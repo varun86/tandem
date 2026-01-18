@@ -176,16 +176,18 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
         return (
           <div className="flex h-full items-center justify-center p-4 bg-surface">
             <img
-              src={convertFileSrc(file.path)}
+              src={convertFileSrc(normalizePathForAsset(file.path))}
               alt={file.name}
               className="max-h-full max-w-full object-contain rounded"
               onError={() => {
-                const convertedSrc = convertFileSrc(file.path);
+                const normalizedPath = normalizePathForAsset(file.path);
+                const convertedSrc = convertFileSrc(normalizedPath);
                 console.error("Image failed to load:", file.path);
+                console.error("Normalized path:", normalizedPath);
                 console.error("Converted src:", convertedSrc);
                 logFrontendError(
                   `Image failed to load: ${file.name}`,
-                  `Path: ${file.path}, Converted: ${convertedSrc}`
+                  `Path: ${file.path}, Normalized: ${normalizedPath}, Converted: ${convertedSrc}`
                 );
                 setError(`Failed to load image: ${file.name}`);
               }}
@@ -211,7 +213,7 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
                 console.error("Converted src:", convertedSrc);
                 logFrontendError(
                   `PDF failed to load: ${file.name}`,
-                  `Original: ${file.path}, Normalized: ${normalizedPath}, Converted: ${convertedSrc}`
+                  `Path: ${file.path}, Normalized: ${normalizedPath}, Converted: ${convertedSrc}`
                 );
                 setError(`Failed to load PDF: ${file.name}`);
               }}
