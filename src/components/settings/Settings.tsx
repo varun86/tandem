@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
+import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import {
   getProvidersConfig,
   setProvidersConfig,
@@ -23,6 +24,8 @@ import {
   removeProject,
   setActiveProject,
   storeApiKey,
+  checkGitStatus,
+  initializeGitRepo,
   type ProvidersConfig,
   type UserProject,
 } from "@/lib/tauri";
@@ -45,6 +48,11 @@ export function Settings({ onClose }: SettingsProps) {
   const [customModel, setCustomModel] = useState("");
   const [customApiKey, setCustomApiKey] = useState("");
   const [customEnabled, setCustomEnabled] = useState(false);
+
+  // Git initialization dialog state
+  const [showGitDialog, setShowGitDialog] = useState(false);
+  const [pendingProjectPath, setPendingProjectPath] = useState<string | null>(null);
+  const [gitStatus, setGitStatus] = useState<{ git_installed: boolean; is_repo: boolean } | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -141,18 +149,72 @@ export function Settings({ onClose }: SettingsProps) {
       });
 
       if (selected && typeof selected === "string") {
-        setProjectLoading(true);
-        const project = await addProject(selected);
-        await loadSettings();
-        // Set as active
-        await setActiveProject(project.id);
-        setActiveProjectId(project.id);
+        // Check Git status
+        const status = await checkGitStatus(selected);
+        
+        if (status.can_enable_undo) {
+          // Git is installed but folder isn't a repo - prompt user
+          setPendingProjectPath(selected);
+          setGitStatus(status);
+          setShowGitDialog(true);
+          return; // Wait for dialog response
+        } else if (!status.git_installed) {
+          // Git not installed - show warning but allow continuing
+          setPendingProjectPath(selected);
+          setGitStatus(status);
+          setShowGitDialog(true);
+          return;
+        }
+        
+        // Git is already set up - proceed
+        await finalizeAddProject(selected);
       }
     } catch (err) {
       console.error("Failed to add project:", err);
+    }
+  };
+
+  // New helper function to complete project addition
+  const finalizeAddProject = async (path: string) => {
+    try {
+      setProjectLoading(true);
+      const project = await addProject(path);
+      await loadSettings();
+      // Set as active
+      await setActiveProject(project.id);
+      setActiveProjectId(project.id);
+    } catch (err) {
+      console.error("Failed to finalize project:", err);
     } finally {
       setProjectLoading(false);
     }
+  };
+
+  // Handle Git initialization from dialog
+  const handleGitInitialize = async () => {
+    if (!pendingProjectPath) return;
+    
+    try {
+      await initializeGitRepo(pendingProjectPath);
+      console.log("Git initialized successfully");
+    } catch (e) {
+      console.error("Failed to initialize Git:", e);
+    }
+    
+    setShowGitDialog(false);
+    await finalizeAddProject(pendingProjectPath);
+    setPendingProjectPath(null);
+    setGitStatus(null);
+  };
+
+  // Handle skipping Git initialization
+  const handleGitSkip = async () => {
+    if (!pendingProjectPath) return;
+    
+    setShowGitDialog(false);
+    await finalizeAddProject(pendingProjectPath);
+    setPendingProjectPath(null);
+    setGitStatus(null);
   };
 
   const handleSetActiveProject = async (projectId: string) => {
@@ -561,6 +623,15 @@ export function Settings({ onClose }: SettingsProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Git Initialization Dialog */}
+      <GitInitDialog
+        isOpen={showGitDialog}
+        onClose={handleGitSkip}
+        onInitialize={handleGitInitialize}
+        gitInstalled={gitStatus?.git_installed ?? false}
+        folderPath={pendingProjectPath ?? ""}
+      />
     </motion.div>
   );
 }

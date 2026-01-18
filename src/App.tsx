@@ -8,6 +8,7 @@ import { SessionSidebar, type SessionInfo, type Project } from "@/components/sid
 import { TaskSidebar } from "@/components/tasks/TaskSidebar";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { FilePreview } from "@/components/files/FilePreview";
+import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { Button } from "@/components/ui";
 import { useAppState } from "@/hooks/useAppState";
 import { useTodos } from "@/hooks/useTodos";
@@ -24,6 +25,8 @@ import {
   addProject,
   getSidecarStatus,
   readFileContent,
+  checkGitStatus,
+  initializeGitRepo,
   type Session,
   type VaultStatus,
   type UserProject,
@@ -92,6 +95,11 @@ function App() {
   const [userProjects, setUserProjects] = useState<UserProject[]>([]);
   const [activeProject, setActiveProjectState] = useState<UserProject | null>(null);
   const [projectSwitcherLoading, setProjectSwitcherLoading] = useState(false);
+
+  // Git initialization dialog state
+  const [showGitDialog, setShowGitDialog] = useState(false);
+  const [pendingProjectPath, setPendingProjectPath] = useState<string | null>(null);
+  const [gitStatus, setGitStatus] = useState<{ git_installed: boolean; is_repo: boolean } | null>(null);
 
   // Todos for task sidebar
   const todosData = useTodos(currentSessionId);
@@ -258,33 +266,87 @@ function App() {
       });
 
       if (selected && typeof selected === "string") {
-        setProjectSwitcherLoading(true);
-        const project = await addProject(selected);
-        await setActiveProject(project.id);
-
-        // Wait for sidecar to restart with polling
-        let attempts = 0;
-        const maxAttempts = 10;
-        while (attempts < maxAttempts) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          const sidecarStatus = await getSidecarStatus();
-          if (sidecarStatus === "running") {
-            console.log("[AddProject] Sidecar ready after", attempts + 1, "attempts");
-            break;
-          }
-          attempts++;
+        // Check Git status
+        const status = await checkGitStatus(selected);
+        
+        if (status.can_enable_undo) {
+          // Git is installed but folder isn't a repo - prompt user
+          setPendingProjectPath(selected);
+          setGitStatus(status);
+          setShowGitDialog(true);
+          return; // Wait for dialog response
+        } else if (!status.git_installed) {
+          // Git not installed - show warning but allow continuing
+          setPendingProjectPath(selected);
+          setGitStatus(status);
+          setShowGitDialog(true);
+          return;
         }
-
-        // Reload everything
-        await refreshAppState();
-        await loadUserProjects();
-        await loadHistory();
+        
+        // Git is already set up or user doesn't want it - proceed
+        await finalizeAddProject(selected);
       }
     } catch (e) {
       console.error("Failed to add project:", e);
+    }
+  };
+
+  // New helper function to complete project addition
+  const finalizeAddProject = async (path: string) => {
+    try {
+      setProjectSwitcherLoading(true);
+      const project = await addProject(path);
+      await setActiveProject(project.id);
+
+      // Wait for sidecar to restart with polling
+      let attempts = 0;
+      const maxAttempts = 10;
+      while (attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const sidecarStatus = await getSidecarStatus();
+        if (sidecarStatus === "running") {
+          console.log("[AddProject] Sidecar ready after", attempts + 1, "attempts");
+          break;
+        }
+        attempts++;
+      }
+
+      // Reload everything
+      await refreshAppState();
+      await loadUserProjects();
+      await loadHistory();
+    } catch (e) {
+      console.error("Failed to finalize project:", e);
     } finally {
       setProjectSwitcherLoading(false);
     }
+  };
+
+  // Handle Git initialization from dialog
+  const handleGitInitialize = async () => {
+    if (!pendingProjectPath) return;
+    
+    try {
+      await initializeGitRepo(pendingProjectPath);
+      console.log("Git initialized successfully");
+    } catch (e) {
+      console.error("Failed to initialize Git:", e);
+    }
+    
+    setShowGitDialog(false);
+    await finalizeAddProject(pendingProjectPath);
+    setPendingProjectPath(null);
+    setGitStatus(null);
+  };
+
+  // Handle skipping Git initialization
+  const handleGitSkip = async () => {
+    if (!pendingProjectPath) return;
+    
+    setShowGitDialog(false);
+    await finalizeAddProject(pendingProjectPath);
+    setPendingProjectPath(null);
+    setGitStatus(null);
   };
 
   const handleManageProjects = () => {
@@ -632,6 +694,15 @@ function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Git Initialization Dialog */}
+            <GitInitDialog
+              isOpen={showGitDialog}
+              onClose={handleGitSkip}
+              onInitialize={handleGitInitialize}
+              gitInstalled={gitStatus?.git_installed ?? false}
+              folderPath={pendingProjectPath ?? ""}
+            />
 
             {/* Task Sidebar */}
             <TaskSidebar

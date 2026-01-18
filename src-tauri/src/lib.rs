@@ -314,6 +314,9 @@ pub fn run() {
             commands::get_workspace_path,
             // Project management
             commands::is_git_repo,
+            commands::is_git_installed,
+            commands::initialize_git_repo,
+            commands::check_git_status,
             commands::add_project,
             commands::remove_project,
             commands::get_user_projects,

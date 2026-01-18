@@ -242,6 +242,24 @@ export async function isGitRepo(path: string): Promise<boolean> {
   return invoke("is_git_repo", { path });
 }
 
+export interface GitStatus {
+  git_installed: boolean;
+  is_repo: boolean;
+  can_enable_undo: boolean;
+}
+
+export async function isGitInstalled(): Promise<boolean> {
+  return invoke("is_git_installed");
+}
+
+export async function initializeGitRepo(path: string): Promise<void> {
+  return invoke("initialize_git_repo", { path });
+}
+
+export async function checkGitStatus(path: string): Promise<GitStatus> {
+  return invoke("check_git_status", { path });
+}
+
 export async function addProject(path: string, name?: string): Promise<UserProject> {
   return invoke("add_project", { path, name });
 }

@@ -266,6 +266,70 @@ pub fn is_git_repo(path: String) -> bool {
     git_dir.exists() && git_dir.is_dir()
 }
 
+/// Check if Git is installed on the system
+#[tauri::command]
+pub fn is_git_installed() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+/// Initialize a Git repository in the specified directory
+#[tauri::command]
+pub fn initialize_git_repo(path: String) -> Result<()> {
+    let path_buf = PathBuf::from(&path);
+
+    // Verify the path exists and is a directory
+    if !path_buf.exists() || !path_buf.is_dir() {
+        return Err(TandemError::InvalidConfig(format!(
+            "Invalid directory: {}",
+            path
+        )));
+    }
+
+    // Check if already a git repo
+    if is_git_repo(path.clone()) {
+        return Ok(()); // Already initialized, no-op
+    }
+
+    // Run git init
+    let output = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(&path_buf)
+        .output()
+        .map_err(|e| TandemError::Sidecar(format!("Failed to run git init: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(TandemError::Sidecar(format!("git init failed: {}", stderr)));
+    }
+
+    tracing::info!("Initialized Git repository at: {}", path);
+    Ok(())
+}
+
+/// Get comprehensive Git status for a directory
+#[derive(serde::Serialize)]
+pub struct GitStatus {
+    pub git_installed: bool,
+    pub is_repo: bool,
+    pub can_enable_undo: bool,
+}
+
+#[tauri::command]
+pub fn check_git_status(path: String) -> GitStatus {
+    let git_installed = is_git_installed();
+    let is_repo = is_git_repo(path);
+    let can_enable_undo = git_installed && !is_repo;
+
+    GitStatus {
+        git_installed,
+        is_repo,
+        can_enable_undo,
+    }
+}
+
 /// Add a new project folder
 #[tauri::command]
 pub fn add_project(
