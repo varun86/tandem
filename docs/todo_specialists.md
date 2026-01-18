@@ -14,6 +14,22 @@ This document captures ideas for making Tandem accessible and valuable to averag
 
 ---
 
+## Connection to Developer Tools
+
+Each specialist maps to capabilities developers already have:
+
+| Developer Tool           | Tandem Specialist |
+| ------------------------ | ----------------- |
+| Code Search (ripgrep)    | Document Analyst  |
+| Data Pipelines           | Data Extractor    |
+| Linters/Formatters       | Writing Assistant |
+| File Managers (tree, mv) | File Organizer    |
+| Research Tools           | Research Helper   |
+
+**The Insight:** In 2024, tools like Cursor and Claude Code gave developers AI-powered capabilities for working with entire codebases. Tandem brings these same capabilities to everyone - researchers, writers, analysts, and administrators who work with documents instead of code.
+
+---
+
 ## Specialist System
 
 ### Concept

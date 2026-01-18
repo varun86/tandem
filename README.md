@@ -25,6 +25,26 @@ Inspired by [Claude Cowork](https://claude.com/blog/cowork-research-preview), bu
 
 **📖 Open Source**: MIT licensed. Review the code, contribute features, or fork it for your needs.
 
+## Developer Superpowers for Everyone
+
+In 2024, AI coding tools like Cursor and Claude Code transformed how developers work - letting them interact with entire codebases, automate complex tasks, and review changes before they happen.
+
+**But why should only programmers have these capabilities?**
+
+- Researchers need to synthesize hundreds of papers
+- Writers need consistency across sprawling manuscripts
+- Analysts need to cross-reference quarterly reports
+- Administrators need to organize mountains of documents
+
+Tandem brings the same transformative capabilities to everyone. Point it at any folder of files, and you get:
+
+- **Folder-wide intelligence** - AI that understands your entire collection, not just one file
+- **Multi-step automation** - Complex tasks broken into reviewable steps
+- **Visual change review** - See exactly what will change before it happens
+- **Complete undo** - Roll back any operation with one click
+
+What Cursor did for developers, Tandem does for everyone.
+
 ## Features
 
 ### Core Capabilities
