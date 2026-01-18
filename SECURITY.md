@@ -7,16 +7,19 @@ Tandem is built with a **zero-trust, security-first** architecture. This documen
 ## Security Features
 
 ### 1. Encrypted Credential Storage
-- API keys are encrypted using AES-256-GCM via Stronghold
+
+- API keys are encrypted using AES-256-GCM via SecureKeyStore
 - Keys are never stored in plaintext or exposed to the frontend
 - Master password derived from user input + machine ID
 
 ### 2. Sandboxed File Access
+
 - AI can only access explicitly granted workspace folders
 - Sensitive paths are permanently denied (`.env`, `.ssh`, `.gnupg`, `*.pem`, `*.key`)
 - All file operations are validated before execution
 
 ### 3. Network Isolation
+
 - Strict Content Security Policy (CSP)
 - Only allowlisted endpoints can be contacted:
   - `127.0.0.1` (local sidecar)
@@ -26,12 +29,14 @@ Tandem is built with a **zero-trust, security-first** architecture. This documen
   - User-configured custom endpoints
 
 ### 4. Supervised Agent Pattern
+
 - AI sidecar is treated as untrusted
 - All operations go through the Tool Proxy
 - User approval required for write/delete operations
 - Full operation journal with undo capability
 
 ### 5. Zero Telemetry
+
 - No analytics or tracking
 - No "call home" functionality
 - All data stays on your device
@@ -103,4 +108,4 @@ We thank the security researchers who have helped improve Tandem's security.
 
 ---
 
-*Last updated: January 2026*
+_Last updated: January 2026_

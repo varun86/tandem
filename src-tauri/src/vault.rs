@@ -1,4 +1,4 @@
-// Tandem Vault - PIN-based encryption for the Stronghold master key
+// Tandem Vault - PIN-based encryption for the keystore master key
 //
 // Security model:
 // 1. On first run, generate a random 32-byte master key

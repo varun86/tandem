@@ -16,11 +16,11 @@ Please be respectful and constructive in all interactions. We're building someth
 
 **Platform-specific:**
 
-| Platform | Additional Requirements |
-|----------|------------------------|
-| Windows | [Build Tools for Visual Studio](https://visualstudio.microsoft.com/downloads/) |
-| macOS | Xcode Command Line Tools (`xcode-select --install`) |
-| Linux | `webkit2gtk-4.1`, `libappindicator3`, `librsvg2` |
+| Platform | Additional Requirements                                                        |
+| -------- | ------------------------------------------------------------------------------ |
+| Windows  | [Build Tools for Visual Studio](https://visualstudio.microsoft.com/downloads/) |
+| macOS    | Xcode Command Line Tools (`xcode-select --install`)                            |
+| Linux    | `webkit2gtk-4.1`, `libappindicator3`, `librsvg2`                               |
 
 ### Setup
 
@@ -66,12 +66,14 @@ refactor: extract tool proxy into separate module
 ### Code Style
 
 **TypeScript/React:**
+
 ```bash
 pnpm lint        # Check for issues
 pnpm format      # Auto-format code
 ```
 
 **Rust:**
+
 ```bash
 cargo fmt        # Format code
 cargo clippy     # Lint
@@ -119,7 +121,7 @@ tandem/
 │   │   ├── sidecar.rs     # Sidecar lifecycle
 │   │   ├── tool_proxy.rs  # File operation proxy
 │   │   ├── llm_router.rs  # Provider routing
-│   │   └── stronghold.rs  # Secure storage
+│   │   └── keystore.rs    # Secure storage
 │   └── capabilities/      # Permission configuration
 └── scripts/               # Build scripts
 ```

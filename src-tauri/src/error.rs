@@ -9,9 +9,6 @@ pub enum TandemError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    #[error("Stronghold error: {0}")]
-    Stronghold(String),
-
     #[error("Path not allowed: {0}")]
     PathNotAllowed(String),
 

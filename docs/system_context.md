@@ -15,7 +15,7 @@ This document provides a comprehensive overview of the Tandem project for AI age
 
 1.  **Frontend (React + Vite)**: The "Glass" UI where the user chats, manages settings, and approves permissions. It communicates with the Tauri backend via `invoke` commands.
 2.  **Backend (Tauri/Rust)**: The security engine. It handles:
-    - **Encrypted Vault**: Storing API keys using AES-256-GCM (Stronghold).
+    - **Encrypted Vault**: Storing API keys using AES-256-GCM encryption via the SecureKeyStore.
     - **LLM Routing**: Abstracting different providers (Anthropic, OpenAI, etc.) into a unified local interface.
     - **Permission Proxy**: Intercepting agent requests and presenting them to the user for approval.
 3.  **Sidecar (OpenCode)**: A bundled binary that acts as the "Autonomous Brain." It receives high-level tasks and generates specific tool calls (read file, edit file, run command).
@@ -54,7 +54,7 @@ The backend (`llm_router.rs`) handles formatting requests into the specific dial
 
 If you are an agent tasked with modifying or explaining Tandem, keep these principles in mind:
 
-1.  **Respect the Vault**: Never attempt to log, print, or bypass the encryption of API keys. They stay in the Rust `Stronghold` vault.
+1.  **Respect the Vault**: Never attempt to log, print, or bypass the encryption of API keys. They stay securely encrypted in the Rust `SecureKeyStore`.
 2.  **Privacy-First**: If you suggest a feature, ensure it doesn't introduce telemetry or external dependencies that leak data.
 3.  **Tauri v2 Conventions**: Tandem uses Tauri v2. Use `capabilities` for permissions and follow the v2 plugin ecosystem patterns.
 4.  **Local Context is King**: The user's primary value is "Chatting with their files." Ensure file-reading and context-gathering logic is robust and respects the scoped directory.

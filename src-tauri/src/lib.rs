@@ -8,7 +8,6 @@ mod llm_router;
 mod sidecar;
 mod sidecar_manager;
 mod state;
-mod stronghold;
 mod tool_proxy;
 mod vault;
 
@@ -99,10 +98,10 @@ fn initialize_keystore_and_keys(app: &tauri::AppHandle, master_key: &[u8]) {
     let app_state = app.state::<state::AppState>();
     let sidecar = app_state.sidecar.clone();
 
-    let mappings: Vec<(stronghold::ApiKeyType, &str)> = vec![
-        (stronghold::ApiKeyType::OpenRouter, "OPENROUTER_API_KEY"),
-        (stronghold::ApiKeyType::Anthropic, "ANTHROPIC_API_KEY"),
-        (stronghold::ApiKeyType::OpenAI, "OPENAI_API_KEY"),
+    let mappings: Vec<(keystore::ApiKeyType, &str)> = vec![
+        (keystore::ApiKeyType::OpenRouter, "OPENROUTER_API_KEY"),
+        (keystore::ApiKeyType::Anthropic, "ANTHROPIC_API_KEY"),
+        (keystore::ApiKeyType::OpenAI, "OPENAI_API_KEY"),
     ];
 
     for (key_type, env_var) in mappings {
@@ -148,14 +147,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(
-            tauri_plugin_stronghold::Builder::new(|password| {
-                // This callback is used when the plugin needs to derive a key
-                // We pass through the master key directly since we already derived it
-                password.as_bytes().to_vec()
-            })
-            .build(),
-        )
         .setup(|app| {
             // Get app data directory
             let app_data_dir = app
@@ -263,14 +254,14 @@ pub fn run() {
 
             app.manage(app_state);
 
-            // Note: Stronghold is NOT initialized here - it will be initialized
+            // Note: Keystore is NOT initialized here - it will be initialized
             // when the vault is unlocked via the unlock_vault command
 
             tracing::info!("Tandem setup complete (vault locked, awaiting PIN)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Vault commands (must be called before other commands that need Stronghold)
+            // Vault commands (must be called before other commands that need the keystore)
             commands::get_vault_status,
             commands::create_vault,
             commands::unlock_vault,
@@ -366,6 +357,6 @@ pub fn run() {
 
 // Re-export for commands module
 pub use crate::vault::VaultStatus;
-pub fn init_stronghold_and_keys(app: &tauri::AppHandle, master_key: &[u8]) {
+pub fn init_keystore_and_keys(app: &tauri::AppHandle, master_key: &[u8]) {
     initialize_keystore_and_keys(app, master_key);
 }

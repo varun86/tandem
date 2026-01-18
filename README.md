@@ -105,7 +105,7 @@ Tandem can only access folders you explicitly grant:
 │  React Frontend │   Tauri Core      │  OpenCode Sidecar     │
 │  (WebView)      │   (Rust)          │  (AI Agent)           │
 ├─────────────────┴───────────────────┴───────────────────────┤
-│                Stronghold Encrypted Vault                    │
+│                SecureKeyStore (AES-256-GCM)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,7 +156,7 @@ Toggle between modes using the button in the chat header.
 
 ## Security
 
-- **API keys**: Encrypted with AES-256-GCM in Stronghold vault
+- **API keys**: Encrypted with AES-256-GCM in SecureKeyStore
 - **File access**: Scoped to user-selected directories only
 - **Network**: Only connects to localhost + allowlisted LLM endpoints
 - **No telemetry**: Zero analytics, zero tracking, zero call home

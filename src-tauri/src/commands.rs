@@ -2,14 +2,13 @@
 // These are the IPC commands exposed to the frontend
 
 use crate::error::{Result, TandemError};
-use crate::keystore::SecureKeyStore;
+use crate::keystore::{validate_api_key, validate_key_type, ApiKeyType, SecureKeyStore};
 use crate::sidecar::{
     CreateSessionRequest, FilePartInput, ModelInfo, ModelSpec, Project, ProviderInfo,
     SendMessageRequest, Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
 };
 use crate::sidecar_manager::{self, SidecarStatus};
 use crate::state::{AppState, AppStateInfo, ProvidersConfig};
-use crate::stronghold::{validate_api_key, validate_key_type, ApiKeyType};
 use crate::tool_proxy::{FileSnapshot, JournalEntry, OperationStatus, UndoAction};
 use crate::vault::{self, EncryptedVaultKey, VaultStatus};
 use crate::VaultState;
@@ -45,7 +44,7 @@ pub async fn create_vault(
         return Err(TandemError::Vault("Vault already exists".to_string()));
     }
 
-    // Delete any existing Stronghold snapshot (from previous installations)
+    // Delete any existing legacy Stronghold snapshot (from previous installations)
     let stronghold_path = vault_state.app_data_dir.join("tandem.stronghold");
     if stronghold_path.exists() {
         tracing::warn!("Deleting old Stronghold snapshot: {:?}", stronghold_path);
@@ -64,12 +63,12 @@ pub async fn create_vault(
     // Store master key and mark as unlocked
     vault_state.set_master_key(master_key.clone());
 
-    // Initialize Stronghold in background thread (it's CPU-intensive)
+    // Initialize keystore in background thread (it's CPU-intensive)
     let app_clone = app.clone();
     let master_key_clone = master_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::init_stronghold_and_keys(&app_clone, &master_key_clone);
-        tracing::info!("Stronghold initialization complete");
+        crate::init_keystore_and_keys(&app_clone, &master_key_clone);
+        tracing::info!("Keystore initialization complete");
     });
 
     Ok(())
@@ -106,12 +105,12 @@ pub async fn unlock_vault(
     // Store master key and mark as unlocked
     vault_state.set_master_key(master_key.clone());
 
-    // Initialize Stronghold in background thread (it's CPU-intensive)
+    // Initialize keystore in background thread (it's CPU-intensive)
     let app_clone = app.clone();
     let master_key_clone = master_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::init_stronghold_and_keys(&app_clone, &master_key_clone);
-        tracing::info!("Stronghold initialization complete");
+        crate::init_keystore_and_keys(&app_clone, &master_key_clone);
+        tracing::info!("Keystore initialization complete");
     });
 
     Ok(())
@@ -506,7 +505,7 @@ pub async fn store_api_key(
     // Insert the key in memory first (fast)
     let keystore = app_clone
         .try_state::<SecureKeyStore>()
-        .ok_or_else(|| TandemError::Stronghold("Keystore not initialized".to_string()))?;
+        .ok_or_else(|| TandemError::Vault("Keystore not initialized".to_string()))?;
 
     keystore.set(&key_name, &api_key_value)?;
 
@@ -561,7 +560,7 @@ pub async fn delete_api_key(
 
     let keystore = app
         .try_state::<SecureKeyStore>()
-        .ok_or_else(|| TandemError::Stronghold("Keystore not initialized".to_string()))?;
+        .ok_or_else(|| TandemError::Vault("Keystore not initialized".to_string()))?;
 
     keystore.delete(&key_name)?;
 

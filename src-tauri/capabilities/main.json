@@ -33,8 +33,6 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
 
-    "stronghold:default",
-
     "updater:default",
 
     "process:allow-restart"
