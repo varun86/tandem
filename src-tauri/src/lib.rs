@@ -67,31 +67,31 @@ impl VaultState {
 /// Initialize tracing for logging (console + file)
 fn init_tracing(app_data_dir: &std::path::Path) {
     use std::fs;
-    
+
     // Create logs directory
     let logs_dir = app_data_dir.join("logs");
     fs::create_dir_all(&logs_dir).ok();
-    
+
     // Log file path (rotate daily)
     let log_file = logs_dir.join(format!(
         "tandem-{}.log",
         chrono::Local::now().format("%Y-%m-%d")
     ));
-    
+
     // Create file appender
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_file)
         .expect("Failed to open log file");
-    
+
     // Set up both console and file logging
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(file)
         .with_ansi(false); // No ANSI colors in file
-    
+
     let console_layer = tracing_subscriber::fmt::layer();
-    
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -100,7 +100,7 @@ fn init_tracing(app_data_dir: &std::path::Path) {
         .with(console_layer)
         .with(file_layer)
         .init();
-    
+
     tracing::info!("Logging to file: {:?}", log_file);
 }
 
@@ -174,9 +174,9 @@ pub fn run() {
             // Fallback to temp dir if we can't get app data
             std::env::temp_dir().join("tandem")
         });
-    
+
     std::fs::create_dir_all(&app_data_dir).ok();
-    
+
     init_tracing(&app_data_dir);
 
     tracing::info!("Starting Tandem application");
@@ -309,6 +309,7 @@ pub fn run() {
             commands::lock_vault,
             // Basic commands
             commands::greet,
+            commands::log_frontend_error,
             commands::get_app_state,
             commands::set_workspace_path,
             commands::get_workspace_path,

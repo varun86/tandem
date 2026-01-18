@@ -210,6 +210,16 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {}! Welcome to Tandem.", name)
 }
 
+/// Log frontend errors to backend log file
+#[tauri::command]
+pub fn log_frontend_error(message: String, details: Option<String>) {
+    if let Some(d) = details {
+        tracing::error!("[FRONTEND ERROR] {}: {}", message, d);
+    } else {
+        tracing::error!("[FRONTEND ERROR] {}", message);
+    }
+}
+
 /// Get the current application state
 #[tauri::command]
 pub fn get_app_state(state: State<'_, AppState>) -> AppStateInfo {

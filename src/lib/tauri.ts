@@ -3,6 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ============================================================================
+// Utility Functions
+// ============================================================================
+
+export async function logFrontendError(message: string, details?: string): Promise<void> {
+  return invoke("log_frontend_error", { message, details });
+}
+
+// ============================================================================
 // Provider Configuration Types
 // ============================================================================
 

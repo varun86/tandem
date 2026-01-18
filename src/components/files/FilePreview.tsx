@@ -15,7 +15,7 @@ import {
   AlertCircle,
   MessageSquarePlus,
 } from "lucide-react";
-import { readFileContent, type FileEntry } from "@/lib/tauri";
+import { readFileContent, type FileEntry, logFrontendError } from "@/lib/tauri";
 // import { cn } from "@/lib/utils"; // Unused
 
 interface FilePreviewProps {
@@ -174,8 +174,13 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
               alt={file.name}
               className="max-h-full max-w-full object-contain rounded"
               onError={() => {
+                const convertedSrc = convertFileSrc(file.path);
                 console.error("Image failed to load:", file.path);
-                console.error("Converted src:", convertFileSrc(file.path));
+                console.error("Converted src:", convertedSrc);
+                logFrontendError(
+                  `Image failed to load: ${file.name}`,
+                  `Path: ${file.path}, Converted: ${convertedSrc}`
+                );
                 setError(`Failed to load image: ${file.name}`);
               }}
               onLoad={() => {
@@ -193,7 +198,12 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
               type="application/pdf"
               className="h-full w-full"
               onError={() => {
+                const convertedSrc = convertFileSrc(file.path);
                 console.error("PDF failed to load:", file.path);
+                logFrontendError(
+                  `PDF failed to load: ${file.name}`,
+                  `Path: ${file.path}, Converted: ${convertedSrc}`
+                );
                 setError(`Failed to load PDF: ${file.name}`);
               }}
             />
