@@ -4,7 +4,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   X,
   FileText,
@@ -121,6 +120,7 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
   const previewType = getPreviewType(file);
 
   // Helper to get MIME type from extension
@@ -162,14 +162,36 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
     }
   }, [file.path, previewType, file.name, file.extension]);
 
+  // Load PDFs as base64 data URLs
   useEffect(() => {
-    if (previewType === "pdf" || previewType === "binary") {
+    if (previewType === "pdf") {
+      const loadPdf = async () => {
+        try {
+          setIsLoading(true);
+          setError(null);
+          const base64 = await readBinaryFile(file.path);
+          setPdfDataUrl(`data:application/pdf;base64,${base64}`);
+        } catch (err) {
+          console.error("Failed to load PDF:", err);
+          logFrontendError(`Failed to load PDF: ${file.name}`, `Error: ${err}`);
+          setError(`Failed to load PDF: ${file.name}`);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      loadPdf();
+      return;
+    }
+  }, [file.path, previewType, file.name]);
+
+  useEffect(() => {
+    if (previewType === "binary") {
       setIsLoading(false);
       return;
     }
 
-    if (previewType === "image") {
-      // Images are handled by the separate useEffect above
+    if (previewType === "image" || previewType === "pdf") {
+      // Images and PDFs are handled by separate useEffects above
       return;
     }
 
@@ -227,15 +249,9 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
       case "pdf":
         return (
           <div className="h-full w-full bg-surface">
-            <embed
-              src={convertFileSrc(file.path)}
-              type="application/pdf"
-              className="h-full w-full"
-              onError={() => {
-                logFrontendError(`PDF failed to load: ${file.name}`, `Path: ${file.path}`);
-                setError(`Failed to load PDF: ${file.name}`);
-              }}
-            />
+            {pdfDataUrl ? (
+              <embed src={pdfDataUrl} type="application/pdf" className="h-full w-full" />
+            ) : null}
           </div>
         );
 

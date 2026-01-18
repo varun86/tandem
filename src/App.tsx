@@ -406,9 +406,12 @@ function App() {
     try {
       console.log("Add to chat:", file.path);
 
-      // Helper to detect image files
+      // Helper to detect binary files (images and PDFs)
       const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"]);
+      const PDF_EXTENSIONS = new Set(["pdf"]);
       const isImage = file.extension && IMAGE_EXTENSIONS.has(file.extension.toLowerCase());
+      const isPdf = file.extension && PDF_EXTENSIONS.has(file.extension.toLowerCase());
+      const isBinary = isImage || isPdf;
 
       // Use standard MIME types
       const getMimeType = (ext: string | undefined): string => {
@@ -429,6 +432,9 @@ function App() {
             return "image/bmp";
           case "ico":
             return "image/x-icon";
+          // PDF
+          case "pdf":
+            return "application/pdf";
           // Text files
           case "ts":
           case "tsx":
@@ -453,8 +459,8 @@ function App() {
       let base64Content: string;
       let size: number;
 
-      if (isImage) {
-        // Read binary file directly as base64
+      if (isBinary) {
+        // Read binary file (images, PDFs) directly as base64
         base64Content = await readBinaryFile(file.path);
         // Estimate size from base64 (base64 is ~33% larger than original)
         size = Math.floor((base64Content.length * 3) / 4);
