@@ -403,6 +403,12 @@ mod tests {
                 endpoint: "http://localhost:11434".to_string(),
                 model: Some("llama3.2".to_string()),
             },
+            opencode_zen: ProviderConfig {
+                enabled: false,
+                default: false,
+                endpoint: "https://api.opencode.ai/v1".to_string(),
+                model: None,
+            },
             custom: vec![],
         }
     }

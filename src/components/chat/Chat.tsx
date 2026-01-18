@@ -24,7 +24,6 @@ import {
   isGitRepo,
   type StreamEvent,
   type SidecarState,
-  type FileAttachmentInput,
   type TodoItem,
 } from "@/lib/tauri";
 

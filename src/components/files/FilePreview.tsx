@@ -16,7 +16,7 @@ import {
   MessageSquarePlus,
 } from "lucide-react";
 import { readFileContent, type FileEntry } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+// import { cn } from "@/lib/utils"; // Unused
 
 interface FilePreviewProps {
   file: FileEntry;
