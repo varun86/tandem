@@ -1984,7 +1984,6 @@ struct PptxTheme {
     title: String,
     subtitle: String,
     text: String,
-    accent: String,
 }
 
 fn get_pptx_theme(theme: &crate::presentation::PresentationTheme) -> PptxTheme {
@@ -1995,28 +1994,24 @@ fn get_pptx_theme(theme: &crate::presentation::PresentationTheme) -> PptxTheme {
             title: "FFFFFF".to_string(),
             subtitle: "A0A0A0".to_string(),
             text: "E0E0E0".to_string(),
-            accent: "F59E0B".to_string(),
         },
         PresentationTheme::Corporate => PptxTheme {
             bg: "1A365D".to_string(),
             title: "FFFFFF".to_string(),
             subtitle: "BEE3F8".to_string(),
             text: "E2E8F0".to_string(),
-            accent: "63B3ED".to_string(),
         },
         PresentationTheme::Minimal => PptxTheme {
             bg: "FFFFFF".to_string(),
             title: "1A202C".to_string(),
             subtitle: "718096".to_string(),
             text: "4A5568".to_string(),
-            accent: "2D3748".to_string(),
         },
         _ => PptxTheme {
             bg: "F7FAFC".to_string(),
             title: "1A202C".to_string(),
             subtitle: "718096".to_string(),
             text: "2D3748".to_string(),
-            accent: "3182CE".to_string(),
         },
     }
 }
