@@ -124,10 +124,25 @@ Tandem supports multiple specialized agent modes powered by OpenCode:
 
 ### Building for Production
 
+If you want to build a distributable installer, run:
+
 ```bash
 # Build for current platform
 pnpm tauri build
+```
 
+**Note on Code Signing:**
+Tandem uses Tauri's secure updater. If you are building the app for yourself, you will need to generate your own signing keys:
+
+1. Generate keys: `pnpm tauri signer generate -w ./src-tauri/tandem.key`
+2. Set environment variables:
+   - `TAURI_SIGNING_PRIVATE_KEY`: The content of the `.key` file
+   - `TAURI_SIGNING_PASSWORD`: The password you set during generation
+3. Update the `pubkey` in `src-tauri/tauri.conf.json` with your new public key.
+
+For more details, see the [Tauri signing documentation](https://tauri.app/v1/guides/distribution/updater/#signing-updates).
+
+```bash
 # Output locations:
 # Windows: src-tauri/target/release/bundle/msi/
 # macOS:   src-tauri/target/release/bundle/dmg/
@@ -306,10 +321,12 @@ tandem/
 - [x] **Phase 4: BYOK Provider Routing** - Multi-provider support
 - [x] **Phase 5: Agent Capabilities** - Multi-mode agents, execution planning
 - [x] **Phase 6: Project Management** - Multi-workspace support
-- [ ] **Phase 7: Browser Integration** - Web content access
-- [ ] **Phase 8: Connectors & Skills** - Extensibility system
-- [ ] **Phase 9: Team Features** - Collaboration tools
-- [ ] **Phase 10: Mobile Companion** - iOS/Android apps
+- [x] **Phase 7: Advanced Presentations** - PPTX export engine, theme mapping, explicit positioning
+- [x] **Phase 8: Brand Evolution** - Rubik 900 typography, polished boot sequence
+- [ ] **Phase 9: Browser Integration** - Web content access
+- [ ] **Phase 10: Connectors & Skills** - Extensibility system
+- [ ] **Phase 11: Team Features** - Collaboration tools
+- [ ] **Phase 12: Mobile Companion** - iOS/Android apps
 
 See [docs/todo_specialists.md](docs/todo_specialists.md) for ideas on specialized AI assistants for non-technical users.
 

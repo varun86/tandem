@@ -1,3 +1,33 @@
+# Tandem v1.1.0 Release Notes
+
+## Highlights
+
+- **Advanced Presentation Engine**: Added high-fidelity PPTX export with theme-aware styling and explicit coordinate mapping.
+- **Brand Evolution**: Refreshed the entire application with Rubik 900 typography and a polished, centered boot sequence.
+- **AI-Powered Layouts**: Enhanced LLM tool guidance to include spatial positioning for automated slide generation.
+
+## Complete Feature List
+
+### Presentation Engine (Major Update)
+
+- **Explicit Styling**: Exported PPTX files now preserve theme colors (Dark, Corporate, Minimal, Light) and layouts.
+- **Positioning Engine**: Implemented EMU (English Metric Unit) mapping to ensure elements are perfectly positioned without overlap.
+- **Themed Backgrounds**: Slides now include high-fidelity background shapes matching the selected Tandem theme.
+- **Enhanced XML Generation**: Refactored the Rust backend to generate standards-compliant OOXML for maximum compatibility with PowerPoint and Google Slides.
+
+### Branding + UI
+
+- **Rubik 900 Font**: Migrated primary brand elements to Google's Rubik font (Weight 900) for a bolder, more modern look.
+- **Centered Splash Screen**: Improved the initialization sequence with precise horizontal centering and smoother transitions.
+- **Matrix Loader Refinement**: Synchronized the MatrixRain effect with the new brand typography.
+
+### Developer Experience
+
+- **Tool Guidance v2**: Updated the internal AI instruction set to proactively use spatial coordinates when designing artifacts.
+- **Local Build Support**: Added documentation for code signing keys to enable independent local builds.
+
+---
+
 # Tandem v1.0.0 Release Notes
 
 ## Highlights
