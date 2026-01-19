@@ -1,8 +1,11 @@
 export interface Presentation {
   title: string;
   author?: string;
+  theme?: PresentationTheme;
   slides: Slide[];
 }
+
+export type PresentationTheme = "light" | "dark" | "corporate" | "minimal";
 
 export type SlideLayout = "title" | "content" | "section" | "blank";
 
@@ -12,6 +15,7 @@ export interface Slide {
   title?: string;
   subtitle?: string;
   elements: SlideElement[];
+  notes?: string; // Speaker notes
 }
 
 export type ElementType = "text" | "image" | "bullet_list";

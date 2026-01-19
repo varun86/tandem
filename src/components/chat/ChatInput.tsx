@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Paperclip, StopCircle, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { AgentSelector } from "./AgentSelector";
+import { ContextToolbar } from "./ContextToolbar";
+import type { ModelInfo } from "@/lib/tauri";
 
 export interface FileAttachment {
   id: string;
@@ -25,6 +26,12 @@ interface ChatInputProps {
   onAgentChange?: (agent: string | undefined) => void;
   externalAttachment?: FileAttachment | null;
   onExternalAttachmentProcessed?: () => void;
+  // New props for Context Toolbar
+  enabledToolCategories?: Set<string>;
+  onToolCategoriesChange?: (categories: Set<string>) => void;
+  selectedModel?: string;
+  onModelChange?: (model: string) => void;
+  availableModels?: ModelInfo[];
 }
 
 export function ChatInput({
@@ -37,6 +44,11 @@ export function ChatInput({
   onAgentChange,
   externalAttachment,
   onExternalAttachmentProcessed,
+  enabledToolCategories,
+  onToolCategoriesChange,
+  selectedModel,
+  onModelChange,
+  availableModels,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -44,10 +56,15 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Handle external attachment from file browser
+  const mergedAttachments = useMemo(() => {
+    if (!externalAttachment) return attachments;
+    const exists = attachments.some((attachment) => attachment.id === externalAttachment.id);
+    return exists ? attachments : [...attachments, externalAttachment];
+  }, [attachments, externalAttachment]);
+
+  // Let parent clear external attachment after we've seen it
   useEffect(() => {
     if (externalAttachment) {
-      setAttachments((prev) => [...prev, externalAttachment]);
       onExternalAttachmentProcessed?.();
     }
   }, [externalAttachment, onExternalAttachmentProcessed]);
@@ -63,16 +80,16 @@ export function ChatInput({
 
   const generateId = () => `attach_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-  const fileToDataUrl = (file: File): Promise<string> => {
+  const fileToDataUrl = (file: globalThis.File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
+      const reader = new globalThis.FileReader();
       reader.onload = () => resolve(reader.result as string);
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
   };
 
-  const addFile = useCallback(async (file: File) => {
+  const addFile = useCallback(async (file: globalThis.File) => {
     const isImage = file.type.startsWith("image/");
     const dataUrl = await fileToDataUrl(file);
 
@@ -151,11 +168,14 @@ export function ChatInput({
 
   const removeAttachment = (id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
+    if (externalAttachment?.id === id) {
+      onExternalAttachmentProcessed?.();
+    }
   };
 
   const handleSubmit = () => {
-    if ((!message.trim() && attachments.length === 0) || disabled) return;
-    onSend(message.trim(), attachments.length > 0 ? attachments : undefined);
+    if ((!message.trim() && mergedAttachments.length === 0) || disabled) return;
+    onSend(message.trim(), mergedAttachments.length > 0 ? mergedAttachments : undefined);
     setMessage("");
     setAttachments([]);
   };
@@ -202,7 +222,7 @@ export function ChatInput({
 
         {/* Attachment previews */}
         <AnimatePresence>
-          {attachments.length > 0 && (
+          {mergedAttachments.length > 0 && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
@@ -210,7 +230,7 @@ export function ChatInput({
               className="mb-3 overflow-hidden"
             >
               <div className="flex flex-wrap gap-2">
-                {attachments.map((attachment) => (
+                {mergedAttachments.map((attachment) => (
                   <motion.div
                     key={attachment.id}
                     initial={{ scale: 0.8, opacity: 0 }}
@@ -268,15 +288,6 @@ export function ChatInput({
                 : "border-border hover:border-border-subtle focus-within:border-primary"
           )}
         >
-          {/* Agent selector */}
-          {onAgentChange && (
-            <AgentSelector
-              selectedAgent={selectedAgent}
-              onAgentChange={onAgentChange}
-              disabled={disabled}
-            />
-          )}
-
           {/* Attachment button */}
           <button
             type="button"
@@ -338,7 +349,7 @@ export function ChatInput({
             <Button
               size="sm"
               onClick={handleSubmit}
-              disabled={(!message.trim() && attachments.length === 0) || disabled}
+              disabled={(!message.trim() && mergedAttachments.length === 0) || disabled}
               className="h-9 w-9 p-0"
               title="Send message"
             >
@@ -347,11 +358,17 @@ export function ChatInput({
           )}
         </div>
 
-        {/* Hints */}
-        <div className="mt-2 flex items-center justify-between text-xs text-text-subtle">
-          <span>Press Enter to send, Shift+Enter for new line • Paste images from clipboard</span>
-          <span>Tandem can read and write files in your workspace</span>
-        </div>
+        {/* Context Toolbar - Agent, Tools, Model selectors */}
+        <ContextToolbar
+          selectedAgent={selectedAgent}
+          onAgentChange={onAgentChange}
+          enabledToolCategories={enabledToolCategories || new Set()}
+          onToolCategoriesChange={onToolCategoriesChange || (() => {})}
+          selectedModel={selectedModel}
+          onModelChange={onModelChange}
+          availableModels={availableModels}
+          disabled={disabled}
+        />
       </div>
     </motion.div>
   );

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Settings } from "@/components/settings";
 import { About } from "@/components/about";
@@ -106,6 +106,24 @@ function App() {
 
   // Todos for task sidebar
   const todosData = useTodos(currentSessionId);
+
+  // Auto-open task sidebar when tasks are created (but not on initial load)
+  const previousTaskCountRef = useRef(0);
+  useEffect(() => {
+    const currentTaskCount = todosData.todos.length;
+
+    // If tasks increased (new tasks created) and we're not already open
+    if (
+      currentTaskCount > previousTaskCountRef.current &&
+      currentTaskCount > 0 &&
+      !taskSidebarOpen
+    ) {
+      console.log(`[TaskSidebar] Auto-opening: ${currentTaskCount} tasks detected`);
+      setTaskSidebarOpen(true);
+    }
+
+    previousTaskCountRef.current = currentTaskCount;
+  }, [todosData.todos.length, taskSidebarOpen]);
 
   // Start with sidecar setup, then onboarding if no workspace, otherwise chat
   const [view, setView] = useState<View>(() => "sidecar-setup");

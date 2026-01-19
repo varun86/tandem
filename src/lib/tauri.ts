@@ -649,6 +649,29 @@ export async function readBinaryFile(path: string): Promise<string> {
 }
 
 // ============================================================================
+// Tool Definitions (for conditional tool injection)
+// ============================================================================
+
+export interface ToolGuidance {
+  category: string;
+  instructions: string;
+  json_schema: Record<string, unknown>;
+  example: string;
+}
+
+export async function getToolGuidance(categories: string[]): Promise<ToolGuidance[]> {
+  return invoke("get_tool_guidance", { categories });
+}
+
+// ============================================================================
+// Presentation Export
+// ============================================================================
+
+export async function exportPresentation(jsonPath: string, outputPath: string): Promise<string> {
+  return invoke("export_presentation", { jsonPath, outputPath });
+}
+
+// ============================================================================
 // Event Listeners
 // ============================================================================
 

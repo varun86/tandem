@@ -1,0 +1,162 @@
+{
+  "title": "Tandem: Your Private AI Coworker",
+  "author": "Tandem Team",
+  "theme": "minimal",
+  "slides": [
+    {
+      "id": "slide_1",
+      "layout": "title",
+      "title": "Tandem",
+      "subtitle": "Your local-first AI coworker for every desktop.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": ["Privacy-focused", "Cross-platform", "No-lock-in"]
+        }
+      ],
+      "notes": "Introduce Tandem as the private alternative to cloud-based AI tools."
+    },
+    {
+      "id": "slide_2",
+      "layout": "content",
+      "title": "The AI Privacy Problem",
+      "subtitle": "Why traditional AI feels risky.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Data Training: Your secrets help train their next model.",
+            "Subscription Bleed: Expensive monthly fees for every user.",
+            "Cloud Lock-in: Hard to switch between AI providers.",
+            "Privacy Tax: Giving up data for convenience."
+          ]
+        }
+      ],
+      "notes": "Highlight the pain points of current cloud-only AI solutions."
+    },
+    {
+      "id": "slide_3",
+      "layout": "section",
+      "title": "The Tandem Solution",
+      "subtitle": "Local control, global intelligence.",
+      "elements": [],
+      "notes": "Transition to how Tandem addresses these problems."
+    },
+    {
+      "id": "slide_4",
+      "layout": "content",
+      "title": "Folder-Wide Intelligence",
+      "subtitle": "AI that understands your entire workspace.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Beyond Single Files: Tandem reads your whole project folder.",
+            "Context-Aware: It knows how your documents relate to each other.",
+            "Instant Search: Find information across hundreds of files instantly.",
+            "Synthesis: Summarize findings from across your entire library."
+          ]
+        }
+      ],
+      "notes": "Explain the 'Workspace' concept for non-technical users."
+    },
+    {
+      "id": "slide_5",
+      "layout": "content",
+      "title": "Chat with Your Documents",
+      "subtitle": "Interactive work, no coding required.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Natural Language: Just talk to your files.",
+            "Drafting: 'Write an email based on these three meeting notes.'",
+            "Analysis: 'Find inconsistencies in these contract drafts.'",
+            "Research: 'Compare the methodologies in these 50 PDFs.'"
+          ]
+        }
+      ],
+      "notes": "Show how people actually interact with the app."
+    },
+    {
+      "id": "slide_6",
+      "layout": "content",
+      "title": "You Are the Boss",
+      "subtitle": "Supervised AI for total peace of mind.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Permission System: Tandem asks before reading or writing any file.",
+            "Visual Review: See exactly what the AI wants to do.",
+            "Full Undo: One-click rollback for any operation.",
+            "No Rogue Actions: You are always in the loop."
+          ]
+        }
+      ],
+      "notes": "Emphasize security and user control."
+    },
+    {
+      "id": "slide_7",
+      "layout": "content",
+      "title": "Bring Your Own Key",
+      "subtitle": "Pay only for what you use.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "No Monthly Fees: Use your own API keys (Anthropic, OpenAI, etc.).",
+            "Cost Effective: Pay pennies for a day's work instead of $20/month.",
+            "Provider Choice: Switch between the best models in seconds.",
+            "OpenRouter Support: Access hundreds of specialized models easily."
+          ]
+        }
+      ],
+      "notes": "Highlight the economic benefits."
+    },
+    {
+      "id": "slide_8",
+      "layout": "content",
+      "title": "100% Offline & Local",
+      "subtitle": "For the ultimate privacy seekers.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Ollama Integration: Run AI models entirely on your computer.",
+            "No internet Needed: Work securely in any environment.",
+            "Zero Telemetry: We never track what you do or see your data.",
+            "Air-Gapped Ready: Perfect for high-security documentation."
+          ]
+        }
+      ],
+      "notes": "Showcase the unique local-only capabilities."
+    },
+    {
+      "id": "slide_9",
+      "layout": "content",
+      "title": "Built for Everyone",
+      "subtitle": "Empowering every professional.",
+      "elements": [
+        {
+          "type": "bullet_list",
+          "content": [
+            "Writers: Character and plot consistency checks.",
+            "Researchers: Rapid synthesis of large document sets.",
+            "Legal/Finance: Secure analysis of sensitive contracts.",
+            "Students: A personal tutor for your local study notes."
+          ]
+        }
+      ],
+      "notes": "Reiterate the broad audience appeal."
+    },
+    {
+      "id": "slide_10",
+      "layout": "section",
+      "title": "Download Tandem",
+      "subtitle": "Start collaborating with your private AI coworker today.",
+      "elements": [],
+      "notes": "Final call to action with a link to the website/GitHub."
+    }
+  ]
+}

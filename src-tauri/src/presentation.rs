@@ -4,7 +4,23 @@ use serde::{Deserialize, Serialize};
 pub struct Presentation {
     pub title: String,
     pub author: Option<String>,
+    pub theme: Option<PresentationTheme>,
     pub slides: Vec<Slide>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresentationTheme {
+    Light,
+    Dark,
+    Corporate,
+    Minimal,
+}
+
+impl Default for PresentationTheme {
+    fn default() -> Self {
+        PresentationTheme::Light
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,6 +39,7 @@ pub struct Slide {
     pub title: Option<String>,
     pub subtitle: Option<String>,
     pub elements: Vec<SlideElement>,
+    pub notes: Option<String>, // Speaker notes
 }
 
 #[derive(Debug, Serialize, Deserialize)]

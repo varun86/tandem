@@ -15,6 +15,7 @@ import {
   MessageSquarePlus,
 } from "lucide-react";
 import { readFileContent, readBinaryFile, type FileEntry, logFrontendError } from "@/lib/tauri";
+import { PresentationPreview } from "./PresentationPreview";
 // import { cn } from "@/lib/utils"; // Unused
 
 interface FilePreviewProps {
@@ -23,7 +24,7 @@ interface FilePreviewProps {
   onAddToChat?: (file: FileEntry) => void;
 }
 
-type PreviewType = "code" | "markdown" | "image" | "pdf" | "text" | "binary";
+type PreviewType = "code" | "markdown" | "image" | "pdf" | "text" | "binary" | "presentation";
 
 const CODE_EXTENSIONS = new Set([
   "ts",
@@ -69,6 +70,9 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 function getPreviewType(file: FileEntry): PreviewType {
+  // Check for presentation files first (full filename match)
+  if (file.name.endsWith(".tandem.ppt.json")) return "presentation";
+
   const ext = file.extension?.toLowerCase();
   if (!ext) return "binary";
 
@@ -116,12 +120,13 @@ function getLanguageFromExtension(ext: string | undefined): string {
 }
 
 export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
+  // Special case: route .tandem.ppt.json files to PresentationPreview
+  const previewType = getPreviewType(file);
   const [content, setContent] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
-  const previewType = getPreviewType(file);
 
   // Helper to get MIME type from extension
   const getMimeType = (ext: string): string => {
@@ -211,6 +216,10 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
 
     loadContent();
   }, [file.path, previewType]);
+
+  if (previewType === "presentation") {
+    return <PresentationPreview file={file} onClose={onClose} />;
+  }
 
   const renderPreview = () => {
     if (isLoading) {

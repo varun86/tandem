@@ -24,6 +24,7 @@ import {
   getSessionMessages,
   undoViaCommand,
   isGitRepo,
+  getToolGuidance,
   type StreamEvent,
   type SidecarState,
   type TodoItem,
@@ -66,6 +67,8 @@ export function Chat({
   const [messages, setMessages] = useState<MessageProps[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(propSessionId || null);
+  const [enabledToolCategories, setEnabledToolCategories] = useState<Set<string>>(new Set());
+  const [, forceUpdate] = useState({});
 
   // Notify parent when generating state changes
   useEffect(() => {
@@ -135,10 +138,45 @@ Start with task #1 and continue through each one. Let me know when each task is 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [executePendingTasksTrigger]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom smoothly (only when new messages arrive or generation ends)
+  const previousMessageCountRef = useRef(0);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Helper function to scroll to bottom
+  const scrollToBottom = useCallback((smooth = false) => {
+    window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({
+        behavior: smooth ? "smooth" : "auto",
+        block: "end",
+      });
+    });
+  }, []);
+
+  // Scroll when message count increases (new message added)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const currentCount = messages.length;
+
+    if (currentCount > previousMessageCountRef.current) {
+      scrollToBottom(false); // Instant scroll for new messages
+    }
+
+    previousMessageCountRef.current = currentCount;
+  }, [messages.length, scrollToBottom]);
+
+  // Also scroll when generation stops (final message complete)
+  useEffect(() => {
+    if (!isGenerating && messages.length > 0) {
+      // Small delay to ensure content is rendered, then scroll
+      setTimeout(() => scrollToBottom(false), 100);
+    }
+  }, [isGenerating, scrollToBottom]);
+
+  // Scroll during active generation (streaming content)
+  useEffect(() => {
+    if (isGenerating && messages.length > 0) {
+      scrollToBottom(false); // Keep scrolling as content streams
+    }
+  }, [messages, isGenerating, scrollToBottom]);
 
   // Store callback in ref to avoid dependency issues
   const onSidecarConnectedRef = useRef(onSidecarConnected);
@@ -333,6 +371,8 @@ Start with task #1 and continue through each one. Let me know when each task is 
 
         console.log("[LoadHistory] Converted to", convertedMessages.length, "UI messages");
         setMessages(convertedMessages);
+        // Force re-render to ensure messages display correctly
+        setTimeout(() => forceUpdate({}), 50);
       } catch (e) {
         console.error("Failed to load session history:", e);
         setError("Failed to load chat history");
@@ -664,6 +704,8 @@ Start with task #1 and continue through each one. Let me know when each task is 
             clearTimeout(generationTimeoutRef.current);
             generationTimeoutRef.current = null;
           }
+          // Force re-render to ensure final content displays
+          setTimeout(() => forceUpdate({}), 50);
           break;
 
         case "session_error":
@@ -871,10 +913,54 @@ Start with task #1 and continue through each one. Let me know when each task is 
       // Select agent
       const agentToUse = selectedAgent;
 
-      // In Plan Mode, guide the AI to use todowrite for task tracking
+      // Inject tool guidance if tool categories are enabled
       let finalContent = content;
+      if (enabledToolCategories.size > 0) {
+        try {
+          const guidance = await getToolGuidance(Array.from(enabledToolCategories));
+
+          if (guidance.length > 0) {
+            const guidanceText = guidance
+              .map((g) => {
+                let instructions = g.instructions;
+
+                // Adapt guidance based on mode
+                if (!usePlanMode) {
+                  // In Immediate Mode: Skip the planning phase, just create directly
+                  instructions = instructions.replace(
+                    /PHASE 1: PLANNING.*?PHASE 2: EXECUTION \(After User Approval\)/s,
+                    "When user requests a presentation, create the .tandem.ppt.json file directly using the write tool."
+                  );
+                }
+
+                return `
+=== ${g.category.toUpperCase()} CAPABILITY ENABLED ===
+
+${instructions}
+
+JSON Schema:
+${JSON.stringify(g.json_schema, null, 2)}
+
+Example:
+${g.example}
+`;
+              })
+              .join("\n\n");
+
+            finalContent = `${guidanceText}\n\n===== USER REQUEST =====\n${content}`;
+            console.log(
+              `[ToolGuidance] Injected ${usePlanMode ? "Plan Mode" : "Immediate Mode"} guidance for: ${Array.from(enabledToolCategories).join(", ")}`
+            );
+          }
+        } catch (e) {
+          console.error("Failed to get tool guidance:", e);
+          // Continue without guidance
+        }
+      }
+
+      // In Plan Mode, guide the AI to use todowrite for task tracking
       if (usePlanMode) {
-        finalContent = `${content}
+        finalContent = `${finalContent}
 
 (Please use the todowrite tool to create a structured task list for tracking this work, then explain your plan.)`;
         console.log("[PlanMode] Using OpenCode's Plan agent with todowrite guidance");
@@ -974,6 +1060,8 @@ Start with task #1 and continue through each one. Let me know when each task is 
       setIsGenerating,
       setMessages,
       usePlanMode,
+      selectedAgent,
+      enabledToolCategories,
       stagedOperations.length,
     ]
   );
@@ -1258,7 +1346,7 @@ Start with task #1 and continue through each one. Let me know when each task is 
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto pb-48">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto pb-48">
         <AnimatePresence>
           {isLoadingHistory ? (
             <motion.div
@@ -1305,7 +1393,9 @@ Start with task #1 and continue through each one. Let me know when each task is 
                           handleSend("Please implement this plan now.");
                         }}
                         onRework={(feedback) => {
-                          handleSend(`Please rework the plan: ${feedback}`);
+                          handleSend(`Please rework the plan with this feedback: ${feedback}
+
+After making the changes, present the updated plan in full (including the complete JSON structure) so I can review it before implementation.`);
                         }}
                         onCancel={() => {
                           clearStaging();
@@ -1313,6 +1403,27 @@ Start with task #1 and continue through each one. Let me know when each task is 
                         }}
                         onViewTasks={onToggleTaskSidebar}
                         disabled={isGenerating}
+                        pendingTasks={pendingTasks}
+                        onExecuteTasks={() => {
+                          // Execute pending tasks with their specific content
+                          if (pendingTasks && pendingTasks.length > 0) {
+                            console.log(
+                              "[ExecuteTasks] Switching to Immediate mode for task execution"
+                            );
+                            // Switch to immediate mode for execution
+                            setUsePlanMode(false);
+
+                            const taskList = pendingTasks
+                              .map((t, i) => `${i + 1}. ${t.content}`)
+                              .join("\n");
+                            const message = `EXECUTION MODE: Please implement the following approved tasks now. Create the files and write the content directly.
+
+${taskList}
+
+Start with task #1 and execute each one. Use the 'write' tool to create files immediately.`;
+                            handleSend(message);
+                          }
+                        }}
                       />
                     </div>
                   )}
@@ -1365,6 +1476,8 @@ Start with task #1 and continue through each one. Let me know when each task is 
         onAgentChange={onAgentChange}
         externalAttachment={fileToAttach}
         onExternalAttachmentProcessed={onFileAttached}
+        enabledToolCategories={enabledToolCategories}
+        onToolCategoriesChange={setEnabledToolCategories}
       />
 
       {/* Permission requests - only show in immediate mode */}

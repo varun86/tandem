@@ -1,54 +1,42 @@
-# Alternative Release Workflow with Changelog Extraction
+# Tandem v1.0.0 Release Notes
 
-If you want to use CHANGELOG.md instead of auto-generated notes:
+## Highlights
 
-```yaml
-- name: Extract release notes
-  id: extract-notes
-  run: |
-    NOTES=$(node scripts/extract-release-notes.js ${{ github.ref_name }})
-    echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-    echo "$NOTES" >> $GITHUB_OUTPUT
-    echo "EOF" >> $GITHUB_OUTPUT
+- AI-powered plan-and-execute workflow for creating PowerPoint presentations
+- Slides tool category to guide LLMs with structured presentation instructions
+- Presentation previewer with navigation, thumbnails, and speaker notes
+- One-click export to PPTX using the built-in Rust backend
 
-- name: Create Release
-  id: create-release
-  uses: actions/github-script@v7
-  with:
-    script: |
-      const { data } = await github.rest.repos.createRelease({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        tag_name: context.ref.replace('refs/tags/', ''),
-        name: `Tandem ${context.ref.replace('refs/tags/', '')}`,
-        body: process.env.RELEASE_NOTES || 'See the assets below to download.',
-        draft: true,
-        prerelease: false
-      });
-      return data.id;
-  env:
-    RELEASE_NOTES: ${{ steps.extract-notes.outputs.RELEASE_NOTES }}
-```
+## Features
 
-## Recommended Workflow
+### Presentations
 
-**Option 1 (Current - Simplest)**: Auto-generated notes
+- Two-phase flow: outline planning (reviewable) then JSON execution
+- `.tandem.ppt.json` format as source of truth for slides
+- Themes: light, dark, corporate, minimal
+- Layouts: title, content, section, blank
+- Slide navigation via arrows, buttons, and thumbnail strip
+- Speaker notes toggle
+- Export to `.pptx` powered by `ppt-rs`
 
-- Automatically creates notes from commits
-- Configured via `.github/release.yml`
-- No manual maintenance needed
+### Chat + Controls
 
-**Option 2 (Manual CHANGELOG.md)**:
+- Context toolbar below the chat input for quick model/tool selection
+- Tool category picker with badges for enabled capabilities
+- Model selector grouped by provider and context size
 
-- More control over messaging
-- Better for major releases
-- Requires updating CHANGELOG.md before each release
-- Use the script above to extract notes
+### File Handling
 
-## Best Practice
+- Automatic detection and preview of `.tandem.ppt.json` files
+- Dedicated presentation preview experience in the file browser
 
-Use **both**:
+## Known Limitations
 
-1. Maintain CHANGELOG.md for major versions
-2. Let GitHub auto-generate for patch releases
-3. Edit release notes manually after publishing if needed
+- No image embedding yet in exported slides
+- Basic layout options only; advanced positioning is not included
+
+## Next Up
+
+- Image and chart support
+- More layout templates and theme customization
+- PDF export and batch export

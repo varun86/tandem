@@ -375,6 +375,10 @@ pub fn run() {
             // Sidecar binary management
             commands::check_sidecar_status,
             commands::download_sidecar,
+            // Tool guidance
+            commands::get_tool_guidance,
+            // Presentation export
+            commands::export_presentation,
             // File browser
             commands::read_directory,
             commands::read_file_content,

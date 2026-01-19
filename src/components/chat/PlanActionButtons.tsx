@@ -8,6 +8,9 @@ interface PlanActionButtonsProps {
   onCancel: () => void;
   onViewTasks?: () => void;
   disabled?: boolean;
+  // Optional: If pending tasks exist, execute those instead
+  pendingTasks?: Array<{ id: string; content: string }>;
+  onExecuteTasks?: () => void;
 }
 
 export function PlanActionButtons({
@@ -16,6 +19,8 @@ export function PlanActionButtons({
   onCancel,
   onViewTasks,
   disabled,
+  pendingTasks,
+  onExecuteTasks,
 }: PlanActionButtonsProps) {
   const [showReworkInput, setShowReworkInput] = useState(false);
   const [reworkFeedback, setReworkFeedback] = useState("");
@@ -66,17 +71,31 @@ export function PlanActionButtons({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
-              onClick={onImplement}
+              onClick={() => {
+                // If there are pending tasks, execute those instead
+                if (pendingTasks && pendingTasks.length > 0 && onExecuteTasks) {
+                  console.log("[PlanAction] Executing pending tasks instead of generic implement");
+                  onExecuteTasks();
+                } else {
+                  onImplement();
+                }
+              }}
               disabled={disabled}
               className={cn(
                 "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
                 "bg-primary text-white hover:bg-primary/90",
                 "disabled:opacity-50 disabled:cursor-not-allowed"
               )}
-              title="Execute this plan"
+              title={
+                pendingTasks && pendingTasks.length > 0
+                  ? `Execute ${pendingTasks.length} pending task${pendingTasks.length !== 1 ? "s" : ""}`
+                  : "Execute this plan"
+              }
             >
               <Play className="h-4 w-4" />
-              Implement this
+              {pendingTasks && pendingTasks.length > 0
+                ? `Implement (${pendingTasks.length} task${pendingTasks.length !== 1 ? "s" : ""})`
+                : "Implement this"}
             </button>
 
             <button

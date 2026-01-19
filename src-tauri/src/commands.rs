@@ -1723,6 +1723,396 @@ pub async fn download_sidecar(app: AppHandle, state: State<'_, AppState>) -> Res
 }
 
 // ============================================================================
+// Tool Definitions (for conditional tool injection)
+// ============================================================================
+
+/// Tool guidance for LLM context injection
+/// Instead of custom OpenCode tools, we provide structured instructions
+/// for using existing tools (like 'write') to create specialized files
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolGuidance {
+    pub category: String,
+    pub instructions: String,
+    pub json_schema: serde_json::Value,
+    pub example: String,
+}
+
+/// Get tool guidance based on enabled categories
+/// This injects structured instructions for the LLM to follow
+#[tauri::command]
+pub fn get_tool_guidance(categories: Vec<String>) -> Vec<ToolGuidance> {
+    let mut guidance = Vec::new();
+    
+    for category in &categories {  // Fix: borrow categories instead of moving
+        match category.as_str() {
+            "presentations" => {
+                guidance.push(ToolGuidance {
+                    category: "presentations".to_string(),
+                    instructions: r#"# PowerPoint Presentation Creation
+
+IMPORTANT: This capability works best in Plan Mode for review and approval.
+
+When user requests a presentation, follow a TWO-PHASE workflow:
+
+## PHASE 1: PLANNING (Required First Step)
+
+Present a structured outline in this EXACT format:
+
+```
+# 📊 Presentation Plan: [Title]
+
+**Theme:** [light/dark/corporate/minimal]
+**Author:** [Author name or "User"]
+
+## Slide Structure:
+
+### Slide 1: [Layout Type]
+**Title:** [Slide title]
+**Subtitle:** [Subtitle if applicable]
+**Content:**
+- Bullet point 1
+- Bullet point 2
+- Bullet point 3
+**Notes:** [Speaker notes if applicable]
+
+### Slide 2: [Layout Type]
+[... repeat structure ...]
+
+---
+
+**Ready to create this presentation?**
+Please review the structure and let me know if you'd like any changes.
+Once approved, I'll generate the .tandem.ppt.json file.
+```
+
+**Layout Types:**
+- `title` - Title slide with title and subtitle (opening slide)
+- `content` - Content slide with title and bullet points
+- `section` - Section divider with title and subtitle
+- `blank` - Blank slide for custom content
+
+## PHASE 2: EXECUTION (After User Approval)
+
+Only after user confirms the plan, use the 'write' tool to create `{filename}.tandem.ppt.json` with this structure.
+
+NOTE: When the JSON file is created, Tandem will automatically export it to a `.pptx` file that can be opened in PowerPoint, Google Slides, or any presentation software.
+
+"#.to_string(),
+                    json_schema: serde_json::json!({
+                        "title": "Presentation title (string, required)",
+                        "author": "Author name (string, optional)",
+                        "theme": "Visual theme: light|dark|corporate|minimal (optional, default: light)",
+                        "slides": "Array of slide objects (required, minimum 1 slide)",
+                        "slide_structure": {
+                            "id": "Unique identifier like 'slide_1', 'slide_2' (string)",
+                            "layout": "Layout type: title|content|section|blank (required)",
+                            "title": "Slide title (string, optional)",
+                            "subtitle": "Slide subtitle (string, optional, for title/section layouts)",
+                            "elements": "Array of content elements",
+                            "element_structure": {
+                                "type": "Element type: bullet_list|text|image",
+                                "content": "For bullet_list: array of strings; for text: single string"
+                            },
+                            "notes": "Speaker notes (string, optional)"
+                        }
+                    }),
+                    example: serde_json::json!({
+                        "title": "Q1 Strategy 2026",
+                        "author": "Product Team",
+                        "theme": "corporate",
+                        "slides": [
+                            {
+                                "id": "slide_1",
+                                "layout": "title",
+                                "title": "Q1 Strategy 2026",
+                                "subtitle": "Growth & Innovation",
+                                "elements": []
+                            },
+                            {
+                                "id": "slide_2",
+                                "layout": "content",
+                                "title": "Key Objectives",
+                                "elements": [{
+                                    "type": "bullet_list",
+                                    "content": [
+                                        "Increase ARR by 40%",
+                                        "Launch 3 major features",
+                                        "Expand to EMEA region"
+                                    ]
+                                }],
+                                "notes": "Emphasize the timeline for each objective"
+                            },
+                            {
+                                "id": "slide_3",
+                                "layout": "section",
+                                "title": "Revenue Targets",
+                                "subtitle": "Quarterly Breakdown",
+                                "elements": []
+                            }
+                        ]
+                    }).to_string(),
+                });
+            },
+            "diagrams" => {
+                // Future: Mermaid diagram guidance
+                tracing::debug!("Diagrams tool category not yet implemented");
+            },
+            "spreadsheets" => {
+                // Future: Table/CSV guidance
+                tracing::debug!("Spreadsheets tool category not yet implemented");
+            },
+            _ => {
+                tracing::warn!("Unknown tool category: {}", category);
+            }
+        }
+    }
+    
+    tracing::info!("Returning {} tool guidance items for categories: {:?}", guidance.len(), categories);
+    guidance
+}
+
+// ============================================================================
+// Presentation Export (ppt-rs)
+// ============================================================================
+
+/// Export a .tandem.ppt.json file to a binary .pptx file using ppt-rs
+#[tauri::command]
+pub async fn export_presentation(
+    json_path: String,
+    output_path: String,
+) -> Result<String> {
+    use crate::presentation::{Presentation, ElementType, ElementContent, SlideLayout};
+    use std::fs::File;
+    use std::io::Write;
+    use zip::write::{FileOptions, ZipWriter};
+    
+    tracing::info!("Exporting presentation from {} to {}", json_path, output_path);
+    
+    // 1. Read and parse JSON
+    let json_content = std::fs::read_to_string(&json_path)
+        .map_err(|e| TandemError::Io(e))?;
+    
+    let presentation: Presentation = serde_json::from_str(&json_content)
+        .map_err(|e| TandemError::InvalidConfig(format!("Invalid presentation JSON: {}", e)))?;
+    
+    tracing::debug!("Parsed presentation: {} with {} slides", presentation.title, presentation.slides.len());
+    
+    let file = File::create(&output_path)
+        .map_err(|e| TandemError::Io(e))?;
+    
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    
+    // Helper to escape XML
+    let escape_xml = |text: &str| -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    };
+    
+    // === [Content_Types].xml ===
+    let mut content_types = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+"#);
+    
+    for i in 1..=presentation.slides.len() {
+        content_types.push_str(&format!(
+            r#"  <Override PartName="/ppt/slides/slide{}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+"#, i));
+    }
+    content_types.push_str("</Types>");
+    
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    zip.write_all(content_types.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    // === _rels/.rels ===
+    zip.start_file("_rels/.rels", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>"#;
+    zip.write_all(rels.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    // === ppt/presentation.xml ===
+    let mut pres_xml = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" saveSubsetFonts="1">
+  <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
+  <p:sldIdLst>
+"#);
+    
+    for (i, _) in presentation.slides.iter().enumerate() {
+        pres_xml.push_str(&format!(
+            r#"    <p:sldId id="{}" r:id="rId{}"/>
+"#, 256 + i, i + 2));
+    }
+    
+    pres_xml.push_str(r#"  </p:sldIdLst>
+  <p:sldSz cx="9144000" cy="6858000"/>
+  <p:notesSz cx="6858000" cy="9144000"/>
+</p:presentation>"#);
+    
+    zip.start_file("ppt/presentation.xml", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    zip.write_all(pres_xml.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    // === ppt/_rels/presentation.xml.rels ===
+    let mut pres_rels = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
+"#);
+    
+    for (i, _) in presentation.slides.iter().enumerate() {
+        pres_rels.push_str(&format!(
+            r#"  <Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{}.xml"/>
+"#, i + 2, i + 1));
+    }
+    pres_rels.push_str("</Relationships>");
+    
+    zip.start_file("ppt/_rels/presentation.xml.rels", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    zip.write_all(pres_rels.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    // === Generate slides ===
+    for (i, slide) in presentation.slides.iter().enumerate() {
+        let slide_num = i + 1;
+        let mut slide_xml = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+"#);
+        
+        let mut shape_id = 2;
+        
+        // Title shape
+        if let Some(title) = &slide.title {
+            slide_xml.push_str(&format!(r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="{}" name="Title {}<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+        <p:spPr/>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle/>
+          <a:p><a:r><a:rPr lang="en-US" sz="4400" b="1"/><a:t>{}</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+"#, shape_id, shape_id, escape_xml(title)));
+            shape_id += 1;
+        }
+        
+        // Subtitle (for title slide layout)
+        if matches!(slide.layout, SlideLayout::Title) {
+            if let Some(subtitle) = &slide.subtitle {
+                slide_xml.push_str(&format!(r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="{}" name="Subtitle {}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
+        <p:spPr/>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle/>
+          <a:p><a:r><a:rPr lang="en-US" sz="2400"/><a:t>{}</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+"#, shape_id, shape_id, escape_xml(subtitle)));
+                shape_id += 1;
+            }
+        }
+        
+        // Content (bullets and text elements)
+        if !slide.elements.is_empty() {
+            let mut content_text = String::new();
+            for element in &slide.elements {
+                match &element.content {
+                    ElementContent::Bullets(bullets) => {
+                        for bullet in bullets {
+                            content_text.push_str(&format!(
+                                r#"          <a:p><a:pPr lvl="0"><a:buFont typeface="Arial"/><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="en-US" sz="2000"/><a:t>{}</a:t></a:r></a:p>
+"#, escape_xml(&bullet)));
+                        }
+                    },
+                    ElementContent::Text(t) => {
+                        content_text.push_str(&format!(
+                            r#"          <a:p><a:r><a:rPr lang="en-US" sz="2000"/><a:t>{}</a:t></a:r></a:p>
+"#, escape_xml(&t)));
+                    },
+                }
+            }
+            
+            if !content_text.is_empty() {
+                slide_xml.push_str(&format!(r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="{}" name="Content {}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+        <p:spPr/>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle/>
+{}        </p:txBody>
+      </p:sp>
+"#, shape_id, shape_id, content_text));
+            }
+        }
+        
+        slide_xml.push_str(r#"    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>"#);
+        
+        zip.start_file(&format!("ppt/slides/slide{}.xml", slide_num), options)
+            .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        zip.write_all(slide_xml.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    }
+    
+    // === Minimal slideMaster (required) ===
+    let slide_master = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>
+  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+  <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>
+</p:sldMaster>"#;
+    
+    zip.start_file("ppt/slideMasters/slideMaster1.xml", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    zip.write_all(slide_master.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    zip.start_file("ppt/slideMasters/_rels/slideMaster1.xml.rels", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let master_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+</Relationships>"#;
+    zip.write_all(master_rels.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    let slide_layout = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">
+  <p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sldLayout>"#;
+    
+    zip.start_file("ppt/slideLayouts/slideLayout1.xml", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    zip.write_all(slide_layout.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    zip.start_file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", options)
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let layout_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
+</Relationships>"#;
+    zip.write_all(layout_rels.as_bytes()).map_err(|e| TandemError::Io(e))?;
+    
+    zip.finish()
+        .map_err(|e| TandemError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    
+    tracing::info!("Successfully exported presentation to {}", output_path);
+    Ok(format!("Exported to {}", output_path))
+}
+
+// ============================================================================
 // File Browser Commands
 // ============================================================================
 
