@@ -5,6 +5,7 @@ mod commands;
 mod error;
 mod keystore;
 mod llm_router;
+mod presentation;
 mod sidecar;
 mod sidecar_manager;
 mod state;

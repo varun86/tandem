@@ -32,15 +32,18 @@ jobs:
           PUBLIC_KEY: ${{ steps.pubkey.outputs.pubkey }}
         run: |
           echo "Step 1: Writing private key to file..."
-          echo "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/private.key
+          printf '%s\n' "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/private.key
 
-          echo "Step 2: Creating test file..."
+          echo "Step 2: Displaying key format (first line only)..."
+          head -n 1 /tmp/private.key
+
+          echo "Step 3: Creating test file..."
           echo "test content" > test.txt
 
-          echo "Step 3: Signing test file with private key..."
+          echo "Step 4: Signing test file with private key..."
           tauri signer sign -k /tmp/private.key test.txt
 
-          echo "Step 4: Verifying signature with public key..."
+          echo "Step 5: Verifying signature with public key..."
           tauri signer verify test.txt "$PUBLIC_KEY"
 
           echo "✅ SUCCESS! Private key, password, and public key all match!"
