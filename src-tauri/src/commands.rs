@@ -996,6 +996,9 @@ pub async fn send_message_streaming(
                         StreamEvent::PermissionAsked { session_id, .. } => {
                             session_id == &target_session_id
                         }
+                        StreamEvent::QuestionAsked { session_id, .. } => {
+                            session_id == &target_session_id
+                        }
                         StreamEvent::FileEdited { session_id, .. } => {
                             session_id == &target_session_id
                         }
