@@ -235,8 +235,12 @@ export function MatrixLoader({ isLoading, onLoadingComplete }: MatrixLoaderProps
             >
               <div className="relative">
                 <motion.h1
-                  className="text-6xl font-bold tracking-wider"
+                  className="text-6xl"
                   style={{
+                    fontFamily: "'Rubik', sans-serif",
+                    fontWeight: 900,
+                    letterSpacing: "0.2em",
+                    marginRight: "-0.2em", // Offset for letter-spacing to ensure true centering
                     color: "var(--color-primary)",
                     textShadow: titleGlow,
                   }}
@@ -259,7 +263,12 @@ export function MatrixLoader({ isLoading, onLoadingComplete }: MatrixLoaderProps
                   }}
                 />
               </div>
-              <p className="text-sm tracking-[0.3em] text-emerald-400/60 uppercase">AI Workspace</p>
+              <p
+                className="text-sm tracking-[0.3em] text-emerald-400/60 uppercase"
+                style={{ fontFamily: "'Rubik', sans-serif", marginRight: "-0.3em" }}
+              >
+                AI Workspace
+              </p>
             </motion.div>
 
             {/* Loading indicator */}

@@ -72,9 +72,11 @@
       }
       
       .splash-title {
+        font-family: 'Rubik', sans-serif;
         font-size: 3.5rem;
-        font-weight: bold;
+        font-weight: 900;
         letter-spacing: 0.2em;
+        margin-right: -0.2em; /* Offset for letter-spacing to ensure true centering */
         color: var(--matrix-green);
         text-shadow: 
           0 0 20px rgba(var(--matrix-green-rgb), 0.5),
@@ -98,8 +100,10 @@
       }
       
       .splash-subtitle {
+        font-family: 'Rubik', sans-serif;
         font-size: 0.75rem;
         letter-spacing: 0.3em;
+        margin-right: -0.3em; /* Offset for letter-spacing */
         text-transform: uppercase;
         color: rgba(var(--matrix-green-rgb), 0.5);
       }
@@ -257,16 +261,21 @@
       }
       
       .pin-title {
+        font-family: 'Rubik', sans-serif;
         font-size: 1rem;
+        font-weight: 700;
         color: var(--matrix-green);
         text-transform: uppercase;
         letter-spacing: 0.15em;
-        margin: 0;
+        margin-right: -0.15em; /* Offset for centering */
+        margin-bottom: 0;
+        margin-top: 0;
         min-height: 1.2em;
         text-align: center;
       }
       
       .pin-subtitle {
+        font-family: 'Rubik', sans-serif;
         font-size: 0.7rem;
         color: rgba(var(--matrix-green-rgb), 0.5);
         margin: -0.5rem 0 0 0;
@@ -394,8 +403,8 @@
       
       <div class="splash-content" style="position: relative; z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 2rem;">
         <div style="text-align: center;">
-          <h1 class="splash-title" style="font-size: 3.5rem; font-weight: bold; letter-spacing: 0.2em; color: var(--matrix-green); margin: 0; font-family: 'JetBrains Mono', monospace;">TANDEM</h1>
-          <p class="splash-subtitle" style="font-size: 0.75rem; letter-spacing: 0.3em; text-transform: uppercase; color: rgba(var(--matrix-green-rgb), 0.5); margin: 0.5rem 0 0 0; font-family: 'JetBrains Mono', monospace;">AI Workspace</p>
+          <h1 class="splash-title">TANDEM</h1>
+          <p class="splash-subtitle" style="margin: 0.5rem 0 0 0;">AI Workspace</p>
         </div>
         
         <!-- Loading spinner (shown while checking vault status) -->

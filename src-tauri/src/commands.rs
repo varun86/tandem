@@ -1843,7 +1843,8 @@ NOTE: When the JSON file is created, Tandem will automatically export it to a `.
                             "elements": "Array of content elements",
                             "element_structure": {
                                 "type": "Element type: bullet_list|text|image",
-                                "content": "For bullet_list: array of strings; for text: single string"
+                                "content": "For bullet_list: array of strings; for text: single string",
+                                "position": "Optional: {x, y, w, h} in percentages (0-100)"
                             },
                             "notes": "Speaker notes (string, optional)"
                         }
@@ -1870,7 +1871,8 @@ NOTE: When the JSON file is created, Tandem will automatically export it to a `.
                                         "Increase ARR by 40%",
                                         "Launch 3 major features",
                                         "Expand to EMEA region"
-                                    ]
+                                    ],
+                                    "position": { "x": 10, "y": 25, "w": 80, "h": 60 }
                                 }],
                                 "notes": "Emphasize the timeline for each objective"
                             },
@@ -1910,6 +1912,55 @@ NOTE: When the JSON file is created, Tandem will automatically export it to a `.
 // ============================================================================
 // Presentation Export (ppt-rs)
 // ============================================================================
+
+const SLIDE_WIDTH: i32 = 12192000; // 13.33 inches in EMUs
+const SLIDE_HEIGHT: i32 = 6858000; // 7.5 inches in EMUs
+
+struct PptxTheme {
+    bg: String,
+    title: String,
+    subtitle: String,
+    text: String,
+    accent: String,
+}
+
+fn get_pptx_theme(theme: &crate::presentation::PresentationTheme) -> PptxTheme {
+    use crate::presentation::PresentationTheme;
+    match theme {
+        PresentationTheme::Dark => PptxTheme {
+            bg: "121212".to_string(),
+            title: "FFFFFF".to_string(),
+            subtitle: "A0A0A0".to_string(),
+            text: "E0E0E0".to_string(),
+            accent: "F59E0B".to_string(),
+        },
+        PresentationTheme::Corporate => PptxTheme {
+            bg: "1A365D".to_string(),
+            title: "FFFFFF".to_string(),
+            subtitle: "BEE3F8".to_string(),
+            text: "E2E8F0".to_string(),
+            accent: "63B3ED".to_string(),
+        },
+        PresentationTheme::Minimal => PptxTheme {
+            bg: "FFFFFF".to_string(),
+            title: "1A202C".to_string(),
+            subtitle: "718096".to_string(),
+            text: "4A5568".to_string(),
+            accent: "2D3748".to_string(),
+        },
+        _ => PptxTheme {
+            bg: "F7FAFC".to_string(),
+            title: "1A202C".to_string(),
+            subtitle: "718096".to_string(),
+            text: "2D3748".to_string(),
+            accent: "3182CE".to_string(),
+        },
+    }
+}
+
+fn to_emu(percent: f64, total: i32) -> i32 {
+    ((percent / 100.0) * total as f64) as i32
+}
 
 /// Export a .tandem.ppt.json file to a binary .pptx file using ppt-rs
 #[tauri::command]
@@ -2035,6 +2086,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
         .map_err(TandemError::Io)?;
 
     // === Generate slides ===
+    let ppt_theme = get_pptx_theme(&presentation.theme.unwrap_or_default());
+
     for (i, slide) in presentation.slides.iter().enumerate() {
         let slide_num = i + 1;
         let mut slide_xml = String::from(
@@ -2044,82 +2097,177 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
     <p:spTree>
       <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
       <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+"#);
+
+        // Background shape
+        slide_xml.push_str(&format!(
+            r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="1000" name="Background"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          <a:solidFill><a:srgbClr val="{}"/></a:solidFill>
+        </p:spPr>
+      </p:sp>
 "#,
-        );
+            SLIDE_WIDTH, SLIDE_HEIGHT, ppt_theme.bg
+        ));
 
         let mut shape_id = 2;
 
         // Title shape
         if let Some(title) = &slide.title {
+            let (x, y, w, h) = match slide.layout {
+                SlideLayout::Title => (10.0, 30.0, 80.0, 15.0),
+                SlideLayout::Section => (10.0, 40.0, 80.0, 15.0),
+                _ => (5.0, 5.0, 90.0, 10.0),
+            };
+
             slide_xml.push_str(&format!(r#"      <p:sp>
-        <p:nvSpPr><p:cNvPr id="{}" name="Title {}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
-        <p:spPr/>
+        <p:nvSpPr><p:cNvPr id="{}" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="{}" y="{}"/>
+            <a:ext cx="{}" cy="{}"/>
+          </a:xfrm>
+        </p:spPr>
         <p:txBody>
-          <a:bodyPr/>
+          <a:bodyPr anchor="ctr" vertical="ctr" wrap="square"><a:spAutoFit/></a:bodyPr>
           <a:lstStyle/>
-          <a:p><a:r><a:rPr lang="en-US" sz="4400" b="1"/><a:t>{}</a:t></a:r></a:p>
+          <a:p>
+            <a:pPr algn="{}"/>
+            <a:r>
+              <a:rPr lang="en-US" sz="{}" b="1">
+                <a:solidFill><a:srgbClr val="{}"/></a:solidFill>
+              </a:rPr>
+              <a:t>{}</a:t>
+            </a:r>
+          </a:p>
         </p:txBody>
       </p:sp>
-"#, shape_id, shape_id, escape_xml(title)));
+"#, 
+                shape_id, 
+                to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
+                to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
+                if matches!(slide.layout, SlideLayout::Title | SlideLayout::Section) { "ctr" } else { "l" },
+                if matches!(slide.layout, SlideLayout::Title) { 5400 } else { 3600 },
+                ppt_theme.title,
+                escape_xml(title)
+            ));
             shape_id += 1;
         }
 
-        // Subtitle (for title slide layout)
-        if matches!(slide.layout, SlideLayout::Title) {
-            if let Some(subtitle) = &slide.subtitle {
-                slide_xml.push_str(&format!(r#"      <p:sp>
-        <p:nvSpPr><p:cNvPr id="{}" name="Subtitle {}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
-        <p:spPr/>
+        // Subtitle
+        if let Some(subtitle) = &slide.subtitle {
+            let (x, y, w, h) = match slide.layout {
+                SlideLayout::Title => (10.0, 45.0, 80.0, 10.0),
+                SlideLayout::Section => (10.0, 55.0, 80.0, 10.0),
+                _ => (5.0, 15.0, 90.0, 5.0),
+            };
+
+            slide_xml.push_str(&format!(r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="{}" name="Subtitle"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="{}" y="{}"/>
+            <a:ext cx="{}" cy="{}"/>
+          </a:xfrm>
+        </p:spPr>
         <p:txBody>
-          <a:bodyPr/>
+          <a:bodyPr anchor="ctr" vertical="ctr" wrap="square"><a:spAutoFit/></a:bodyPr>
           <a:lstStyle/>
-          <a:p><a:r><a:rPr lang="en-US" sz="2400"/><a:t>{}</a:t></a:r></a:p>
+          <a:p>
+            <a:pPr algn="{}"/>
+            <a:r>
+              <a:rPr lang="en-US" sz="{}">
+                <a:solidFill><a:srgbClr val="{}"/></a:solidFill>
+              </a:rPr>
+              <a:t>{}</a:t>
+            </a:r>
+          </a:p>
         </p:txBody>
       </p:sp>
-"#, shape_id, shape_id, escape_xml(subtitle)));
-                shape_id += 1;
-            }
+"#, 
+                shape_id, 
+                to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
+                to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
+                if matches!(slide.layout, SlideLayout::Title | SlideLayout::Section) { "ctr" } else { "l" },
+                2400,
+                ppt_theme.subtitle,
+                escape_xml(subtitle)
+            ));
+            shape_id += 1;
         }
 
-        // Content (bullets and text elements)
-        if !slide.elements.is_empty() {
-            let mut content_text = String::new();
-            for element in &slide.elements {
-                match &element.content {
-                    ElementContent::Bullets(bullets) => {
-                        for bullet in bullets {
-                            content_text.push_str(&format!(
-                                r#"          <a:p><a:pPr lvl="0"><a:buFont typeface="Arial"/><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="en-US" sz="2000"/><a:t>{}</a:t></a:r></a:p>
-"#, escape_xml(bullet)));
-                        }
+        // Elements
+        for element in &slide.elements {
+            let (x, y, w, h) = if let Some(pos) = &element.position {
+                (pos.x, pos.y, pos.w, pos.h)
+            } else {
+                (5.0, 25.0, 90.0, 65.0)
+            };
+
+            let mut content_xml = String::new();
+            match &element.content {
+                ElementContent::Bullets(bullets) => {
+                    for bullet in bullets {
+                        content_xml.push_str(&format!(
+                            r#"          <a:p>
+            <a:pPr lvl="0">
+              <a:buFont typeface="Arial"/>
+              <a:buChar char="•"/>
+            </a:pPr>
+            <a:r>
+              <a:rPr lang="en-US" sz="1800">
+                <a:solidFill><a:srgbClr val="{}"/></a:solidFill>
+              </a:rPr>
+              <a:t>{}</a:t>
+            </a:r>
+          </a:p>
+"#, ppt_theme.text, escape_xml(bullet)));
                     }
-                    ElementContent::Text(t) => {
-                        content_text.push_str(&format!(
-                            r#"          <a:p><a:r><a:rPr lang="en-US" sz="2000"/><a:t>{}</a:t></a:r></a:p>
-"#, escape_xml(t)));
-                    }
+                }
+                ElementContent::Text(t) => {
+                    content_xml.push_str(&format!(
+                        r#"          <a:p>
+            <a:r>
+              <a:rPr lang="en-US" sz="1800">
+                <a:solidFill><a:srgbClr val="{}"/></a:solidFill>
+              </a:rPr>
+              <a:t>{}</a:t>
+            </a:r>
+          </a:p>
+"#, ppt_theme.text, escape_xml(t)));
                 }
             }
 
-            if !content_text.is_empty() {
-                slide_xml.push_str(&format!(r#"      <p:sp>
-        <p:nvSpPr><p:cNvPr id="{}" name="Content {}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
-        <p:spPr/>
+            slide_xml.push_str(&format!(r#"      <p:sp>
+        <p:nvSpPr><p:cNvPr id="{}" name="Content"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="{}" y="{}"/>
+            <a:ext cx="{}" cy="{}"/>
+          </a:xfrm>
+        </p:spPr>
         <p:txBody>
-          <a:bodyPr/>
+          <a:bodyPr anchor="t" wrap="square"><a:spAutoFit/></a:bodyPr>
           <a:lstStyle/>
 {}        </p:txBody>
       </p:sp>
-"#, shape_id, shape_id, content_text));
-            }
+"#, 
+                shape_id, 
+                to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
+                to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
+                content_xml
+            ));
+            shape_id += 1;
         }
 
         slide_xml.push_str(
             r#"    </p:spTree>
   </p:cSld>
   <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
-</p:sld>"#,
-        );
+</p:sld>"#);
 
         zip.start_file(format!("ppt/slides/slide{}.xml", slide_num), options)
             .map_err(|e| TandemError::Io(std::io::Error::other(e)))?;
