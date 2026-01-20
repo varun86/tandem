@@ -233,3 +233,177 @@ This document describes known issues and potential improvements for the web star
 - WCAG 2.1 Level AA compliance target
 - WAI-ARIA Authoring Practices 1.1
 - HTML5 semantic elements usage
+
+---
+
+## Additional Issues for New Files
+
+### TODO-014: About Page Accessibility
+
+**Issue**: The about.html page has similar accessibility issues as index.html.
+
+**Affected Elements**:
+
+- Missing alt text on team member avatars
+- No semantic structure for team section
+- Stats section lacks proper headings
+
+**Expected Fix**: Add proper alt text, use semantic HTML
+
+**Severity**: Major
+
+---
+
+### TODO-015: Config.js Security Issue
+
+**Issue**: The config.js file contains what appears to be an API key in plain text.
+
+**Current Code**:
+
+```javascript
+apiKey: "sk-test-123456789", // This is a test key, do not use in production
+```
+
+**Expected Fix**: Remove sensitive keys, use environment variables, implement proper secret management
+
+**Impact**: Potential security vulnerability if committed to repository
+
+**Severity**: Critical
+
+---
+
+### TODO-016: JavaScript Missing Element Reference
+
+**Issue**: app.js references elements that may not exist on all pages (cart buttons, newsletter form, mobile menu).
+
+**Current Code**:
+
+```javascript
+const cartButtons = document.querySelectorAll('[data-action="add-to-cart"]');
+```
+
+**Expected Fix**: Add null checks before using DOM elements
+
+**Impact**: JavaScript errors on pages without these elements
+
+**Severity**: Major
+
+---
+
+### TODO-017: Console Logging in Production
+
+**Issue**: Multiple console.log statements and tracking functions that reference undefined globals.
+
+**Current Code**:
+
+```javascript
+console.log("Track:", category, action, label);
+```
+
+```javascript
+if (typeof gtag !== "undefined") {
+```
+
+**Expected Fix**: Remove or properly guard console.log statements, implement proper error tracking
+
+**Impact**: Information leakage, potential errors in production
+
+**Severity**: Minor
+
+---
+
+### TODO-018: Missing Error Handling
+
+**Issue**: The JavaScript has no error handling for network requests or failed operations.
+
+**Expected Fix**: Add try-catch blocks, implement error boundaries
+
+**Impact**: Unhandled errors can break the application
+
+**Severity**: Major
+
+---
+
+### TODO-019: CSS Unused Code
+
+**Issue**: The CSS includes styles for elements that don't exist (products-page sidebar, mobile-menu).
+
+**Current Code**:
+
+```css
+.products-page .sidebar {
+  float: left;
+  width: 250px;
+}
+```
+
+**Expected Fix**: Remove unused styles or implement the missing elements
+
+**Impact**: Bloated CSS file, maintenance burden
+
+**Severity**: Minor
+
+---
+
+### TODO-020: Missing Meta Tags
+
+**Issue**: HTML pages lack important meta tags for SEO and social sharing.
+
+**Missing Tags**:
+
+- Meta description
+- Open Graph tags
+- Twitter card tags
+- Canonical URL
+
+**Expected Fix**: Add appropriate meta tags
+
+**Impact**: Poor SEO and social media sharing
+
+**Severity**: Minor
+
+---
+
+### TODO-021: Incomplete README
+
+**Issue**: The README.md provides minimal information and lacks important sections.
+
+**Missing Sections**:
+
+- Installation instructions (even for static)
+- Environment variables
+- Testing instructions
+- Contributing guidelines
+- License information
+
+**Expected Fix**: Expand README with comprehensive project documentation
+
+**Impact**: Difficult for new developers to contribute
+
+**Severity**: Minor
+
+---
+
+### TODO-022: Duplicate IDs
+
+**Issue**: Multiple pages may contain elements with the same IDs if linked together.
+
+**Example**: The search input exists on multiple pages with id="search"
+
+**Expected Fix**: Use classes or unique IDs per page
+
+**Impact**: Invalid HTML, potential JavaScript errors
+
+**Severity**: Major
+
+---
+
+### TODO-023: No Minification or Build Process
+
+**Issue**: CSS and JavaScript are served in development format without minification.
+
+**Expected Fix**: Implement a build process for production
+
+**Impact**: Larger file sizes, slower page loads
+
+**Severity**: Suggestion
