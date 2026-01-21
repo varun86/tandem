@@ -720,7 +720,7 @@ impl SidecarManager {
         if let Some(config_dir) = dirs::config_dir() {
             let opencode_config_dir = config_dir.join("opencode");
             let config_path = opencode_config_dir.join("config.json");
-            
+
             // We update the config every time it starts to ensure new Ollama models are picked up
             // Create the directory if needed
             if let Err(e) = std::fs::create_dir_all(&opencode_config_dir) {
@@ -737,18 +737,27 @@ impl SidecarManager {
                             if !parts.is_empty() {
                                 let name = parts[0];
                                 let mut model_info = serde_json::Map::new();
-                                model_info.insert("name".to_string(), serde_json::Value::String(name.to_string()));
-                                models_map.insert(name.to_string(), serde_json::Value::Object(model_info));
+                                model_info.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String(name.to_string()),
+                                );
+                                models_map.insert(
+                                    name.to_string(),
+                                    serde_json::Value::Object(model_info),
+                                );
                             }
                         }
-                        if let Ok(json) = serde_json::to_string(&serde_json::Value::Object(models_map)) {
+                        if let Ok(json) =
+                            serde_json::to_string(&serde_json::Value::Object(models_map))
+                        {
                             ollama_models_json = json;
                         }
                     }
                 }
 
                 // Write the dynamic config
-                let ollama_config = format!(r#"{{
+                let ollama_config = format!(
+                    r#"{{
   "$schema": "https://opencode.ai/config.json",
   "provider": {{
     "ollama": {{
@@ -760,12 +769,17 @@ impl SidecarManager {
       "models": {}
     }}
   }}
-}}"#, ollama_models_json);
+}}"#,
+                    ollama_models_json
+                );
 
                 if let Err(e) = std::fs::write(&config_path, ollama_config) {
                     tracing::warn!("Failed to write OpenCode config: {}", e);
                 } else {
-                    tracing::info!("Updated dynamic OpenCode config with Ollama models at: {:?}", config_path);
+                    tracing::info!(
+                        "Updated dynamic OpenCode config with Ollama models at: {:?}",
+                        config_path
+                    );
                 }
             }
         }

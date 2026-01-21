@@ -25,8 +25,8 @@ export function ModelSelector({ currentModel, onModelSelect, className }: ModelS
 
   // Close when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+    const handleClickOutside = (event: any) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as any)) {
         setIsOpen(false);
       }
     };
