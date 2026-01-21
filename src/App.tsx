@@ -748,7 +748,22 @@ function App() {
               <SessionSidebar
                 isOpen={true}
                 onToggle={() => setSidebarOpen(!sidebarOpen)}
-                sessions={sessions.filter((session) => true)}
+                sessions={sessions.filter((session) => {
+                  // Only show sessions from the active project
+                  if (!activeProject) return true;
+                  if (!session.directory) return false;
+
+                  // Normalize paths for comparison: lowercase, standard slashes, remove trailing slash
+                  const normSession = session.directory.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
+                  const normProject = activeProject.path.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
+
+                  // Check if session directory starts with or contains the project path
+                  // We check both ways to handle nested workspaces or root mismatches
+                  return (
+                    normSession.includes(normProject) ||
+                    normProject.includes(normSession)
+                  );
+                })}
                 projects={projects}
                 currentSessionId={currentSessionId}
                 onSelectSession={handleSelectSession}

@@ -781,6 +781,17 @@ Start with task #1 and continue through each one. Let me know when each task is 
             "shell",
           ].includes(event.tool);
           if (needsApproval) {
+            // Check for Auto-Approve
+            if (allowAllTools && currentSessionId) {
+              approveTool(currentSessionId, event.part_id, {
+                tool: event.tool,
+                args,
+                messageId: event.message_id,
+              }).catch(console.error);
+              // Do not add to pending permissions
+              break;
+            }
+
             const permissionRequest: PermissionRequest = {
               id: event.part_id,
               type: event.tool as PermissionRequest["type"],

@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **High-Fidelity PDF Export:** Added `@page { margin: 0; size: landscape; }` and `color-adjust` CSS to the HTML slide template to suppress browser headers/footers and preserve professional aesthetics during PDF export.
 - **Settings Synchronization:** Fixed a bug where changing the model/provider in settings was not immediately reflected in the Chat interface.
 - **Model Selector Refinement:** Cleaned up the model dropdown to prioritize OpenCode Zen/Ollama and hide unconfigured providers, reducing clutter.
-- **"Allow All" Availability:** Unlocked the "Allow All" button during AI generation, allowing users to toggle auto-approval mid-response to stop repetitive permission prompts.
-- **Chat History Filtering:** Fixed an issue where generic chat sessions (created without explicit project paths) were hidden from the session list when the backend running context mismatched the frontend project path.
+- **"Allow All" Logic:** Fixed a critical issue where the "Allow All" toggle was ignored by the event handler, implementing robust auto-approval logic for permissions.
+- **Chat History Visibility:** Improved session list filtering to strictly handle project path normalization, ensuring only relevant project chats are shown while preventing history loss.
 
 ## [0.1.6] - 2026-01-20
 

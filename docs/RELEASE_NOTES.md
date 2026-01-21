@@ -4,8 +4,8 @@
 
 - **Model Selection UX**: The provider/model selector has been streamlined to prioritize OpenCode Zen and Ollama, while automatically hiding unconfigured providers to reduce list noise.
 - **Instant Settings Sync**: Changing your preferred model or provider in Settings now updates the Chat interface immediately without requiring a refresh.
-- **Mid-Stream Permissions**: The "Allow All" button is now unblocked during generation, allowing you to quickly authorize complex tasks (like multi-file operations) while the AI is streaming, preventing repetitive approval loops.
-- **Robust Session Visibility**: Removed strict project path filtering that could hide chat sessions when using the sidecar in manual/developer modes. Your history is now always visible.
+- **Mid-Stream Permissions**: The "Allow All" button is now unblocked during generation, AND the auto-approval logic has been fixed to reliably intercept and approve tool requests without prompting.
+- **Robust Session Visibility**: Session filtering is now smarter about path normalization, ensuring your chat history is complete for the active project while correctly hiding unrelated sessions.
 - **HTML Slide Improvements**: Enhanced PDF export fidelity for slides and improved the flexible feedback loop during presentation planning.
 
 ## Notes
