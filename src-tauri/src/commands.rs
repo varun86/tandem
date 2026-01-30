@@ -3173,7 +3173,7 @@ pub fn import_skill(
     location: crate::skills::SkillLocation,
 ) -> Result<crate::skills::SkillInfo> {
     // Parse content to get name
-    let (name, description, body) = crate::skills::parse_skill_content(&content)?;
+    let (name, description, _body) = crate::skills::parse_skill_content(&content)?;
 
     // Determine target directory
     let target_dir = match location {
@@ -3351,7 +3351,7 @@ pub struct PlanSessionResult {
 /// Start a new planning session with a guaranteed pre-created plan file
 #[tauri::command]
 pub async fn start_plan_session(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     goal: Option<String>,
 ) -> Result<PlanSessionResult> {

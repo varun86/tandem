@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-01-30
+
+### Added
+
+- **Memory Context System**: Integrated a semantic memory store using `sqlite-vec`. This allows the AI to store and retrieve context from past sessions and project documentation, enabling long-term memory and smarter context-aware responses.
+- **Ralph Loop**: Added a robust "Ralph Loop" mode for iterative task execution. The AI can now loop on a task until a completion promise is met, with support for pause, resume, and plan-aware execution.
+
+### Fixed
+
+- **Memory Store Initialization**: Resolved an `unresolved import sqlite_vec::sqlite_vec` error by correctly implementing the `sqlite3_vec_init` C-extension registration via `rusqlite`.
+
 ## [0.1.13] - 2026-01-30
 
 ### Added

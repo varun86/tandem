@@ -1,5 +1,5 @@
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 use tauri::{AppHandle, Emitter};
 

@@ -1,3 +1,30 @@
+# Tandem v0.1.14 Release Notes
+
+## Highlights
+
+- **Long-Term Memory**: Tandem now remembers! We've integrated a semantic memory system using `sqlite-vec` that allows the AI to recall context from previous sessions and project documents. This means smarter, more context-aware assistance that grows with your project.
+- **Ralph Loop (Iterative Task Agent)**: Meet Ralph—a new mode that puts the AI in a robust "do-loop." Give it a complex task, and it will iterate, verify, and refine its work until it meets a strict completion promise. It's like having a tireless junior developer who checks their own work.
+- **Semantic Context Retrieval**: Questions about your project now tap into a vector database of your codebase, providing accurate, relevant context even for large repositories that don't fit in a standard prompt.
+
+## Complete Feature List
+
+### Core Intelligence
+
+- **Vector Memory Store**: Implemented a local, zero-trust vector database (`sqlite-vec`) to store and retrieve semantic embeddings of your codebase and conversation history.
+- **Memory Context Injection**: The AI now automatically receives relevant context snippets based on your current query, reducing hallucinations and "I don't know" responses about your own code.
+
+### Workflow
+
+- **Iterative Execution Loop**: The new "Ralph Loop" mode automates the [Plan -> Execute -> Verify] cycle. It loops until the task is verifiable complete, with built-in pause/resume controls for human oversight.
+- **Plan Mode Integration**: Ralph works hand-in-hand with Plan Mode, respecting your review process while automating the repetitive parts of implementation.
+
+### Technical improvements
+
+- **SQLite Extension Fix**: Resolved a critical build issue with `sqlite-vec` by properly registering the C-extension initialization, ensuring stable memory database connections.
+- **Documentation**: Added comprehensive documentation for the Ralph Loop architecture and implementation details.
+
+---
+
 # Tandem v0.1.13 Release Notes
 
 ## Highlights
@@ -181,6 +208,17 @@
 
 - If you see OpenRouter credit-limit errors, add credits or lower max output tokens for the selected model.
 - AppImage installs are unchanged and continue to update via the AppImage artifact.
+
+---
+
+# Tandem v0.1.4 Release Notes
+
+## Highlights
+
+- **Auto-Update**: Built-in updater for seamless upgrades via GitHub Releases.
+- **About Page**: New dedicated view for version info and update management.
+- **Key Security**: API keys are now encrypted at rest using system-native credential stores (Keytar).
+- **Sidecar Management**: Improved process lifecycle handling and binary updates.
 
 ---
 

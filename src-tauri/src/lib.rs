@@ -6,6 +6,7 @@ mod error;
 mod file_watcher;
 mod keystore;
 mod llm_router;
+mod memory;
 mod presentation;
 mod sidecar;
 mod sidecar_manager;

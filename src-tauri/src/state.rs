@@ -1,4 +1,5 @@
 // Tandem Application State
+use crate::memory::MemoryManager;
 use crate::sidecar::{SidecarConfig, SidecarManager};
 use crate::tool_proxy::{OperationJournal, StagingStore};
 use serde::{Deserialize, Serialize};
@@ -207,6 +208,8 @@ pub struct AppState {
     pub operation_journal: Arc<OperationJournal>,
     /// Staging store for execution planning
     pub staging_store: Arc<StagingStore>,
+    /// Memory manager for context storage
+    pub memory_manager: Option<Arc<MemoryManager>>,
 }
 
 impl AppState {
@@ -235,6 +238,7 @@ impl AppState {
             current_session_id: RwLock::new(None),
             operation_journal: Arc::new(OperationJournal::new(100)),
             staging_store: Arc::new(StagingStore::new()),
+            memory_manager: None,
         }
     }
 
