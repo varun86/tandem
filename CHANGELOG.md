@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-02-08
+
+### Fixed
+
+- **Release Build Trigger**: Bumped version/tag to ensure GitHub Releases builds run with the corrected workflow configuration.
+
 ## [0.2.4] - 2026-02-08
 
 ### Added

@@ -1,3 +1,11 @@
+# Tandem v0.2.5 Release Notes
+
+## Highlights
+
+- **Release Build Trigger**: Re-cut release so GitHub Actions builds run with the corrected release workflow configuration.
+
+---
+
 # Tandem v0.2.4 Release Notes
 
 ## Highlights

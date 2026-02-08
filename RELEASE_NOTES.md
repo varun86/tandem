@@ -2,6 +2,10 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.2.5 (2026-02-08)
+
+- Re-cut release to ensure CI/release builds run with the corrected GitHub Actions workflow.
+
 ## v0.2.4 (2026-02-08)
 
 - Fixed Starter Pack installs failing in packaged builds (bundled resource path resolution).
