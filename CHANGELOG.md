@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-02-08
+
+### Fixed
+
+- **macOS Release Builds**: Disabled codesigning/notarization by default in the release workflow to prevent macOS builds from failing when Apple certificate secrets are missing or misconfigured. (Enable with `MACOS_SIGNING_ENABLED=true` repo variable.)
+
 ## [0.2.5] - 2026-02-08
 
 ### Fixed

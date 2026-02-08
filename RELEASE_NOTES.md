@@ -2,6 +2,10 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.2.6 (2026-02-08)
+
+- Fix macOS release builds by disabling signing/notarization by default (can be enabled via `MACOS_SIGNING_ENABLED=true`).
+
 ## v0.2.5 (2026-02-08)
 
 - Re-cut release to ensure CI/release builds run with the corrected GitHub Actions workflow.

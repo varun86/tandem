@@ -1,3 +1,11 @@
+# Tandem v0.2.6 Release Notes
+
+## Highlights
+
+- **macOS Release Builds**: Disabled signing/notarization by default to prevent macOS build failures when Apple certificate secrets are missing or misconfigured. (Enable with `MACOS_SIGNING_ENABLED=true`.)
+
+---
+
 # Tandem v0.2.5 Release Notes
 
 ## Highlights
