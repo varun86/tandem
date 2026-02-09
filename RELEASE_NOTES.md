@@ -2,6 +2,10 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.2.9 (Unreleased)
+
+- Windows: Prevent orphaned OpenCode sidecar (and Bun) processes during `pnpm tauri dev` rebuilds by attaching the sidecar to a Job Object (kill-on-close).
+
 ## v0.2.8 (2026-02-09)
 
 - Support multiple custom OpenCode providers by name: Tandem now lets you select arbitrary providers from the sidecar catalog (not just the built-in list) and persists the selection for routing.

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - Unreleased
+
+### Fixed
+
+- **Question Prompts**: Properly handle OpenCode `question.asked` events (including multi-question requests) and render an interactive one-at-a-time wizard with multiple-choice + custom answers; replies are sent via the OpenCode `/question/{requestID}/reply` API.
+- **Windows Dev Reload Sidecar Cleanup**: Prevent orphaned OpenCode sidecar (and Bun) processes when the app is restarted during `tauri dev` rebuilds by attaching the sidecar to a Windows Job Object (kill-on-close).
+
 ## [0.2.8] - 2026-02-09
 
 ### Added

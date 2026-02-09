@@ -11,6 +11,91 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+#[cfg(windows)]
+// Store as integer so the manager stays Send + Sync (Tauri requires this for shared state).
+struct WindowsJobHandle(isize);
+
+#[cfg(windows)]
+impl WindowsJobHandle {
+    fn as_handle(&self) -> HANDLE {
+        self.0 as HANDLE
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJobHandle {
+    fn drop(&mut self) {
+        unsafe {
+            if self.0 != 0 {
+                // With JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, closing the job handle terminates
+                // all assigned processes. This prevents orphaned sidecars during dev reloads.
+                let _ = CloseHandle(self.as_handle());
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn windows_create_kill_on_close_job() -> std::io::Result<WindowsJobHandle> {
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        if job.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if ok == 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = CloseHandle(job);
+            return Err(e);
+        }
+
+        Ok(WindowsJobHandle(job as isize))
+    }
+}
+
+#[cfg(windows)]
+fn windows_try_assign_pid_to_job(job: HANDLE, pid: u32) -> std::io::Result<()> {
+    unsafe {
+        // We reopen the process by PID to get a handle we can pass to AssignProcessToJobObject.
+        // This avoids relying on std's internal Child handle representation.
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+        if process.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ok = AssignProcessToJobObject(job, process);
+        let assign_err = if ok == 0 {
+            Some(std::io::Error::last_os_error())
+        } else {
+            None
+        };
+        let _ = CloseHandle(process);
+        if let Some(e) = assign_err {
+            return Err(e);
+        }
+        Ok(())
+    }
+}
+
 /// Sidecar process state
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -505,18 +590,61 @@ pub enum StreamEvent {
     /// Question asked by LLM
     QuestionAsked {
         session_id: String,
-        question_id: String,
-        header: Option<String>,
-        question: String,
-        options: Vec<QuestionOption>,
+        request_id: String,
+        questions: Vec<QuestionInfo>,
+        tool_call_id: Option<String>,
+        tool_message_id: Option<String>,
     },
 }
 
-/// Question option from OpenCode
+/// A single multiple-choice option for a question prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestionOption {
-    pub id: String,
+pub struct QuestionChoice {
     pub label: String,
+    pub description: String,
+}
+
+/// A single question in a question request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionInfo {
+    /// Very short label (max ~12 chars in OpenCode schema).
+    pub header: String,
+    /// The full question text.
+    pub question: String,
+    /// Multiple-choice options.
+    pub options: Vec<QuestionChoice>,
+    /// Allow selecting multiple options.
+    pub multiple: Option<bool>,
+    /// Allow typing a custom answer.
+    pub custom: Option<bool>,
+}
+
+/// Frontend-friendly question request (snake_case fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionRequest {
+    pub session_id: String,
+    pub request_id: String,
+    pub questions: Vec<QuestionInfo>,
+    pub tool_call_id: Option<String>,
+    pub tool_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenCodeQuestionToolRef {
+    #[serde(rename = "callID")]
+    pub call_id: String,
+    #[serde(rename = "messageID")]
+    pub message_id: String,
+}
+
+/// OpenCode wire format for question requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenCodeQuestionRequest {
+    pub id: String,
+    #[serde(rename = "sessionID")]
+    pub session_id: String,
+    pub questions: Vec<QuestionInfo>,
+    pub tool: Option<OpenCodeQuestionToolRef>,
 }
 
 /// Model info from OpenCode
@@ -589,6 +717,8 @@ pub struct SidecarManager {
     config: RwLock<SidecarConfig>,
     state: RwLock<SidecarState>,
     process: Mutex<Option<Child>>,
+    #[cfg(windows)]
+    windows_job: Mutex<Option<WindowsJobHandle>>,
     circuit_breaker: Mutex<CircuitBreaker>,
     port: RwLock<Option<u16>>,
     http_client: Client,
@@ -616,6 +746,8 @@ impl SidecarManager {
             config: RwLock::new(config),
             state: RwLock::new(SidecarState::Stopped),
             process: Mutex::new(None),
+            #[cfg(windows)]
+            windows_job: Mutex::new(None),
             port: RwLock::new(None),
             http_client,
             stream_client,
@@ -797,6 +929,35 @@ impl SidecarManager {
             .spawn()
             .map_err(|e| TandemError::Sidecar(format!("Failed to spawn sidecar: {}", e)))?;
 
+        // On Windows, put the sidecar into a Job Object configured to kill child processes when
+        // the job handle is closed. This prevents orphaned sidecars during `tauri dev` rebuilds
+        // where the app process may be terminated abruptly without running shutdown hooks.
+        #[cfg(windows)]
+        {
+            let pid = child.id();
+            let mut job_guard = self.windows_job.lock().await;
+            if job_guard.is_none() {
+                match windows_create_kill_on_close_job() {
+                    Ok(job) => *job_guard = Some(job),
+                    Err(e) => {
+                        tracing::warn!("Failed to create Windows job object for sidecar: {}", e);
+                    }
+                }
+            }
+            if let Some(job) = job_guard.as_ref() {
+                if let Err(e) = windows_try_assign_pid_to_job(job.as_handle(), pid) {
+                    // If Tandem itself is running inside a non-breakaway job, Windows may reject
+                    // assigning the child to another job. In that case we fall back to best-effort
+                    // shutdown hooks and manual cleanup.
+                    tracing::warn!(
+                        "Failed to assign sidecar PID {} to job object (may orphan on dev reload): {}",
+                        pid,
+                        e
+                    );
+                }
+            }
+        }
+
         // Store the process and port
         {
             let mut process_guard = self.process.lock().await;
@@ -896,6 +1057,13 @@ impl SidecarManager {
 
             // Wait for the process to exit
             let _ = child.wait();
+        }
+
+        // Drop the job handle last (kills any straggling descendants).
+        #[cfg(windows)]
+        {
+            let mut job_guard = self.windows_job.lock().await;
+            *job_guard = None;
         }
 
         // Give extra time for Windows to release file handles
@@ -1686,8 +1854,95 @@ impl SidecarManager {
     }
 
     // ========================================================================
+    // Question Requests
+    // ========================================================================
+
+    /// List all pending question requests.
+    ///
+    /// OpenCode API: GET /question
+    pub async fn list_questions(&self) -> Result<Vec<QuestionRequest>> {
+        self.check_circuit_breaker().await?;
+
+        let url = format!("{}/question", self.base_url().await?);
+        let mut req = self.http_client.get(&url);
+        if let Some(directory) = self.workspace_directory().await {
+            req = req.query(&[("directory", directory)]);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to list questions: {}", e)))?;
+
+        let requests: Vec<OpenCodeQuestionRequest> = self.handle_response(response).await?;
+        Ok(requests
+            .into_iter()
+            .map(|r| QuestionRequest {
+                session_id: r.session_id,
+                request_id: r.id,
+                questions: r.questions,
+                tool_call_id: r.tool.as_ref().map(|t| t.call_id.clone()),
+                tool_message_id: r.tool.as_ref().map(|t| t.message_id.clone()),
+            })
+            .collect())
+    }
+
+    /// Reply to a question request.
+    ///
+    /// OpenCode API: POST /question/{requestID}/reply
+    pub async fn reply_question(&self, request_id: &str, answers: Vec<Vec<String>>) -> Result<()> {
+        self.check_circuit_breaker().await?;
+
+        let url = format!("{}/question/{}/reply", self.base_url().await?, request_id);
+
+        let mut req = self.http_client.post(&url);
+        if let Some(directory) = self.workspace_directory().await {
+            req = req.query(&[("directory", directory)]);
+        }
+
+        let response = req
+            .json(&serde_json::json!({ "answers": answers }))
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to reply to question: {}", e)))?;
+
+        let _ok: bool = self.handle_response(response).await?;
+        Ok(())
+    }
+
+    /// Reject a question request.
+    ///
+    /// OpenCode API: POST /question/{requestID}/reject
+    pub async fn reject_question(&self, request_id: &str) -> Result<()> {
+        self.check_circuit_breaker().await?;
+
+        let url = format!("{}/question/{}/reject", self.base_url().await?, request_id);
+
+        let mut req = self.http_client.post(&url);
+        if let Some(directory) = self.workspace_directory().await {
+            req = req.query(&[("directory", directory)]);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to reject question: {}", e)))?;
+
+        let _ok: bool = self.handle_response(response).await?;
+        Ok(())
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
+
+    async fn workspace_directory(&self) -> Option<String> {
+        let config = self.config.read().await;
+        config
+            .workspace_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+    }
 
     async fn check_circuit_breaker(&self) -> Result<()> {
         let mut cb = self.circuit_breaker.lock().await;
@@ -2184,26 +2439,64 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
             })
         }
         "question.asked" => {
+            // OpenCode question requests can contain multiple questions.
+            // Schema reference: `QuestionRequest` -> `questions: QuestionInfo[]`
             let session_id = props.get("sessionID").and_then(|s| s.as_str())?.to_string();
-            let question_id = props
-                .get("questionID")
-                .and_then(|s| s.as_str())?
-                .to_string();
-            let header = props
-                .get("header")
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string());
-            let question = props.get("question").and_then(|s| s.as_str())?.to_string();
+            let request_id = props.get("id").and_then(|s| s.as_str())?.to_string();
+            let (tool_call_id, tool_message_id) = props
+                .get("tool")
+                .and_then(|t| t.as_object())
+                .map(|tool| {
+                    (
+                        tool.get("callID")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        tool.get("messageID")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    )
+                })
+                .unwrap_or((None, None));
 
-            let options = props
-                .get("options")
-                .and_then(|o| o.as_array())
+            let questions = props
+                .get("questions")
+                .and_then(|q| q.as_array())
                 .map(|arr| {
                     arr.iter()
-                        .filter_map(|opt| {
-                            Some(QuestionOption {
-                                id: opt.get("id")?.as_str()?.to_string(),
-                                label: opt.get("label")?.as_str()?.to_string(),
+                        .filter_map(|q| {
+                            let question = q.get("question").and_then(|s| s.as_str())?.to_string();
+                            let header = q
+                                .get("header")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let multiple = q.get("multiple").and_then(|b| b.as_bool());
+                            let custom = q.get("custom").and_then(|b| b.as_bool());
+                            let options = q
+                                .get("options")
+                                .and_then(|o| o.as_array())
+                                .map(|opts| {
+                                    opts.iter()
+                                        .filter_map(|opt| {
+                                            Some(QuestionChoice {
+                                                label: opt.get("label")?.as_str()?.to_string(),
+                                                description: opt
+                                                    .get("description")
+                                                    .and_then(|d| d.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+
+                            Some(QuestionInfo {
+                                header,
+                                question,
+                                options,
+                                multiple,
+                                custom,
                             })
                         })
                         .collect()
@@ -2212,10 +2505,10 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
 
             Some(StreamEvent::QuestionAsked {
                 session_id,
-                question_id,
-                header,
-                question,
-                options,
+                request_id,
+                questions,
+                tool_call_id,
+                tool_message_id,
             })
         }
         "todo.updated" => {
@@ -2374,5 +2667,37 @@ mod tests {
         assert!(
             matches!(event, Some(StreamEvent::SessionIdle { session_id }) if session_id == "ses_123")
         );
+    }
+
+    #[test]
+    fn test_parse_sse_question_asked_multi() {
+        let mut buffer = String::from(
+            "data: {\"type\":\"question.asked\",\"properties\":{\"id\":\"que_123\",\"sessionID\":\"ses_123\",\"questions\":[{\"header\":\"Topic\",\"question\":\"What is the topic?\",\"multiple\":true,\"custom\":true,\"options\":[{\"label\":\"A\",\"description\":\"Option A\"},{\"label\":\"B\",\"description\":\"Option B\"}]},{\"header\":\"Tone\",\"question\":\"Pick a tone\",\"multiple\":false,\"custom\":false,\"options\":[{\"label\":\"Informative\",\"description\":\"Straightforward\"}]}]}}\n\n",
+        );
+
+        let event = parse_sse_event(&mut buffer);
+        match event {
+            Some(StreamEvent::QuestionAsked {
+                session_id,
+                request_id,
+                questions,
+                tool_call_id,
+                tool_message_id,
+            }) => {
+                assert_eq!(session_id, "ses_123");
+                assert_eq!(request_id, "que_123");
+                assert_eq!(tool_call_id, None);
+                assert_eq!(tool_message_id, None);
+                assert_eq!(questions.len(), 2);
+                assert_eq!(questions[0].header, "Topic");
+                assert_eq!(questions[0].multiple, Some(true));
+                assert_eq!(questions[0].custom, Some(true));
+                assert_eq!(questions[0].options.len(), 2);
+                assert_eq!(questions[0].options[0].label, "A");
+                assert_eq!(questions[0].options[0].description, "Option A");
+                assert_eq!(questions[1].custom, Some(false));
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
     }
 }

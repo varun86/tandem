@@ -1,3 +1,11 @@
+# Tandem v0.2.9 Release Notes
+
+## Highlights
+
+- **Windows Dev Reload Sidecar Cleanup**: Prevent orphaned OpenCode sidecar (and Bun) processes during `pnpm tauri dev` rebuilds by attaching the sidecar to a Windows Job Object (kill-on-close).
+
+---
+
 # Tandem v0.2.8 Release Notes
 
 ## Highlights
