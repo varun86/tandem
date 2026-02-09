@@ -9,6 +9,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tokio::sync::Semaphore;
 
+/// Selected model (provider + model id) for the OpenCode sidecar.
+///
+/// Why: OpenCode supports many providers by name (including user-defined ones in `.opencode/config.json`).
+/// We need to preserve arbitrary provider IDs without baking them into a fixed enum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectedModel {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
 /// Provider configuration for LLM routing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -39,6 +49,10 @@ pub struct ProvidersConfig {
     pub ollama: ProviderConfig,
     #[serde(default)]
     pub custom: Vec<ProviderConfig>,
+    /// If set, overrides the default provider/model selection for outgoing messages.
+    /// This supports OpenCode providers that are not represented in `ProvidersConfig` (e.g. user-defined providers).
+    #[serde(default)]
+    pub selected_model: Option<SelectedModel>,
 }
 
 fn default_openrouter() -> ProviderConfig {
@@ -100,6 +114,7 @@ impl Default for ProvidersConfig {
             openai: default_openai(),
             ollama: default_ollama(),
             custom: Vec::new(),
+            selected_model: None,
         }
     }
 }

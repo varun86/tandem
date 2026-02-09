@@ -96,7 +96,7 @@ export function Chat({
   onAgentChange: propOnAgentChange,
   onFileOpen,
   hasConfiguredProvider = true,
-  activeProviderId,
+  activeProviderId: _activeProviderId,
   activeProviderLabel,
   activeModelLabel,
   onOpenSettings,
@@ -1888,6 +1888,8 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                 try {
                   // Normalize provider ID (sidecar uses 'opencode', tandem use 'opencode_zen')
                   const providerId = providerIdRaw === "opencode" ? "opencode_zen" : providerIdRaw;
+                  const providerIdForSidecar =
+                    providerId === "opencode_zen" ? "opencode" : providerId;
 
                   const config = await getProvidersConfig();
 
@@ -1899,50 +1901,54 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                     "opencode_zen",
                     "ollama",
                   ];
-                  let targetProvider = providerId;
+                  const isKnownTopLevel = knownProviders.includes(providerId);
 
-                  if (!knownProviders.includes(targetProvider)) {
-                    // If it's a sub-provider or unknown, stay with current active provider
-                    // This handles OpenCode Zen and OpenRouter which have many sub-providers (AIHUBMIX, etc)
-                    targetProvider = activeProviderId || "opencode_zen";
-                  }
-
-                  // We need to enable the selected provider and disable others
-                  const updated: ProvidersConfig = {
-                    openrouter: {
-                      ...config.openrouter,
-                      enabled: targetProvider === "openrouter",
-                      default: targetProvider === "openrouter",
-                    },
-                    opencode_zen: {
-                      ...config.opencode_zen,
-                      enabled: targetProvider === "opencode_zen",
-                      default: targetProvider === "opencode_zen",
-                    },
-                    anthropic: {
-                      ...config.anthropic,
-                      enabled: targetProvider === "anthropic",
-                      default: targetProvider === "anthropic",
-                    },
-                    openai: {
-                      ...config.openai,
-                      enabled: targetProvider === "openai",
-                      default: targetProvider === "openai",
-                    },
-                    ollama: {
-                      ...config.ollama,
-                      enabled: targetProvider === "ollama",
-                      default: targetProvider === "ollama",
-                    },
-                    custom: config.custom,
+                  // Always persist the selected model (provider+model) so the backend can route
+                  // to arbitrary OpenCode providers (including user-defined ones).
+                  let updated: ProvidersConfig = {
+                    ...config,
+                    selected_model: { provider_id: providerIdForSidecar, model_id: modelId },
                   };
 
-                  // Update model for target provider
-                  if (targetProvider === "opencode_zen") updated.opencode_zen.model = modelId;
-                  if (targetProvider === "openrouter") updated.openrouter.model = modelId;
-                  if (targetProvider === "anthropic") updated.anthropic.model = modelId;
-                  if (targetProvider === "openai") updated.openai.model = modelId;
-                  if (targetProvider === "ollama") updated.ollama.model = modelId;
+                  if (isKnownTopLevel) {
+                    // For known providers, keep the existing behavior: enable one, disable others.
+                    updated = {
+                      ...updated,
+                      openrouter: {
+                        ...config.openrouter,
+                        enabled: providerId === "openrouter",
+                        default: providerId === "openrouter",
+                      },
+                      opencode_zen: {
+                        ...config.opencode_zen,
+                        enabled: providerId === "opencode_zen",
+                        default: providerId === "opencode_zen",
+                      },
+                      anthropic: {
+                        ...config.anthropic,
+                        enabled: providerId === "anthropic",
+                        default: providerId === "anthropic",
+                      },
+                      openai: {
+                        ...config.openai,
+                        enabled: providerId === "openai",
+                        default: providerId === "openai",
+                      },
+                      ollama: {
+                        ...config.ollama,
+                        enabled: providerId === "ollama",
+                        default: providerId === "ollama",
+                      },
+                      custom: config.custom,
+                    };
+
+                    // Update model for known providers (for display + defaults)
+                    if (providerId === "opencode_zen") updated.opencode_zen.model = modelId;
+                    if (providerId === "openrouter") updated.openrouter.model = modelId;
+                    if (providerId === "anthropic") updated.anthropic.model = modelId;
+                    if (providerId === "openai") updated.openai.model = modelId;
+                    if (providerId === "ollama") updated.ollama.model = modelId;
+                  }
 
                   await setProvidersConfig(updated);
                   // Trigger refresh in parent to update labels

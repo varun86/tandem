@@ -129,9 +129,15 @@ export function ModelSelector({
             // Always show OpenCode Zen and Ollama (local/free)
             if (group.providerId === "opencode_zen" || group.providerId === "ollama") return true;
 
-            // For others, check if they have a key or are enabled
             const conf = getConf(group.providerId);
-            return conf?.has_key || conf?.enabled;
+            if (conf) {
+              // For known providers, check if they have a key or are enabled
+              return conf.has_key || conf.enabled;
+            }
+
+            // For unknown providers, trust the sidecar model catalog: if it listed models,
+            // it is a usable provider (often configured via `.opencode/config.json`).
+            return true;
           })
           .sort((a, b) => {
             // 1. OpenCode Zen always first

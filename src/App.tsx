@@ -182,12 +182,45 @@ function App() {
       (state.providers_config.openai?.enabled && state.providers_config.openai?.has_key) ||
       state.providers_config.opencode_zen?.enabled ||
       (state.providers_config.ollama?.enabled && state.providers_config.ollama?.has_key) ||
+      // If the user explicitly selected a provider+model from the sidecar catalog, treat as configured.
+      (!!state.providers_config.selected_model?.provider_id?.trim() &&
+        !!state.providers_config.selected_model?.model_id?.trim()) ||
       // Custom providers (e.g. LM Studio / OpenAI-compatible endpoints) often don't require a key.
       (state.providers_config.custom?.some((c) => c.enabled && !!c.endpoint?.trim()) ?? false));
 
   const activeProviderInfo = useMemo(() => {
     const config = state?.providers_config;
     if (!config) return null;
+
+    const labelForProviderId = (id: string) => {
+      switch (id) {
+        case "openrouter":
+          return "OpenRouter";
+        case "opencode_zen":
+          return "OpenCode Zen";
+        case "anthropic":
+          return "Anthropic";
+        case "openai":
+          return "OpenAI";
+        case "ollama":
+          return "Ollama";
+        default:
+          return id.charAt(0).toUpperCase() + id.slice(1);
+      }
+    };
+
+    // Prefer the explicitly selected model/provider (supports OpenCode custom providers).
+    if (config.selected_model?.provider_id?.trim() && config.selected_model?.model_id?.trim()) {
+      const providerId =
+        config.selected_model.provider_id === "opencode"
+          ? "opencode_zen"
+          : config.selected_model.provider_id;
+      return {
+        providerId,
+        providerLabel: labelForProviderId(providerId),
+        modelLabel: config.selected_model.model_id,
+      };
+    }
 
     const enabledCustom = (config.custom ?? []).find((c) => c.enabled);
     const candidates = [

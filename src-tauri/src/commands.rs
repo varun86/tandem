@@ -245,6 +245,24 @@ pub fn lock_vault(vault_state: State<'_, VaultState>) -> Result<()> {
 }
 
 fn resolve_default_model_spec(config: &ProvidersConfig) -> Option<ModelSpec> {
+    // If the user explicitly selected a model/provider (including custom provider IDs),
+    // prefer that over the fixed provider slots.
+    if let Some(sel) = &config.selected_model {
+        let provider_id = if sel.provider_id == "opencode_zen" {
+            // Back-compat: frontend uses "opencode_zen", sidecar expects "opencode".
+            "opencode".to_string()
+        } else {
+            sel.provider_id.clone()
+        };
+
+        if !provider_id.trim().is_empty() && !sel.model_id.trim().is_empty() {
+            return Some(ModelSpec {
+                provider_id,
+                model_id: sel.model_id.clone(),
+            });
+        }
+    }
+
     let candidates: Vec<(&str, &crate::state::ProviderConfig)> = vec![
         ("openrouter", &config.openrouter),
         ("opencode", &config.opencode_zen), // OpenCode expects "opencode" not "opencode_zen"
@@ -285,6 +303,18 @@ fn resolve_default_model_spec(config: &ProvidersConfig) -> Option<ModelSpec> {
 fn resolve_default_provider_and_model(
     config: &ProvidersConfig,
 ) -> (Option<String>, Option<String>) {
+    if let Some(sel) = &config.selected_model {
+        let provider_id = if sel.provider_id == "opencode_zen" {
+            "opencode".to_string()
+        } else {
+            sel.provider_id.clone()
+        };
+
+        if !provider_id.trim().is_empty() && !sel.model_id.trim().is_empty() {
+            return (Some(provider_id), Some(sel.model_id.clone()));
+        }
+    }
+
     let candidates: Vec<(&str, &crate::state::ProviderConfig)> = vec![
         ("openrouter", &config.openrouter),
         ("opencode", &config.opencode_zen), // OpenCode expects "opencode" not "opencode_zen"

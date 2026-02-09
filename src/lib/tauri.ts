@@ -22,6 +22,11 @@ export interface ProviderConfig {
   has_key: boolean;
 }
 
+export interface SelectedModel {
+  provider_id: string;
+  model_id: string;
+}
+
 export interface ProvidersConfig {
   openrouter: ProviderConfig;
   opencode_zen: ProviderConfig;
@@ -29,6 +34,7 @@ export interface ProvidersConfig {
   openai: ProviderConfig;
   ollama: ProviderConfig;
   custom: ProviderConfig[];
+  selected_model?: SelectedModel | null;
 }
 
 export interface AppStateInfo {

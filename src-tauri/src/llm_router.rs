@@ -438,6 +438,7 @@ mod tests {
                 has_key: false,
             },
             custom: vec![],
+            selected_model: None,
         }
     }
 

@@ -178,6 +178,7 @@ export function Settings({
             default: provider === "ollama",
           },
           custom: providers.custom,
+          selected_model: providers.selected_model ?? null,
         }
       : {
           ...providers,
@@ -200,6 +201,7 @@ export function Settings({
       openai: { ...providers.openai, default: provider === "openai" },
       ollama: { ...providers.ollama, default: provider === "ollama" },
       custom: providers.custom,
+      selected_model: providers.selected_model ?? null,
     };
     setProviders(updated);
     await setProvidersConfig(updated);
@@ -350,6 +352,7 @@ export function Settings({
           has_key: false, // Custom provider key checking not implemented yet
         },
       ],
+      selected_model: providers.selected_model ?? null,
     };
 
     setProviders(updated);
@@ -385,6 +388,7 @@ export function Settings({
             has_key: false, // Custom provider key checking not implemented yet
           },
         ],
+        selected_model: providers.selected_model ?? null,
       };
 
       setProviders(updated);
