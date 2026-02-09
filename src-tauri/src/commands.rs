@@ -343,6 +343,7 @@ fn resolve_default_model_spec(config: &ProvidersConfig) -> Option<ModelSpec> {
         ("anthropic", &config.anthropic),
         ("openai", &config.openai),
         ("ollama", &config.ollama),
+        ("poe", &config.poe),
     ];
 
     // Prefer explicit default provider
@@ -395,6 +396,7 @@ fn resolve_default_provider_and_model(
         ("anthropic", &config.anthropic),
         ("openai", &config.openai),
         ("ollama", &config.ollama),
+        ("poe", &config.poe),
     ];
 
     if let Some((provider_id, provider)) = candidates
@@ -420,6 +422,7 @@ fn env_var_for_key(key_type: &ApiKeyType) -> Option<&'static str> {
         ApiKeyType::OpenCodeZen => Some("OPENCODE_ZEN_API_KEY"),
         ApiKeyType::Anthropic => Some("ANTHROPIC_API_KEY"),
         ApiKeyType::OpenAI => Some("OPENAI_API_KEY"),
+        ApiKeyType::Poe => Some("POE_API_KEY"),
         ApiKeyType::Custom(_) => None,
     }
 }
@@ -828,12 +831,8 @@ pub async fn store_api_key(
 
     // Update environment variable immediately
     if let Some(env_key) = env_var_for_key(&key_type_enum) {
-        let masked = if api_key.len() > 8 {
-            format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
-        } else {
-            "[REDACTED]".to_string()
-        };
-        tracing::info!("Setting environment variable {} = {}", env_key, masked);
+        // Never log secrets (even masked) to avoid accidental disclosure.
+        tracing::info!("Setting environment variable {}", env_key);
         state.sidecar.set_env(env_key, &api_key).await;
     }
 
@@ -981,6 +980,7 @@ pub fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
         let opencode_zen_key = ApiKeyType::OpenCodeZen.to_key_name();
         let anthropic_key = ApiKeyType::Anthropic.to_key_name();
         let openai_key = ApiKeyType::OpenAI.to_key_name();
+        let poe_key = ApiKeyType::Poe.to_key_name();
 
         tracing::info!("[populate_provider_keys] Checking for keys:");
         tracing::info!(
@@ -1003,11 +1003,13 @@ pub fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
             openai_key,
             keystore.has(&openai_key)
         );
+        tracing::info!("  Poe key '{}': {}", poe_key, keystore.has(&poe_key));
 
         config.openrouter.has_key = keystore.has(&openrouter_key);
         config.opencode_zen.has_key = keystore.has(&opencode_zen_key);
         config.anthropic.has_key = keystore.has(&anthropic_key);
         config.openai.has_key = keystore.has(&openai_key);
+        config.poe.has_key = keystore.has(&poe_key);
         // For local models, we might consider them "having a key" or check connection
         config.ollama.has_key = true; // Local inference is always 'authed'
     } else {
@@ -1018,6 +1020,7 @@ pub fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
         config.opencode_zen.has_key = false;
         config.anthropic.has_key = false;
         config.openai.has_key = false;
+        config.poe.has_key = false;
         config.ollama.has_key = true; // Local is fine
     }
 }
@@ -1077,6 +1080,17 @@ async fn sync_provider_keys_env(app: &AppHandle, state: &AppState, config: &Prov
     } else {
         state.sidecar.remove_env("OPENAI_API_KEY").await;
     }
+
+    // Poe
+    if config.poe.enabled {
+        if let Ok(Some(key)) = get_api_key(app, "poe").await {
+            state.sidecar.set_env("POE_API_KEY", &key).await;
+        } else {
+            state.sidecar.remove_env("POE_API_KEY").await;
+        }
+    } else {
+        state.sidecar.remove_env("POE_API_KEY").await;
+    }
 }
 
 /// Set the providers configuration
@@ -1113,7 +1127,8 @@ pub async fn set_providers_config(
     let key_providers_changed = previous_config.openrouter.enabled != config.openrouter.enabled
         || previous_config.opencode_zen.enabled != config.opencode_zen.enabled
         || previous_config.anthropic.enabled != config.anthropic.enabled
-        || previous_config.openai.enabled != config.openai.enabled;
+        || previous_config.openai.enabled != config.openai.enabled
+        || previous_config.poe.enabled != config.poe.enabled;
 
     if ollama_changed || key_providers_changed {
         sync_ollama_env(&state, &config).await;
