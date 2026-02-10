@@ -15,7 +15,6 @@ import {
   Info,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { ProviderCard } from "./ProviderCard";
 import { ThemePicker } from "./ThemePicker";
 import { Button } from "@/components/ui/Button";
@@ -28,7 +27,9 @@ import { MemoryStats } from "./MemoryStats";
 import { useUpdater } from "@/hooks/useUpdater";
 import {
   applyCustomBackground,
+  getCustomBackgroundAssetUrl,
   mirrorCustomBackgroundToLocalStorage,
+  tryReadCustomBackgroundDataUrl,
 } from "@/lib/customBackground";
 import {
   clearCustomBackgroundImage,
@@ -96,7 +97,9 @@ export function Settings({
   const [customBg, setCustomBg] = useState<CustomBackgroundInfo | null>(null);
   const [customBgLoading, setCustomBgLoading] = useState(false);
   const [customBgError, setCustomBgError] = useState<string | null>(null);
+  const [customBgPreviewSrc, setCustomBgPreviewSrc] = useState<string | null>(null);
   const bgSaveTimerRef = useRef<number | null>(null);
+  const bgPreviewFallbackRanRef = useRef(false);
 
   // Custom provider state
   const [customEndpoint, setCustomEndpoint] = useState("");
@@ -143,6 +146,13 @@ export function Settings({
       setCustomBgLoading(false);
     }
   }
+
+  // Preview: try asset URL first; fall back to a data URL if the asset protocol fails.
+  useEffect(() => {
+    bgPreviewFallbackRanRef.current = false;
+    const asset = getCustomBackgroundAssetUrl(customBg ?? undefined);
+    setCustomBgPreviewSrc(asset);
+  }, [customBg]);
 
   useEffect(() => {
     if (!initialSection) return;
@@ -829,9 +839,16 @@ export function Settings({
                   <div className="mt-2 aspect-video overflow-hidden rounded-md border border-border bg-surface">
                     {customBg?.file_path ? (
                       <img
-                        src={convertFileSrc(customBg.file_path)}
+                        src={customBgPreviewSrc ?? undefined}
                         alt="Custom background preview"
                         className="h-full w-full object-cover"
+                        onError={async () => {
+                          if (bgPreviewFallbackRanRef.current) return;
+                          bgPreviewFallbackRanRef.current = true;
+                          if (!customBg?.file_path) return;
+                          const dataUrl = await tryReadCustomBackgroundDataUrl(customBg.file_path);
+                          if (dataUrl) setCustomBgPreviewSrc(dataUrl);
+                        }}
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-xs text-text-subtle">

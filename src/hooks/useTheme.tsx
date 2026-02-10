@@ -4,8 +4,11 @@ import { DEFAULT_THEME_ID, THEMES, cycleThemeId, getThemeById } from "@/lib/them
 import { getCustomBackground, getUserTheme, setUserTheme } from "@/lib/tauri";
 import {
   applyCustomBackground,
+  applyCustomBackgroundUrl,
+  getCustomBackgroundAssetUrl,
   mirrorCustomBackgroundToLocalStorage,
   CUSTOM_BG_STORAGE_KEY,
+  tryReadCustomBackgroundDataUrl,
 } from "@/lib/customBackground";
 
 const THEME_STORAGE_KEY = "tandem.themeId";
@@ -28,6 +31,30 @@ function applyCssVars(theme: ThemeDefinition) {
     root.style.setProperty(name, value);
   }
   root.dataset.theme = theme.id;
+}
+
+function preloadImage(src: string, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const img = new Image();
+
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+
+    const t = window.setTimeout(() => done(false), timeoutMs);
+    img.onload = () => {
+      window.clearTimeout(t);
+      done(true);
+    };
+    img.onerror = () => {
+      window.clearTimeout(t);
+      done(false);
+    };
+    img.src = src;
+  });
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -76,6 +103,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         applyCustomBackground(info);
         mirrorCustomBackgroundToLocalStorage(info);
+
+        // Fallback: in some packaged builds, `asset:` URLs can fail to load even when the file exists.
+        // If the asset URL doesn't load quickly, replace it with a data URL read from disk.
+        const assetUrl = getCustomBackgroundAssetUrl(info);
+        if (info?.settings?.enabled && info.file_path && assetUrl) {
+          const ok = await preloadImage(assetUrl, 1200);
+          if (!ok) {
+            const dataUrl = await tryReadCustomBackgroundDataUrl(info.file_path);
+            if (dataUrl && !cancelled) {
+              applyCustomBackgroundUrl(info.settings, dataUrl);
+            }
+          }
+        }
       } catch {
         if (cancelled) return;
         applyCustomBackground(null);

@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { CustomBackgroundFit, CustomBackgroundInfo } from "@/lib/tauri";
 
 export const CUSTOM_BG_STORAGE_KEY = "tandem.customBackground";
+export const CUSTOM_BG_MAX_BYTES = 20 * 1024 * 1024;
 
 export type CustomBackgroundMirror = {
   enabled: boolean;
@@ -9,6 +10,12 @@ export type CustomBackgroundMirror = {
   fit: CustomBackgroundFit;
   filePath: string | null;
 };
+
+function normalizeNativePath(p: string): string {
+  // Tauri and browsers typically tolerate Windows paths, but normalizing avoids edge cases
+  // across platforms and protocol handlers.
+  return p.replace(/\\/g, "/");
+}
 
 function fitToCss(fit: CustomBackgroundFit): {
   size: string;
@@ -26,6 +33,39 @@ function fitToCss(fit: CustomBackgroundFit): {
   }
 }
 
+export function mimeFromPath(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "application/octet-stream";
+}
+
+export function getCustomBackgroundAssetUrl(
+  info: CustomBackgroundInfo | null | undefined
+): string | null {
+  if (!info?.settings?.enabled || !info.file_path) return null;
+  try {
+    return convertFileSrc(normalizeNativePath(info.file_path));
+  } catch {
+    return null;
+  }
+}
+
+export function applyCustomBackgroundUrl(
+  settings: { opacity?: number; fit: CustomBackgroundFit },
+  srcUrl: string
+) {
+  const root = document.documentElement;
+  const css = fitToCss(settings.fit);
+
+  root.style.setProperty("--custom-bg-image", `url("${srcUrl}")`);
+  root.style.setProperty("--custom-bg-opacity", String(settings.opacity ?? 0));
+  root.style.setProperty("--custom-bg-size", css.size);
+  root.style.setProperty("--custom-bg-position", css.position);
+  root.style.setProperty("--custom-bg-repeat", css.repeat);
+}
+
 export function applyCustomBackground(info: CustomBackgroundInfo | null | undefined) {
   const root = document.documentElement;
 
@@ -36,23 +76,15 @@ export function applyCustomBackground(info: CustomBackgroundInfo | null | undefi
   }
 
   const { opacity, fit } = info.settings;
-  const css = fitToCss(fit);
-
-  let src = "";
-  try {
-    src = convertFileSrc(info.file_path);
-  } catch {
+  const src = getCustomBackgroundAssetUrl(info);
+  if (!src) {
     // If convertFileSrc isn't available (e.g. web dev), skip.
     root.style.setProperty("--custom-bg-image", "none");
     root.style.setProperty("--custom-bg-opacity", "0");
     return;
   }
 
-  root.style.setProperty("--custom-bg-image", `url("${src}")`);
-  root.style.setProperty("--custom-bg-opacity", String(opacity ?? 0));
-  root.style.setProperty("--custom-bg-size", css.size);
-  root.style.setProperty("--custom-bg-position", css.position);
-  root.style.setProperty("--custom-bg-repeat", css.repeat);
+  applyCustomBackgroundUrl({ opacity, fit }, src);
 }
 
 export function mirrorCustomBackgroundToLocalStorage(
@@ -97,4 +129,17 @@ export function applyCustomBackgroundFromMirror(mirror: CustomBackgroundMirror |
     },
     file_path: mirror.filePath,
   });
+}
+
+export async function tryReadCustomBackgroundDataUrl(filePath: string): Promise<string | null> {
+  // Only used as a fallback when asset protocol URLs fail to load (observed in some packaged builds).
+  // We avoid mirroring this into localStorage because it can be very large.
+  try {
+    const { readBinaryFile } = await import("./tauri");
+    const base64 = await readBinaryFile(filePath, CUSTOM_BG_MAX_BYTES);
+    const mime = mimeFromPath(filePath);
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return null;
+  }
 }
