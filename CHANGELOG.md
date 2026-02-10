@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.12] - Unreleased
+## [0.2.13] - Unreleased
+
+### Added
+
+- **Skill Templates: New Starter Skills**: Add two new bundled starter skills: `brainstorming` and `development-estimation`.
+- **Skill Templates: Runtime Pills**: Starter skill cards now show optional runtime hints (e.g. Python/Node/Bash) via `requires: [...]` YAML frontmatter.
+- **Skills UI: Installed Skill Discoverability**: Add clearer install/manage UX (runtime note, counts for folder vs global installs, and a jump-to-installed action).
+
+### Fixed
+
+- **Dev Skill Template Discovery**: In `tauri dev`, load starter skill templates from `src-tauri/resources/skill-templates/` so newly added templates appear immediately (avoids stale `target/**/resources/**` copies).
+- **Logs Viewer UX**: Improve log viewer usability (fullscreen mode, and copy feedback).
+- **Skill Template Parsing**: Fix invalid bundled skill template frontmatter (missing `name`) so it is not skipped.
+
+### Changed
+
+- **Packs UI**: Show packs only (remove starter skills section) and move the runtime note to the top of the Packs page.
+- **Docs**: Expand contributor documentation with a developer guide for adding skills.
+
+## [0.2.12] - 2026-02-09
 
 ### Fixed
 
@@ -384,7 +403,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.11...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.13...HEAD
+[0.2.13]: https://github.com/frumu-ai/tandem/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/frumu-ai/tandem/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/frumu-ai/tandem/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/frumu-ai/tandem/compare/v0.2.9...v0.2.10

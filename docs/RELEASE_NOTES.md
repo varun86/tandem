@@ -1,3 +1,16 @@
+# Tandem v0.2.13 Release Notes
+
+## Highlights
+
+- **New Starter Skills**: Add two new bundled starter skills: `brainstorming` and `development-estimation`.
+- **Runtime Requirement Pills**: Starter skill cards can show optional runtime hints (Python/Node/Bash) via `requires: [...]` YAML frontmatter.
+- **Skills UX Improvements**: Clearer install/manage experience (runtime note, installed-skill counts, and better discoverability of deletion).
+- **Packs Page Cleanup**: Packs page now shows packs only (no starter skills section) and surfaces the runtime note at the top.
+- **Diagnostics Polishing**: Logs viewer improvements (fullscreen + copy feedback) and fix invalid bundled skill template frontmatter so templates aren’t skipped.
+- **Dev Quality of Life**: In `tauri dev`, starter skill templates are loaded from `src-tauri/resources/skill-templates/` so newly added templates appear immediately.
+
+---
+
 # Tandem v0.2.12 Release Notes
 
 ## Highlights

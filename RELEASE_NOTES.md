@@ -2,7 +2,17 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.2.12 (Unreleased)
+## v0.2.13 (Unreleased)
+
+- Skills: Add two new bundled starter skills: `brainstorming` and `development-estimation`.
+- Skills: Show runtime requirement pills on starter skill cards via optional `requires: [...]` YAML frontmatter.
+- Skills: Improve Skills install/manage UX (runtime note, clearer installed-skill counts, and jump-to-installed).
+- Packs: Packs page now shows packs only (remove starter skills section) and moves the runtime note to the top.
+- Diagnostics: Improve Logs viewer UX (fullscreen + copy feedback); fix an invalid bundled skill template frontmatter that was being skipped.
+- Dev: In `tauri dev`, load starter skill templates from `src-tauri/resources/skill-templates/` so newly added templates appear immediately.
+- Docs: Add a developer guide for adding skills in `CONTRIBUTING.md`.
+
+## v0.2.12 (2026-02-09)
 
 - Orchestrator: Persist the selected provider/model on runs and prefer it when sending prompts, so runs don't start without an explicit model spec.
 - Orchestrator: Prevent empty plans from being treated as "Completed"; make Restart rerun completed plans and re-plan when needed.
