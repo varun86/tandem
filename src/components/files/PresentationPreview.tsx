@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
+  Maximize2,
+  Minimize2,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -18,9 +20,16 @@ import { save } from "@tauri-apps/plugin-dialog";
 interface PresentationPreviewProps {
   file: FileEntry;
   onClose: () => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
-export function PresentationPreview({ file, onClose }: PresentationPreviewProps) {
+export function PresentationPreview({
+  file,
+  onClose,
+  expanded,
+  onToggleExpand,
+}: PresentationPreviewProps) {
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -131,7 +140,9 @@ export function PresentationPreview({ file, onClose }: PresentationPreviewProps)
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center border-l border-border bg-background">
+      <div
+        className={`flex h-full items-center justify-center bg-background ${expanded ? "" : "border-l border-border"}`}
+      >
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
@@ -139,18 +150,31 @@ export function PresentationPreview({ file, onClose }: PresentationPreviewProps)
 
   if (error || !presentation) {
     return (
-      <div className="flex h-full flex-col border-l border-border bg-background">
+      <div
+        className={`flex h-full flex-col bg-background ${expanded ? "" : "border-l border-border"}`}
+      >
         <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
           <div className="flex items-center gap-3">
             <AlertCircle className="h-5 w-5 text-error" />
             <p className="text-sm font-medium text-text">Error Loading Presentation</p>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onToggleExpand}
+              className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+              title={expanded ? "Dock preview" : "Expand preview to full screen"}
+              disabled={!onToggleExpand}
+            >
+              {expanded ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+              title="Close preview"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
         <div className="flex h-full items-center justify-center p-8">
           <div className="text-center">
@@ -171,7 +195,7 @@ export function PresentationPreview({ file, onClose }: PresentationPreviewProps)
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
       transition={{ duration: 0.2 }}
-      className="flex h-full flex-col border-l border-border bg-background"
+      className={`flex h-full flex-col bg-background ${expanded ? "" : "border-l border-border"}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
@@ -186,6 +210,14 @@ export function PresentationPreview({ file, onClose }: PresentationPreviewProps)
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onToggleExpand}
+            className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
+            title={expanded ? "Dock preview" : "Expand preview to full screen"}
+            disabled={!onToggleExpand}
+          >
+            {expanded ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </button>
           <Button
             onClick={handleExport}
             disabled={isExporting}

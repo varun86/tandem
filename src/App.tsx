@@ -129,6 +129,7 @@ function App() {
   // File browser state
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "files">("sessions");
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
+  const [filePreviewDockEl, setFilePreviewDockEl] = useState<HTMLDivElement | null>(null);
   const [fileToAttach, setFileToAttach] = useState<FileAttachment | null>(null);
 
   // Project management state
@@ -1223,11 +1224,15 @@ function App() {
                     transition={{ duration: 0.3 }}
                     className="overflow-hidden"
                   >
-                    <FilePreview
-                      file={selectedFile}
-                      onClose={() => setSelectedFile(null)}
-                      onAddToChat={handleAddFileToChat}
-                    />
+                    <div ref={setFilePreviewDockEl} className="h-full" />
+                    {filePreviewDockEl && (
+                      <FilePreview
+                        file={selectedFile}
+                        dockEl={filePreviewDockEl}
+                        onClose={() => setSelectedFile(null)}
+                        onAddToChat={handleAddFileToChat}
+                      />
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

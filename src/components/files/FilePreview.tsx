@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
@@ -7,6 +8,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   X,
+  Maximize2,
+  Minimize2,
   FileText,
   FileCode,
   Image as ImageIcon,
@@ -27,10 +30,11 @@ import {
 } from "@/lib/tauri";
 import { PresentationPreview } from "./PresentationPreview";
 import { HtmlPreview } from "./HtmlPreview";
-// import { cn } from "@/lib/utils"; // Unused
+import { cn } from "@/lib/utils";
 
 interface FilePreviewProps {
   file: FileEntry;
+  dockEl: HTMLElement;
   onClose: () => void;
   onAddToChat?: (file: FileEntry) => void;
 }
@@ -150,7 +154,7 @@ function getLanguageFromExtension(ext: string | undefined): string {
   return map[ext.toLowerCase()] || ext.toLowerCase();
 }
 
-export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
+export function FilePreview({ file, dockEl, onClose, onAddToChat }: FilePreviewProps) {
   // Special case: route .tandem.ppt.json files to PresentationPreview
   const previewType = getPreviewType(file);
   const [content, setContent] = useState<string>("");
@@ -158,6 +162,22 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
   const [error, setError] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  // When switching files, default to the docked panel view (not fullscreen).
+  useEffect(() => {
+    setExpanded(false);
+  }, [file.path]);
+
+  // Escape exits fullscreen (matches Logs drawer behavior expectations).
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
 
   // Helper to get MIME type from extension
   const getMimeType = (ext: string): string => {
@@ -251,10 +271,6 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
 
     loadContent();
   }, [file.path, previewType]);
-
-  if (previewType === "presentation") {
-    return <PresentationPreview file={file} onClose={onClose} />;
-  }
 
   const renderPreview = () => {
     if (isLoading) {
@@ -412,58 +428,87 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
 
   const Icon = getIcon();
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 20 }}
-      transition={{ duration: 0.2 }}
-      className="flex h-full flex-col border-l border-border bg-background"
+  const panel = (
+    <div
+      className={cn(
+        // If we're fullscreen, escape any parent layout/transforms by pinning to the viewport.
+        expanded ? "fixed inset-0 z-50 bg-background shadow-xl" : "h-full",
+        // Docked mode visually matches the rest of the app layout.
+        expanded || previewType === "presentation" ? "" : "border-l border-border"
+      )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <Icon className="h-5 w-5 flex-shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-text truncate">{file.name}</p>
-            <p className="text-xs text-text-muted truncate">{file.path}</p>
+      {previewType === "presentation" ? (
+        <PresentationPreview
+          file={file}
+          onClose={onClose}
+          expanded={expanded}
+          onToggleExpand={() => setExpanded((e) => !e)}
+        />
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.2 }}
+          className="flex h-full flex-col bg-background"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <Icon className="h-5 w-5 flex-shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text truncate">{file.name}</p>
+                <p className="text-xs text-text-muted truncate">{file.path}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setExpanded((e) => !e)}
+                className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                title={expanded ? "Dock preview" : "Expand preview to full screen"}
+              >
+                {expanded ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+              </button>
+              {previewType === "html" && (
+                <button
+                  onClick={() => openPath(file.path)}
+                  className="flex items-center gap-2 rounded-lg bg-surface-elevated px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-surface-elevated/80 border border-border"
+                  title="Open in default browser"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  <span>Open in Browser</span>
+                </button>
+              )}
+              {onAddToChat && (
+                <button
+                  onClick={() => onAddToChat(file)}
+                  className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+                  title="Add to chat context"
+                >
+                  <MessageSquarePlus className="h-4 w-4" />
+                  <span>Add to Chat</span>
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                title="Close preview"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {previewType === "html" && (
-            <button
-              onClick={() => openPath(file.path)}
-              className="flex items-center gap-2 rounded-lg bg-surface-elevated px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-surface-elevated/80 border border-border"
-              title="Open in default browser"
-            >
-              <ExternalLink className="h-4 w-4" />
-              <span>Open in Browser</span>
-            </button>
-          )}
-          {onAddToChat && (
-            <button
-              onClick={() => onAddToChat(file)}
-              className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary/90"
-              title="Add to chat context"
-            >
-              <MessageSquarePlus className="h-4 w-4" />
-              <span>Add to Chat</span>
-            </button>
-          )}
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
-            title="Close preview"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden">{renderPreview()}</div>
-    </motion.div>
+          {/* Content */}
+          <div className="flex-1 overflow-hidden">{renderPreview()}</div>
+        </motion.div>
+      )}
+    </div>
   );
+
+  // Always render via portal so fullscreen mode is truly viewport-relative (not clipped by parent layout/transforms).
+  const target = expanded ? document.body : dockEl;
+  return createPortal(panel, target);
 }
 
 function formatFileSize(bytes: number): string {
