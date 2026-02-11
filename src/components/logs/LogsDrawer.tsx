@@ -11,9 +11,9 @@ import {
   X,
   Maximize2,
   Minimize2,
+  Copy,
 } from "lucide-react";
 import { ConsoleTab } from "./ConsoleTab";
-import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import {
   listAppLogFiles,
@@ -608,9 +608,19 @@ export function LogsDrawer({
           </div>
         </div>
 
-        {tab === "console" ? (
+        {/* Console Tab - always mounted, visibility toggled via CSS */}
+        <div
+          style={{ display: tab === "console" ? "flex" : "none" }}
+          className="min-h-0 flex-1 flex-col"
+        >
           <ConsoleTab sessionId={sessionId} />
-        ) : (
+        </div>
+
+        {/* Tandem Logs Tab - always mounted, visibility toggled via CSS */}
+        <div
+          style={{ display: tab === "tandem" ? "flex" : "none" }}
+          className="min-h-0 flex-1 flex-col"
+        >
           <div className="flex min-h-0 flex-1 flex-col">
             {/* List */}
             <div ref={listContainerRef} className="relative min-h-0 flex-1 overflow-hidden">
@@ -649,6 +659,7 @@ export function LogsDrawer({
                 <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2">
                   <button
                     type="button"
+                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-primary/40 bg-surface-elevated/95 px-3 py-1.5 text-xs font-medium text-primary shadow-lg shadow-black/25 transition hover:border-primary/70 hover:bg-surface-elevated"
                     onClick={() => {
                       setFollow(true);
                       listApi?.scrollToRow({
@@ -657,10 +668,9 @@ export function LogsDrawer({
                         behavior: "instant",
                       });
                     }}
-                    className="pointer-events-auto rounded-full border border-border bg-surface-elevated/90 px-3 py-1 text-[10px] text-text-subtle shadow-lg shadow-black/30 backdrop-blur-sm hover:text-text"
-                    title="Jump to bottom and resume following"
                   >
-                    Jump to bottom to follow
+                    <ScrollText className="h-3 w-3" />
+                    Jump to latest
                   </button>
                 </div>
               )}
@@ -674,43 +684,50 @@ export function LogsDrawer({
               )}
             </div>
 
-            {/* Footer */}
-            <div className="border-t border-border px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-xs text-text-subtle">
-                  Tip: scroll up to pause following; use &quot;Jump to bottom to follow&quot; to
-                  resume.
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      selectedLine ? copyText(selectedLine.raw, "Copied line") : undefined
-                    }
-                    className="h-8 px-3 text-xs"
-                    disabled={!selectedLine}
-                    title={selectedLine ? "Copy selected line" : "Click a line above to select it"}
-                  >
-                    Copy
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mt-2 rounded-lg border border-border bg-surface-elevated px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-text-subtle">
-                  {selectedLine
-                    ? "Selected line (full text)"
-                    : "Click a line to preview/copy full text"}
-                </div>
-                <div className="mt-2 rounded-md border border-border bg-surface px-2 py-2">
-                  <div className="max-h-28 overflow-auto whitespace-pre font-mono text-[12px] leading-relaxed text-text pb-2">
-                    {selectedLine?.raw?.replace(/\r?\n$/, "") ?? ""}
+            {/* Selected line preview */}
+            {selectedLine && (
+              <div className="flex flex-col border-t border-border bg-surface">
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-xs text-text-subtle">Selected Line</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        globalThis.navigator?.clipboard?.writeText(selectedLine.raw).then(() => {
+                          setToastMsg("Copied to clipboard");
+                          if (toastTimerRef.current) {
+                            globalThis.clearTimeout(toastTimerRef.current);
+                          }
+                          toastTimerRef.current = globalThis.setTimeout(() => {
+                            setToastMsg(null);
+                            toastTimerRef.current = null;
+                          }, 2000);
+                        });
+                      }}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-subtle transition hover:bg-surface-elevated hover:text-text"
+                    >
+                      <Copy className="h-3 w-3" />
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLine(null)}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-subtle transition hover:bg-surface-elevated hover:text-text"
+                    >
+                      <X className="h-3 w-3" />
+                      Close
+                    </button>
                   </div>
                 </div>
+                <div className="max-h-40 overflow-auto border-t border-border bg-background px-3 py-2">
+                  <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-text-muted">
+                    {selectedLine.raw}
+                  </pre>
+                </div>
               </div>
-            </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

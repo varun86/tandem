@@ -254,6 +254,10 @@ label[for],
   padding: 0;
 }
 
+.code-block-shell {
+  min-height: 0;
+}
+
 .prose-custom ul,
 .prose-custom ol {
   padding-left: 1.5em;

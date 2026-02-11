@@ -19,15 +19,204 @@ import {
   X,
   ExternalLink,
   ChevronDown,
+  ChevronUp,
   Brain,
 } from "lucide-react";
-import React, { useState, ReactNode } from "react";
+import React, {
+  startTransition,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 export interface MessageAttachment {
   name: string;
   type: "image" | "file";
   preview?: string;
 }
+
+const MAX_CODE_LINES = 25;
+const NEAR_VIEWPORT_ROOT_MARGIN = "900px 0px";
+const codeHighlightReadyCache = new Set<string>();
+const codeExpandedCache = new Set<string>();
+
+function stableStringHash(input: string): string {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 33) ^ input.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function requestIdle(work: () => void): () => void {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const id = globalThis.requestIdleCallback(() => work(), { timeout: 300 });
+    return () => {
+      if (typeof globalThis.cancelIdleCallback === "function") {
+        globalThis.cancelIdleCallback(id);
+      }
+    };
+  }
+  const timeout = globalThis.setTimeout(work, 32);
+  return () => globalThis.clearTimeout(timeout);
+}
+
+function useNearViewport(
+  ref: React.RefObject<unknown>,
+  options?: { rootMargin?: string }
+): boolean {
+  const [isNear, setIsNear] = useState(false);
+
+  useEffect(() => {
+    const target = ref.current;
+    if (!target) return;
+
+    const observer = new globalThis.IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        if (entry.isIntersecting) {
+          setIsNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: options?.rootMargin ?? "0px" }
+    );
+
+    (observer.observe as (node: unknown) => void)(target);
+    return () => observer.disconnect();
+  }, [options?.rootMargin, ref]);
+
+  return isNear;
+}
+
+const CollapsibleCodeBlock = ({
+  language,
+  children,
+  renderMode,
+  ...props
+}: {
+  language: string;
+  children: React.ReactNode;
+  renderMode: "full" | "streaming-lite";
+  [key: string]: unknown;
+}) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const codeString = String(children).replace(/\n$/, "");
+  const codeLines = useMemo(() => codeString.split("\n"), [codeString]);
+  const lineCount = codeLines.length;
+  const isLong = lineCount > MAX_CODE_LINES;
+  const codeHash = useMemo(() => stableStringHash(codeString), [codeString]);
+  const cacheKey = useMemo(() => `${language}:${codeHash}`, [codeHash, language]);
+  const [isExpanded, setIsExpanded] = useState(() => codeExpandedCache.has(cacheKey));
+  const nearViewport = useNearViewport(containerRef, {
+    rootMargin: NEAR_VIEWPORT_ROOT_MARGIN,
+  });
+  const shouldDeferDuringStreaming = renderMode === "streaming-lite" && !isExpanded;
+  const [isHighlightReady, setIsHighlightReady] = useState(
+    () =>
+      codeHighlightReadyCache.has(cacheKey) ||
+      codeExpandedCache.has(cacheKey) ||
+      (!isLong && !shouldDeferDuringStreaming)
+  );
+  const showCollapsedPreview = isLong && !isExpanded;
+  const highlightReady = !showCollapsedPreview && (!shouldDeferDuringStreaming || isHighlightReady);
+
+  useEffect(() => {
+    if (shouldDeferDuringStreaming && nearViewport && !isHighlightReady) {
+      return requestIdle(() => {
+        startTransition(() => {
+          codeHighlightReadyCache.add(cacheKey);
+          setIsHighlightReady(true);
+        });
+      });
+    }
+  }, [cacheKey, isHighlightReady, nearViewport, shouldDeferDuringStreaming]);
+
+  useEffect(() => {
+    if (isExpanded) {
+      codeExpandedCache.add(cacheKey);
+      codeHighlightReadyCache.add(cacheKey);
+    } else {
+      codeExpandedCache.delete(cacheKey);
+    }
+  }, [cacheKey, isExpanded]);
+
+  const previewCode = useMemo(() => {
+    if (isExpanded || !isLong) return codeString;
+    return codeLines.slice(0, MAX_CODE_LINES).join("\n");
+  }, [codeLines, codeString, isExpanded, isLong]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="group overflow-hidden rounded-lg border border-white/10 bg-surface/60 code-block-shell"
+    >
+      <div className="flex items-center justify-between border-b border-white/10 bg-surface-elevated/70 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-error/80" />
+          <span className="h-2 w-2 rounded-full bg-warning/80" />
+          <span className="h-2 w-2 rounded-full bg-success/80" />
+          <span className="ml-2 text-[0.65rem] uppercase tracking-widest text-text-subtle terminal-text">
+            {language || "text"}
+          </span>
+        </div>
+      </div>
+
+      <div className={cn("relative", !isExpanded && isLong && "max-h-[320px] overflow-hidden")}>
+        {highlightReady ? (
+          <SyntaxHighlighter
+            style={oneDark}
+            language={language}
+            PreTag="div"
+            customStyle={{ margin: 0, background: "transparent", padding: "1rem" }}
+            {...props}
+          >
+            {codeString}
+          </SyntaxHighlighter>
+        ) : (
+          <pre className="m-0 overflow-auto p-4 font-mono text-xs leading-relaxed text-text">
+            <code>{previewCode}</code>
+          </pre>
+        )}
+
+        {!isExpanded && isLong && (
+          <div className="absolute inset-x-0 bottom-0 flex items-end justify-center bg-gradient-to-t from-surface-elevated via-surface-elevated/90 to-transparent pb-4 pt-16">
+            <button
+              onClick={() => {
+                setIsExpanded(true);
+                codeExpandedCache.add(cacheKey);
+                codeHighlightReadyCache.add(cacheKey);
+                setIsHighlightReady(true);
+              }}
+              className="flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-4 py-1.5 text-xs font-medium text-primary shadow-lg shadow-black/20 transition-all hover:border-primary/40 hover:bg-primary/20 backdrop-blur-sm"
+            >
+              Show {lineCount - MAX_CODE_LINES} more lines
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isExpanded && isLong && (
+        <div className="flex justify-center border-t border-white/5 bg-surface-elevated/30 py-2">
+          <button
+            onClick={() => {
+              setIsExpanded(false);
+              codeExpandedCache.delete(cacheKey);
+            }}
+            className="flex items-center gap-2 rounded px-3 py-1 text-xs text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+          >
+            Collapse
+            <ChevronUp className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export interface MessageProps {
   id: string;
@@ -51,6 +240,8 @@ export interface MessageProps {
     chunks_total: number;
     latency_ms: number;
   } | null;
+  renderMode?: "full" | "streaming-lite";
+  disableMountAnimation?: boolean;
 }
 
 export interface ToolCall {
@@ -153,6 +344,8 @@ function MessageComponent({
   onOpenQuestionToolCall,
   isQuestionToolCallPending,
   memoryRetrieval,
+  renderMode = "full",
+  disableMountAnimation = false,
 }: MessageProps) {
   const isUser = role === "user";
   const isSystem = role === "system";
@@ -164,7 +357,11 @@ function MessageComponent({
   // Memoize markdown components to prevent re-creation on every render
   const markdownComponents = React.useMemo(
     () => ({
-      a({ href, children, ...props }: any) {
+      a({
+        href,
+        children,
+        ...props
+      }: React.ComponentPropsWithoutRef<"a"> & { children?: ReactNode }) {
         // Treat markdown links to local files as "open in file browser"
         // instead of navigating the SPA (which refreshes the app).
         if (href && FILE_PATH_EXACT.test(href)) {
@@ -195,28 +392,22 @@ function MessageComponent({
           </a>
         );
       },
-      code({ className, children, inline, ...props }: any) {
+      code({
+        className,
+        children,
+        inline,
+        ...props
+      }: {
+        className?: string;
+        children?: ReactNode;
+        inline?: boolean;
+      } & React.HTMLAttributes<HTMLElement>) {
         const match = /language-(\w+)/.exec(className || "");
         if (match) {
           return (
-            <div className="overflow-hidden rounded-lg border border-white/10 bg-surface/60">
-              <div className="flex items-center gap-2 border-b border-white/10 bg-surface-elevated/70 px-3 py-2">
-                <span className="h-2 w-2 rounded-full bg-error/80" />
-                <span className="h-2 w-2 rounded-full bg-warning/80" />
-                <span className="h-2 w-2 rounded-full bg-success/80" />
-                <span className="ml-2 text-[0.65rem] uppercase tracking-widest text-text-subtle terminal-text">
-                  code
-                </span>
-              </div>
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{ margin: 0, background: "transparent", padding: "1rem" }}
-              >
-                {String(children).replace(/\n$/, "")}
-              </SyntaxHighlighter>
-            </div>
+            <CollapsibleCodeBlock language={match[1]} renderMode={renderMode} {...props}>
+              {children}
+            </CollapsibleCodeBlock>
           );
         }
         const inlineText = String(children).trim();
@@ -241,7 +432,7 @@ function MessageComponent({
         );
       },
       // Custom paragraph renderer to parse file paths in text
-      p: ({ children }: any) => (
+      p: ({ children }: { children?: ReactNode }) => (
         <p>
           {React.Children.map(children, (child, index) =>
             typeof child === "string" ? (
@@ -253,7 +444,7 @@ function MessageComponent({
         </p>
       ),
       // Custom list item renderer to parse file paths
-      li: ({ children }: any) => (
+      li: ({ children }: { children?: ReactNode }) => (
         <li>
           {React.Children.map(children, (child, index) =>
             typeof child === "string" ? (
@@ -265,7 +456,7 @@ function MessageComponent({
         </li>
       ),
     }),
-    [onFileOpen]
+    [onFileOpen, renderMode]
   );
 
   const handleCopy = () => {
@@ -286,20 +477,20 @@ function MessageComponent({
     setIsEditing(false);
   };
 
-  return (
-    <motion.div
-      className={cn(
-        "flex gap-4 px-4 py-8 relative group",
-        isUser
-          ? "bg-transparent border-l-2 border-primary/70"
-          : "glass border-glass shadow-lg shadow-black/20 ring-1 ring-white/5"
-      )}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.15 }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
+  const containerClassName = cn(
+    "flex gap-4 px-4 py-8 relative group",
+    isUser
+      ? "bg-transparent border-l-2 border-primary/70"
+      : "glass border-glass shadow-lg shadow-black/20 ring-1 ring-white/5"
+  );
+
+  const containerHandlers = {
+    onMouseEnter: () => setIsHovered(true),
+    onMouseLeave: () => setIsHovered(false),
+  };
+
+  const messageBody = (
+    <>
       {/* Avatar */}
       {isUser ? (
         <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
@@ -495,6 +686,22 @@ function MessageComponent({
             </div>
           ))}
       </div>
+    </>
+  );
+
+  return disableMountAnimation ? (
+    <div className={containerClassName} {...containerHandlers}>
+      {messageBody}
+    </div>
+  ) : (
+    <motion.div
+      className={containerClassName}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.15 }}
+      {...containerHandlers}
+    >
+      {messageBody}
     </motion.div>
   );
 }
@@ -513,25 +720,36 @@ const CollapsedToolCalls = React.memo(function CollapsedToolCalls({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const runningCount = toolCalls.filter((t) => t.status === "running").length;
-  const completedCount = toolCalls.filter((t) => t.status === "completed").length;
-  const pendingCount = toolCalls.filter((t) => t.status === "pending").length;
-
-  // Group by tool type for summary
-  const toolGroups = toolCalls.reduce(
-    (acc, tool) => {
-      const name = tool.tool.replace(/^(read_file|write_file|read|write)$/, (m) =>
-        m.includes("read") ? "read" : "write"
-      );
-      acc[name] = (acc[name] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>
+  const runningCount = useMemo(
+    () => toolCalls.filter((t) => t.status === "running").length,
+    [toolCalls]
+  );
+  const completedCount = useMemo(
+    () => toolCalls.filter((t) => t.status === "completed").length,
+    [toolCalls]
+  );
+  const pendingCount = useMemo(
+    () => toolCalls.filter((t) => t.status === "pending").length,
+    [toolCalls]
   );
 
-  const summary = Object.entries(toolGroups)
-    .map(([name, count]) => `${count} ${name}`)
-    .join(", ");
+  // Group by tool type for summary
+  const summary = useMemo(() => {
+    const toolGroups = toolCalls.reduce(
+      (acc, tool) => {
+        const name = tool.tool.replace(/^(read_file|write_file|read|write)$/, (m) =>
+          m.includes("read") ? "read" : "write"
+        );
+        acc[name] = (acc[name] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    return Object.entries(toolGroups)
+      .map(([name, count]) => `${count} ${name}`)
+      .join(", ");
+  }, [toolCalls]);
 
   return (
     <motion.div
@@ -643,6 +861,11 @@ const ToolCallCard = React.memo(function ToolCallCard({
   };
 
   // Helper to summarizing args for specific tools
+  const serializedArgs = useMemo(
+    () => (args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : ""),
+    [args]
+  );
+
   const getArgsSummary = () => {
     if (!args) return null;
 
@@ -662,7 +885,7 @@ const ToolCallCard = React.memo(function ToolCallCard({
     }
 
     // Default: truncated JSON
-    const json = JSON.stringify(args, null, 2);
+    const json = serializedArgs;
     if (json.length > 100) {
       return <div className="text-xs text-text-subtle">{json.substring(0, 100)}...</div>;
     }
@@ -721,7 +944,7 @@ const ToolCallCard = React.memo(function ToolCallCard({
               <div className="mt-2 rounded bg-surface p-2 overflow-x-auto max-w-full">
                 <p className="mb-1 text-[10px] uppercase font-bold text-text-muted">Arguments</p>
                 <pre className="font-mono text-xs text-text-subtle whitespace-pre-wrap break-words">
-                  {JSON.stringify(args, null, 2)}
+                  {serializedArgs}
                 </pre>
               </div>
             )}

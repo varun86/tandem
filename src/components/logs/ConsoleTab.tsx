@@ -606,12 +606,6 @@ export function ConsoleTab({ sessionId }: ConsoleTabProps) {
     };
   }, [handleEvent]);
 
-  // Clear entries when session changes
-  useEffect(() => {
-    setEntries([]);
-    setApprovals(new Map());
-  }, [sessionId]);
-
   // -----------------------------------------------------------------------
   // Approval handlers
   // -----------------------------------------------------------------------

@@ -9,6 +9,9 @@ interface QuestionDialogProps {
   request: QuestionRequestEvent | null;
   onSubmit: (answers: string[][]) => void;
   onReject: () => void;
+  canViewPlan?: boolean;
+  onViewPlan?: () => void;
+  planLabel?: string;
 }
 
 type DraftAnswer = {
@@ -16,7 +19,14 @@ type DraftAnswer = {
   custom: string;
 };
 
-export function QuestionDialog({ request, onSubmit, onReject }: QuestionDialogProps) {
+export function QuestionDialog({
+  request,
+  onSubmit,
+  onReject,
+  canViewPlan = false,
+  onViewPlan,
+  planLabel,
+}: QuestionDialogProps) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [draftAnswers, setDraftAnswers] = useState<DraftAnswer[]>(() =>
     request ? request.questions.map(() => ({ selected: [], custom: "" })) : []
@@ -101,13 +111,13 @@ export function QuestionDialog({ request, onSubmit, onReject }: QuestionDialogPr
     <AnimatePresence>
       {request && currentQuestion && currentDraft && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
           <motion.div
-            className="mx-4 w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl"
+            className="mx-4 w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-xl"
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
@@ -124,6 +134,27 @@ export function QuestionDialog({ request, onSubmit, onReject }: QuestionDialogPr
                   </div>
                 </div>
                 <p className="text-sm text-text mb-4">{currentQuestion.question}</p>
+
+                {canViewPlan && (
+                  <div className="mb-4 rounded-lg border border-primary/30 bg-primary/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-primary">Plan available</div>
+                        <div className="truncate text-xs text-text-muted">
+                          {planLabel || "Open the latest plan for review"}
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        className="h-8 px-3 text-xs"
+                        onClick={onViewPlan}
+                        type="button"
+                      >
+                        View plan
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Options */}
                 <div className="space-y-2 mb-4">

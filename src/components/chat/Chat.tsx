@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { startTransition, useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Loader2,
   Settings as SettingsIcon,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -160,6 +161,7 @@ export function Chat({
   const [pendingQuestionRequests, setPendingQuestionRequests] = useState<QuestionRequestEvent[]>(
     []
   );
+  const [statusBanner, setStatusBanner] = useState<string | null>(null);
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isGitRepository, setIsGitRepository] = useState(false);
@@ -177,6 +179,7 @@ export function Chat({
       onPlanModeChange?.(agent === "plan");
     });
   const usePlanMode = selectedAgent === "plan";
+  const hasPendingQuestionOverlay = pendingQuestionRequests.length > 0;
   const setUsePlanMode = (enabled: boolean) => {
     onAgentChange(enabled ? "plan" : undefined);
   };
@@ -184,7 +187,9 @@ export function Chat({
   const messagesRef = useRef<MessageProps[]>([]);
   const currentAssistantMessageRef = useRef<string>("");
   const currentAssistantMessageIdRef = useRef<string | null>(null);
+  const assistantFlushFrameRef = useRef<number | null>(null);
   const generationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEventAtRef = useRef<number | null>(null);
   const prevPropSessionIdRef = useRef<string | null>(null);
   // Track the currently active session without causing re-renders (used by stream handlers).
@@ -384,12 +389,16 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
   // Auto-scroll to bottom smoothly (only when new messages arrive or generation ends)
   const previousMessageCountRef = useRef(0);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [followLatest, setFollowLatest] = useState(true);
+  const showJumpToLatest = messages.length > 0 && !isAtBottom;
 
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => messagesContainerRef.current,
-    estimateSize: () => 100,
-    overscan: 5,
+    estimateSize: () => 220,
+    overscan: 10,
+    getItemKey: (index) => messages[index]?.id ?? index,
   });
 
   // Helper function to scroll to bottom
@@ -406,31 +415,55 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     [messages.length, rowVirtualizer]
   );
 
-  // Scroll when message count increases (new message added)
+  // Track whether the user is near the bottom and whether auto-follow should remain enabled.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const BOTTOM_THRESHOLD_PX = 96;
+
+    const syncScrollState = () => {
+      const distanceFromBottom =
+        container.scrollHeight - (container.scrollTop + container.clientHeight);
+      const atBottom = distanceFromBottom <= BOTTOM_THRESHOLD_PX;
+      setIsAtBottom(atBottom);
+      if (atBottom) {
+        setFollowLatest(true);
+      } else {
+        setFollowLatest(false);
+      }
+    };
+
+    syncScrollState();
+    container.addEventListener("scroll", syncScrollState, { passive: true });
+    return () => container.removeEventListener("scroll", syncScrollState);
+  }, [messages.length]);
+
+  // Scroll when message count increases (new message added) and follow mode is enabled.
   useEffect(() => {
     const currentCount = messages.length;
 
-    if (currentCount > previousMessageCountRef.current) {
+    if (followLatest && currentCount > previousMessageCountRef.current) {
       scrollToBottom(false); // Instant scroll for new messages
     }
 
     previousMessageCountRef.current = currentCount;
-  }, [messages.length, scrollToBottom]);
+  }, [followLatest, messages.length, scrollToBottom]);
 
-  // Also scroll when generation stops (final message complete)
+  // Also scroll when generation stops (final message complete), if follow mode is enabled.
   useEffect(() => {
-    if (!isGenerating && messages.length > 0) {
+    if (!isGenerating && followLatest && messages.length > 0) {
       // Small delay to ensure content is rendered, then scroll
       setTimeout(() => scrollToBottom(false), 100);
     }
-  }, [isGenerating, messages.length, scrollToBottom]);
+  }, [followLatest, isGenerating, messages.length, scrollToBottom]);
 
-  // Scroll during active generation (streaming content)
+  // Scroll during active generation (streaming content) only when follow mode is enabled.
   useEffect(() => {
-    if (isGenerating && messages.length > 0) {
+    if (followLatest && isGenerating && messages.length > 0) {
       scrollToBottom(false); // Keep scrolling as content streams
     }
-  }, [messages, isGenerating, scrollToBottom]);
+  }, [followLatest, messages, isGenerating, scrollToBottom]);
 
   // Store callback in ref to avoid dependency issues
   const onSidecarConnectedRef = useRef(onSidecarConnected);
@@ -810,6 +843,83 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     messagesRef.current = messages;
   }, [messages]);
 
+  const applyAssistantContent = useCallback((contentToApply: string) => {
+    setMessages((prev) => {
+      const targetId = currentAssistantMessageIdRef.current;
+
+      if (targetId) {
+        const idx = prev.findIndex((m) => m.id === targetId);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], content: contentToApply };
+          return updated;
+        }
+      }
+
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage && lastMessage.role === "assistant") {
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...lastMessage,
+            id: targetId || lastMessage.id,
+            content: contentToApply,
+          },
+        ];
+      }
+
+      return [
+        ...prev,
+        {
+          id: targetId || crypto.randomUUID(),
+          role: "assistant",
+          content: contentToApply,
+          timestamp: new Date(),
+        },
+      ];
+    });
+  }, []);
+
+  const flushAssistantContent = useCallback(() => {
+    assistantFlushFrameRef.current = null;
+    const contentToApply = currentAssistantMessageRef.current;
+    startTransition(() => {
+      applyAssistantContent(contentToApply);
+    });
+  }, [applyAssistantContent]);
+
+  const scheduleAssistantFlush = useCallback(() => {
+    if (assistantFlushFrameRef.current !== null) return;
+    assistantFlushFrameRef.current = globalThis.requestAnimationFrame(flushAssistantContent);
+  }, [flushAssistantContent]);
+
+  useEffect(() => {
+    return () => {
+      if (assistantFlushFrameRef.current !== null) {
+        globalThis.cancelAnimationFrame(assistantFlushFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (statusBannerTimerRef.current) {
+        globalThis.clearTimeout(statusBannerTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showStatusBanner = useCallback((message: string) => {
+    setStatusBanner(message);
+    if (statusBannerTimerRef.current) {
+      globalThis.clearTimeout(statusBannerTimerRef.current);
+    }
+    statusBannerTimerRef.current = globalThis.setTimeout(() => {
+      setStatusBanner(null);
+      statusBannerTimerRef.current = null;
+    }, 2600);
+  }, []);
+
   const handleApprovePermission = async (id: string, _remember?: "once" | "session" | "always") => {
     try {
       const req = pendingPermissions.find((p) => p.id === id);
@@ -890,45 +1000,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
             // Replace with full content
             currentAssistantMessageRef.current = newContent;
           }
-          setMessages((prev) => {
-            const targetId = currentAssistantMessageIdRef.current;
-            const contentToApply = currentAssistantMessageRef.current;
-
-            // 1) If we have a stable OpenCode message id, prefer updating that message
-            if (targetId) {
-              const idx = prev.findIndex((m) => m.id === targetId);
-              if (idx >= 0) {
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], content: contentToApply };
-                return updated;
-              }
-            }
-
-            // 2) Otherwise, update the last assistant message if present
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.role === "assistant") {
-              return [
-                ...prev.slice(0, -1),
-                {
-                  ...lastMessage,
-                  id: targetId || lastMessage.id,
-                  content: contentToApply,
-                },
-              ];
-            }
-
-            // 3) If placeholder assistant message is missing (e.g., cleared by a session effect),
-            // append a new assistant message so content isn't lost.
-            return [
-              ...prev,
-              {
-                id: targetId || crypto.randomUUID(),
-                role: "assistant",
-                content: contentToApply,
-                timestamp: new Date(),
-              },
-            ];
-          });
+          scheduleAssistantFlush();
           break;
         }
 
@@ -1328,6 +1400,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
       usePlanMode,
       allowAllTools,
       handleApprovePermission,
+      scheduleAssistantFlush,
     ]
   );
 
@@ -1800,12 +1873,41 @@ ${g.example}
     const request = pendingQuestionRequests[0];
     if (!request) return;
 
+    const normalizedQuestionContext = request.questions
+      .map((q) => {
+        const labels = q.options.map((o) => o.label).join(" ");
+        return `${q.header} ${q.question} ${labels}`;
+      })
+      .join(" ")
+      .toLowerCase();
+    const normalizedAnswers = answers
+      .flat()
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean);
+    const isPlanProceedDecision =
+      normalizedQuestionContext.includes("plan") &&
+      (normalizedQuestionContext.includes("proceed") ||
+        normalizedQuestionContext.includes("saved") ||
+        normalizedQuestionContext.includes("read-only"));
+    const selectedImmediateExecution = normalizedAnswers.some((a) =>
+      /(enable code edits|implement|execute|apply changes|go ahead|proceed|do it now|immediate|coder)/.test(
+        a
+      )
+    );
+    const selectedManualPath = normalizedAnswers.some((a) =>
+      /(myself|manual|manually|i'll do it myself|i will do it myself)/.test(a)
+    );
+
     try {
       await replyQuestion(request.request_id, answers);
       handledQuestionRequestIdsRef.current.add(request.request_id);
       if (request.tool_call_id) pendingQuestionToolCallIdsRef.current.delete(request.tool_call_id);
       if (request.tool_message_id)
         pendingQuestionToolMessageIdsRef.current.delete(request.tool_message_id);
+      if (isPlanProceedDecision && selectedImmediateExecution && !selectedManualPath) {
+        setUsePlanMode(false);
+        showStatusBanner("Switched to Immediate mode for execution.");
+      }
       removeActiveQuestionRequest();
     } catch (err) {
       console.error("Failed to reply to question request:", err);
@@ -1830,10 +1932,28 @@ ${g.example}
     }
   };
 
+  useEffect(() => {
+    if (!usePlanMode || !activePlan || !hasPendingQuestionOverlay) return;
+    const currentQuestionText =
+      pendingQuestionRequests[0]?.questions?.[0]?.question?.toLowerCase() ?? "";
+    if (
+      currentQuestionText.includes("plan") &&
+      (currentQuestionText.includes("proceed") || currentQuestionText.includes("saved")) &&
+      !showPlanView
+    ) {
+      setShowPlanView(true);
+    }
+  }, [activePlan, hasPendingQuestionOverlay, pendingQuestionRequests, showPlanView, usePlanMode]);
+
   const needsConnection = sidecarStatus !== "running" && !isConnecting;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      {statusBanner && (
+        <div className="pointer-events-none absolute right-4 top-4 z-40 rounded-lg border border-success/40 bg-success/15 px-3 py-2 text-sm text-success shadow-lg">
+          {statusBanner}
+        </div>
+      )}
       {/* Header */}
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">
@@ -1947,7 +2067,7 @@ ${g.example}
           {/* Messages */}
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto overflow-x-hidden pb-48"
+            className="relative flex-1 overflow-y-auto overflow-x-hidden pb-48"
           >
             {isLoadingHistory ? (
               <motion.div
@@ -1985,7 +2105,11 @@ ${g.example}
                   const isLastMessage = virtualItem.index === messages.length - 1;
                   const isAssistant = message.role === "assistant";
                   const showActionButtons =
-                    usePlanMode && isLastMessage && isAssistant && !isGenerating;
+                    usePlanMode &&
+                    isLastMessage &&
+                    isAssistant &&
+                    !isGenerating &&
+                    !hasPendingQuestionOverlay;
 
                   // Use content length in key ONLY for streaming messages to force re-renders
                   const isActivelyStreaming = isGenerating && isLastMessage && isAssistant;
@@ -2006,6 +2130,8 @@ ${g.example}
                         key={message.id}
                         {...message}
                         isStreaming={isActivelyStreaming}
+                        renderMode={isActivelyStreaming ? "streaming-lite" : "full"}
+                        disableMountAnimation
                         onEdit={handleEdit}
                         onRewind={handleRewind}
                         onRegenerate={handleRegenerate}
@@ -2064,6 +2190,23 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {showJumpToLatest && (
+              <div className="pointer-events-none sticky bottom-28 z-20 flex justify-end px-5">
+                <button
+                  type="button"
+                  className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-primary/40 bg-surface-elevated/95 px-4 py-2 text-xs font-medium text-primary shadow-lg shadow-black/25 transition hover:border-primary/70 hover:bg-surface-elevated animate-pulse"
+                  onClick={() => {
+                    setFollowLatest(true);
+                    scrollToBottom(true);
+                  }}
+                  aria-label="Jump to latest message"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                  Jump to latest
+                </button>
               </div>
             )}
 
@@ -2235,6 +2378,9 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
             request={pendingQuestionRequests[0] ?? null}
             onSubmit={handleSubmitQuestionRequest}
             onReject={handleRejectQuestionRequest}
+            canViewPlan={usePlanMode && !!activePlan}
+            onViewPlan={() => setShowPlanView(true)}
+            planLabel={activePlan?.fileName}
           />
         </div>
 
