@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-02-12
+
+### Fixed
+
+- **Version Metadata Sync**: Updated `tauri.conf.json`, `package.json`, and `Cargo.toml` so auto-updates detect new releases correctly.
+
 ## [0.2.23] - 2026-02-12
 
 ### Added
@@ -568,7 +574,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.23...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.24...HEAD
+[0.2.24]: https://github.com/frumu-ai/tandem/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/frumu-ai/tandem/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/frumu-ai/tandem/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/frumu-ai/tandem/compare/v0.2.20...v0.2.21

@@ -2,6 +2,10 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.2.24 (2026-02-12)
+
+- Updates: Fix version metadata mismatches by syncing `tauri.conf.json`, `package.json`, and `Cargo.toml` so auto-updates detect new releases correctly.
+
 ## v0.2.22 (2026-02-11)
 
 - Orchestrator: Fixed a cross-project state bug where opening Orchestrator could load an old completed run from another project.

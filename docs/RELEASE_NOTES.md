@@ -1,3 +1,17 @@
+# Tandem v0.2.24 Release Notes
+
+## Highlights
+
+- **Update detection fix**: Synced version metadata across `tauri.conf.json`, `package.json`, and `Cargo.toml` so auto-updates detect new releases correctly.
+
+## Complete Feature List
+
+### Updates
+
+- Align version numbers across app metadata to prevent false "up to date" status in the updater.
+
+---
+
 # Tandem v0.2.23 Release Notes
 
 ## Highlights

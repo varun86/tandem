@@ -543,8 +543,8 @@ pub fn sync_bundled_tools(app: &tauri::AppHandle) -> Result<Vec<String>, String>
                 tracing::info!("Using dev mode fallback for bundled tools: {:?}", dev_path);
                 dev_path
             } else {
-                tracing::warn!(
-                    "Bundled tools directory does not exist: {:?} (dev fallback also missing: {:?})",
+                tracing::info!(
+                    "No bundled tools directory found; skipping tool sync (checked {:?} and {:?})",
                     bundled_tools_dir,
                     dev_path
                 );

@@ -1,6 +1,6 @@
 [package]
 name = "tandem"
-version = "0.2.22"
+version = "0.2.24"
 description = "A local-first, zero-trust AI workspace application"
 authors = ["Tandem Contributors"]
 edition = "2021"
@@ -50,6 +50,7 @@ dirs = "5"
 serde_yaml = "0.9"
 notify = "6.1"
 regex = "1"
+globset = "0.4"
 tokio-util = { version = "0.7", features = ["rt"] }
 semver = "1"
 
