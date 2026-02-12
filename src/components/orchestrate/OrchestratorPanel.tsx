@@ -270,16 +270,26 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
     };
   }, [runId]);
 
+  // Surface terminal backend errors in the inline alert so users don't have to open logs.
+  useEffect(() => {
+    if (snapshot?.status === "failed" && snapshot.error_message) {
+      setError(snapshot.error_message);
+    }
+  }, [snapshot?.status, snapshot?.error_message]);
+
   // Listen for orchestrator events
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
 
     const setupListener = async () => {
       unlisten = await listen<OrchestratorEvent>("orchestrator-event", (event) => {
-        if (event.payload.type === "task_trace") {
-          const taskId = event.payload.task_id as string | undefined;
-          const stage = event.payload.stage as string | undefined;
-          const detail = event.payload.detail as string | undefined;
+        const payload = event.payload;
+        if (runId && payload.run_id !== runId) return;
+
+        if (payload.type === "task_trace") {
+          const taskId = payload.task_id as string | undefined;
+          const stage = payload.stage as string | undefined;
+          const detail = payload.detail as string | undefined;
           if (!taskId || !stage) return;
 
           setTaskRuntime((prev) => {
@@ -310,6 +320,21 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
             next[taskId] = { status, detail };
             return next;
           });
+          return;
+        }
+
+        if (payload.type === "run_failed") {
+          const reason = payload.reason;
+          setError(
+            typeof reason === "string" && reason.trim().length > 0
+              ? reason
+              : "Run failed. Check logs for details."
+          );
+          return;
+        }
+
+        if (payload.type === "run_completed" || payload.type === "run_resumed") {
+          setError(null);
         }
       });
     };
@@ -319,7 +344,7 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [runId]);
 
   const handleCreateRun = async () => {
     if (!objective.trim()) {
@@ -441,10 +466,32 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
   const handleRestart = async () => {
     if (!runId) return;
     setIsLoading(true);
+    setError(null);
     try {
       await invoke("orchestrator_restart_run", { runId });
     } catch (e) {
       setError(`Failed to restart: ${e}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleExtendBudget = async (clearCaps = false) => {
+    if (!runId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const nextSnapshot = await invoke<RunSnapshot>("orchestrator_extend_budget", {
+        runId,
+        addIterations: clearCaps ? 0 : 100,
+        addTokens: clearCaps ? 0 : 100_000,
+        addWallTimeSecs: clearCaps ? 0 : 30 * 60,
+        addSubagentRuns: clearCaps ? 0 : 500,
+        clearCaps,
+      });
+      setSnapshot(nextSnapshot);
+    } catch (e) {
+      setError(`Failed to update budget caps: ${e}`);
     } finally {
       setIsLoading(false);
     }
@@ -497,6 +544,7 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
   );
   const showRetryFailedInline = runStatus === "executing" && hasFailedTasks && !hasRunningTasks;
   const showTerminalControls = isCompleted || isFailed || isCancelled || showRetryFailedInline;
+  const canAdjustBudgetCaps = Boolean(snapshot && runId && !isCancelled);
   const terminalPrimaryLabel = isCancelled
     ? "Resume Run"
     : isFailed || showRetryFailedInline
@@ -641,6 +689,38 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
 
                 {/* Budget */}
                 <BudgetMeter budget={snapshot.budget} />
+
+                {/* Budget actions */}
+                {canAdjustBudgetCaps && (
+                  <div className="rounded-lg border border-border bg-surface-elevated/40 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                      Budget Controls
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleExtendBudget(false)}
+                        disabled={isLoading}
+                      >
+                        <RefreshCw className="mr-1 h-4 w-4" />
+                        Add Budget Headroom
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleExtendBudget(true)}
+                        disabled={isLoading}
+                      >
+                        <RefreshCw className="mr-1 h-4 w-4" />
+                        Relax Max Caps
+                      </Button>
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      Add Budget Headroom increases limits (+100 iterations, +100k tokens, +30m wall
+                      time, +500 agent calls). Relax Max Caps sets very high safety limits for long
+                      runs.
+                    </p>
+                  </div>
+                )}
 
                 {/* Controls */}
                 {(canShowRuntimeControls || showTerminalControls) && (

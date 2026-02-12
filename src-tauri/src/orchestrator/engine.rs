@@ -16,6 +16,7 @@ use crate::stream_hub::StreamHub;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -62,6 +63,11 @@ pub struct OrchestratorEngine {
 }
 
 impl OrchestratorEngine {
+    const RELAXED_MAX_ITERATIONS: u32 = 1_000_000;
+    const RELAXED_MAX_TOTAL_TOKENS: u64 = 100_000_000;
+    const RELAXED_MAX_WALL_TIME_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
+    const RELAXED_MAX_SUBAGENT_RUNS: u32 = 100_000;
+
     fn is_rate_limit_error(error: &str) -> bool {
         let e = error.to_lowercase();
         e.contains("rate limit")
@@ -323,6 +329,11 @@ impl OrchestratorEngine {
         }
 
         let mut join_set: JoinSet<Result<()>> = JoinSet::new();
+        // Throttle repetitive budget warnings (e.g. wall_time at 80% every loop tick).
+        // We log when the warning bucket advances (5% steps) or after cooldown.
+        let mut last_budget_warning: HashMap<String, (u8, Instant)> = HashMap::new();
+        const WARNING_BUCKET_STEP_PERCENT: u8 = 5;
+        const WARNING_LOG_COOLDOWN_SECS: u64 = 30;
         loop {
             {
                 let mut tracker = self.budget_tracker.write().await;
@@ -362,12 +373,24 @@ impl OrchestratorEngine {
                     dimension,
                     percentage,
                 } => {
-                    // Log warning but continue
-                    tracing::warn!(
-                        "Budget warning: {} at {:.0}%",
-                        dimension,
-                        percentage * 100.0
-                    );
+                    let percent = (percentage * 100.0).floor().clamp(0.0, 100.0) as u8;
+                    let bucket =
+                        (percent / WARNING_BUCKET_STEP_PERCENT) * WARNING_BUCKET_STEP_PERCENT;
+                    let now = Instant::now();
+
+                    let should_log = match last_budget_warning.get(&dimension) {
+                        Some((prev_bucket, prev_at)) => {
+                            bucket > *prev_bucket
+                                || now.duration_since(*prev_at).as_secs()
+                                    >= WARNING_LOG_COOLDOWN_SECS
+                        }
+                        None => true,
+                    };
+
+                    if should_log {
+                        tracing::warn!("Budget warning: {} at {}%", dimension, percent);
+                        last_budget_warning.insert(dimension, (bucket, now));
+                    }
                 }
                 BudgetCheckResult::Ok => {}
             }
@@ -473,16 +496,30 @@ impl OrchestratorEngine {
                     return Ok(());
                 }
 
-                let has_any_failed = {
+                let (has_any_failed, failed_reason) = {
                     let run = self.run.read().await;
-                    TaskScheduler::any_failed(&run.tasks)
+                    let has_failed = TaskScheduler::any_failed(&run.tasks);
+                    let reason = run
+                        .tasks
+                        .iter()
+                        .find(|t| t.state == TaskState::Failed)
+                        .map(|t| {
+                            if let Some(msg) = t.error_message.as_deref() {
+                                format!("Task {} failed: {}", t.id, msg)
+                            } else {
+                                format!("Task {} failed", t.id)
+                            }
+                        });
+                    (has_failed, reason)
                 };
 
                 // If nothing is running/schedulable and at least one task is failed,
                 // transition the run to terminal failed state instead of idling forever.
                 if has_any_failed {
-                    self.handle_failure("One or more tasks failed (max retries exceeded)")
-                        .await?;
+                    let reason = failed_reason.unwrap_or_else(|| {
+                        "One or more tasks failed (max retries exceeded)".to_string()
+                    });
+                    self.handle_failure(&reason).await?;
                     return Ok(());
                 }
 
@@ -1643,6 +1680,87 @@ impl OrchestratorEngine {
         let config = self.run.read().await.config.clone();
         let mut tracker = self.budget_tracker.write().await;
         tracker.update_limits(&config);
+    }
+
+    /// Extend run budget limits in-place so users can continue long-running workflows.
+    pub async fn extend_budget_limits(
+        &self,
+        add_iterations: u32,
+        add_tokens: u64,
+        add_wall_time_secs: u64,
+        add_subagent_runs: u32,
+        clear_caps: bool,
+    ) -> Result<RunSnapshot> {
+        {
+            let mut run = self.run.write().await;
+
+            if clear_caps {
+                run.config.max_iterations =
+                    run.config.max_iterations.max(Self::RELAXED_MAX_ITERATIONS);
+                run.config.max_total_tokens = run
+                    .config
+                    .max_total_tokens
+                    .max(Self::RELAXED_MAX_TOTAL_TOKENS);
+                run.config.max_wall_time_secs = run
+                    .config
+                    .max_wall_time_secs
+                    .max(Self::RELAXED_MAX_WALL_TIME_SECS);
+                run.config.max_subagent_runs = run
+                    .config
+                    .max_subagent_runs
+                    .max(Self::RELAXED_MAX_SUBAGENT_RUNS);
+            } else {
+                run.config.max_iterations =
+                    run.config.max_iterations.saturating_add(add_iterations);
+                run.config.max_total_tokens =
+                    run.config.max_total_tokens.saturating_add(add_tokens);
+                run.config.max_wall_time_secs = run
+                    .config
+                    .max_wall_time_secs
+                    .saturating_add(add_wall_time_secs);
+                run.config.max_subagent_runs = run
+                    .config
+                    .max_subagent_runs
+                    .saturating_add(add_subagent_runs);
+            }
+
+            run.budget.max_iterations = run.config.max_iterations;
+            run.budget.max_tokens = run.config.max_total_tokens;
+            run.budget.max_wall_time_secs = run.config.max_wall_time_secs;
+            run.budget.max_subagent_runs = run.config.max_subagent_runs;
+
+            let still_exceeded = run.budget.iterations_used >= run.budget.max_iterations
+                || run.budget.tokens_used >= run.budget.max_tokens
+                || run.budget.wall_time_secs >= run.budget.max_wall_time_secs
+                || run.budget.subagent_runs_used >= run.budget.max_subagent_runs;
+
+            if run.budget.exceeded && !still_exceeded {
+                run.budget.exceeded = false;
+                run.budget.exceeded_reason = None;
+
+                if run
+                    .error_message
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains("Budget exceeded:"))
+                {
+                    run.error_message = None;
+                }
+
+                if run.status == RunStatus::Failed {
+                    run.status = RunStatus::Paused;
+                    run.ended_at = None;
+                    for task in run.tasks.iter_mut() {
+                        if task.state == TaskState::InProgress {
+                            task.state = TaskState::Pending;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.update_budget_limits().await;
+        self.save_state().await?;
+        Ok(self.get_snapshot().await)
     }
 
     #[cfg(test)]

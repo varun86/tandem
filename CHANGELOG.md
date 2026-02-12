@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-02-12
+
+### Added
+
+- **Global Activity Indicators**: Added top-right runtime badges for concurrent background work (`CHATTING` and `ORCHESTRATING` counts) so active work remains visible while navigating between sessions/views.
+- **Session List Running State UX**: Added explicit running status indicators in the Sessions sidebar for active chat sessions and orchestrator runs.
+- **Orchestrator Budget Controls**: Added in-panel budget actions so users can extend run limits (`Add Budget Headroom`) or relax caps for long-running orchestrations (`Relax Max Caps`) without starting over.
+
+### Changed
+
+- **Session Selection Behavior**: Selecting a normal chat session now exits Orchestrator panel mode and clears stale selected run context.
+- **Sidebar Status Presentation**: Refined running indicators to avoid duplicate spinners and keep status signal in a consistent location (`RUNNING` on the metadata line).
+- **Chat Activity Accounting**: Chat running counts now derive from global sidecar stream events (session-scoped), not only the currently mounted chat component state.
+
+### Fixed
+
+- **Orchestrator Console Persistence**: Fixed orchestrator Console tab history clearing on drawer reopen by scoping logs to run sessions and loading persisted tool events across base + task child sessions.
+- **Orchestrator Console Live Scope**: Fixed Console stream bleed by filtering live tool events to only the orchestrator run's related session IDs.
+- **Orchestrator Retry Error Visibility**: Fixed retry/restart failures being visible only in logs by surfacing run failure reasons directly in Orchestrator UI alerts.
+- **Orchestrator Failure Context**: Improved terminal failure messaging to include concrete failed-task error details (e.g. provider/model-not-found) instead of generic max-retry text.
+- **Orchestrator Budget Recovery**: Fixed budget-limit dead ends by allowing failed budget runs to move back to resumable state after caps are increased.
+- **Concurrent Chat Session Indicators**: Fixed sidebar/chat-header indicators dropping when switching selection by tracking running sessions globally and rendering status per session ID.
+- **Budget Warning Log Spam**: Throttled repetitive orchestrator budget warning logs (e.g. `wall_time at 80%`) to log on meaningful threshold progression/cooldown instead of every loop tick.
+
 ## [0.2.22] - 2026-02-11
 
 ### Fixed
@@ -544,7 +568,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.19...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.23...HEAD
+[0.2.23]: https://github.com/frumu-ai/tandem/compare/v0.2.22...v0.2.23
+[0.2.22]: https://github.com/frumu-ai/tandem/compare/v0.2.21...v0.2.22
+[0.2.21]: https://github.com/frumu-ai/tandem/compare/v0.2.20...v0.2.21
 [0.2.19]: https://github.com/frumu-ai/tandem/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/frumu-ai/tandem/compare/v0.2.17...v0.2.18
 [0.2.17]: https://github.com/frumu-ai/tandem/compare/v0.2.16...v0.2.17

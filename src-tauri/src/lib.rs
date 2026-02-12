@@ -523,6 +523,7 @@ pub fn run() {
             commands::orchestrator_get_budget,
             commands::orchestrator_list_tasks,
             commands::orchestrator_get_config,
+            commands::orchestrator_extend_budget,
             commands::orchestrator_get_run_model,
             commands::orchestrator_set_resume_model,
             commands::orchestrator_approve,

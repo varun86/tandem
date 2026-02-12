@@ -90,6 +90,8 @@ interface ChatProps {
   onOpenExtensions?: (tab?: "skills" | "plugins" | "integrations") => void;
   draftMessage?: string;
   onDraftMessageConsumed?: () => void;
+  activeOrchestrationCount?: number;
+  activeChatRunningCount?: number;
 }
 
 export function Chat({
@@ -118,6 +120,8 @@ export function Chat({
   onOpenExtensions,
   draftMessage,
   onDraftMessageConsumed,
+  activeOrchestrationCount = 0,
+  activeChatRunningCount = 0,
 }: ChatProps) {
   const [messages, setMessages] = useState<MessageProps[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -2109,6 +2113,34 @@ ${g.example}
 
         {/* Connection status */}
         <div className="flex items-center gap-4">
+          {activeChatRunningCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1"
+              title="Chat sessions currently running"
+            >
+              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+              <span className="text-[10px] font-medium uppercase tracking-wide text-primary">
+                {activeChatRunningCount} chat
+              </span>
+            </motion.div>
+          )}
+
+          {activeOrchestrationCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1"
+              title="Orchestration runs currently executing in the background"
+            >
+              <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+              <span className="text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                {activeOrchestrationCount} orch
+              </span>
+            </motion.div>
+          )}
+
           {/* Staged operations counter */}
           {usePlanMode && stagedOperations.length > 0 && (
             <motion.div

@@ -39,7 +39,10 @@ import {
   readBinaryFile,
   checkGitStatus,
   initializeGitRepo,
+  onSidecarEvent,
+  onSidecarEventV2,
   type Session,
+  type StreamEventEnvelopeV2,
   type VaultStatus,
   type UserProject,
   type FileEntry,
@@ -116,6 +119,9 @@ function App() {
   const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [executePendingTrigger, setExecutePendingTrigger] = useState(0);
   const [isExecutingTasks, setIsExecutingTasks] = useState(false);
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const autoIndexDebounceRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const autoIndexLastRunRef = useRef<number>(0);
 
   // Persist currentSessionId to localStorage whenever it changes
   useEffect(() => {
@@ -169,6 +175,81 @@ function App() {
     };
   }, [activeProject?.id, startIndex]);
 
+  // Incremental auto-index when AI creates/edits files.
+  // This keeps vector memory fresh after tool-based changes, not just on project load.
+  useEffect(() => {
+    if (!activeProject?.id) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const isFileWriteTool = (tool: string) =>
+      tool === "write" ||
+      tool === "write_file" ||
+      tool === "create_file" ||
+      tool === "delete" ||
+      tool === "delete_file" ||
+      tool === "edit" ||
+      tool === "patch";
+
+    const triggerIndex = async () => {
+      if (disposed) return;
+      try {
+        const settings = await getMemorySettings();
+        if (!settings.auto_index_on_project_load) return;
+
+        // Cooldown to avoid excessive indexing bursts during large edit batches.
+        const now = Date.now();
+        if (now - autoIndexLastRunRef.current < 15_000) return;
+
+        await startIndex(activeProject.id);
+        autoIndexLastRunRef.current = now;
+      } catch (e) {
+        console.warn("[AutoIndex] Failed to refresh index after file change:", e);
+      }
+    };
+
+    const scheduleIndex = () => {
+      if (autoIndexDebounceRef.current) {
+        globalThis.clearTimeout(autoIndexDebounceRef.current);
+      }
+      autoIndexDebounceRef.current = globalThis.setTimeout(() => {
+        void triggerIndex();
+      }, 1500);
+    };
+
+    const setup = async () => {
+      try {
+        unlisten = await onSidecarEvent((event) => {
+          if (event.type === "file_edited") {
+            scheduleIndex();
+            return;
+          }
+          if (event.type === "tool_end" && isFileWriteTool(event.tool) && !event.error) {
+            scheduleIndex();
+          }
+        });
+      } catch (e) {
+        console.warn("[AutoIndex] Failed to subscribe to file change events:", e);
+      }
+    };
+
+    void setup();
+
+    return () => {
+      disposed = true;
+      if (autoIndexDebounceRef.current) {
+        globalThis.clearTimeout(autoIndexDebounceRef.current);
+        autoIndexDebounceRef.current = null;
+      }
+      try {
+        unlisten?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [activeProject?.id, startIndex]);
+
   // Git initialization dialog state
   const [showGitDialog, setShowGitDialog] = useState(false);
   const [pendingProjectPath, setPendingProjectPath] = useState<string | null>(null);
@@ -191,6 +272,70 @@ function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, [activeProject]); // Re-fetch when project changes
+
+  // Track running sessions globally from sidecar stream events so indicators remain accurate
+  // even when the user switches away from the active chat tab/session.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    const setup = async () => {
+      try {
+        unlisten = await onSidecarEventV2((envelope: StreamEventEnvelopeV2) => {
+          const payload = envelope.payload;
+          const sid = "session_id" in payload ? payload.session_id : undefined;
+          if (!sid) return;
+
+          if (payload.type === "session_idle" || payload.type === "session_error") {
+            setRunningSessionIds((prev) => {
+              if (!prev.has(sid)) return prev;
+              const next = new Set(prev);
+              next.delete(sid);
+              return next;
+            });
+            return;
+          }
+
+          if (payload.type === "session_status") {
+            const terminal = ["idle", "completed", "failed", "error", "cancelled"].includes(
+              payload.status
+            );
+            setRunningSessionIds((prev) => {
+              const has = prev.has(sid);
+              if (terminal && has) {
+                const next = new Set(prev);
+                next.delete(sid);
+                return next;
+              }
+              if (!terminal && !has) {
+                const next = new Set(prev);
+                next.add(sid);
+                return next;
+              }
+              return prev;
+            });
+            return;
+          }
+
+          // Any other session-scoped event implies activity.
+          setRunningSessionIds((prev) => {
+            if (prev.has(sid)) return prev;
+            const next = new Set(prev);
+            next.add(sid);
+            return next;
+          });
+        });
+      } catch (e) {
+        console.error("Failed to subscribe to sidecar events in App:", e);
+      }
+    };
+    setup();
+    return () => {
+      try {
+        unlisten?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   // If panel opens with no explicit run selected, resume only active runs.
   // Do not auto-open completed/failed/cancelled history; let users start fresh by default.
@@ -668,6 +813,8 @@ function App() {
 
   const handleSelectSession = (sessionId: string) => {
     setView("chat");
+    setOrchestratorOpen(false);
+    setCurrentOrchestratorRunId(null);
     // If the user clicks the already-selected session, React won't emit a state change,
     // and Chat won't reload history. Force a reload by briefly clearing then restoring.
     if (sessionId === currentSessionId) {
@@ -679,6 +826,8 @@ function App() {
   };
 
   const handleNewChat = () => {
+    setOrchestratorOpen(false);
+    setCurrentOrchestratorRunId(null);
     setCurrentSessionId(null);
     setView("chat");
   };
@@ -841,6 +990,31 @@ function App() {
       console.error("Failed to add file to chat:", err);
     }
   };
+
+  const visibleChatSessionIds = useMemo(() => {
+    const runBaseSessionIds = new Set(orchestratorRuns.map((r) => r.session_id));
+    return new Set(
+      sessions
+        .filter((s) => {
+          if (runBaseSessionIds.has(s.id)) return false;
+          if (s.title?.startsWith("Orchestrator Task ")) return false;
+          if (s.title?.startsWith("Orchestrator Resume:")) return false;
+          return true;
+        })
+        .map((s) => s.id)
+    );
+  }, [sessions, orchestratorRuns]);
+
+  const activeOrchestrationCount = useMemo(
+    () =>
+      orchestratorRuns.filter((run) => run.status === "planning" || run.status === "executing")
+        .length,
+    [orchestratorRuns]
+  );
+  const activeChatRunningCount = useMemo(
+    () => Array.from(runningSessionIds).filter((sid) => visibleChatSessionIds.has(sid)).length,
+    [runningSessionIds, visibleChatSessionIds]
+  );
 
   return (
     <div className="h-screen w-screen app-background">
@@ -1036,6 +1210,7 @@ function App() {
                       projects={projects}
                       currentSessionId={currentSessionId}
                       currentRunId={currentOrchestratorRunId}
+                      activeChatSessionIds={Array.from(runningSessionIds)}
                       onSelectSession={handleSelectSession}
                       onSelectRun={(runId) => {
                         setCurrentOrchestratorRunId(runId);
@@ -1209,6 +1384,8 @@ function App() {
                     onProviderChange={refreshAppState}
                     draftMessage={draftMessage ?? undefined}
                     onDraftMessageConsumed={() => setDraftMessage(null)}
+                    activeChatRunningCount={activeChatRunningCount}
+                    activeOrchestrationCount={activeOrchestrationCount}
                     onFileOpen={(filePath) => {
                       // Resolve relative paths to absolute using workspace path
                       const workspacePath = activeProject?.path || state?.workspace_path;

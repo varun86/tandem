@@ -10,6 +10,7 @@ import {
   Clock,
   FileText,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -67,6 +68,7 @@ interface SessionSidebarProps {
   projects: Project[];
   currentSessionId: string | null;
   currentRunId?: string | null;
+  activeChatSessionIds?: string[];
   onSelectSession: (sessionId: string) => void;
   onSelectRun?: (runId: string) => void;
   onNewChat: () => void;
@@ -91,6 +93,7 @@ export function SessionSidebar({
   projects,
   currentSessionId,
   currentRunId,
+  activeChatSessionIds = [],
   onSelectSession,
   onSelectRun,
   onNewChat,
@@ -107,6 +110,7 @@ export function SessionSidebar({
 }: SessionSidebarProps) {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [sessionToDelete, setSessionToDelete] = useState<DisplayItem | null>(null);
+  const runningChatIdsSet = useMemo(() => new Set(activeChatSessionIds), [activeChatSessionIds]);
 
   // Merge and group items by project
   const itemsByProject = useMemo(() => {
@@ -245,6 +249,8 @@ export function SessionSidebar({
       return date.toLocaleDateString([], { month: "short", day: "numeric" });
     }
   };
+
+  const isOrchestratorActive = (status?: string) => status === "planning" || status === "executing";
 
   const getProjectName = (projectId: string) => {
     // First, try to match with our userProjects
@@ -487,18 +493,32 @@ export function SessionSidebar({
                                 </p>
                                 <div className="mt-0.5 flex items-center gap-2">
                                   {item.status ? (
-                                    <span
-                                      className={cn(
-                                        "text-[10px] uppercase font-medium",
-                                        item.status === "completed"
-                                          ? "text-emerald-500"
-                                          : item.status === "failed"
-                                            ? "text-red-500"
-                                            : "text-text-muted"
+                                    <>
+                                      {isOrchestratorActive(item.status) && (
+                                        <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
                                       )}
-                                    >
-                                      {item.status.replace("_", " ")}
-                                    </span>
+                                      <span
+                                        className={cn(
+                                          "text-[10px] uppercase font-medium",
+                                          item.status === "completed"
+                                            ? "text-emerald-500"
+                                            : item.status === "failed"
+                                              ? "text-red-500"
+                                              : isOrchestratorActive(item.status)
+                                                ? "text-amber-400"
+                                                : "text-text-muted"
+                                        )}
+                                      >
+                                        {item.status.replace("_", " ")}
+                                      </span>
+                                    </>
+                                  ) : runningChatIdsSet.has(item.id) ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+                                      <span className="text-[10px] uppercase font-medium text-amber-400">
+                                        running
+                                      </span>
+                                    </>
                                   ) : (
                                     <>
                                       <Clock className="h-3 w-3 text-text-subtle" />

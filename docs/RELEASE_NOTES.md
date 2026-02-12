@@ -1,10 +1,15 @@
-# Tandem v0.2.22 Release Notes
+# Tandem v0.2.23 Release Notes
 
 ## Highlights
 
 - **Project-scoped orchestrator context**: Fixed Orchestrator mode reopening a stale run from a different project/workspace.
 - **Clean project switching behavior**: Switching or adding projects now clears stale orchestrator run selection so each workspace starts from the correct context.
 - **Safer default resume logic**: Opening Orchestrator with no explicit run now auto-resumes only active runs and does not auto-open completed/terminal history.
+- **Persistent orchestrator console history**: Orchestrator Console logs now reload correctly after closing/reopening the drawer, including task-session tool calls.
+- **Clear runtime visibility**: Added global activity badges and per-session running indicators so concurrent chat + orchestrator work is visible at a glance.
+- **Actionable failure feedback**: Retry/restart failures now surface directly in Orchestrator UI with specific reason text (for example model/provider resolution errors).
+- **User-adjustable orchestrator budgets**: Added in-panel controls to increase budget headroom or relax caps so long-running runs can continue without starting over.
+- **Reduced warning noise**: Repetitive orchestrator budget warnings are now throttled to prevent log spam.
 
 ## Complete Feature List
 
@@ -21,6 +26,29 @@
   - `failed`
   - `cancelled`
 - Added a guard to reset the selected run if it is not present in the active workspace run list.
+- Fixed Orchestrator Logs drawer wiring so Console receives orchestrator session scope instead of mounting without session context.
+- Console history reconstruction now aggregates run base session + task child sessions for complete persisted tool execution history.
+- Console live event handling is scoped to run-related session IDs to avoid unrelated stream noise.
+- Retry/restart failure reasons are now surfaced in-panel via `run_failed` handling and persisted snapshot error hydration.
+- Backend failure completion now preserves concrete failed-task reason text when transitioning run status to `failed`.
+- Added direct budget controls in Orchestrator UI:
+  - `Add Budget Headroom` (+100 iterations, +100k tokens, +30 minutes wall time, +500 sub-agent calls)
+  - `Relax Max Caps` (sets very high safety limits for extended runs)
+- Extending budget limits now updates persisted run config/budget state and clears `Budget exceeded` failure state when limits are no longer exceeded, allowing resume.
+- Budget warning logs are now throttled:
+  - log on 5% bucket increases (80, 85, 90, ...)
+  - or after cooldown (30s)
+  - instead of warning every execution loop tick.
+
+### Sessions + Chat Runtime UX
+
+- Selecting a normal chat session now reliably exits Orchestrator view and clears stale run selection.
+- Added sidebar running markers for chat sessions (`RUNNING`) and orchestrator items (`EXECUTING`/active spinner).
+- Added top-right runtime badges for concurrent activity:
+  - `N CHATTING`
+  - `N ORCHESTRATING`
+- Chat running indicators now use global sidecar stream-derived running session IDs, so indicators remain correct even when switching to a different selected session.
+- Removed duplicate/overlapping spinner states in the session row to keep one clear running signal per item.
 
 ---
 

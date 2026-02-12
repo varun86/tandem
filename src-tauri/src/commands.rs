@@ -5943,6 +5943,36 @@ pub async fn orchestrator_get_config(
     Ok(engine.get_config().await)
 }
 
+/// Extend budget limits for a run so users can continue long workflows.
+#[tauri::command]
+pub async fn orchestrator_extend_budget(
+    state: State<'_, AppState>,
+    run_id: String,
+    add_iterations: Option<u32>,
+    add_tokens: Option<u64>,
+    add_wall_time_secs: Option<u64>,
+    add_subagent_runs: Option<u32>,
+    clear_caps: Option<bool>,
+) -> Result<RunSnapshot> {
+    let engine = {
+        let engines = state.orchestrator_engines.read().unwrap();
+        engines
+            .get(&run_id)
+            .cloned()
+            .ok_or_else(|| TandemError::NotFound(format!("Run not found: {}", run_id)))?
+    };
+
+    engine
+        .extend_budget_limits(
+            add_iterations.unwrap_or(0),
+            add_tokens.unwrap_or(0),
+            add_wall_time_secs.unwrap_or(0),
+            add_subagent_runs.unwrap_or(0),
+            clear_caps.unwrap_or(false),
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn orchestrator_get_run_model(
     state: State<'_, AppState>,
