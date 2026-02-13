@@ -12,6 +12,7 @@ use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use futures_util::StreamExt;
 use tandem_types::{ToolResult, ToolSchema};
 
 #[async_trait]
@@ -60,12 +61,13 @@ impl ToolRegistry {
     }
 
     pub async fn list(&self) -> Vec<ToolSchema> {
-        self.tools
-            .read()
-            .await
-            .values()
-            .map(|t| t.schema())
-            .collect()
+        let mut dedup: HashMap<String, ToolSchema> = HashMap::new();
+        for schema in self.tools.read().await.values().map(|t| t.schema()) {
+            dedup.entry(schema.name.clone()).or_insert(schema);
+        }
+        let mut schemas = dedup.into_values().collect::<Vec<_>>();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
     }
 
     pub async fn execute(&self, name: &str, args: Value) -> anyhow::Result<ToolResult> {
@@ -94,6 +96,88 @@ impl ToolRegistry {
         };
         tool.execute_with_cancel(args, cancel).await
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolSchemaValidationError {
+    pub tool_name: String,
+    pub path: String,
+    pub reason: String,
+}
+
+impl std::fmt::Display for ToolSchemaValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid tool schema `{}` at `{}`: {}",
+            self.tool_name, self.path, self.reason
+        )
+    }
+}
+
+impl std::error::Error for ToolSchemaValidationError {}
+
+pub fn validate_tool_schemas(schemas: &[ToolSchema]) -> Result<(), ToolSchemaValidationError> {
+    for schema in schemas {
+        validate_schema_node(&schema.name, "$", &schema.input_schema)?;
+    }
+    Ok(())
+}
+
+fn validate_schema_node(
+    tool_name: &str,
+    path: &str,
+    value: &Value,
+) -> Result<(), ToolSchemaValidationError> {
+    let Some(obj) = value.as_object() else {
+        if let Some(arr) = value.as_array() {
+            for (idx, item) in arr.iter().enumerate() {
+                validate_schema_node(tool_name, &format!("{path}[{idx}]"), item)?;
+            }
+        }
+        return Ok(());
+    };
+
+    if obj.get("type").and_then(|t| t.as_str()) == Some("array") && !obj.contains_key("items") {
+        return Err(ToolSchemaValidationError {
+            tool_name: tool_name.to_string(),
+            path: path.to_string(),
+            reason: "array schema missing items".to_string(),
+        });
+    }
+
+    if let Some(items) = obj.get("items") {
+        validate_schema_node(tool_name, &format!("{path}.items"), items)?;
+    }
+    if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+        for (key, child) in props {
+            validate_schema_node(tool_name, &format!("{path}.properties.{key}"), child)?;
+        }
+    }
+    if let Some(additional_props) = obj.get("additionalProperties") {
+        validate_schema_node(
+            tool_name,
+            &format!("{path}.additionalProperties"),
+            additional_props,
+        )?;
+    }
+    if let Some(one_of) = obj.get("oneOf").and_then(|v| v.as_array()) {
+        for (idx, child) in one_of.iter().enumerate() {
+            validate_schema_node(tool_name, &format!("{path}.oneOf[{idx}]"), child)?;
+        }
+    }
+    if let Some(any_of) = obj.get("anyOf").and_then(|v| v.as_array()) {
+        for (idx, child) in any_of.iter().enumerate() {
+            validate_schema_node(tool_name, &format!("{path}.anyOf[{idx}]"), child)?;
+        }
+    }
+    if let Some(all_of) = obj.get("allOf").and_then(|v| v.as_array()) {
+        for (idx, child) in all_of.iter().enumerate() {
+            validate_schema_node(tool_name, &format!("{path}.allOf[{idx}]"), child)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn is_path_allowed(path: &str) -> bool {
@@ -354,47 +438,134 @@ impl Tool for WebSearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "websearch".to_string(),
-            description: "Search web results from DuckDuckGo HTML endpoint".to_string(),
-            input_schema: json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}}}),
+            description: "Search web results using Exa.ai MCP endpoint".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer" }
+                }
+            }),
         }
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let query = args["query"].as_str().unwrap_or("").trim();
         if query.is_empty() {
+            tracing::warn!("WebSearchTool missing query. Args: {}", args);
             return Ok(ToolResult {
-                output: "missing query".to_string(),
+                output: format!("missing query. Received args: {}", args),
                 metadata: json!({"count": 0}),
             });
         }
-        let limit = args["limit"]
-            .as_u64()
-            .map(|v| v.clamp(1, 10) as usize)
-            .unwrap_or(5);
-        let encoded = query.replace(' ', "+");
-        let url = format!("https://duckduckgo.com/html/?q={encoded}");
-        let body = reqwest::get(&url).await?.text().await?;
-        let re = Regex::new(r#"<a[^>]*class="result__a"[^>]*>(.*?)</a>"#)?;
-        let tag_re = Regex::new(r"<[^>]+>")?;
-        let mut lines = Vec::new();
-        for cap in re.captures_iter(&body).take(limit) {
-            let title = cap
-                .get(1)
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .replace("&amp;", "&")
-                .replace("&quot;", "\"")
-                .replace("&#x27;", "'");
-            let clean = tag_re.replace_all(&title, "").to_string();
-            if !clean.trim().is_empty() {
-                lines.push(clean.trim().to_string());
+        let num_results = args["limit"].as_u64().map(|v| v.clamp(1, 10)).unwrap_or(8);
+
+        #[derive(serde::Serialize)]
+        struct McpSearchRequest {
+            jsonrpc: String,
+            id: u32,
+            method: String,
+            params: McpSearchParams,
+        }
+
+        #[derive(serde::Serialize)]
+        struct McpSearchParams {
+            name: String,
+            arguments: McpSearchArgs,
+        }
+
+        #[derive(serde::Serialize)]
+        struct McpSearchArgs {
+            query: String,
+            #[serde(rename = "numResults")]
+            num_results: u64,
+        }
+
+        let request = McpSearchRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "tools/call".to_string(),
+            params: McpSearchParams {
+                name: "web_search_exa".to_string(),
+                arguments: McpSearchArgs {
+                    query: query.to_string(),
+                    num_results,
+                },
+            },
+        };
+
+        let client = reqwest::Client::new();
+        let res = client
+            .post("https://mcp.exa.ai/mcp")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            let error_text = res.text().await?;
+            return Err(anyhow::anyhow!("Search error: {}", error_text));
+        }
+
+        let mut stream = res.bytes_stream();
+        let mut buffer = Vec::new();
+        let timeout_duration = std::time::Duration::from_secs(10); // Wait at most 10s for first chunk
+
+        // We use a loop but breaks on first result.
+        // We also want to apply a timeout to receiving ANY chunk from the stream.
+        loop {
+            let chunk_future = stream.next();
+            match tokio::time::timeout(timeout_duration, chunk_future).await {
+                Ok(Some(chunk_result)) => {
+                    let chunk = chunk_result?;
+                    tracing::info!("WebSearchTool received chunk size: {}", chunk.len());
+                    buffer.extend_from_slice(&chunk);
+
+                    while let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = buffer.drain(..=idx).collect();
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        let line = line.trim();
+                        tracing::info!("WebSearchTool parsing line: {}", line);
+
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            if let Ok(val) = serde_json::from_str::<Value>(data.trim()) {
+                                if let Some(content) = val
+                                    .get("result")
+                                    .and_then(|r| r.get("content"))
+                                    .and_then(|c| c.as_array())
+                                {
+                                    if let Some(first) = content.first() {
+                                        if let Some(text) =
+                                            first.get("text").and_then(|t| t.as_str())
+                                        {
+                                            return Ok(ToolResult {
+                                                output: text.to_string(),
+                                                metadata: json!({"query": query}),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::info!("WebSearchTool stream ended without result.");
+                    break;
+                }
+                Err(_) => {
+                    tracing::warn!("WebSearchTool stream timed out waiting for chunk.");
+                    return Ok(ToolResult {
+                        output: "Search timed out. No results received.".to_string(),
+                        metadata: json!({"query": query, "error": "timeout"}),
+                    });
+                }
             }
         }
-        if lines.is_empty() {
-            lines.push(format!("No search results parsed for query: {query}"));
-        }
+
         Ok(ToolResult {
-            output: lines.join("\n"),
-            metadata: json!({"count": lines.len(), "query": query}),
+            output: "No search results found.".to_string(),
+            metadata: json!({"query": query}),
         })
     }
 }
@@ -470,7 +641,23 @@ impl Tool for TodoWriteTool {
         ToolSchema {
             name: "todo_write".to_string(),
             description: "Update todo list".to_string(),
-            input_schema: json!({"type":"object","properties":{"todos":{"type":"array"}}}),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "todos":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "id":{"type":"string"},
+                                "content":{"type":"string"},
+                                "text":{"type":"string"},
+                                "status":{"type":"string"}
+                            }
+                        }
+                    }
+                }
+            }),
         }
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -508,7 +695,21 @@ impl Tool for QuestionTool {
         ToolSchema {
             name: "question".to_string(),
             description: "Emit a question request for the user".to_string(),
-            input_schema: json!({"type":"object","properties":{"questions":{"type":"array"}}}),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "questions":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "question":{"type":"string"},
+                                "choices":{"type":"array","items":{"type":"string"}}
+                            }
+                        }
+                    }
+                }
+            }),
         }
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -592,7 +793,22 @@ impl Tool for BatchTool {
         ToolSchema {
             name: "batch".to_string(),
             description: "Execute multiple tool calls sequentially".to_string(),
-            input_schema: json!({"type":"object","properties":{"tool_calls":{"type":"array"}}}),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "tool_calls":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "tool":{"type":"string"},
+                                "name":{"type":"string"},
+                                "args":{"type":"object"}
+                            }
+                        }
+                    }
+                }
+            }),
         }
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -779,6 +995,43 @@ async fn find_symbol_definition(symbol: &str) -> String {
         .find(|line| line.ends_with(&format!("fn {symbol}")))
         .map(ToString::to_string)
         .unwrap_or_else(|| "symbol not found".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn validator_rejects_array_without_items() {
+        let schemas = vec![ToolSchema {
+            name: "bad".to_string(),
+            description: "bad schema".to_string(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{"todos":{"type":"array"}}
+            }),
+        }];
+        let err = validate_tool_schemas(&schemas).expect_err("expected schema validation failure");
+        assert_eq!(err.tool_name, "bad");
+        assert!(err.path.contains("properties.todos"));
+    }
+
+    #[tokio::test]
+    async fn registry_schemas_are_unique_and_valid() {
+        let registry = ToolRegistry::new();
+        let schemas = registry.list().await;
+        validate_tool_schemas(&schemas).expect("registry tool schemas should validate");
+        let unique = schemas
+            .iter()
+            .map(|schema| schema.name.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            unique.len(),
+            schemas.len(),
+            "tool schemas must be unique by name"
+        );
+    }
 }
 
 async fn find_symbol_references(symbol: &str) -> String {

@@ -153,8 +153,9 @@ impl ResolvedMode {
             ModeBase::Immediate => None,
             ModeBase::Ask => Some("general".to_string()),
             ModeBase::Plan => Some("plan".to_string()),
-            ModeBase::Orchestrate => Some("orchestrate".to_string()),
-            ModeBase::Coder => Some("coder".to_string()),
+            // Engine-native agent names are build/plan/explore/general.
+            ModeBase::Orchestrate => Some("plan".to_string()),
+            ModeBase::Coder => Some("build".to_string()),
             ModeBase::Explore => Some("explore".to_string()),
         }
     }

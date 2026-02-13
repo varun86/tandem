@@ -428,6 +428,159 @@ impl Provider for OpenAICompatibleProvider {
             body_preview
         );
     }
+
+    async fn stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Option<Vec<ToolSchema>>,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let wire_messages = messages
+            .into_iter()
+            .map(|m| json!({"role": m.role, "content": m.content}))
+            .collect::<Vec<_>>();
+
+        let wire_tools = tools
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut body = json!({
+            "model": self.default_model,
+            "messages": wire_messages,
+            "stream": true,
+        });
+        if !wire_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(wire_tools);
+            body["tool_choice"] = json!("auto");
+        }
+
+        let mut req = self.client.post(url).json(&body);
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+
+        let resp = req.send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "provider stream request failed with status {}: {}",
+                status,
+                truncate_for_error(&text, 500)
+            );
+        }
+
+        let mut bytes = resp.bytes_stream();
+        let stream = try_stream! {
+            let mut buffer = String::new();
+            while let Some(chunk) = bytes.next().await {
+                if cancel.is_cancelled() {
+                    yield StreamChunk::Done { finish_reason: "cancelled".to_string() };
+                    break;
+                }
+
+                let chunk = chunk?;
+                buffer.push_str(str::from_utf8(&chunk).unwrap_or_default());
+
+                while let Some(pos) = buffer.find("\n\n") {
+                    let frame = buffer[..pos].to_string();
+                    buffer = buffer[pos + 2..].to_string();
+                    for line in frame.lines() {
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
+                        let payload = line.trim_start_matches("data: ").trim();
+                        if payload == "[DONE]" {
+                            yield StreamChunk::Done { finish_reason: "stop".to_string() };
+                            continue;
+                        }
+
+                        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+                            continue;
+                        };
+
+                        if let Some(detail) = extract_openai_error(&value) {
+                            Err(anyhow::anyhow!(detail))?;
+                        }
+
+                        let choices = value
+                            .get("choices")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        for choice in choices {
+                            let delta = choice.get("delta").cloned().unwrap_or_default();
+
+                            if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
+                                if !text.is_empty() {
+                                    yield StreamChunk::TextDelta(text.to_string());
+                                }
+                            }
+
+                            if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                                for call in tool_calls {
+                                    let id = call
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let function = call.get("function").cloned().unwrap_or_default();
+                                    let name = function
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let args_delta = function
+                                        .get("arguments")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_string();
+
+                                    if !id.is_empty() && !name.is_empty() {
+                                        yield StreamChunk::ToolCallStart {
+                                            id: id.clone(),
+                                            name,
+                                        };
+                                    }
+                                    if !id.is_empty() && !args_delta.is_empty() {
+                                        yield StreamChunk::ToolCallDelta {
+                                            id: id.clone(),
+                                            args_delta,
+                                        };
+                                    }
+                                    if !id.is_empty() {
+                                        yield StreamChunk::ToolCallEnd { id };
+                                    }
+                                }
+                            }
+
+                            if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                                if !reason.is_empty() {
+                                    yield StreamChunk::Done {
+                                        finish_reason: reason.to_string(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
 }
 
 struct AnthropicProvider {

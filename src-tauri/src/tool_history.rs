@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use tandem_core::resolve_shared_paths;
+use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tandem_types::{MessagePart, Session};
 use tauri::AppHandle;
 
@@ -13,6 +14,8 @@ pub struct ToolExecutionRow {
     pub id: String,
     pub session_id: String,
     pub message_id: Option<String>,
+    pub part_id: Option<String>,
+    pub correlation_id: Option<String>,
     pub tool: String,
     pub status: String,
     pub args: Option<Value>,
@@ -40,7 +43,7 @@ fn now_ms_i64() -> Result<i64> {
     to_i64(crate::logs::now_ms())
 }
 
-fn app_memory_db_path(_app: &AppHandle) -> Result<PathBuf> {
+fn app_tool_history_db_path(_app: &AppHandle) -> Result<PathBuf> {
     let app_data_dir = match resolve_shared_paths() {
         Ok(paths) => paths.canonical_root,
         Err(e) => dirs::data_dir().map(|d| d.join("tandem")).ok_or_else(|| {
@@ -51,24 +54,22 @@ fn app_memory_db_path(_app: &AppHandle) -> Result<PathBuf> {
         })?,
     };
     std::fs::create_dir_all(&app_data_dir)?;
-    Ok(app_data_dir.join("memory.sqlite"))
+    Ok(app_data_dir.join("tool_history.sqlite"))
 }
 
 pub fn app_memory_db_path_for_commands(app: &AppHandle) -> Result<PathBuf> {
-    app_memory_db_path(app)
+    app_tool_history_db_path(app)
 }
 
-fn open_conn(app: &AppHandle) -> Result<Connection> {
-    let db_path = app_memory_db_path(app)?;
-    let conn =
-        Connection::open(&db_path).map_err(|e| to_memory_error("open tool history db", e))?;
-
+fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS tool_executions (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
             message_id TEXT,
+            part_id TEXT,
+            correlation_id TEXT,
             tool TEXT NOT NULL,
             status TEXT NOT NULL,
             args_json TEXT,
@@ -82,11 +83,171 @@ fn open_conn(app: &AppHandle) -> Result<Connection> {
             ON tool_executions(session_id, started_at_ms DESC);
         CREATE INDEX IF NOT EXISTS idx_tool_exec_updated
             ON tool_executions(updated_at_ms DESC);
+        CREATE INDEX IF NOT EXISTS idx_tool_exec_status
+            ON tool_executions(status, started_at_ms DESC);
         "#,
     )
     .map_err(|e| to_memory_error("initialize tool history schema", e))?;
 
-    Ok(conn)
+    // Existing installs may be on an older schema; ensure additive columns exist.
+    let mut known_cols = std::collections::HashSet::new();
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(tool_executions)")
+        .map_err(|e| to_memory_error("read tool history schema", e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| to_memory_error("query tool history schema", e))?;
+    for row in rows {
+        known_cols.insert(row.map_err(|e| to_memory_error("read schema row", e))?);
+    }
+
+    if !known_cols.contains("part_id") {
+        conn.execute("ALTER TABLE tool_executions ADD COLUMN part_id TEXT", [])
+            .map_err(|e| to_memory_error("add part_id column", e))?;
+    }
+    if !known_cols.contains("correlation_id") {
+        conn.execute(
+            "ALTER TABLE tool_executions ADD COLUMN correlation_id TEXT",
+            [],
+        )
+        .map_err(|e| to_memory_error("add correlation_id column", e))?;
+    }
+
+    Ok(())
+}
+
+fn is_recoverable_sqlite_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("database disk image is malformed") || lower.contains("malformed")
+}
+
+fn backup_and_reset_tool_history_db(path: &std::path::Path) -> Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| TandemError::Memory("Invalid tool history db path".to_string()))?;
+    let ts = crate::logs::now_ms();
+    let backup_dir = parent
+        .join("tool_history_backups")
+        .join(format!("corrupt-{ts}"));
+    std::fs::create_dir_all(&backup_dir)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("tool_history.sqlite");
+    let backup_path = backup_dir.join(file_name);
+    let _ = std::fs::copy(path, &backup_path);
+    let _ = std::fs::remove_file(path);
+
+    Ok(Some(backup_path))
+}
+
+fn open_conn(app: &AppHandle) -> Result<Connection> {
+    let db_path = app_tool_history_db_path(app)?;
+
+    let open_and_init = || -> Result<Connection> {
+        let conn =
+            Connection::open(&db_path).map_err(|e| to_memory_error("open tool history db", e))?;
+        ensure_schema(&conn)?;
+        Ok(conn)
+    };
+
+    match open_and_init() {
+        Ok(conn) => Ok(conn),
+        Err(err) if is_recoverable_sqlite_error(&err.to_string()) => {
+            emit_event(
+                tracing::Level::WARN,
+                ProcessKind::Desktop,
+                ObservabilityEvent {
+                    event: "tool_history.recovery.start",
+                    component: "tool_history",
+                    correlation_id: None,
+                    session_id: None,
+                    run_id: None,
+                    message_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    status: Some("running"),
+                    error_code: Some("TOOL_HISTORY_DB_MALFORMED"),
+                    detail: Some("tool history recovery started"),
+                },
+            );
+            tracing::warn!("tool_history recovery triggered: {}", err);
+            let backup = match backup_and_reset_tool_history_db(&db_path) {
+                Ok(backup) => backup,
+                Err(recovery_err) => {
+                    emit_event(
+                        tracing::Level::ERROR,
+                        ProcessKind::Desktop,
+                        ObservabilityEvent {
+                            event: "tool_history.recovery.fail",
+                            component: "tool_history",
+                            correlation_id: None,
+                            session_id: None,
+                            run_id: None,
+                            message_id: None,
+                            provider_id: None,
+                            model_id: None,
+                            status: Some("failed"),
+                            error_code: Some("TOOL_HISTORY_BACKUP_FAILED"),
+                            detail: Some("tool history backup/reset failed"),
+                        },
+                    );
+                    return Err(recovery_err);
+                }
+            };
+            if let Some(path) = backup {
+                tracing::warn!("tool_history backup written: {}", path.display());
+            }
+            let conn = match open_and_init() {
+                Ok(conn) => conn,
+                Err(recovery_err) => {
+                    emit_event(
+                        tracing::Level::ERROR,
+                        ProcessKind::Desktop,
+                        ObservabilityEvent {
+                            event: "tool_history.recovery.fail",
+                            component: "tool_history",
+                            correlation_id: None,
+                            session_id: None,
+                            run_id: None,
+                            message_id: None,
+                            provider_id: None,
+                            model_id: None,
+                            status: Some("failed"),
+                            error_code: Some("TOOL_HISTORY_REOPEN_FAILED"),
+                            detail: Some("tool history reopen after recovery failed"),
+                        },
+                    );
+                    return Err(recovery_err);
+                }
+            };
+            tracing::info!("tool_history.recovered");
+            emit_event(
+                tracing::Level::INFO,
+                ProcessKind::Desktop,
+                ObservabilityEvent {
+                    event: "tool_history.recovery.success",
+                    component: "tool_history",
+                    correlation_id: None,
+                    session_id: None,
+                    run_id: None,
+                    message_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    status: Some("ok"),
+                    error_code: None,
+                    detail: Some("tool history recovery completed"),
+                },
+            );
+            Ok(conn)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn normalize_call_id(part_id: &str, session_id: &str, message_id: &str, tool: &str) -> String {
@@ -102,21 +263,23 @@ fn to_json_text(value: &Value) -> Option<String> {
 }
 
 fn map_row_to_tool_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ToolExecutionRow> {
-    let started_at_i64: i64 = row.get(8)?;
-    let ended_at_i64: Option<i64> = row.get(9)?;
+    let started_at_i64: i64 = row.get(10)?;
+    let ended_at_i64: Option<i64> = row.get(11)?;
     Ok(ToolExecutionRow {
         id: row.get(0)?,
         session_id: row.get(1)?,
         message_id: row.get(2)?,
-        tool: row.get(3)?,
-        status: row.get(4)?,
+        part_id: row.get(3)?,
+        correlation_id: row.get(4)?,
+        tool: row.get(5)?,
+        status: row.get(6)?,
         args: row
-            .get::<_, Option<String>>(5)?
+            .get::<_, Option<String>>(7)?
             .and_then(|s| serde_json::from_str(&s).ok()),
         result: row
-            .get::<_, Option<String>>(6)?
+            .get::<_, Option<String>>(8)?
             .and_then(|s| serde_json::from_str(&s).ok()),
-        error: row.get(7)?,
+        error: row.get(9)?,
         started_at_ms: u64::try_from(started_at_i64).unwrap_or_default(),
         ended_at_ms: ended_at_i64.and_then(|v| u64::try_from(v).ok()),
     })
@@ -135,24 +298,42 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             let now_ms = now_ms_i64()?;
             let started_ms = now_ms;
             let id = normalize_call_id(part_id, session_id, message_id, tool);
+            let part_id_norm = if part_id.trim().is_empty() {
+                None
+            } else {
+                Some(part_id.clone())
+            };
+            let correlation_id = format!("{}:{}:{}", session_id, message_id, id);
             let args_json = to_json_text(args);
 
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, tool, status, args_json,
+                    id, session_id, message_id, part_id, correlation_id, tool, status, args_json,
                     started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?6, NULL, ?7)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7, ?8, NULL, ?9)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     message_id = excluded.message_id,
+                    part_id = COALESCE(excluded.part_id, tool_executions.part_id),
+                    correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
                     tool = excluded.tool,
                     status = 'running',
                     args_json = COALESCE(excluded.args_json, tool_executions.args_json),
                     started_at_ms = COALESCE(tool_executions.started_at_ms, excluded.started_at_ms),
                     updated_at_ms = excluded.updated_at_ms
                 "#,
-                params![id, session_id, message_id, tool, args_json, started_ms, now_ms],
+                params![
+                    id,
+                    session_id,
+                    message_id,
+                    part_id_norm,
+                    correlation_id,
+                    tool,
+                    args_json,
+                    started_ms,
+                    now_ms
+                ],
             )
             .map_err(|e| to_memory_error("record tool_start", e))?;
             Ok(())
@@ -168,6 +349,12 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             let conn = open_conn(app)?;
             let now_ms = now_ms_i64()?;
             let id = normalize_call_id(part_id, session_id, message_id, tool);
+            let part_id_norm = if part_id.trim().is_empty() {
+                None
+            } else {
+                Some(part_id.clone())
+            };
+            let correlation_id = format!("{}:{}:{}", session_id, message_id, id);
             let status = if error.is_some() {
                 "failed"
             } else {
@@ -178,12 +365,14 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, tool, status, result_json,
+                    id, session_id, message_id, part_id, correlation_id, tool, status, result_json,
                     error_text, started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     message_id = excluded.message_id,
+                    part_id = COALESCE(excluded.part_id, tool_executions.part_id),
+                    correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
                     tool = excluded.tool,
                     status = excluded.status,
                     result_json = COALESCE(excluded.result_json, tool_executions.result_json),
@@ -195,6 +384,8 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
                     id,
                     session_id,
                     message_id,
+                    part_id_norm,
+                    correlation_id,
                     tool,
                     status,
                     result_json,
@@ -224,7 +415,7 @@ pub fn list_tool_executions(
     let mut rows_out = Vec::new();
     let sql_with_before = r#"
         SELECT
-            id, session_id, message_id, tool, status, args_json, result_json,
+            id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
             error_text, started_at_ms, ended_at_ms
         FROM tool_executions
         WHERE session_id = ?1
@@ -234,7 +425,7 @@ pub fn list_tool_executions(
     "#;
     let sql_no_before = r#"
         SELECT
-            id, session_id, message_id, tool, status, args_json, result_json,
+            id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
             error_text, started_at_ms, ended_at_ms
         FROM tool_executions
         WHERE session_id = ?1
@@ -269,6 +460,56 @@ pub fn list_tool_executions(
     }
 
     Ok(rows_out)
+}
+
+pub fn mark_running_tools_terminal(
+    app: &AppHandle,
+    session_id: Option<&str>,
+    stale_after_ms: u64,
+    reason: &str,
+) -> Result<u64> {
+    let conn = open_conn(app)?;
+    let now_ms = now_ms_i64()?;
+    let cutoff = if stale_after_ms == 0 {
+        now_ms
+    } else {
+        now_ms.saturating_sub(to_i64(stale_after_ms)?)
+    };
+
+    let changed = if let Some(sid) = session_id {
+        conn.execute(
+            r#"
+            UPDATE tool_executions
+            SET
+                status = 'failed',
+                error_text = COALESCE(error_text, ?1),
+                ended_at_ms = COALESCE(ended_at_ms, ?2),
+                updated_at_ms = ?2
+            WHERE session_id = ?3
+              AND status = 'running'
+              AND started_at_ms <= ?4
+            "#,
+            params![reason, now_ms, sid, cutoff],
+        )
+        .map_err(|e| to_memory_error("reconcile running tools by session", e))?
+    } else {
+        conn.execute(
+            r#"
+            UPDATE tool_executions
+            SET
+                status = 'failed',
+                error_text = COALESCE(error_text, ?1),
+                ended_at_ms = COALESCE(ended_at_ms, ?2),
+                updated_at_ms = ?2
+            WHERE status = 'running'
+              AND started_at_ms <= ?3
+            "#,
+            params![reason, now_ms, cutoff],
+        )
+        .map_err(|e| to_memory_error("reconcile running tools", e))?
+    };
+
+    Ok(u64::try_from(changed).unwrap_or_default())
 }
 
 pub fn backfill_tool_executions_from_sessions(

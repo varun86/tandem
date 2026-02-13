@@ -30,9 +30,12 @@ mod vault;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tandem_core::resolve_shared_paths;
+use tandem_observability::{emit_event, init_process_logging, ObservabilityEvent, ProcessKind};
 use tauri::Manager;
 use tauri_plugin_store::StoreExt;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+static LOG_GUARD: std::sync::OnceLock<tracing_appender::non_blocking::WorkerGuard> =
+    std::sync::OnceLock::new();
 
 /// Vault state - tracks whether the vault is unlocked and stores the master key
 pub struct VaultState {
@@ -84,37 +87,29 @@ impl VaultState {
 
 /// Initialize tracing for logging (console + file)
 fn init_tracing(app_data_dir: &std::path::Path) {
-    use std::fs;
-    use tracing_appender::rolling;
-
-    // Create logs directory
     let logs_dir = app_data_dir.join("logs");
-    fs::create_dir_all(&logs_dir).ok();
-
-    // Use daily rotation with size limit (tracing-appender will handle rotation)
-    // Each file will be named tandem-YYYY-MM-DD.log
-    // Old files are kept for a few days before being deleted
-    let file_appender = rolling::daily(&logs_dir, "tandem");
-
-    // Set up both console and file logging
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_appender)
-        .with_ansi(false); // No ANSI colors in file
-
-    let console_layer = tracing_subscriber::fmt::layer();
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                // Changed from "tandem=debug,tauri=info" to reduce log size
-                .unwrap_or_else(|_| "tandem=info,tauri=info".into()),
-        )
-        .with(console_layer)
-        .with(file_layer)
-        .init();
-
-    tracing::info!("Logging initialized (logs directory: {:?})", logs_dir);
-    tracing::info!("Log level: INFO (use RUST_LOG env var to change)");
+    if let Ok((guard, info)) = init_process_logging(ProcessKind::Desktop, &logs_dir, 14) {
+        let _ = LOG_GUARD.set(guard);
+        emit_event(
+            tracing::Level::INFO,
+            ProcessKind::Desktop,
+            ObservabilityEvent {
+                event: "logging.initialized",
+                component: "desktop.main",
+                correlation_id: None,
+                session_id: None,
+                run_id: None,
+                message_id: None,
+                provider_id: None,
+                model_id: None,
+                status: Some("ok"),
+                error_code: None,
+                detail: Some("desktop jsonl logging initialized"),
+            },
+        );
+        tracing::info!("Logging initialized (logs directory: {:?})", logs_dir);
+        tracing::info!("Desktop logging info: {:?}", info);
+    }
 }
 
 fn is_recoverable_memory_error(err: &memory::types::MemoryError) -> bool {
@@ -538,6 +533,7 @@ pub fn run() {
             commands::start_sidecar,
             commands::stop_sidecar,
             commands::get_sidecar_status,
+            commands::get_sidecar_startup_health,
             commands::get_runtime_diagnostics,
             commands::engine_acquire_lease,
             commands::engine_renew_lease,

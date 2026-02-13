@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use uuid::Uuid;
@@ -59,6 +60,14 @@ struct StreamHubState {
     running: bool,
     stop_tx: Option<oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingToolState {
+    tool: String,
+    message_id: String,
+    started: Instant,
+    correlation_id: String,
 }
 
 pub struct StreamHub {
@@ -117,11 +126,11 @@ impl StreamHub {
 
         let task = tokio::spawn(async move {
             let mut health = StreamHealthStatus::Recovering;
-            let mut pending_tools: HashMap<(String, String), (String, Instant)> = HashMap::new();
+            let mut pending_tools: HashMap<(String, String), PendingToolState> = HashMap::new();
             let mut last_progress = Instant::now();
-            let tool_timeout = Duration::from_secs(120);
             let idle_timeout = Duration::from_secs(10 * 60);
             let no_event_watchdog = Duration::from_secs(45);
+            let mut subscription_generation: u64 = 0;
 
             emit_stream_health(
                 StreamHealthStatus::Recovering,
@@ -136,6 +145,125 @@ impl StreamHub {
                 let stream_res = sidecar.subscribe_events().await;
                 let stream = match stream_res {
                     Ok(s) => {
+                        subscription_generation = subscription_generation.saturating_add(1);
+                        emit_event(
+                            tracing::Level::INFO,
+                            ProcessKind::Desktop,
+                            ObservabilityEvent {
+                                event: "stream.subscribe.ok",
+                                component: "stream_hub",
+                                correlation_id: None,
+                                session_id: None,
+                                run_id: None,
+                                message_id: None,
+                                provider_id: None,
+                                model_id: None,
+                                status: Some("ok"),
+                                error_code: None,
+                                detail: Some("event stream subscription established"),
+                            },
+                        );
+                        if subscription_generation > 1 {
+                            let restart_event = StreamEvent::Raw {
+                                event_type: "system.engine_restart_detected".to_string(),
+                                data: serde_json::json!({
+                                    "subscription_generation": subscription_generation,
+                                    "reason": "stream_resubscribed"
+                                }),
+                            };
+                            let restart_env = StreamEventEnvelopeV2 {
+                                event_id: Uuid::new_v4().to_string(),
+                                correlation_id: format!("engine-restart-{}", Uuid::new_v4()),
+                                ts_ms: crate::logs::now_ms(),
+                                session_id: None,
+                                source: StreamEventSource::System,
+                                payload: restart_event.clone(),
+                            };
+                            let _ = app.emit("sidecar_event", &restart_event);
+                            let _ = app.emit("sidecar_event_v2", &restart_env);
+                            let _ = tx.send(restart_env);
+                            emit_event(
+                                tracing::Level::WARN,
+                                ProcessKind::Desktop,
+                                ObservabilityEvent {
+                                    event: "engine.restart.detected",
+                                    component: "stream_hub",
+                                    correlation_id: None,
+                                    session_id: None,
+                                    run_id: None,
+                                    message_id: None,
+                                    provider_id: None,
+                                    model_id: None,
+                                    status: Some("detected"),
+                                    error_code: None,
+                                    detail: Some("stream subscription generation advanced"),
+                                },
+                            );
+                            emit_event(
+                                tracing::Level::INFO,
+                                ProcessKind::Desktop,
+                                ObservabilityEvent {
+                                    event: "tool.reconcile.start",
+                                    component: "stream_hub",
+                                    correlation_id: None,
+                                    session_id: None,
+                                    run_id: None,
+                                    message_id: None,
+                                    provider_id: None,
+                                    model_id: None,
+                                    status: Some("running"),
+                                    error_code: None,
+                                    detail: Some("reconciling running tools on stream resubscribe"),
+                                },
+                            );
+                            match crate::tool_history::mark_running_tools_terminal(
+                                &app,
+                                None,
+                                0,
+                                "interrupted: stream reconnected",
+                            ) {
+                                Ok(reconciled) => {
+                                    if reconciled > 0 {
+                                        emit_event(
+                                            tracing::Level::INFO,
+                                            ProcessKind::Desktop,
+                                            ObservabilityEvent {
+                                                event: "tool.reconcile.end",
+                                                component: "stream_hub",
+                                                correlation_id: None,
+                                                session_id: None,
+                                                run_id: None,
+                                                message_id: None,
+                                                provider_id: None,
+                                                model_id: None,
+                                                status: Some("ok"),
+                                                error_code: None,
+                                                detail: Some(
+                                                    "reconciled stale running tools on resubscribe",
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
+                                Err(_) => emit_event(
+                                    tracing::Level::WARN,
+                                    ProcessKind::Desktop,
+                                    ObservabilityEvent {
+                                        event: "tool.reconcile.end",
+                                        component: "stream_hub",
+                                        correlation_id: None,
+                                        session_id: None,
+                                        run_id: None,
+                                        message_id: None,
+                                        provider_id: None,
+                                        model_id: None,
+                                        status: Some("failed"),
+                                        error_code: Some("TOOL_RECONCILE_FAILED"),
+                                        detail: Some("failed to reconcile tools on resubscribe"),
+                                    },
+                                ),
+                            }
+                        }
                         if !matches!(health, StreamHealthStatus::Healthy) {
                             health = StreamHealthStatus::Healthy;
                             emit_stream_health(
@@ -151,6 +279,23 @@ impl StreamHub {
                     }
                     Err(e) => {
                         tracing::warn!("StreamHub failed to subscribe to sidecar events: {}", e);
+                        emit_event(
+                            tracing::Level::ERROR,
+                            ProcessKind::Desktop,
+                            ObservabilityEvent {
+                                event: "stream.subscribe.error",
+                                component: "stream_hub",
+                                correlation_id: None,
+                                session_id: None,
+                                run_id: None,
+                                message_id: None,
+                                provider_id: None,
+                                model_id: None,
+                                status: Some("failed"),
+                                error_code: Some("STREAM_SUBSCRIBE_FAILED"),
+                                detail: Some("failed to subscribe to /event"),
+                            },
+                        );
                         if !matches!(health, StreamHealthStatus::Degraded) {
                             health = StreamHealthStatus::Degraded;
                             emit_stream_health(
@@ -177,15 +322,18 @@ impl StreamHub {
                 loop {
                     tokio::select! {
                         _ = tick.tick() => {
-                            if let Some(((session_id, part_id), (tool, _started))) = pending_tools
+                            if let Some(((session_id, part_id), pending)) = pending_tools
                                 .iter()
-                                .find(|(_, (_, started))| started.elapsed() > tool_timeout)
+                                .find(|(_, pending)| {
+                                    pending.started.elapsed() > tool_timeout_for(&pending.tool)
+                                })
                             {
+                                let tool_timeout = tool_timeout_for(&pending.tool);
                                 let timeout_event = StreamEvent::SessionError {
                                     session_id: session_id.clone(),
                                     error: format!(
                                         "Tool '{}' (part {}) exceeded timeout of {:?}",
-                                        tool,
+                                        pending.tool,
                                         part_id,
                                         tool_timeout
                                     ),
@@ -201,6 +349,46 @@ impl StreamHub {
                                 let _ = app.emit("sidecar_event", &timeout_event);
                                 let _ = app.emit("sidecar_event_v2", &timeout_env);
                                 let _ = tx.send(timeout_env);
+
+                                let synthetic_end = StreamEvent::ToolEnd {
+                                    session_id: session_id.clone(),
+                                    message_id: pending.message_id.clone(),
+                                    part_id: part_id.clone(),
+                                    tool: pending.tool.clone(),
+                                    result: None,
+                                    error: Some("failed_timeout".to_string()),
+                                };
+                                let _ = crate::tool_history::record_stream_event(&app, &synthetic_end);
+                                let synthetic_env = StreamEventEnvelopeV2 {
+                                    event_id: Uuid::new_v4().to_string(),
+                                    correlation_id: pending.correlation_id.clone(),
+                                    ts_ms: crate::logs::now_ms(),
+                                    session_id: Some(session_id.clone()),
+                                    source: StreamEventSource::System,
+                                    payload: synthetic_end.clone(),
+                                };
+                                let _ = app.emit("sidecar_event", &synthetic_end);
+                                let _ = app.emit("sidecar_event_v2", &synthetic_env);
+                                let _ = tx.send(synthetic_env);
+                                emit_event(
+                                    tracing::Level::WARN,
+                                    ProcessKind::Desktop,
+                                    ObservabilityEvent {
+                                        event: "tool.synthetic_terminal_emitted",
+                                        component: "stream_hub",
+                                        correlation_id: Some(&pending.correlation_id),
+                                        session_id: Some(session_id),
+                                        run_id: None,
+                                        message_id: Some(&pending.message_id),
+                                        provider_id: None,
+                                        model_id: None,
+                                        status: Some("ok"),
+                                        error_code: Some("TOOL_TIMEOUT"),
+                                        detail: Some("synthetic tool terminal emitted after timeout"),
+                                    },
+                                );
+
+                                pending_tools.remove(&(session_id.clone(), part_id.clone()));
                             }
 
                             if pending_tools.is_empty() && last_progress.elapsed() > idle_timeout {
@@ -225,6 +413,23 @@ impl StreamHub {
                             if last_progress.elapsed() > no_event_watchdog
                                 && !matches!(health, StreamHealthStatus::Degraded)
                             {
+                                emit_event(
+                                    tracing::Level::WARN,
+                                    ProcessKind::Desktop,
+                                    ObservabilityEvent {
+                                        event: "stream.watchdog.no_events",
+                                        component: "stream_hub",
+                                        correlation_id: None,
+                                        session_id: None,
+                                        run_id: None,
+                                        message_id: None,
+                                        provider_id: None,
+                                        model_id: None,
+                                        status: Some("degraded"),
+                                        error_code: Some("STREAM_DISCONNECT"),
+                                        detail: Some("no events watchdog triggered"),
+                                    },
+                                );
                                 health = StreamHealthStatus::Degraded;
                                 emit_stream_health(
                                     StreamHealthStatus::Degraded,
@@ -242,6 +447,23 @@ impl StreamHub {
                         maybe = stream.next() => {
                             let Some(next_item) = maybe else {
                                 tracing::info!("StreamHub stream ended; attempting resubscribe");
+                                emit_event(
+                                    tracing::Level::WARN,
+                                    ProcessKind::Desktop,
+                                    ObservabilityEvent {
+                                        event: "stream.disconnected",
+                                        component: "stream_hub",
+                                        correlation_id: None,
+                                        session_id: None,
+                                        run_id: None,
+                                        message_id: None,
+                                        provider_id: None,
+                                        model_id: None,
+                                        status: Some("recovering"),
+                                        error_code: Some("STREAM_DISCONNECT"),
+                                        detail: Some("sidecar event stream ended"),
+                                    },
+                                );
                                 if !matches!(health, StreamHealthStatus::Recovering) {
                                     health = StreamHealthStatus::Recovering;
                                     emit_stream_health(
@@ -277,13 +499,197 @@ impl StreamHub {
                                     }
                                     if let Err(e) = crate::tool_history::record_stream_event(&app, &event) {
                                         tracing::warn!("Failed to persist tool history event: {}", e);
+                                        if let StreamEvent::ToolEnd {
+                                            session_id,
+                                            message_id,
+                                            part_id,
+                                            tool,
+                                            ..
+                                        } = &event
+                                        {
+                                            // Emit an explicit synthetic terminal event so UIs can close
+                                            // pending indicators even when persistence is degraded.
+                                            let synthetic = StreamEvent::ToolEnd {
+                                                session_id: session_id.clone(),
+                                                message_id: message_id.clone(),
+                                                part_id: part_id.clone(),
+                                                tool: tool.clone(),
+                                                result: None,
+                                                error: Some("interrupted".to_string()),
+                                            };
+                                            let synthetic_env = StreamEventEnvelopeV2 {
+                                                event_id: Uuid::new_v4().to_string(),
+                                                correlation_id: format!("{}:{}", session_id, part_id),
+                                                ts_ms: crate::logs::now_ms(),
+                                                session_id: Some(session_id.clone()),
+                                                source: StreamEventSource::System,
+                                                payload: synthetic.clone(),
+                                            };
+                                            let _ = app.emit("sidecar_event", &synthetic);
+                                            let _ = app.emit("sidecar_event_v2", &synthetic_env);
+                                            let _ = tx.send(synthetic_env);
+                                            emit_event(
+                                                tracing::Level::WARN,
+                                                ProcessKind::Desktop,
+                                                ObservabilityEvent {
+                                                    event: "tool.synthetic_terminal_emitted",
+                                                    component: "stream_hub",
+                                                    correlation_id: None,
+                                                    session_id: Some(session_id),
+                                                    run_id: None,
+                                                    message_id: Some(message_id),
+                                                    provider_id: None,
+                                                    model_id: None,
+                                                    status: Some("ok"),
+                                                    error_code: Some("TOOL_PERSISTENCE_FAILED"),
+                                                    detail: Some(
+                                                        "synthetic tool terminal emitted after tool_history write failure",
+                                                    ),
+                                                },
+                                            );
+                                        }
                                     }
                                     match &event {
-                                        StreamEvent::ToolStart { session_id, part_id, tool, .. } => {
-                                            pending_tools.insert((session_id.clone(), part_id.clone()), (tool.clone(), Instant::now()));
+                                        StreamEvent::ToolStart {
+                                            session_id,
+                                            message_id,
+                                            part_id,
+                                            tool,
+                                            ..
+                                        } => {
+                                            let correlation_id =
+                                                format!("{}:{}:{}", session_id, message_id, part_id);
+                                            tracing::info!(
+                                                "tool.lifecycle.start session_id={} message_id={} part_id={} correlation_id={} tool={}",
+                                                session_id,
+                                                message_id,
+                                                part_id,
+                                                correlation_id,
+                                                tool
+                                            );
+                                            pending_tools.insert(
+                                                (session_id.clone(), part_id.clone()),
+                                                PendingToolState {
+                                                    tool: tool.clone(),
+                                                    message_id: message_id.clone(),
+                                                    started: Instant::now(),
+                                                    correlation_id,
+                                                },
+                                            );
                                         }
-                                        StreamEvent::ToolEnd { session_id, part_id, .. } => {
-                                            pending_tools.remove(&(session_id.clone(), part_id.clone()));
+                                        StreamEvent::ToolEnd {
+                                            session_id,
+                                            message_id,
+                                            part_id,
+                                            tool,
+                                            ..
+                                        } => {
+                                            let mut resolved_part_id = part_id.clone();
+                                            if !pending_tools
+                                                .contains_key(&(session_id.clone(), part_id.clone()))
+                                            {
+                                                if let Some(((candidate_session, candidate_part), _)) =
+                                                    pending_tools
+                                                        .iter()
+                                                        .find(|((sid, _), pending)| {
+                                                            sid == session_id
+                                                                && pending.message_id == *message_id
+                                                                && pending.tool.eq_ignore_ascii_case(tool)
+                                                        })
+                                                {
+                                                    resolved_part_id = candidate_part.clone();
+                                                    tracing::warn!(
+                                                        "tool.lifecycle.end remapped mismatched part_id session_id={} message_id={} tool={} incoming_part_id={} resolved_part_id={}",
+                                                        candidate_session,
+                                                        message_id,
+                                                        tool,
+                                                        part_id,
+                                                        resolved_part_id
+                                                    );
+                                                }
+                                            }
+                                            tracing::info!(
+                                                "tool.lifecycle.end session_id={} message_id={} part_id={} correlation_id={}:{} tool={}",
+                                                session_id,
+                                                message_id,
+                                                resolved_part_id,
+                                                session_id,
+                                                resolved_part_id,
+                                                tool
+                                            );
+                                            pending_tools
+                                                .remove(&(session_id.clone(), resolved_part_id.clone()));
+                                        }
+                                        StreamEvent::SessionIdle { session_id }
+                                        | StreamEvent::SessionError { session_id, .. } => {
+                                            emit_event(
+                                                tracing::Level::INFO,
+                                                ProcessKind::Desktop,
+                                                ObservabilityEvent {
+                                                    event: "tool.reconcile.start",
+                                                    component: "stream_hub",
+                                                    correlation_id: None,
+                                                    session_id: Some(session_id),
+                                                    run_id: None,
+                                                    message_id: None,
+                                                    provider_id: None,
+                                                    model_id: None,
+                                                    status: Some("running"),
+                                                    error_code: None,
+                                                    detail: Some(
+                                                        "reconciling running tools on session terminal event",
+                                                    ),
+                                                },
+                                            );
+                                            match crate::tool_history::mark_running_tools_terminal(
+                                                &app,
+                                                Some(session_id),
+                                                0,
+                                                "interrupted",
+                                            ) {
+                                                Ok(reconciled) => {
+                                                    if reconciled > 0 {
+                                                        emit_event(
+                                                            tracing::Level::INFO,
+                                                            ProcessKind::Desktop,
+                                                            ObservabilityEvent {
+                                                                event: "tool.reconcile.end",
+                                                                component: "stream_hub",
+                                                                correlation_id: None,
+                                                                session_id: Some(session_id),
+                                                                run_id: None,
+                                                                message_id: None,
+                                                                provider_id: None,
+                                                                model_id: None,
+                                                                status: Some("ok"),
+                                                                error_code: None,
+                                                                detail: Some(
+                                                                    "reconciled running tools on session terminal event",
+                                                                ),
+                                                            },
+                                                        );
+                                                    }
+                                                }
+                                                Err(_) => emit_event(
+                                                    tracing::Level::WARN,
+                                                    ProcessKind::Desktop,
+                                                    ObservabilityEvent {
+                                                        event: "tool.reconcile.end",
+                                                        component: "stream_hub",
+                                                        correlation_id: None,
+                                                        session_id: Some(session_id),
+                                                        run_id: None,
+                                                        message_id: None,
+                                                        provider_id: None,
+                                                        model_id: None,
+                                                        status: Some("failed"),
+                                                        error_code: Some("TOOL_RECONCILE_FAILED"),
+                                                        detail: Some(
+                                                            "failed to reconcile tools on session terminal event",
+                                                        ),
+                                                    },
+                                                ),
+                                            }
                                         }
                                         _ => {}
                                     }
@@ -435,5 +841,14 @@ fn derive_correlation_id(event: &StreamEvent) -> String {
         | StreamEvent::FileEdited { session_id, .. }
         | StreamEvent::MemoryRetrieval { session_id, .. } => session_id.clone(),
         StreamEvent::Raw { .. } => Uuid::new_v4().to_string(),
+    }
+}
+
+fn tool_timeout_for(tool: &str) -> Duration {
+    match tool.trim().to_ascii_lowercase().as_str() {
+        // Workspace-wide file enumeration can be slow on large repos (especially Windows).
+        "glob" => Duration::from_secs(10 * 60),
+        "grep" | "search" | "codesearch" => Duration::from_secs(5 * 60),
+        _ => Duration::from_secs(120),
     }
 }

@@ -4,10 +4,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures::Stream;
@@ -28,7 +30,7 @@ use tandem_wire::{
     WireSessionMessage,
 };
 
-use crate::AppState;
+use crate::{AppState, StartupStatus};
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -67,6 +69,11 @@ struct EngineLeaseRenewInput {
 #[derive(Debug, Deserialize)]
 struct EngineLeaseReleaseInput {
     lease_id: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageRepairInput {
+    force: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -209,6 +216,7 @@ fn app_router(state: AppState) -> Router {
         .route("/global/lease/acquire", post(global_lease_acquire))
         .route("/global/lease/renew", post(global_lease_renew))
         .route("/global/lease/release", post(global_lease_release))
+        .route("/global/storage/repair", post(global_storage_repair))
         .route(
             "/global/config",
             get(global_config).patch(global_config_patch),
@@ -336,7 +344,48 @@ fn app_router(state: AppState) -> Router {
         .route("/instance/dispose", post(instance_dispose))
         .route("/log", post(push_log))
         .route("/doc", get(openapi_doc))
+        .layer(middleware::from_fn_with_state(state.clone(), startup_gate))
         .with_state(state)
+}
+
+async fn startup_gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if request.uri().path() == "/global/health" {
+        return next.run(request).await;
+    }
+    if state.is_ready() {
+        return next.run(request).await;
+    }
+
+    let snapshot = state.startup_snapshot().await;
+    let status_text = match snapshot.status {
+        StartupStatus::Starting => "starting",
+        StartupStatus::Ready => "ready",
+        StartupStatus::Failed => "failed",
+    };
+    let code = match snapshot.status {
+        StartupStatus::Failed => "ENGINE_STARTUP_FAILED",
+        _ => "ENGINE_STARTING",
+    };
+    let error = format!(
+        "Engine {}: phase={} attempt_id={} elapsed_ms={}{}",
+        status_text,
+        snapshot.phase,
+        snapshot.attempt_id,
+        snapshot.elapsed_ms,
+        snapshot
+            .last_error
+            .as_ref()
+            .map(|e| format!(" error={}", e))
+            .unwrap_or_default()
+    );
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ErrorEnvelope {
+            error,
+            code: Some(code.to_string()),
+        }),
+    )
+        .into_response()
 }
 
 async fn global_health(State(state): State<AppState>) -> impl IntoResponse {
@@ -346,13 +395,16 @@ async fn global_health(State(state): State<AppState>) -> impl IntoResponse {
         leases.retain(|_, lease| !lease.is_expired(now));
         leases.len()
     };
-    let in_process = state
-        .in_process_mode
-        .load(std::sync::atomic::Ordering::Relaxed);
+    let startup = state.startup_snapshot().await;
     Json(json!({
         "healthy": true,
+        "ready": state.is_ready(),
+        "phase": startup.phase,
+        "startup_attempt_id": startup.attempt_id,
+        "startup_elapsed_ms": startup.elapsed_ms,
+        "last_error": startup.last_error,
         "version": env!("CARGO_PKG_VERSION"),
-        "mode": if in_process { "in-process" } else { "sidecar" },
+        "mode": state.mode_label(),
         "leaseCount": lease_count
     }))
 }
@@ -418,10 +470,42 @@ async fn global_lease_release(
     Json(json!({ "ok": removed, "lease_count": leases.len() }))
 }
 
+async fn global_storage_repair(
+    State(state): State<AppState>,
+    Json(input): Json<StorageRepairInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let force = input.force.unwrap_or(false);
+    let report = state
+        .storage
+        .run_legacy_storage_repair_scan(force)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({
+        "status": report.status,
+        "marker_updated": report.marker_updated,
+        "sessions_merged": report.sessions_merged,
+        "messages_recovered": report.messages_recovered,
+        "parts_recovered": report.parts_recovered,
+        "legacy_counts": report.legacy_counts,
+        "imported_counts": report.imported_counts,
+    })))
+}
+
 fn sse_stream(state: AppState) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
     let rx = state.event_bus.subscribe();
     let initial = tokio_stream::once(Ok(Event::default().data(
         serde_json::to_string(&EngineEvent::new("server.connected", json!({}))).unwrap_or_default(),
+    )));
+    let ready = tokio_stream::once(Ok(Event::default().data(
+        serde_json::to_string(&EngineEvent::new(
+            "engine.lifecycle.ready",
+            json!({
+                "status": "ready",
+                "transport": "sse",
+                "timestamp_ms": crate::now_ms(),
+            }),
+        ))
+        .unwrap_or_default(),
     )));
     let live = BroadcastStream::new(rx).filter_map(|msg| match msg {
         Ok(event) => {
@@ -431,21 +515,13 @@ fn sse_stream(state: AppState) -> impl Stream<Item = Result<Event, std::convert:
         }
         Err(_) => None,
     });
-    let heartbeat =
-        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(30)))
-            .map(|_| {
-                let payload =
-                    serde_json::to_string(&EngineEvent::new("server.heartbeat", json!({})))
-                        .unwrap_or_default();
-                Ok(Event::default().data(truncate_for_stream(&payload, 16_000)))
-            });
-    initial.chain(live).chain(heartbeat)
+    initial.chain(ready).chain(live)
 }
 
 async fn events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
-    Sse::new(sse_stream(state)).keep_alive(KeepAlive::new().interval(Duration::from_secs(30)))
+    Sse::new(sse_stream(state)).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
 }
 
 async fn create_session(
@@ -668,22 +744,128 @@ async fn session_messages(
 async fn prompt_async(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<StatusCode, StatusCode> {
     let engine = state.engine_loop.clone();
     let cancellations = state.cancellations.clone();
     let session_id = id.clone();
+    let correlation_id = headers
+        .get("x-tandem-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    tracing::info!(
+        target: "tandem.obs",
+        event = "server.prompt_async.start",
+        component = "http.prompt_async",
+        session_id = %session_id,
+        correlation_id = %correlation_id.as_deref().unwrap_or(""),
+        "prompt_async request accepted"
+    );
+
     tokio::spawn(async move {
         let run = tokio::time::timeout(
             Duration::from_secs(60 * 10),
-            engine.run_prompt_async(id, req),
+            engine.run_prompt_async_with_context(id, req, correlation_id.clone()),
         )
         .await;
-        if run.is_err() {
-            let _ = cancellations.cancel(&session_id).await;
+        match run {
+            Ok(Ok(_)) => {
+                tracing::info!(
+                    target: "tandem.obs",
+                    event = "server.prompt_async.finish",
+                    component = "http.prompt_async",
+                    session_id = %session_id,
+                    correlation_id = %correlation_id.as_deref().unwrap_or(""),
+                    "prompt_async finished successfully"
+                );
+            }
+            Ok(Err(err)) => {
+                let error_message = err.to_string();
+                let error_code = dispatch_error_code(&error_message);
+                tracing::error!(
+                    target: "tandem.obs",
+                    event = "server.prompt_async.error",
+                    component = "http.prompt_async",
+                    session_id = %session_id,
+                    correlation_id = %correlation_id.as_deref().unwrap_or(""),
+                    error_code = error_code,
+                    "prompt_async failed: {:#}",
+                    err
+                );
+                state.event_bus.publish(EngineEvent::new(
+                    "session.error",
+                    json!({
+                        "sessionID": session_id,
+                        "error": {
+                            "code": error_code,
+                            "message": truncate_text(&error_message, 500),
+                        }
+                    }),
+                ));
+                state.event_bus.publish(EngineEvent::new(
+                    "session.status",
+                    json!({"sessionID": session_id, "status":"error"}),
+                ));
+                state.event_bus.publish(EngineEvent::new(
+                    "session.updated",
+                    json!({"sessionID": session_id, "status":"error"}),
+                ));
+                let _ = cancellations.cancel(&session_id).await;
+            }
+            Err(_) => {
+                tracing::error!(
+                    target: "tandem.obs",
+                    event = "server.prompt_async.error",
+                    component = "http.prompt_async",
+                    session_id = %session_id,
+                    correlation_id = %correlation_id.as_deref().unwrap_or(""),
+                    error_code = "ENGINE_TIMEOUT",
+                    "prompt_async timed out"
+                );
+                state.event_bus.publish(EngineEvent::new(
+                    "session.error",
+                    json!({
+                        "sessionID": session_id,
+                        "error": {
+                            "code": "ENGINE_TIMEOUT",
+                            "message": "prompt_async timed out",
+                        }
+                    }),
+                ));
+                state.event_bus.publish(EngineEvent::new(
+                    "session.status",
+                    json!({"sessionID": session_id, "status":"error"}),
+                ));
+                state.event_bus.publish(EngineEvent::new(
+                    "session.updated",
+                    json!({"sessionID": session_id, "status":"error"}),
+                ));
+                let _ = cancellations.cancel(&session_id).await;
+            }
         }
     });
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn dispatch_error_code(message: &str) -> &'static str {
+    if message.contains("invalid_function_parameters")
+        || message.contains("array schema missing items")
+    {
+        "TOOL_SCHEMA_INVALID"
+    } else {
+        "ENGINE_DISPATCH_FAILED"
+    }
+}
+
+fn truncate_text(input: &str, max_len: usize) -> String {
+    if input.len() <= max_len {
+        return input.to_string();
+    }
+    let mut out = input[..max_len].to_string();
+    out.push_str("...<truncated>");
+    out
 }
 
 async fn session_todos(
@@ -755,18 +937,52 @@ async fn update_session(
 async fn send_message_streaming(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<SendMessageRequest>,
-) -> Result<Json<Vec<WireSessionMessage>>, StatusCode> {
+) -> Result<Json<Vec<WireSessionMessage>>, (StatusCode, String)> {
+    let correlation_id = headers
+        .get("x-tandem-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    tracing::info!(
+        target: "tandem.obs",
+        event = "server.prompt_async.start",
+        component = "http.send_message_streaming",
+        session_id = %id,
+        correlation_id = %correlation_id.as_deref().unwrap_or(""),
+        "prompt_async request received"
+    );
     state
         .engine_loop
-        .run_prompt_async(id.clone(), req)
+        .run_prompt_async_with_context(id.clone(), req, correlation_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            tracing::error!(
+                target: "tandem.obs",
+                event = "server.prompt_async.error",
+                component = "http.send_message_streaming",
+                session_id = %id,
+                error_code = "ENGINE_DISPATCH_FAILED",
+                "prompt_async failed: {:#}",
+                err
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Engine error: {:#}", err),
+            )
+        })?;
+    tracing::info!(
+        target: "tandem.obs",
+        event = "server.prompt_async.finish",
+        component = "http.send_message_streaming",
+        session_id = %id,
+        "prompt_async completed"
+    );
     let session = state
         .storage
         .get_session(&id)
         .await
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
     let messages = session
         .messages
         .iter()
@@ -1818,6 +2034,7 @@ async fn openapi_doc() -> Json<Value> {
         "info":{"title":"tandem-engine","version":"0.1.0"},
         "paths":{
             "/global/health":{"get":{"summary":"Health check"}},
+            "/global/storage/repair":{"post":{"summary":"Force legacy storage repair scan"}},
             "/session":{"get":{"summary":"List sessions"},"post":{"summary":"Create session"}},
             "/session/{id}/message":{"post":{"summary":"Run message loop"}},
             "/session/{id}/fork":{"post":{"summary":"Fork a session"}},
@@ -1880,7 +2097,6 @@ mod tests {
         let auth = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         let logs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
         let workspace_index = WorkspaceIndex::new(".").await;
-        let in_process_mode = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancellations = CancellationRegistry::new();
         let engine_loop = EngineLoop::new(
             storage.clone(),
@@ -1892,25 +2108,29 @@ mod tests {
             tools.clone(),
             cancellations.clone(),
         );
-        AppState {
-            storage,
-            config,
-            event_bus,
-            providers,
-            plugins,
-            agents,
-            tools,
-            permissions,
-            mcp,
-            pty,
-            lsp,
-            auth,
-            logs,
-            workspace_index,
-            in_process_mode,
-            cancellations,
-            engine_loop,
-        }
+        let state = AppState::new_starting(Uuid::new_v4().to_string(), false);
+        state
+            .mark_ready(crate::RuntimeState {
+                storage,
+                config,
+                event_bus,
+                providers,
+                plugins,
+                agents,
+                tools,
+                permissions,
+                mcp,
+                pty,
+                lsp,
+                auth,
+                logs,
+                workspace_index,
+                cancellations,
+                engine_loop,
+            })
+            .await
+            .expect("runtime ready");
+        state
     }
 
     #[tokio::test]
@@ -2069,8 +2289,31 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let payload: Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload.get("healthy").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(payload.get("ready").and_then(|v| v.as_bool()), Some(true));
+        assert!(payload.get("phase").is_some());
+        assert!(payload.get("startup_attempt_id").is_some());
+        assert!(payload.get("startup_elapsed_ms").is_some());
         assert!(payload.get("version").and_then(|v| v.as_str()).is_some());
         assert!(payload.get("mode").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[tokio::test]
+    async fn non_health_routes_are_blocked_until_runtime_ready() {
+        let state = AppState::new_starting(Uuid::new_v4().to_string(), false);
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/provider")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            payload.get("code").and_then(|v| v.as_str()),
+            Some("ENGINE_STARTING")
+        );
     }
 
     #[tokio::test]

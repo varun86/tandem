@@ -45,6 +45,15 @@ impl MemoryManager {
     /// 2. Generate embeddings for each chunk
     /// 3. Store chunks and embeddings in the database
     pub async fn store_message(&self, request: StoreMessageRequest) -> MemoryResult<Vec<String>> {
+        if self
+            .db
+            .ensure_vector_tables_healthy()
+            .await
+            .unwrap_or(false)
+        {
+            tracing::warn!("Memory vector tables were repaired before storing message chunks");
+        }
+
         let config = if let Some(ref pid) = request.project_id {
             self.db.get_or_create_config(pid).await?
         } else {
@@ -90,8 +99,24 @@ impl MemoryManager {
                 metadata: request.metadata.clone(),
             };
 
-            // Store in database
-            self.db.store_chunk(&chunk, &embedding).await?;
+            // Store in database (retry once after vector-table self-heal).
+            if let Err(err) = self.db.store_chunk(&chunk, &embedding).await {
+                tracing::warn!("Failed to store memory chunk {}: {}", chunk.id, err);
+                let repaired = self
+                    .db
+                    .ensure_vector_tables_healthy()
+                    .await
+                    .unwrap_or(false);
+                if repaired {
+                    tracing::warn!(
+                        "Retrying memory chunk insert after vector table repair: {}",
+                        chunk.id
+                    );
+                    self.db.store_chunk(&chunk, &embedding).await?;
+                } else {
+                    return Err(err);
+                }
+            }
             chunk_ids.push(chunk_id);
         }
 
@@ -128,7 +153,7 @@ impl MemoryManager {
         };
 
         for search_tier in tiers_to_search {
-            let tier_results = self
+            let tier_results = match self
                 .db
                 .search_similar(
                     &query_embedding,
@@ -137,7 +162,47 @@ impl MemoryManager {
                     session_id,
                     effective_limit,
                 )
-                .await?;
+                .await
+            {
+                Ok(results) => results,
+                Err(err) => {
+                    tracing::warn!(
+                        "Memory tier search failed for {:?}: {}. Attempting vector repair.",
+                        search_tier,
+                        err
+                    );
+                    let repaired = self
+                        .db
+                        .ensure_vector_tables_healthy()
+                        .await
+                        .unwrap_or(false);
+                    if repaired {
+                        match self
+                            .db
+                            .search_similar(
+                                &query_embedding,
+                                search_tier,
+                                project_id,
+                                session_id,
+                                effective_limit,
+                            )
+                            .await
+                        {
+                            Ok(results) => results,
+                            Err(retry_err) => {
+                                tracing::warn!(
+                                    "Memory tier search still failing for {:?} after repair: {}",
+                                    search_tier,
+                                    retry_err
+                                );
+                                continue;
+                            }
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+            };
 
             for (chunk, distance) in tier_results {
                 // Convert distance to similarity (cosine similarity)

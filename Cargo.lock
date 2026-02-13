@@ -5930,6 +5930,7 @@ dependencies = [
  "sha2",
  "sqlite-vec",
  "tandem-core",
+ "tandem-observability",
  "tandem-types",
  "tar",
  "tauri",
@@ -5968,6 +5969,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tandem-observability",
  "tandem-providers",
  "tandem-tools",
  "tandem-types",
@@ -5975,6 +5977,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -5998,6 +6001,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tandem-core",
+ "tandem-observability",
  "tandem-providers",
  "tandem-runtime",
  "tandem-server",
@@ -6011,6 +6015,19 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "tandem-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6075,14 +6092,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "glob",
  "ignore",
  "regex",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "tandem-types",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -6096,6 +6116,7 @@ dependencies = [
  "byteorder",
  "crossterm",
  "futures",
+ "pulldown-cmark",
  "rand 0.8.5",
  "ratatui",
  "reqwest 0.12.28",
@@ -6103,9 +6124,11 @@ dependencies = [
  "serde_json",
  "tachyonfx",
  "tandem-core",
+ "tandem-observability",
  "tandem-types",
  "tandem-wire",
  "thiserror 1.0.69",
+ "throbber-widgets-tui",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -6710,6 +6733,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "throbber-widgets-tui"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d36b5738d666a2b4c91b7c24998a8588db724b3107258343ebf8824bf55b06d"
+dependencies = [
+ "rand 0.8.5",
+ "ratatui",
+]
+
+[[package]]
 name = "tiff"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7081,6 +7114,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7090,12 +7133,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

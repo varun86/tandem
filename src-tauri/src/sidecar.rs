@@ -13,6 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tandem_core::resolve_shared_paths;
+use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tokio::sync::{Mutex, RwLock};
 
 #[cfg(windows)]
@@ -135,6 +136,35 @@ pub struct SidecarRuntimeSnapshot {
     pub pid: Option<u32>,
     pub binary_path: Option<String>,
     pub circuit: SidecarCircuitSnapshot,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SidecarHealthResponse {
+    healthy: bool,
+    #[serde(default = "default_health_ready")]
+    ready: bool,
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    startup_attempt_id: String,
+    #[serde(default)]
+    startup_elapsed_ms: u64,
+    #[serde(default)]
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SidecarStartupHealth {
+    pub healthy: bool,
+    pub ready: bool,
+    pub phase: String,
+    pub startup_attempt_id: String,
+    pub startup_elapsed_ms: u64,
+    pub last_error: Option<String>,
+}
+
+fn default_health_ready() -> bool {
+    true
 }
 
 /// Configuration for the sidecar manager
@@ -932,6 +962,22 @@ impl SidecarManager {
         }
     }
 
+    pub async fn startup_health(&self) -> Result<SidecarStartupHealth> {
+        let port = self
+            .port()
+            .await
+            .ok_or_else(|| TandemError::Sidecar("Sidecar port not assigned".to_string()))?;
+        let health = self.health_check(port).await?;
+        Ok(SidecarStartupHealth {
+            healthy: health.healthy,
+            ready: health.ready,
+            phase: health.phase,
+            startup_attempt_id: health.startup_attempt_id,
+            startup_elapsed_ms: health.startup_elapsed_ms,
+            last_error: health.last_error,
+        })
+    }
+
     /// Set environment variables for OpenCode
     pub async fn set_env(&self, key: &str, value: &str) {
         let mut env_vars = self.env_vars.write().await;
@@ -990,24 +1036,34 @@ impl SidecarManager {
         let env_vars = self.env_vars.read().await;
 
         // In shared mode, prefer attaching to an already-running engine.
-        if config.shared_mode && self.health_check(port).await.is_ok() {
-            {
-                let mut port_guard = self.port.write().await;
-                *port_guard = Some(port);
+        if config.shared_mode {
+            if let Ok(health) = self.health_check(port).await {
+                if health.ready {
+                    {
+                        let mut port_guard = self.port.write().await;
+                        *port_guard = Some(port);
+                    }
+                    {
+                        let mut owns_guard = self.owns_process.write().await;
+                        *owns_guard = false;
+                    }
+                    {
+                        let mut state = self.state.write().await;
+                        *state = SidecarState::Running;
+                    }
+                    tracing::info!(
+                        "Attached to existing tandem-engine sidecar on port {}",
+                        port
+                    );
+                    return Ok(());
+                }
+                tracing::info!(
+                    "Existing tandem-engine on port {} is healthy but not ready yet (phase={} elapsed_ms={})",
+                    port,
+                    health.phase,
+                    health.startup_elapsed_ms
+                );
             }
-            {
-                let mut owns_guard = self.owns_process.write().await;
-                *owns_guard = false;
-            }
-            {
-                let mut state = self.state.write().await;
-                *state = SidecarState::Running;
-            }
-            tracing::info!(
-                "Attached to existing tandem-engine sidecar on port {}",
-                port
-            );
-            return Ok(());
         }
 
         tracing::debug!(
@@ -1272,8 +1328,10 @@ impl SidecarManager {
         let shared_mode = self.config.read().await.shared_mode;
         let owns_process = *self.owns_process.read().await;
 
-        // Shared mode: detach and keep engine alive for other clients.
-        if shared_mode {
+        // Shared mode: detach only when this client does not own the process.
+        // If we own it, continue to the normal kill path below so we don't leave
+        // orphaned/stuck sidecars behind.
+        if shared_mode && !owns_process {
             {
                 let mut process_guard = self.process.lock().await;
                 let _ = process_guard.take();
@@ -1408,9 +1466,16 @@ impl SidecarManager {
 
     /// Find an available port
     async fn find_available_port(&self) -> Result<u16> {
-        let config = self.config.read().await;
-        if config.port != 0 {
-            return Ok(config.port);
+        let preferred_port = self.config.read().await.port;
+        if preferred_port != 0 {
+            // Prefer configured port, but gracefully fall back if it is unavailable.
+            if std::net::TcpListener::bind(("127.0.0.1", preferred_port)).is_ok() {
+                return Ok(preferred_port);
+            }
+            tracing::warn!(
+                "Configured sidecar port {} is unavailable; falling back to an ephemeral port",
+                preferred_port
+            );
         }
 
         // Find a random available port
@@ -1429,16 +1494,127 @@ impl SidecarManager {
     /// Wait for the sidecar to be ready
     async fn wait_for_ready(&self, port: u16) -> Result<()> {
         let start = Instant::now();
-        let timeout = Duration::from_secs(60); // Increased timeout for slower systems
+        let timeout = self.startup_wait_timeout();
 
         tracing::debug!("Waiting for sidecar to be ready on port {}", port);
+        emit_event(
+            tracing::Level::INFO,
+            ProcessKind::Desktop,
+            ObservabilityEvent {
+                event: "sidecar.wait.start",
+                component: "sidecar",
+                correlation_id: None,
+                session_id: None,
+                run_id: None,
+                message_id: None,
+                provider_id: None,
+                model_id: None,
+                status: Some("start"),
+                error_code: None,
+                detail: Some(&format!("port={} timeout_ms={}", port, timeout.as_millis())),
+            },
+        );
 
         let mut last_error = String::new();
+        let mut last_health: Option<SidecarHealthResponse> = None;
+        let mut last_progress_emit = Instant::now() - Duration::from_secs(5);
         while start.elapsed() < timeout {
+            // If the child exited before becoming healthy, fail fast with useful logs.
+            {
+                let mut process_guard = self.process.lock().await;
+                if let Some(child) = process_guard.as_mut() {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let tail = self
+                                .log_buffer
+                                .snapshot(40)
+                                .into_iter()
+                                .map(|l| l.text)
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let detail = if tail.trim().is_empty() {
+                                format!("sidecar process exited early with status {}", status)
+                            } else {
+                                format!(
+                                    "sidecar process exited early with status {}\nrecent logs:\n{}",
+                                    status, tail
+                                )
+                            };
+                            return Err(TandemError::Sidecar(detail));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!("Failed to query sidecar process status: {}", e);
+                        }
+                    }
+                }
+            }
+
             match self.health_check(port).await {
-                Ok(_) => {
+                Ok(health) if health.ready => {
                     tracing::info!("Sidecar is ready after {:?}", start.elapsed());
+                    emit_event(
+                        tracing::Level::INFO,
+                        ProcessKind::Desktop,
+                        ObservabilityEvent {
+                            event: "sidecar.wait.ready",
+                            component: "sidecar",
+                            correlation_id: None,
+                            session_id: None,
+                            run_id: None,
+                            message_id: None,
+                            provider_id: None,
+                            model_id: None,
+                            status: Some("ok"),
+                            error_code: None,
+                            detail: Some(&format!(
+                                "port={} elapsed_ms={}",
+                                port,
+                                start.elapsed().as_millis()
+                            )),
+                        },
+                    );
                     return Ok(());
+                }
+                Ok(health) => {
+                    last_error = format!(
+                        "Engine starting: phase={} attempt_id={} elapsed_ms={}{}",
+                        health.phase,
+                        health.startup_attempt_id,
+                        health.startup_elapsed_ms,
+                        health
+                            .last_error
+                            .as_ref()
+                            .map(|e| format!(" last_error={}", e))
+                            .unwrap_or_default()
+                    );
+                    last_health = Some(health.clone());
+                    if last_progress_emit.elapsed() >= Duration::from_secs(3) {
+                        emit_event(
+                            tracing::Level::INFO,
+                            ProcessKind::Desktop,
+                            ObservabilityEvent {
+                                event: "sidecar.wait.progress",
+                                component: "sidecar",
+                                correlation_id: None,
+                                session_id: None,
+                                run_id: None,
+                                message_id: None,
+                                provider_id: None,
+                                model_id: None,
+                                status: Some("starting"),
+                                error_code: None,
+                                detail: Some(&format!(
+                                    "port={} phase={} attempt_id={} elapsed_ms={}",
+                                    port,
+                                    health.phase,
+                                    health.startup_attempt_id,
+                                    health.startup_elapsed_ms
+                                )),
+                            },
+                        );
+                        last_progress_emit = Instant::now();
+                    }
                 }
                 Err(e) => {
                     last_error = e.to_string();
@@ -1448,39 +1624,86 @@ impl SidecarManager {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
+        if let Some(health) = &last_health {
+            last_error = format!(
+                "{}; final_health={{ready:{},phase:{},attempt_id:{},elapsed_ms:{},last_error:{}}}",
+                last_error,
+                health.ready,
+                health.phase,
+                health.startup_attempt_id,
+                health.startup_elapsed_ms,
+                health.last_error.clone().unwrap_or_default()
+            );
+        }
+        emit_event(
+            tracing::Level::WARN,
+            ProcessKind::Desktop,
+            ObservabilityEvent {
+                event: "sidecar.wait.timeout",
+                component: "sidecar",
+                correlation_id: None,
+                session_id: None,
+                run_id: None,
+                message_id: None,
+                provider_id: None,
+                model_id: None,
+                status: Some("timeout"),
+                error_code: Some("ENGINE_START_TIMEOUT"),
+                detail: Some(&format!(
+                    "port={} timeout_ms={} last_error={}",
+                    port,
+                    timeout.as_millis(),
+                    last_error
+                )),
+            },
+        );
         tracing::error!("Sidecar failed to start. Last error: {}", last_error);
         Err(TandemError::Sidecar(format!(
-            "Sidecar failed to start within 60s timeout. Last error: {}",
+            "Sidecar failed to start within {}s timeout. Last error: {}",
+            timeout.as_secs(),
             last_error
         )))
     }
 
     /// Health check for the sidecar
     /// tandem-engine exposes /global/health endpoint that returns JSON
-    async fn health_check(&self, port: u16) -> Result<()> {
+    async fn health_check(&self, port: u16) -> Result<SidecarHealthResponse> {
         let url = format!("http://127.0.0.1:{}/global/health", port);
 
         let response = self
             .http_client
             .get(&url)
-            .timeout(Duration::from_secs(30)) // Longer timeout for first request (plugin installation)
+            // Keep connect/read timeout short so startup retries remain responsive even when
+            // localhost connect attempts linger in SYN_SENT on Windows.
+            .timeout(Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| TandemError::Sidecar(format!("Health check request failed: {}", e)))?;
 
         if response.status().is_success() {
-            // Verify it returns valid JSON with healthy: true
-            let body: serde_json::Value = response.json().await.map_err(|e| {
-                TandemError::Sidecar(format!("Health check returned invalid JSON: {}", e))
-            })?;
+            let body = response
+                .json::<SidecarHealthResponse>()
+                .await
+                .map_err(|e| {
+                    TandemError::Sidecar(format!("Health check returned invalid JSON: {}", e))
+                })?;
 
-            if body.get("healthy").and_then(|v| v.as_bool()) == Some(true) {
-                tracing::debug!("tandem-engine health check passed: {:?}", body);
-                Ok(())
+            if body.healthy {
+                tracing::debug!(
+                    "tandem-engine health check passed: ready={} phase={} attempt_id={} elapsed_ms={}",
+                    body.ready,
+                    body.phase,
+                    body.startup_attempt_id,
+                    body.startup_elapsed_ms
+                );
+                Ok(body)
             } else {
                 Err(TandemError::Sidecar(format!(
-                    "Health check returned unhealthy: {:?}",
-                    body
+                    "Health check returned unhealthy: ready={} phase={} attempt_id={} elapsed_ms={}",
+                    body.ready,
+                    body.phase,
+                    body.startup_attempt_id,
+                    body.startup_elapsed_ms
                 )))
             }
         } else {
@@ -1489,6 +1712,31 @@ impl SidecarManager {
                 response.status()
             )))
         }
+    }
+
+    fn startup_wait_timeout(&self) -> Duration {
+        let normal = Duration::from_secs(120);
+        let extended = Duration::from_secs(240);
+        let force_repair = std::env::var("TANDEM_FORCE_LEGACY_REPAIR")
+            .map(|v| {
+                let lower = v.trim().to_ascii_lowercase();
+                matches!(lower.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false);
+        if force_repair {
+            return extended;
+        }
+
+        if let Ok(paths) = resolve_shared_paths() {
+            let marker = paths
+                .engine_state_dir
+                .join("storage")
+                .join("legacy_import_marker.json");
+            if !marker.exists() {
+                return extended;
+            }
+        }
+        normal
     }
 
     // ========================================================================
@@ -1747,6 +1995,16 @@ impl SidecarManager {
     /// OpenCode API: POST /session/{id}/prompt_async
     /// Returns 204 No Content - actual response comes via /event SSE stream
     pub async fn send_message(&self, session_id: &str, request: SendMessageRequest) -> Result<()> {
+        self.send_message_with_context(session_id, request, None)
+            .await
+    }
+
+    pub async fn send_message_with_context(
+        &self,
+        session_id: &str,
+        request: SendMessageRequest,
+        correlation_id: Option<&str>,
+    ) -> Result<()> {
         self.check_circuit_breaker().await?;
 
         let base = self.base_url().await?;
@@ -1769,9 +2027,13 @@ impl SidecarManager {
 
         tracing::debug!("Sending prompt to: {} with {:?}", url, request);
 
-        let response = self
-            .http_client
-            .post(&url)
+        let mut request_builder = self.http_client.post(&url);
+        if let Some(cid) = correlation_id {
+            request_builder = request_builder
+                .header("x-tandem-correlation-id", cid)
+                .header("x-tandem-session-id", session_id);
+        }
+        let response = request_builder
             .json(&request)
             .send()
             .await
@@ -1805,13 +2067,16 @@ impl SidecarManager {
                     fallback_url
                 );
 
-                let response = self
-                    .http_client
-                    .post(&fallback_url)
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|e| TandemError::Sidecar(format!("Failed to send message: {}", e)))?;
+                let mut fallback_builder = self.http_client.post(&fallback_url);
+                if let Some(cid) = correlation_id {
+                    fallback_builder = fallback_builder
+                        .header("x-tandem-correlation-id", cid)
+                        .header("x-tandem-session-id", session_id);
+                }
+                let response =
+                    fallback_builder.json(&request).send().await.map_err(|e| {
+                        TandemError::Sidecar(format!("Failed to send message: {}", e))
+                    })?;
 
                 let status = response.status();
                 let content_type = response
@@ -2694,19 +2959,29 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                         .unwrap_or("unknown")
                         .to_string();
                     let state_value = part.get("state");
-                    let state = state_value
+                    let explicit_state = state_value
                         .and_then(|s| s.get("status"))
                         .and_then(|s| s.as_str())
-                        .unwrap_or_else(|| {
-                            part.get("state")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("pending")
-                        });
+                        .or_else(|| part.get("state").and_then(|s| s.as_str()));
                     let args = state_value
                         .and_then(|s| s.get("input"))
                         .cloned()
                         .or_else(|| part.get("args").cloned())
                         .unwrap_or(serde_json::Value::Null);
+                    let has_output = state_value.and_then(|s| s.get("output")).is_some()
+                        || part.get("result").is_some()
+                        || part.get("output").is_some();
+                    let has_error = state_value.and_then(|s| s.get("error")).is_some()
+                        || part.get("error").is_some();
+                    let state = explicit_state.unwrap_or_else(|| {
+                        if has_error {
+                            "failed"
+                        } else if has_output {
+                            "completed"
+                        } else {
+                            "pending"
+                        }
+                    });
 
                     match state {
                         // OpenCode has used multiple spellings across builds.

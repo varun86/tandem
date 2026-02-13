@@ -80,6 +80,15 @@ export interface SidecarStatus {
   binaryPath: string | null;
 }
 
+export interface SidecarStartupHealth {
+  healthy: boolean;
+  ready: boolean;
+  phase: string;
+  startup_attempt_id: string;
+  startup_elapsed_ms: number;
+  last_error?: string | null;
+}
+
 export interface SessionTime {
   created: number;
   updated: number;
@@ -244,6 +253,13 @@ export interface RuntimeDiagnostics {
   sidecar: SidecarRuntimeSnapshot;
   stream: StreamRuntimeSnapshot;
   lease_count: number;
+  logging: {
+    initialized: boolean;
+    process: string;
+    active_files: string[];
+    last_write_ts_ms?: number;
+    dropped_events: number;
+  };
 }
 
 export interface EngineLeaseInfo {
@@ -640,6 +656,10 @@ export async function getSidecarStatus(): Promise<SidecarState> {
   return invoke("get_sidecar_status");
 }
 
+export async function getSidecarStartupHealth(): Promise<SidecarStartupHealth | null> {
+  return invoke("get_sidecar_startup_health");
+}
+
 export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
   return invoke("get_runtime_diagnostics");
 }
@@ -683,8 +703,8 @@ export async function createSession(
     title,
     model,
     provider,
-    allow_all_tools: allowAllTools,
-    mode_id: modeId,
+    allowAllTools,
+    modeId,
   });
 }
 
@@ -775,7 +795,7 @@ export async function sendMessageStreaming(
     content,
     attachments,
     agent,
-    mode_id: modeId,
+    modeId,
   });
 }
 

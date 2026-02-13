@@ -39,6 +39,7 @@ use std::time::{Duration, Instant};
 use tandem_core::{
     migrate_legacy_storage_if_needed, resolve_shared_paths, SessionRepairStats, Storage,
 };
+use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use uuid::Uuid;
@@ -285,11 +286,70 @@ pub async fn index_workspace_command(
     state: State<'_, AppState>,
     project_id: String,
 ) -> Result<IndexingStats> {
+    let correlation_id = Uuid::new_v4().to_string();
+    emit_event(
+        tracing::Level::INFO,
+        ProcessKind::Desktop,
+        ObservabilityEvent {
+            event: "index.workspace.start",
+            component: "tauri.commands",
+            correlation_id: Some(&correlation_id),
+            session_id: None,
+            run_id: None,
+            message_id: None,
+            provider_id: None,
+            model_id: None,
+            status: Some("start"),
+            error_code: None,
+            detail: Some("index_workspace_command"),
+        },
+    );
     if let Some(manager) = &state.memory_manager {
         let workspace_path = state
             .get_workspace_path()
             .ok_or_else(|| TandemError::IoError("No workspace selected".to_string()))?;
-        index_workspace(&app, &workspace_path, &project_id, manager).await
+        match index_workspace(&app, &workspace_path, &project_id, manager).await {
+            Ok(stats) => {
+                emit_event(
+                    tracing::Level::INFO,
+                    ProcessKind::Desktop,
+                    ObservabilityEvent {
+                        event: "index.workspace.complete",
+                        component: "tauri.commands",
+                        correlation_id: Some(&correlation_id),
+                        session_id: None,
+                        run_id: None,
+                        message_id: None,
+                        provider_id: None,
+                        model_id: None,
+                        status: Some("ok"),
+                        error_code: None,
+                        detail: Some("index complete"),
+                    },
+                );
+                Ok(stats)
+            }
+            Err(err) => {
+                emit_event(
+                    tracing::Level::ERROR,
+                    ProcessKind::Desktop,
+                    ObservabilityEvent {
+                        event: "index.workspace.failed",
+                        component: "tauri.commands",
+                        correlation_id: Some(&correlation_id),
+                        session_id: None,
+                        run_id: None,
+                        message_id: None,
+                        provider_id: None,
+                        model_id: None,
+                        status: Some("failed"),
+                        error_code: Some("INDEX_WORKSPACE_FAILED"),
+                        detail: Some("index command failed"),
+                    },
+                );
+                Err(err)
+            }
+        }
     } else {
         Err(TandemError::Memory(
             "Memory manager not initialized".to_string(),
@@ -1592,6 +1652,10 @@ pub async fn set_providers_config(
 pub async fn start_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result<u16> {
     let initial_state = state.sidecar.state().await;
     if initial_state == SidecarState::Running {
+        state
+            .stream_hub
+            .start(app.clone(), state.sidecar.clone())
+            .await?;
         return state.sidecar.port().await.ok_or_else(|| {
             TandemError::Sidecar("Sidecar running but no port assigned".to_string())
         });
@@ -1601,6 +1665,10 @@ pub async fn start_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(200)).await;
             if state.sidecar.state().await == SidecarState::Running {
+                state
+                    .stream_hub
+                    .start(app.clone(), state.sidecar.clone())
+                    .await?;
                 return state.sidecar.port().await.ok_or_else(|| {
                     TandemError::Sidecar("Sidecar running but no port assigned".to_string())
                 });
@@ -1695,11 +1763,38 @@ pub async fn get_sidecar_status(state: State<'_, AppState>) -> Result<SidecarSta
     Ok(state.sidecar.state().await)
 }
 
+#[tauri::command]
+pub async fn get_sidecar_startup_health(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::sidecar::SidecarStartupHealth>> {
+    let sidecar_state = state.sidecar.state().await;
+    if matches!(sidecar_state, SidecarState::Stopped | SidecarState::Failed) {
+        return Ok(None);
+    }
+    match state.sidecar.startup_health().await {
+        Ok(health) => Ok(Some(health)),
+        Err(err) => {
+            tracing::debug!("get_sidecar_startup_health unavailable: {}", err);
+            Ok(None)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeDiagnostics {
     pub sidecar: crate::sidecar::SidecarRuntimeSnapshot,
     pub stream: crate::stream_hub::StreamRuntimeSnapshot,
     pub lease_count: usize,
+    pub logging: RuntimeLoggingDiagnostics,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeLoggingDiagnostics {
+    pub initialized: bool,
+    pub process: String,
+    pub active_files: Vec<String>,
+    pub last_write_ts_ms: Option<u64>,
+    pub dropped_events: u64,
 }
 
 #[tauri::command]
@@ -1707,10 +1802,33 @@ pub async fn get_runtime_diagnostics(state: State<'_, AppState>) -> Result<Runti
     let sidecar = state.sidecar.runtime_snapshot().await;
     let stream = state.stream_hub.runtime_snapshot().await;
     let leases = state.engine_leases.lock().await;
+    let logging = match resolve_shared_paths() {
+        Ok(paths) => {
+            let logs_dir = paths.canonical_root.join("logs");
+            let files = logs::list_log_files(&logs_dir).unwrap_or_default();
+            let active_files = files.iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+            let last_write_ts_ms = files.iter().map(|f| f.modified_ms).max();
+            RuntimeLoggingDiagnostics {
+                initialized: true,
+                process: "desktop".to_string(),
+                active_files,
+                last_write_ts_ms,
+                dropped_events: 0,
+            }
+        }
+        Err(_) => RuntimeLoggingDiagnostics {
+            initialized: false,
+            process: "desktop".to_string(),
+            active_files: Vec::new(),
+            last_write_ts_ms: None,
+            dropped_events: 0,
+        },
+    };
     Ok(RuntimeDiagnostics {
         sidecar,
         stream,
         lease_count: leases.len(),
+        logging,
     })
 }
 
@@ -2324,10 +2442,36 @@ async fn send_message_streaming_internal(
     mode_id: Option<String>,
     streaming_label: bool,
 ) -> Result<()> {
+    let correlation_id = Uuid::new_v4().to_string();
+    emit_event(
+        tracing::Level::INFO,
+        ProcessKind::Desktop,
+        ObservabilityEvent {
+            event: "chat.dispatch.start",
+            component: "tauri.commands",
+            correlation_id: Some(&correlation_id),
+            session_id: Some(&session_id),
+            run_id: None,
+            message_id: None,
+            provider_id: None,
+            model_id: None,
+            status: Some("start"),
+            error_code: None,
+            detail: Some("send_message_streaming_internal"),
+        },
+    );
     let mode_resolution = resolve_effective_mode(app, state, mode_id.as_deref(), agent.as_deref())?;
     if let Some(reason) = mode_resolution.fallback_reason.as_ref() {
         tracing::warn!("[send_message_streaming] {}", reason);
     }
+    tracing::info!(
+        "[send_message_streaming] session={} mode_id={} base_mode={:?} requested_agent={:?} resolved_sidecar_agent={:?}",
+        session_id,
+        mode_resolution.mode.id,
+        mode_resolution.mode.base_mode,
+        agent,
+        mode_resolution.mode.sidecar_agent()
+    );
     set_session_mode(state, &session_id, mode_resolution.mode.clone());
 
     let base_prompt = if let Some(extra) = mode_resolution.mode.system_prompt_append.as_deref() {
@@ -2396,7 +2540,52 @@ async fn send_message_streaming_internal(
         request.agent = Some(agent_name);
     }
 
-    state.sidecar.send_message(&session_id, request).await
+    match state
+        .sidecar
+        .send_message_with_context(&session_id, request, Some(&correlation_id))
+        .await
+    {
+        Ok(()) => {
+            emit_event(
+                tracing::Level::INFO,
+                ProcessKind::Desktop,
+                ObservabilityEvent {
+                    event: "chat.dispatch.sent",
+                    component: "tauri.commands",
+                    correlation_id: Some(&correlation_id),
+                    session_id: Some(&session_id),
+                    run_id: None,
+                    message_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    status: Some("ok"),
+                    error_code: None,
+                    detail: Some("prompt_async accepted"),
+                },
+            );
+            Ok(())
+        }
+        Err(err) => {
+            emit_event(
+                tracing::Level::ERROR,
+                ProcessKind::Desktop,
+                ObservabilityEvent {
+                    event: "chat.dispatch.failed",
+                    component: "tauri.commands",
+                    correlation_id: Some(&correlation_id),
+                    session_id: Some(&session_id),
+                    run_id: None,
+                    message_id: None,
+                    provider_id: None,
+                    model_id: None,
+                    status: Some("failed"),
+                    error_code: Some("ENGINE_DISPATCH_FAILED"),
+                    detail: Some("prompt_async request failed"),
+                },
+            );
+            Err(err)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

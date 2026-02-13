@@ -253,7 +253,7 @@ impl MemoryDatabase {
 
     /// Validate that sqlite-vec tables are readable.
     /// This catches legacy/corrupted vector blobs early so startup can recover.
-    async fn validate_vector_tables(&self) -> MemoryResult<()> {
+    pub async fn validate_vector_tables(&self) -> MemoryResult<()> {
         let conn = self.conn.lock().await;
         for table in [
             "session_memory_vectors",
@@ -264,6 +264,77 @@ impl MemoryDatabase {
             let _: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
         }
         Ok(())
+    }
+
+    fn is_vector_table_error(err: &rusqlite::Error) -> bool {
+        let text = err.to_string().to_lowercase();
+        text.contains("vector blob")
+            || text.contains("session_memory_vectors")
+            || text.contains("project_memory_vectors")
+            || text.contains("global_memory_vectors")
+            || text.contains("vec0")
+    }
+
+    async fn recreate_vector_tables(&self) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+
+        conn.execute("DROP TABLE IF EXISTS session_memory_vectors", [])?;
+        conn.execute("DROP TABLE IF EXISTS project_memory_vectors", [])?;
+        conn.execute("DROP TABLE IF EXISTS global_memory_vectors", [])?;
+
+        conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_vectors USING vec0(
+                    chunk_id TEXT PRIMARY KEY,
+                    embedding float[{}]
+                )",
+                DEFAULT_EMBEDDING_DIMENSION
+            ),
+            [],
+        )?;
+
+        conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS project_memory_vectors USING vec0(
+                    chunk_id TEXT PRIMARY KEY,
+                    embedding float[{}]
+                )",
+                DEFAULT_EMBEDDING_DIMENSION
+            ),
+            [],
+        )?;
+
+        conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS global_memory_vectors USING vec0(
+                    chunk_id TEXT PRIMARY KEY,
+                    embedding float[{}]
+                )",
+                DEFAULT_EMBEDDING_DIMENSION
+            ),
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    /// Ensure vector tables are readable and recreate them if corruption is detected.
+    /// Returns true when a repair was performed.
+    pub async fn ensure_vector_tables_healthy(&self) -> MemoryResult<bool> {
+        match self.validate_vector_tables().await {
+            Ok(()) => Ok(false),
+            Err(crate::memory::types::MemoryError::Database(err))
+                if Self::is_vector_table_error(&err) =>
+            {
+                tracing::warn!(
+                    "Memory vector tables appear corrupted ({}). Recreating vector tables.",
+                    err
+                );
+                self.recreate_vector_tables().await?;
+                Ok(true)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Store a chunk with its embedding
@@ -480,7 +551,7 @@ impl MemoryDatabase {
                     );
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
-                        .query_map(params![limit], |row| {
+                        .query_map(params![embedding_json, limit], |row| {
                             Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
