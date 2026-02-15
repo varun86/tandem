@@ -16,6 +16,7 @@ import {
   Database,
   RefreshCw,
   FileText,
+  ScrollText,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { ProviderCard } from "./ProviderCard";
@@ -26,6 +27,7 @@ import { Switch } from "@/components/ui/Switch";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
 import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { MemoryStats } from "./MemoryStats";
+import { LogsDrawer } from "@/components/logs";
 
 import { useUpdater } from "@/hooks/useUpdater";
 import {
@@ -50,13 +52,11 @@ import {
   storeApiKey,
   checkGitStatus,
   initializeGitRepo,
-  checkSidecarStatus,
   getStorageMigrationStatus,
   runStorageMigration,
   type ProvidersConfig,
   type CustomBackgroundInfo,
   type UserProject,
-  type SidecarStatus,
   type StorageMigrationStatus,
   type StorageMigrationRunResult,
 } from "@/lib/tauri";
@@ -77,6 +77,7 @@ export function Settings({
   initialSection,
   onInitialSectionConsumed,
 }: SettingsProps) {
+  const [activeTab, setActiveTab] = useState<"settings" | "logs">("settings");
   const {
     status: updateStatus,
     updateInfo,
@@ -99,7 +100,6 @@ export function Settings({
 
   // Version info
   const [appVersion, setAppVersion] = useState<string>("");
-  const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null);
 
   // Custom background image (global)
   const [customBg, setCustomBg] = useState<CustomBackgroundInfo | null>(null);
@@ -131,7 +131,6 @@ export function Settings({
     loadSettings();
     void loadCustomBackground();
     getVersion().then(setAppVersion);
-    checkSidecarStatus().then(setSidecarStatus).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -508,6 +507,59 @@ export function Settings({
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
+  if (activeTab === "logs") {
+    return (
+      <motion.div
+        className="h-full overflow-y-auto p-6"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div className="mx-auto max-w-2xl space-y-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                <SettingsIcon className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-text">Settings</h1>
+                <p className="text-text-muted">Configure your Tandem folders and AI</p>
+              </div>
+            </div>
+            {onClose && (
+              <Button variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-elevated/40 p-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab("settings")}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Settings
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("logs")}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-primary/15 px-3 py-2 text-sm font-medium text-text transition-colors"
+            >
+              <ScrollText className="h-4 w-4" />
+              Logs
+            </button>
+          </div>
+
+          <div className="h-[70vh] min-h-[560px]">
+            <LogsDrawer embedded />
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       className="h-full overflow-y-auto p-6"
@@ -534,13 +586,30 @@ export function Settings({
           )}
         </div>
 
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-elevated/40 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab("settings")}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-primary/15 px-3 py-2 text-sm font-medium text-text transition-colors"
+          >
+            <SettingsIcon className="h-4 w-4" />
+            Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("logs")}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+          >
+            <ScrollText className="h-4 w-4" />
+            Logs
+          </button>
+        </div>
+
         {/* Version Info */}
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-elevated/50 p-3 text-sm text-text-muted">
           <div className="flex items-center gap-2">
             <Info className="h-4 w-4 text-primary" />
             <span>Tandem v{appVersion || "..."}</span>
-            <span className="text-text-subtle">•</span>
-            <span>Tandem Engine v{sidecarStatus?.version || "..."}</span>
           </div>
         </div>
 

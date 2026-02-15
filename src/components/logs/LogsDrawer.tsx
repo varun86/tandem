@@ -226,9 +226,11 @@ function pickNewest(files: LogFileInfo[]): string | null {
 export function LogsDrawer({
   onClose,
   sessionId,
+  embedded = false,
 }: {
-  onClose: () => void;
+  onClose?: () => void;
   sessionId?: string | null;
+  embedded?: boolean;
 }) {
   const [tab, setTab] = useState<"tandem" | "console">("tandem");
   const [files, setFiles] = useState<LogFileInfo[]>([]);
@@ -591,8 +593,10 @@ export function LogsDrawer({
   return (
     <div
       className={cn(
-        "fixed z-50 border-border bg-surface shadow-xl h-dvh",
-        expanded ? "inset-0" : "inset-y-0 right-0 w-full sm:w-[560px] border-l"
+        embedded
+          ? "h-full min-h-0 overflow-hidden rounded-xl border border-border bg-surface shadow-sm"
+          : "fixed z-50 h-dvh border-border bg-surface shadow-xl",
+        !embedded && (expanded ? "inset-0" : "inset-y-0 right-0 w-full border-l sm:w-[560px]")
       )}
     >
       <div className="flex h-full min-h-0 flex-col">
@@ -609,22 +613,26 @@ export function LogsDrawer({
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setExpanded((e) => !e)}
-                className="rounded p-1 text-text-subtle hover:bg-surface-elevated hover:text-text"
-                title={expanded ? "Dock logs drawer" : "Expand logs to full screen"}
-              >
-                {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-              </button>
-              <button
-                onClick={onClose}
-                className="rounded p-1 text-text-subtle hover:bg-surface-elevated hover:text-text"
-                title="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            {!embedded && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setExpanded((e) => !e)}
+                  className="rounded p-1 text-text-subtle hover:bg-surface-elevated hover:text-text"
+                  title={expanded ? "Dock logs drawer" : "Expand logs to full screen"}
+                >
+                  {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                </button>
+                {onClose && (
+                  <button
+                    onClick={onClose}
+                    className="rounded p-1 text-text-subtle hover:bg-surface-elevated hover:text-text"
+                    title="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Tabs + controls */}

@@ -14,6 +14,7 @@ import { OrchestratorPanel } from "@/components/orchestrate/OrchestratorPanel";
 import { type RunSummary } from "@/components/orchestrate/types";
 import { PacksPanel } from "@/components/packs";
 import { AppUpdateOverlay } from "@/components/updates/AppUpdateOverlay";
+import { WhatsNewOverlay } from "@/components/updates/WhatsNewOverlay";
 import { StorageMigrationOverlay } from "@/components/migration/StorageMigrationOverlay";
 import { useAppState } from "@/hooks/useAppState";
 import { useTheme } from "@/hooks/useTheme";
@@ -76,6 +77,10 @@ import {
   Blocks,
   Loader2,
 } from "lucide-react";
+import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.0.md?raw";
+
+const WHATS_NEW_VERSION = "v0.3.0-beta";
+const WHATS_NEW_SEEN_KEY = "tandem_whats_new_seen_version";
 
 type View = "chat" | "extensions" | "settings" | "about" | "packs" | "onboarding" | "sidecar-setup";
 
@@ -225,9 +230,23 @@ function App() {
     null
   );
   const [migrationResult, setMigrationResult] = useState<StorageMigrationRunResult | null>(null);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   const migrationCheckedRef = useRef(false);
   const engineLeaseIdRef = useRef<string | null>(null);
   const engineLeaseTimerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!vaultUnlocked) return;
+    const seenVersion = localStorage.getItem(WHATS_NEW_SEEN_KEY);
+    if (seenVersion !== WHATS_NEW_VERSION) {
+      setShowWhatsNew(true);
+    }
+  }, [vaultUnlocked]);
+
+  const dismissWhatsNew = useCallback(() => {
+    localStorage.setItem(WHATS_NEW_SEEN_KEY, WHATS_NEW_VERSION);
+    setShowWhatsNew(false);
+  }, []);
 
   // Auto-index workspace files when a project becomes active (if enabled in settings).
   useEffect(() => {
@@ -573,6 +592,14 @@ function App() {
             view !== "extensions"
           ? "onboarding"
           : view;
+
+  const shouldShowWhatsNew =
+    showWhatsNew &&
+    sidecarReady &&
+    !historyLoading &&
+    !historyOverlayOpen &&
+    !migrationOverlayOpen &&
+    effectiveView === "chat";
 
   // Auto-open task sidebar when tasks are created (but not on initial load).
   // Only do this while in chat view.
@@ -1756,6 +1783,12 @@ function App() {
           )}
         </main>
         <AppUpdateOverlay />
+        <WhatsNewOverlay
+          open={shouldShowWhatsNew}
+          version={WHATS_NEW_VERSION}
+          markdown={whatsNewMarkdown}
+          onClose={dismissWhatsNew}
+        />
         <StorageMigrationOverlay
           open={migrationOverlayOpen}
           running={migrationRunning}
