@@ -9,6 +9,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Memory: Wired `src-tauri` to consume shared `crates/tandem-memory` directly and removed duplicated local memory implementation files.
 - Memory: Added strict `memory_search` tool in `tandem-tools` with enforced session/project scoping and blocked global tier access.
 - Memory UX: Added embedding health surface (`embedding_status`, `embedding_reason`) to memory retrieval events and settings, with chat/settings badges.
+- Memory UX: Persisted memory lifecycle telemetry into tool history (`memory.lookup`, `memory.store`) so chat badges and console events survive session reload.
+- Memory UX: Fixed a chat race where memory events could arrive before assistant text, causing missing badges despite console memory events being present.
+- Memory Reliability: Added startup SQLite integrity check + auto backup/reset recovery for malformed `memory.sqlite` databases.
 - Windows: Fixed `cargo test -p tandem-memory --lib` link-time CRT mismatch (`LNK2038`) between `esaxx-rs` and `ort-sys` via vendored `esaxx-rs` build patch.
 
 ## v0.2.25 (2026-02-12)

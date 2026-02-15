@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skill Tool Scope Behavior**: `skill` now respects agent-level equipped skill lists when present (filtered list/load), while still being callable from all modes.
 - **Memory Crate Integration**: `src-tauri` now consumes `crates/tandem-memory` directly via re-export facade and removed duplicated local memory implementation files.
 - **Memory/Embedding UX Telemetry**: `memory_retrieval` stream events and memory settings now include embedding health fields (`embedding_status`, `embedding_reason`), and chat/settings UI surface those states.
+- **Memory Telemetry Persistence**: Memory lifecycle events are now persisted into tool history (`memory.lookup`, `memory.store`) so session reloads can rehydrate memory badges and console entries.
+- **Chat Memory Badge Reliability**: Chat now buffers memory telemetry that can arrive before assistant content chunks and deterministically attaches it to the next assistant message.
 
 ### Fixed
 
@@ -44,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Question Handling**: Added custom-answer support alongside multiple-choice options and fixed `permission(tool=question)` normalization into question-answer flow.
 - **Skills Discovery Determinism**: Duplicate skill names are now resolved by deterministic priority (project roots override global roots).
 - **Windows `tandem-memory` Test Linking**: Fixed MSVC CRT mismatch (`LNK2038`, `MT_StaticRelease` vs `MD_DynamicRelease`) by vendoring/patching `esaxx-rs` to avoid static CRT linkage in this workspace.
+- **Corrupt Memory DB Startup Recovery**: Added SQLite integrity validation (`PRAGMA quick_check`) at memory DB startup so malformed databases are detected and auto-backed-up/reset before runtime writes.
+- **Session Rehydration Gaps**: Fixed missing memory retrieval/storage telemetry after reload by rehydrating persisted memory rows into assistant message badges and console history.
 
 ## [0.3.0] - 2026-02-14
 
