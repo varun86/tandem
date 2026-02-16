@@ -18,6 +18,15 @@ use ignore::WalkBuilder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tandem_memory::{
+    MemoryCapabilities, MemoryCapabilityToken, MemoryPromoteRequest, MemoryPromoteResponse,
+    MemoryPutRequest, MemoryPutResponse, MemorySearchRequest, MemorySearchResponse, ScrubReport,
+    ScrubStatus,
+};
+use tandem_orchestrator::{
+    DefaultMissionReducer, MissionEvent, MissionReducer, MissionSpec, NoopMissionReducer, WorkItem,
+    WorkItemStatus,
+};
 use tandem_skills::{SkillLocation, SkillService, SkillsConflictPolicy};
 use tokio::process::Command;
 use tokio_stream::wrappers::BroadcastStream;
@@ -34,7 +43,12 @@ use tandem_wire::{
     WireSessionMessage,
 };
 
-use crate::{ActiveRun, AppState, StartupStatus};
+use crate::ResourceStoreError;
+use crate::{
+    evaluate_routine_execution_policy, ActiveRun, AppState, RoutineExecutionDecision,
+    RoutineHistoryEvent, RoutineMisfirePolicy, RoutineSchedule, RoutineSpec, RoutineStatus,
+    RoutineStoreError, StartupStatus,
+};
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -223,6 +237,128 @@ struct SkillsTemplateInstallRequest {
     location: SkillLocation,
 }
 
+#[derive(Debug, Deserialize)]
+struct MemoryPutInput {
+    #[serde(flatten)]
+    request: MemoryPutRequest,
+    capability: Option<MemoryCapabilityToken>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryPromoteInput {
+    #[serde(flatten)]
+    request: MemoryPromoteRequest,
+    capability: Option<MemoryCapabilityToken>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySearchInput {
+    #[serde(flatten)]
+    request: MemorySearchRequest,
+    capability: Option<MemoryCapabilityToken>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MemoryAuditQuery {
+    run_id: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MissionCreateInput {
+    title: String,
+    goal: String,
+    #[serde(default)]
+    work_items: Vec<MissionCreateWorkItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MissionCreateWorkItem {
+    #[serde(default)]
+    work_item_id: Option<String>,
+    title: String,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    assigned_agent: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MissionEventInput {
+    event: MissionEvent,
+}
+
+#[derive(Debug, Deserialize)]
+struct RoutineCreateInput {
+    routine_id: Option<String>,
+    name: String,
+    schedule: RoutineSchedule,
+    timezone: Option<String>,
+    misfire_policy: Option<RoutineMisfirePolicy>,
+    entrypoint: String,
+    args: Option<Value>,
+    creator_type: Option<String>,
+    creator_id: Option<String>,
+    requires_approval: Option<bool>,
+    external_integrations_allowed: Option<bool>,
+    next_fire_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RoutinePatchInput {
+    name: Option<String>,
+    status: Option<RoutineStatus>,
+    schedule: Option<RoutineSchedule>,
+    timezone: Option<String>,
+    misfire_policy: Option<RoutineMisfirePolicy>,
+    entrypoint: Option<String>,
+    args: Option<Value>,
+    requires_approval: Option<bool>,
+    external_integrations_allowed: Option<bool>,
+    next_fire_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RoutineRunNowInput {
+    run_count: Option<u32>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RoutineHistoryQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RoutineEventsQuery {
+    routine_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ResourceListQuery {
+    prefix: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ResourceEventsQuery {
+    prefix: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResourceWriteInput {
+    value: Value,
+    if_match_rev: Option<u64>,
+    updated_by: Option<String>,
+    ttl_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResourceDeleteInput {
+    if_match_rev: Option<u64>,
+    updated_by: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ErrorEnvelope {
     error: String,
@@ -240,6 +376,8 @@ struct LegacyProviderInfo {
 
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let reaper_state = state.clone();
+    let status_indexer_state = state.clone();
+    let routine_scheduler_state = state.clone();
     let app = app_router(state);
     let reaper = tokio::spawn(async move {
         loop {
@@ -262,6 +400,8 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
             }
         }
     });
+    let status_indexer = tokio::spawn(crate::run_status_indexer(status_indexer_state));
+    let routine_scheduler = tokio::spawn(crate::run_routine_scheduler(routine_scheduler_state));
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let result = axum::serve(listener, app)
@@ -272,6 +412,8 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         })
         .await;
     reaper.abort();
+    status_indexer.abort();
+    routine_scheduler.abort();
     result?;
     Ok(())
 }
@@ -454,6 +596,30 @@ fn app_router(state: AppState) -> Router {
             post(skills_templates_install),
         )
         .route("/skills/{name}", get(skills_get).delete(skills_delete))
+        .route("/memory/put", post(memory_put))
+        .route("/memory/promote", post(memory_promote))
+        .route("/memory/search", post(memory_search))
+        .route("/memory/audit", get(memory_audit))
+        .route("/mission", get(mission_list).post(mission_create))
+        .route("/mission/{id}", get(mission_get))
+        .route("/mission/{id}/event", post(mission_apply_event))
+        .route("/routines", get(routines_list).post(routines_create))
+        .route("/routines/events", get(routines_events))
+        .route(
+            "/routines/{id}",
+            axum::routing::patch(routines_patch).delete(routines_delete),
+        )
+        .route("/routines/{id}/run_now", post(routines_run_now))
+        .route("/routines/{id}/history", get(routines_history))
+        .route("/resource", get(resource_list))
+        .route("/resource/events", get(resource_events))
+        .route(
+            "/resource/{*key}",
+            get(resource_get)
+                .put(resource_put)
+                .patch(resource_patch)
+                .delete(resource_delete),
+        )
         .route("/skill", get(skill_list))
         .route("/instance/dispose", post(instance_dispose))
         .route("/log", post(push_log))
@@ -2944,6 +3110,1169 @@ async fn skill_list() -> Json<Value> {
         "deprecation_warning": "GET /skill is deprecated; use GET /skills instead."
     }))
 }
+
+fn default_memory_capability_for(
+    run_id: &str,
+    partition: &tandem_memory::MemoryPartition,
+) -> MemoryCapabilityToken {
+    MemoryCapabilityToken {
+        run_id: run_id.to_string(),
+        subject: "default".to_string(),
+        org_id: partition.org_id.clone(),
+        workspace_id: partition.workspace_id.clone(),
+        project_id: partition.project_id.clone(),
+        memory: MemoryCapabilities::default(),
+        expires_at: u64::MAX,
+    }
+}
+
+fn validate_memory_capability(
+    run_id: &str,
+    partition: &tandem_memory::MemoryPartition,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryCapabilityToken, StatusCode> {
+    let cap = capability.unwrap_or_else(|| default_memory_capability_for(run_id, partition));
+    if cap.run_id != run_id
+        || cap.org_id != partition.org_id
+        || cap.workspace_id != partition.workspace_id
+        || cap.project_id != partition.project_id
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if cap.expires_at < crate::now_ms() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(cap)
+}
+
+fn scrub_content(input: &str) -> ScrubReport {
+    let mut redactions = 0u32;
+    let mut blocked = false;
+
+    let lower = input.to_lowercase();
+    let redact_markers = [
+        "api_key",
+        "secret=",
+        "authorization: bearer",
+        "x-api-key",
+        "token=",
+    ];
+    for marker in redact_markers {
+        if lower.contains(marker) {
+            redactions = redactions.saturating_add(1);
+        }
+    }
+
+    let block_markers = [
+        "-----begin private key-----",
+        "aws_secret_access_key",
+        "sk-ant-",
+        "ghp_",
+    ];
+    for marker in block_markers {
+        if lower.contains(marker) {
+            blocked = true;
+            break;
+        }
+    }
+
+    if blocked {
+        ScrubReport {
+            status: ScrubStatus::Blocked,
+            redactions,
+            block_reason: Some("sensitive secret marker detected".to_string()),
+        }
+    } else if redactions > 0 {
+        ScrubReport {
+            status: ScrubStatus::Redacted,
+            redactions,
+            block_reason: None,
+        }
+    } else {
+        ScrubReport {
+            status: ScrubStatus::Passed,
+            redactions: 0,
+            block_reason: None,
+        }
+    }
+}
+
+async fn append_memory_audit(
+    state: &AppState,
+    event: crate::MemoryAuditEvent,
+) -> Result<(), StatusCode> {
+    let mut audit = state.memory_audit_log.write().await;
+    audit.push(event);
+    Ok(())
+}
+
+async fn memory_put(
+    State(state): State<AppState>,
+    Json(input): Json<MemoryPutInput>,
+) -> Result<Json<MemoryPutResponse>, StatusCode> {
+    let request = input.request;
+    let capability =
+        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+
+    if !capability
+        .memory
+        .write_tiers
+        .contains(&request.partition.tier)
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let partition_key = request.partition.key();
+    let now = crate::now_ms();
+    let audit_id = Uuid::new_v4().to_string();
+
+    let record = crate::GovernedMemoryRecord {
+        id: id.clone(),
+        run_id: request.run_id.clone(),
+        partition: request.partition.clone(),
+        kind: request.kind,
+        content: request.content,
+        artifact_refs: request.artifact_refs,
+        classification: request.classification,
+        metadata: request.metadata,
+        source_memory_id: None,
+        created_at_ms: now,
+    };
+
+    {
+        let mut records = state.memory_records.write().await;
+        records.insert(id.clone(), record);
+    }
+
+    append_memory_audit(
+        &state,
+        crate::MemoryAuditEvent {
+            audit_id: audit_id.clone(),
+            action: "memory_put".to_string(),
+            run_id: request.run_id.clone(),
+            memory_id: Some(id.clone()),
+            source_memory_id: None,
+            to_tier: Some(request.partition.tier),
+            partition_key: partition_key.clone(),
+            actor: capability.subject,
+            status: "ok".to_string(),
+            detail: None,
+            created_at_ms: now,
+        },
+    )
+    .await?;
+
+    state.event_bus.publish(EngineEvent::new(
+        "memory.put",
+        json!({
+            "runID": request.run_id,
+            "memoryID": id,
+            "tier": request.partition.tier,
+            "partitionKey": partition_key,
+            "auditID": audit_id,
+        }),
+    ));
+
+    Ok(Json(MemoryPutResponse {
+        id,
+        stored: true,
+        tier: request.partition.tier,
+        partition_key,
+        audit_id,
+    }))
+}
+
+async fn memory_promote(
+    State(state): State<AppState>,
+    Json(input): Json<MemoryPromoteInput>,
+) -> Result<Json<MemoryPromoteResponse>, StatusCode> {
+    let request = input.request;
+    let source_memory_id = request.source_memory_id.clone();
+    let capability =
+        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+
+    if !capability.memory.promote_targets.contains(&request.to_tier) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if capability.memory.require_review_for_promote
+        && (request.review.approval_id.is_none() || request.review.reviewer_id.is_none())
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let source = {
+        let records = state.memory_records.read().await;
+        records.get(&request.source_memory_id).cloned()
+    }
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    if source.partition.org_id != request.partition.org_id
+        || source.partition.workspace_id != request.partition.workspace_id
+        || source.partition.project_id != request.partition.project_id
+        || source.partition.tier != request.from_tier
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let scrub_report = scrub_content(&source.content);
+    let audit_id = Uuid::new_v4().to_string();
+    let now = crate::now_ms();
+    let partition_key = format!(
+        "{}/{}/{}/{}",
+        request.partition.org_id,
+        request.partition.workspace_id,
+        request.partition.project_id,
+        request.to_tier
+    );
+
+    if scrub_report.status == ScrubStatus::Blocked {
+        append_memory_audit(
+            &state,
+            crate::MemoryAuditEvent {
+                audit_id: audit_id.clone(),
+                action: "memory_promote".to_string(),
+                run_id: request.run_id.clone(),
+                memory_id: None,
+                source_memory_id: Some(source_memory_id.clone()),
+                to_tier: Some(request.to_tier),
+                partition_key,
+                actor: capability.subject,
+                status: "blocked".to_string(),
+                detail: scrub_report.block_reason.clone(),
+                created_at_ms: now,
+            },
+        )
+        .await?;
+
+        return Ok(Json(MemoryPromoteResponse {
+            promoted: false,
+            new_memory_id: None,
+            to_tier: request.to_tier,
+            scrub_report,
+            audit_id,
+        }));
+    }
+
+    let new_id = Uuid::new_v4().to_string();
+    let promoted_record = crate::GovernedMemoryRecord {
+        id: new_id.clone(),
+        run_id: request.run_id.clone(),
+        partition: tandem_memory::MemoryPartition {
+            org_id: request.partition.org_id.clone(),
+            workspace_id: request.partition.workspace_id.clone(),
+            project_id: request.partition.project_id.clone(),
+            tier: request.to_tier,
+        },
+        kind: source.kind,
+        content: source.content,
+        artifact_refs: source.artifact_refs,
+        classification: source.classification,
+        metadata: source.metadata,
+        source_memory_id: Some(source.id),
+        created_at_ms: now,
+    };
+
+    {
+        let mut records = state.memory_records.write().await;
+        records.insert(new_id.clone(), promoted_record);
+    }
+
+    append_memory_audit(
+        &state,
+        crate::MemoryAuditEvent {
+            audit_id: audit_id.clone(),
+            action: "memory_promote".to_string(),
+            run_id: request.run_id.clone(),
+            memory_id: Some(new_id.clone()),
+            source_memory_id: Some(source_memory_id.clone()),
+            to_tier: Some(request.to_tier),
+            partition_key: format!(
+                "{}/{}/{}/{}",
+                request.partition.org_id,
+                request.partition.workspace_id,
+                request.partition.project_id,
+                request.to_tier
+            ),
+            actor: capability.subject,
+            status: "ok".to_string(),
+            detail: None,
+            created_at_ms: now,
+        },
+    )
+    .await?;
+
+    state.event_bus.publish(EngineEvent::new(
+        "memory.promote",
+        json!({
+            "runID": request.run_id,
+            "sourceMemoryID": source_memory_id,
+            "memoryID": new_id,
+            "toTier": request.to_tier,
+            "auditID": audit_id,
+            "scrubStatus": scrub_report.status,
+        }),
+    ));
+
+    Ok(Json(MemoryPromoteResponse {
+        promoted: true,
+        new_memory_id: Some(new_id),
+        to_tier: request.to_tier,
+        scrub_report,
+        audit_id,
+    }))
+}
+
+async fn memory_search(
+    State(state): State<AppState>,
+    Json(input): Json<MemorySearchInput>,
+) -> Result<Json<MemorySearchResponse>, StatusCode> {
+    let request = input.request;
+    let capability =
+        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+
+    let requested_scopes = if request.read_scopes.is_empty() {
+        capability.memory.read_tiers.clone()
+    } else {
+        request.read_scopes.clone()
+    };
+
+    let mut scopes_used = Vec::new();
+    let mut blocked_scopes = Vec::new();
+    for scope in requested_scopes {
+        if capability.memory.read_tiers.contains(&scope) {
+            scopes_used.push(scope);
+        } else {
+            blocked_scopes.push(scope);
+        }
+    }
+
+    let limit = request.limit.unwrap_or(8).clamp(1, 100) as usize;
+    let query_lower = request.query.to_lowercase();
+
+    let mut results = Vec::new();
+    {
+        let records = state.memory_records.read().await;
+        for record in records.values() {
+            if record.partition.org_id != request.partition.org_id
+                || record.partition.workspace_id != request.partition.workspace_id
+                || record.partition.project_id != request.partition.project_id
+            {
+                continue;
+            }
+            if !scopes_used.contains(&record.partition.tier) {
+                continue;
+            }
+            if !query_lower.is_empty() && !record.content.to_lowercase().contains(&query_lower) {
+                continue;
+            }
+            results.push(json!({
+                "id": record.id,
+                "tier": record.partition.tier,
+                "classification": record.classification,
+                "kind": record.kind,
+                "source_memory_id": record.source_memory_id,
+                "created_at_ms": record.created_at_ms,
+                "content": record.content,
+                "artifact_refs": record.artifact_refs,
+            }));
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    let audit_id = Uuid::new_v4().to_string();
+    let now = crate::now_ms();
+    append_memory_audit(
+        &state,
+        crate::MemoryAuditEvent {
+            audit_id: audit_id.clone(),
+            action: "memory_search".to_string(),
+            run_id: request.run_id.clone(),
+            memory_id: None,
+            source_memory_id: None,
+            to_tier: None,
+            partition_key: request.partition.key(),
+            actor: capability.subject,
+            status: "ok".to_string(),
+            detail: None,
+            created_at_ms: now,
+        },
+    )
+    .await?;
+
+    state.event_bus.publish(EngineEvent::new(
+        "memory.search",
+        json!({
+            "runID": request.run_id,
+            "partitionKey": request.partition.key(),
+            "resultCount": results.len(),
+            "blockedScopes": blocked_scopes,
+            "auditID": audit_id,
+        }),
+    ));
+
+    Ok(Json(MemorySearchResponse {
+        results,
+        scopes_used,
+        blocked_scopes,
+        audit_id,
+    }))
+}
+
+async fn memory_audit(
+    State(state): State<AppState>,
+    Query(query): Query<MemoryAuditQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let mut entries = state.memory_audit_log.read().await.clone();
+    if let Some(run_id) = query.run_id {
+        entries.retain(|event| event.run_id == run_id);
+    }
+    entries.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    entries.truncate(limit);
+    Json(json!({
+        "events": entries,
+        "count": entries.len(),
+    }))
+}
+
+fn mission_event_id(event: &MissionEvent) -> &str {
+    match event {
+        MissionEvent::MissionStarted { mission_id }
+        | MissionEvent::MissionPaused { mission_id, .. }
+        | MissionEvent::MissionResumed { mission_id }
+        | MissionEvent::MissionCanceled { mission_id, .. }
+        | MissionEvent::RunStarted { mission_id, .. }
+        | MissionEvent::RunFinished { mission_id, .. }
+        | MissionEvent::ToolObserved { mission_id, .. }
+        | MissionEvent::ApprovalGranted { mission_id, .. }
+        | MissionEvent::ApprovalDenied { mission_id, .. }
+        | MissionEvent::TimerFired { mission_id, .. }
+        | MissionEvent::ResourceChanged { mission_id, .. } => mission_id,
+    }
+}
+
+async fn mission_create(
+    State(state): State<AppState>,
+    Json(input): Json<MissionCreateInput>,
+) -> Json<Value> {
+    let spec = MissionSpec::new(input.title, input.goal);
+    let mission_id = spec.mission_id.clone();
+    let mut mission = NoopMissionReducer::init(spec);
+    mission.work_items = input
+        .work_items
+        .into_iter()
+        .map(|item| WorkItem {
+            work_item_id: item
+                .work_item_id
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            title: item.title,
+            detail: item.detail,
+            status: WorkItemStatus::Todo,
+            depends_on: Vec::new(),
+            assigned_agent: item.assigned_agent,
+            run_id: None,
+            artifact_refs: Vec::new(),
+            metadata: None,
+        })
+        .collect();
+
+    state
+        .missions
+        .write()
+        .await
+        .insert(mission_id.clone(), mission.clone());
+    state.event_bus.publish(EngineEvent::new(
+        "mission.created",
+        json!({
+            "missionID": mission_id,
+            "workItemCount": mission.work_items.len(),
+        }),
+    ));
+
+    Json(json!({
+        "mission": mission,
+    }))
+}
+
+async fn mission_list(State(state): State<AppState>) -> Json<Value> {
+    let mut missions = state
+        .missions
+        .read()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    missions.sort_by(|a, b| a.mission_id.cmp(&b.mission_id));
+    Json(json!({
+        "missions": missions,
+        "count": missions.len(),
+    }))
+}
+
+async fn mission_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let mission = state
+        .missions
+        .read()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "Mission not found",
+                    "code": "MISSION_NOT_FOUND",
+                    "missionID": id,
+                })),
+            )
+        })?;
+    Ok(Json(json!({
+        "mission": mission,
+    })))
+}
+
+async fn mission_apply_event(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<MissionEventInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let event = input.event;
+    if mission_event_id(&event) != id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Mission event mission_id mismatch",
+                "code": "MISSION_EVENT_MISMATCH",
+                "missionID": id,
+            })),
+        ));
+    }
+
+    let current = state
+        .missions
+        .read()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "Mission not found",
+                    "code": "MISSION_NOT_FOUND",
+                    "missionID": id,
+                })),
+            )
+        })?;
+
+    let (next, commands) = DefaultMissionReducer::reduce(&current, event);
+    let next_revision = next.revision;
+    let next_status = next.status.clone();
+    state
+        .missions
+        .write()
+        .await
+        .insert(id.clone(), next.clone());
+
+    state.event_bus.publish(EngineEvent::new(
+        "mission.updated",
+        json!({
+            "missionID": id,
+            "revision": next_revision,
+            "status": next_status,
+            "commandCount": commands.len(),
+        }),
+    ));
+
+    Ok(Json(json!({
+        "mission": next,
+        "commands": commands,
+    })))
+}
+
+fn routine_error_response(error: RoutineStoreError) -> (StatusCode, Json<Value>) {
+    match error {
+        RoutineStoreError::InvalidRoutineId { routine_id } => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Invalid routine id",
+                "code": "INVALID_ROUTINE_ID",
+                "routineID": routine_id,
+            })),
+        ),
+        RoutineStoreError::InvalidSchedule { detail } => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Invalid routine schedule",
+                "code": "INVALID_ROUTINE_SCHEDULE",
+                "detail": detail,
+            })),
+        ),
+        RoutineStoreError::PersistFailed { message } => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Routine persistence failed",
+                "code": "ROUTINE_PERSIST_FAILED",
+                "detail": message,
+            })),
+        ),
+    }
+}
+
+async fn routines_create(
+    State(state): State<AppState>,
+    Json(input): Json<RoutineCreateInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let routine = RoutineSpec {
+        routine_id: input
+            .routine_id
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        name: input.name,
+        status: RoutineStatus::Active,
+        schedule: input.schedule,
+        timezone: input.timezone.unwrap_or_else(|| "UTC".to_string()),
+        misfire_policy: input
+            .misfire_policy
+            .unwrap_or(RoutineMisfirePolicy::RunOnce),
+        entrypoint: input.entrypoint,
+        args: input.args.unwrap_or_else(|| json!({})),
+        creator_type: input.creator_type.unwrap_or_else(|| "user".to_string()),
+        creator_id: input.creator_id.unwrap_or_else(|| "unknown".to_string()),
+        requires_approval: input.requires_approval.unwrap_or(true),
+        external_integrations_allowed: input.external_integrations_allowed.unwrap_or(false),
+        next_fire_at_ms: input.next_fire_at_ms,
+        last_fired_at_ms: None,
+    };
+    let stored = state
+        .put_routine(routine)
+        .await
+        .map_err(routine_error_response)?;
+    state.event_bus.publish(EngineEvent::new(
+        "routine.created",
+        json!({
+            "routineID": stored.routine_id,
+            "name": stored.name,
+            "entrypoint": stored.entrypoint,
+        }),
+    ));
+    Ok(Json(json!({
+        "routine": stored,
+    })))
+}
+
+async fn routines_list(State(state): State<AppState>) -> Json<Value> {
+    let routines = state.list_routines().await;
+    Json(json!({
+        "routines": routines,
+        "count": routines.len(),
+    }))
+}
+
+async fn routines_patch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<RoutinePatchInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let mut routine = state.get_routine(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Routine not found",
+                "code": "ROUTINE_NOT_FOUND",
+                "routineID": id,
+            })),
+        )
+    })?;
+    if let Some(name) = input.name {
+        routine.name = name;
+    }
+    if let Some(status) = input.status {
+        routine.status = status;
+    }
+    if let Some(schedule) = input.schedule {
+        routine.schedule = schedule;
+    }
+    if let Some(timezone) = input.timezone {
+        routine.timezone = timezone;
+    }
+    if let Some(misfire_policy) = input.misfire_policy {
+        routine.misfire_policy = misfire_policy;
+    }
+    if let Some(entrypoint) = input.entrypoint {
+        routine.entrypoint = entrypoint;
+    }
+    if let Some(args) = input.args {
+        routine.args = args;
+    }
+    if let Some(requires_approval) = input.requires_approval {
+        routine.requires_approval = requires_approval;
+    }
+    if let Some(external_integrations_allowed) = input.external_integrations_allowed {
+        routine.external_integrations_allowed = external_integrations_allowed;
+    }
+    if let Some(next_fire_at_ms) = input.next_fire_at_ms {
+        routine.next_fire_at_ms = Some(next_fire_at_ms);
+    }
+
+    let stored = state
+        .put_routine(routine)
+        .await
+        .map_err(routine_error_response)?;
+    state.event_bus.publish(EngineEvent::new(
+        "routine.updated",
+        json!({
+            "routineID": stored.routine_id,
+            "status": stored.status,
+            "nextFireAtMs": stored.next_fire_at_ms,
+        }),
+    ));
+    Ok(Json(json!({
+        "routine": stored,
+    })))
+}
+
+async fn routines_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let deleted = state
+        .delete_routine(&id)
+        .await
+        .map_err(routine_error_response)?;
+    if let Some(routine) = deleted {
+        state.event_bus.publish(EngineEvent::new(
+            "routine.deleted",
+            json!({
+                "routineID": routine.routine_id,
+            }),
+        ));
+        Ok(Json(json!({
+            "deleted": true,
+            "routineID": id,
+        })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Routine not found",
+                "code": "ROUTINE_NOT_FOUND",
+                "routineID": id,
+            })),
+        ))
+    }
+}
+
+async fn routines_run_now(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<RoutineRunNowInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let routine = state.get_routine(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Routine not found",
+                "code": "ROUTINE_NOT_FOUND",
+                "routineID": id,
+            })),
+        )
+    })?;
+    let run_count = input.run_count.unwrap_or(1).clamp(1, 20);
+    let now = crate::now_ms();
+    let trigger_type = "manual";
+    match evaluate_routine_execution_policy(&routine, trigger_type) {
+        RoutineExecutionDecision::Allowed => {
+            let _ = state.mark_routine_fired(&routine.routine_id, now).await;
+            state
+                .append_routine_history(RoutineHistoryEvent {
+                    routine_id: routine.routine_id.clone(),
+                    trigger_type: trigger_type.to_string(),
+                    run_count,
+                    fired_at_ms: now,
+                    status: "queued".to_string(),
+                    detail: input.reason,
+                })
+                .await;
+            state.event_bus.publish(EngineEvent::new(
+                "routine.fired",
+                json!({
+                    "routineID": routine.routine_id,
+                    "runCount": run_count,
+                    "triggerType": trigger_type,
+                    "firedAtMs": now,
+                }),
+            ));
+            Ok(Json(json!({
+                "ok": true,
+                "status": "queued",
+                "routineID": id,
+                "runCount": run_count,
+                "firedAtMs": now,
+            })))
+        }
+        RoutineExecutionDecision::RequiresApproval { reason } => {
+            state
+                .append_routine_history(RoutineHistoryEvent {
+                    routine_id: routine.routine_id.clone(),
+                    trigger_type: trigger_type.to_string(),
+                    run_count,
+                    fired_at_ms: now,
+                    status: "pending_approval".to_string(),
+                    detail: Some(reason.clone()),
+                })
+                .await;
+            state.event_bus.publish(EngineEvent::new(
+                "routine.approval_required",
+                json!({
+                    "routineID": routine.routine_id,
+                    "runCount": run_count,
+                    "triggerType": trigger_type,
+                    "reason": reason,
+                }),
+            ));
+            Ok(Json(json!({
+                "ok": true,
+                "status": "pending_approval",
+                "routineID": id,
+                "runCount": run_count,
+            })))
+        }
+        RoutineExecutionDecision::Blocked { reason } => {
+            state
+                .append_routine_history(RoutineHistoryEvent {
+                    routine_id: routine.routine_id.clone(),
+                    trigger_type: trigger_type.to_string(),
+                    run_count,
+                    fired_at_ms: now,
+                    status: "blocked_policy".to_string(),
+                    detail: Some(reason.clone()),
+                })
+                .await;
+            state.event_bus.publish(EngineEvent::new(
+                "routine.blocked",
+                json!({
+                    "routineID": routine.routine_id,
+                    "runCount": run_count,
+                    "triggerType": trigger_type,
+                    "reason": reason,
+                }),
+            ));
+            Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "Routine blocked by policy",
+                    "code": "ROUTINE_POLICY_BLOCKED",
+                    "routineID": id,
+                    "reason": reason,
+                })),
+            ))
+        }
+    }
+}
+
+async fn routines_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<RoutineHistoryQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let events = state.list_routine_history(&id, limit).await;
+    Json(json!({
+        "routineID": id,
+        "events": events,
+        "count": events.len(),
+    }))
+}
+
+fn routines_sse_stream(
+    state: AppState,
+    routine_id: Option<String>,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    let ready = tokio_stream::once(Ok(Event::default().data(
+        serde_json::to_string(&json!({
+            "status": "ready",
+            "stream": "routines",
+            "timestamp_ms": crate::now_ms(),
+        }))
+        .unwrap_or_default(),
+    )));
+    let rx = state.event_bus.subscribe();
+    let live = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(event) => {
+            if !event.event_type.starts_with("routine.") {
+                return None;
+            }
+            if let Some(routine_id) = routine_id.as_deref() {
+                let event_routine_id = event
+                    .properties
+                    .get("routineID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if event_routine_id != routine_id {
+                    return None;
+                }
+            }
+            let payload = serde_json::to_string(&event).unwrap_or_default();
+            Some(Ok(Event::default().data(payload)))
+        }
+        Err(_) => None,
+    });
+    ready.chain(live)
+}
+
+async fn routines_events(
+    State(state): State<AppState>,
+    Query(query): Query<RoutineEventsQuery>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Sse::new(routines_sse_stream(state, query.routine_id))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
+fn resource_error_response(error: ResourceStoreError) -> (StatusCode, Json<Value>) {
+    match error {
+        ResourceStoreError::InvalidKey { key } => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Invalid resource key namespace",
+                "code": "INVALID_RESOURCE_KEY",
+                "key": key,
+            })),
+        ),
+        ResourceStoreError::RevisionConflict(conflict) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Resource revision conflict",
+                "code": "RESOURCE_REVISION_CONFLICT",
+                "key": conflict.key,
+                "expected_rev": conflict.expected_rev,
+                "current_rev": conflict.current_rev,
+            })),
+        ),
+        ResourceStoreError::PersistFailed { message } => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Resource persistence failed",
+                "code": "RESOURCE_PERSIST_FAILED",
+                "detail": message,
+            })),
+        ),
+    }
+}
+
+fn normalize_resource_key(raw: String) -> String {
+    raw.trim_start_matches('/').trim().to_string()
+}
+
+async fn resource_list(
+    State(state): State<AppState>,
+    Query(query): Query<ResourceListQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let rows = state
+        .list_shared_resources(query.prefix.as_deref(), limit)
+        .await;
+    Json(json!({
+        "resources": rows,
+        "count": rows.len(),
+    }))
+}
+
+async fn resource_get(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let key = normalize_resource_key(key);
+    let resource = state.get_shared_resource(&key).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Resource not found",
+                "code": "RESOURCE_NOT_FOUND",
+                "key": key,
+            })),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "resource": resource,
+    })))
+}
+
+async fn resource_put(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(input): Json<ResourceWriteInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let key = normalize_resource_key(key);
+    let updated_by = input.updated_by.unwrap_or_else(|| "system".to_string());
+    let record = state
+        .put_shared_resource(
+            key.clone(),
+            input.value,
+            input.if_match_rev,
+            updated_by.clone(),
+            input.ttl_ms,
+        )
+        .await
+        .map_err(resource_error_response)?;
+
+    state.event_bus.publish(EngineEvent::new(
+        "resource.updated",
+        json!({
+            "key": record.key,
+            "rev": record.rev,
+            "updatedBy": updated_by,
+            "updatedAtMs": record.updated_at_ms,
+        }),
+    ));
+
+    Ok(Json(json!({
+        "resource": record
+    })))
+}
+
+async fn resource_patch(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(input): Json<ResourceWriteInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let key = normalize_resource_key(key);
+    let existing = state.get_shared_resource(&key).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Resource not found",
+                "code": "RESOURCE_NOT_FOUND",
+                "key": key,
+            })),
+        )
+    })?;
+
+    let merged_value = if existing.value.is_object() && input.value.is_object() {
+        let mut map = existing.value.as_object().cloned().unwrap_or_default();
+        for (k, v) in input.value.as_object().cloned().unwrap_or_default() {
+            map.insert(k, v);
+        }
+        Value::Object(map)
+    } else {
+        input.value
+    };
+
+    let updated_by = input.updated_by.unwrap_or_else(|| "system".to_string());
+    let record = state
+        .put_shared_resource(
+            key.clone(),
+            merged_value,
+            input.if_match_rev,
+            updated_by.clone(),
+            input.ttl_ms.or(existing.ttl_ms),
+        )
+        .await
+        .map_err(resource_error_response)?;
+
+    state.event_bus.publish(EngineEvent::new(
+        "resource.updated",
+        json!({
+            "key": record.key,
+            "rev": record.rev,
+            "updatedBy": updated_by,
+            "updatedAtMs": record.updated_at_ms,
+        }),
+    ));
+
+    Ok(Json(json!({
+        "resource": record
+    })))
+}
+
+async fn resource_delete(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(input): Json<ResourceDeleteInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let key = normalize_resource_key(key);
+    let updated_by = input.updated_by.unwrap_or_else(|| "system".to_string());
+    let deleted = state
+        .delete_shared_resource(&key, input.if_match_rev)
+        .await
+        .map_err(resource_error_response)?;
+
+    if let Some(record) = deleted {
+        state.event_bus.publish(EngineEvent::new(
+            "resource.deleted",
+            json!({
+                "key": record.key,
+                "rev": record.rev,
+                "updatedBy": updated_by,
+                "updatedAtMs": crate::now_ms(),
+            }),
+        ));
+        Ok(Json(json!({
+            "deleted": true,
+            "key": key,
+        })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Resource not found",
+                "code": "RESOURCE_NOT_FOUND",
+                "key": key,
+            })),
+        ))
+    }
+}
+
+fn resource_sse_stream(
+    state: AppState,
+    prefix: Option<String>,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    let ready = tokio_stream::once(Ok(Event::default().data(
+        serde_json::to_string(&json!({
+            "status": "ready",
+            "stream": "resource",
+            "timestamp_ms": crate::now_ms(),
+        }))
+        .unwrap_or_default(),
+    )));
+    let rx = state.event_bus.subscribe();
+    let live = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(event) => {
+            if event.event_type != "resource.updated" && event.event_type != "resource.deleted" {
+                return None;
+            }
+            if let Some(prefix) = prefix.as_deref() {
+                let key = event
+                    .properties
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !key.starts_with(prefix) {
+                    return None;
+                }
+            }
+            let payload = serde_json::to_string(&event).unwrap_or_default();
+            Some(Ok(Event::default().data(payload)))
+        }
+        Err(_) => None,
+    });
+    ready.chain(live)
+}
+
+async fn resource_events(
+    State(state): State<AppState>,
+    Query(query): Query<ResourceEventsQuery>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Sse::new(resource_sse_stream(state, query.prefix))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
 async fn instance_dispose() -> Json<Value> {
     Json(json!({"ok": true}))
 }
@@ -2982,6 +4311,21 @@ async fn openapi_doc() -> Json<Value> {
             "/skills/import/preview":{"post":{"summary":"Preview skill import conflicts/actions"}},
             "/skills/templates":{"get":{"summary":"List installable skill templates"}},
             "/skills/templates/{id}/install":{"post":{"summary":"Install a skill template"}},
+            "/memory/put":{"post":{"summary":"Store scoped memory content"}},
+            "/memory/promote":{"post":{"summary":"Promote memory across tiers with scrub/audit"}},
+            "/memory/search":{"post":{"summary":"Search scoped memory with capability gating"}},
+            "/memory/audit":{"get":{"summary":"List memory audit events"}},
+            "/mission":{"get":{"summary":"List missions"},"post":{"summary":"Create mission"}},
+            "/mission/{id}":{"get":{"summary":"Get mission"}},
+            "/mission/{id}/event":{"post":{"summary":"Apply mission event through reducer"}},
+            "/routines":{"get":{"summary":"List routines"},"post":{"summary":"Create routine"}},
+            "/routines/{id}":{"patch":{"summary":"Update routine"},"delete":{"summary":"Delete routine"}},
+            "/routines/{id}/run_now":{"post":{"summary":"Trigger routine immediately"}},
+            "/routines/{id}/history":{"get":{"summary":"List routine history"}},
+            "/routines/events":{"get":{"summary":"SSE stream for routine lifecycle events"}},
+            "/resource":{"get":{"summary":"List shared resources by prefix"}},
+            "/resource/{key}":{"get":{"summary":"Get shared resource"},"put":{"summary":"Put shared resource with optional revision guard"},"patch":{"summary":"Patch shared resource with optional revision guard"},"delete":{"summary":"Delete shared resource with optional revision guard"}},
+            "/resource/events":{"get":{"summary":"SSE stream for shared resource events"}},
             "/command":{"get":{"summary":"List executable commands"}},
             "/session/{id}/command":{"post":{"summary":"Run explicit command"}},
             "/session/{id}/shell":{"post":{"summary":"Run shell command"}},
@@ -3015,6 +4359,7 @@ mod tests {
     use tandem_providers::ProviderRegistry;
     use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
     use tandem_tools::ToolRegistry;
+    use tokio::sync::broadcast;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -3049,7 +4394,8 @@ mod tests {
             tools.clone(),
             cancellations.clone(),
         );
-        let state = AppState::new_starting(Uuid::new_v4().to_string(), false);
+        let mut state = AppState::new_starting(Uuid::new_v4().to_string(), false);
+        state.shared_resources_path = root.join("shared_resources.json");
         state
             .mark_ready(crate::RuntimeState {
                 storage,
@@ -3072,6 +4418,22 @@ mod tests {
             .await
             .expect("runtime ready");
         state
+    }
+
+    async fn next_event_of_type(
+        rx: &mut broadcast::Receiver<EngineEvent>,
+        expected_type: &str,
+    ) -> EngineEvent {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = rx.recv().await.expect("event");
+                if event.event_type == expected_type {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("event timeout")
     }
 
     #[tokio::test]
@@ -4034,5 +5396,1229 @@ mod tests {
             .and_then(|v| v.as_str())
             .expect("title");
         assert_eq!(title, "Ship the fix quickly");
+    }
+
+    #[tokio::test]
+    async fn resource_put_patch_get_and_list_roundtrip() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/resource/project/demo/board")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"status":"todo","count":1},
+                    "updated_by": "agent-1"
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let patch_req = Request::builder()
+            .method("PATCH")
+            .uri("/resource/project/demo/board")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"count":2},
+                    "if_match_rev": 1,
+                    "updated_by": "agent-2"
+                })
+                .to_string(),
+            ))
+            .expect("patch request");
+        let patch_resp = app
+            .clone()
+            .oneshot(patch_req)
+            .await
+            .expect("patch response");
+        assert_eq!(patch_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/resource/project/demo/board")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let payload: Value = serde_json::from_slice(&get_body).expect("json");
+        assert_eq!(
+            payload
+                .get("resource")
+                .and_then(|r| r.get("rev"))
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            payload
+                .get("resource")
+                .and_then(|r| r.get("value"))
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("todo")
+        );
+        assert_eq!(
+            payload
+                .get("resource")
+                .and_then(|r| r.get("value"))
+                .and_then(|v| v.get("count"))
+                .and_then(|v| v.as_i64()),
+            Some(2)
+        );
+
+        let list_req = Request::builder()
+            .method("GET")
+            .uri("/resource?prefix=project/demo")
+            .body(Body::empty())
+            .expect("list request");
+        let list_resp = app.clone().oneshot(list_req).await.expect("list response");
+        assert_eq!(list_resp.status(), StatusCode::OK);
+        let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("list body");
+        let list_payload: Value = serde_json::from_slice(&list_body).expect("json");
+        assert_eq!(list_payload.get("count").and_then(|v| v.as_u64()), Some(1));
+    }
+
+    #[tokio::test]
+    async fn resource_put_conflict_returns_409() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let first_req = Request::builder()
+            .method("PUT")
+            .uri("/resource/mission/demo/card-1")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"title":"Card 1"},
+                    "updated_by": "agent-1"
+                })
+                .to_string(),
+            ))
+            .expect("first request");
+        let first_resp = app
+            .clone()
+            .oneshot(first_req)
+            .await
+            .expect("first response");
+        assert_eq!(first_resp.status(), StatusCode::OK);
+
+        let conflict_req = Request::builder()
+            .method("PUT")
+            .uri("/resource/mission/demo/card-1")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"title":"Card 1 updated"},
+                    "if_match_rev": 99,
+                    "updated_by": "agent-2"
+                })
+                .to_string(),
+            ))
+            .expect("conflict request");
+        let conflict_resp = app
+            .clone()
+            .oneshot(conflict_req)
+            .await
+            .expect("conflict response");
+        assert_eq!(conflict_resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn resource_updated_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/resource/project/demo/board")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"status":"todo"},
+                    "updated_by": "agent-1"
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let event = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = rx.recv().await.expect("event");
+                if event.event_type == "resource.updated" {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("resource.updated timeout");
+
+        let mut properties = event
+            .properties
+            .as_object()
+            .cloned()
+            .expect("resource.updated properties object");
+        let updated_at_ms = properties
+            .remove("updatedAtMs")
+            .and_then(|v| v.as_u64())
+            .expect("updatedAtMs");
+        assert!(updated_at_ms > 0);
+
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": properties,
+        });
+        let expected = json!({
+            "type": "resource.updated",
+            "properties": {
+                "key": "project/demo/board",
+                "rev": 1,
+                "updatedBy": "agent-1"
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn resource_deleted_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/resource/project/demo/board")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "value": {"status":"todo"},
+                    "updated_by": "agent-1"
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let delete_req = Request::builder()
+            .method("DELETE")
+            .uri("/resource/project/demo/board")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "if_match_rev": 1,
+                    "updated_by": "reviewer-1"
+                })
+                .to_string(),
+            ))
+            .expect("delete request");
+        let delete_resp = app
+            .clone()
+            .oneshot(delete_req)
+            .await
+            .expect("delete response");
+        assert_eq!(delete_resp.status(), StatusCode::OK);
+
+        let event = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = rx.recv().await.expect("event");
+                if event.event_type == "resource.deleted" {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("resource.deleted timeout");
+
+        let mut properties = event
+            .properties
+            .as_object()
+            .cloned()
+            .expect("resource.deleted properties object");
+        let updated_at_ms = properties
+            .remove("updatedAtMs")
+            .and_then(|v| v.as_u64())
+            .expect("updatedAtMs");
+        assert!(updated_at_ms > 0);
+
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": properties,
+        });
+        let expected = json!({
+            "type": "resource.deleted",
+            "properties": {
+                "key": "project/demo/board",
+                "rev": 1,
+                "updatedBy": "reviewer-1"
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn mission_create_and_get_roundtrip() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/mission")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "title": "Ship control center",
+                    "goal": "Build mission scaffolding",
+                    "work_items": [
+                        {"work_item_id":"w-1","title":"Implement API"}
+                    ]
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let create_payload: Value = serde_json::from_slice(&create_body).expect("json");
+        let mission_id = create_payload
+            .get("mission")
+            .and_then(|v| v.get("mission_id"))
+            .and_then(|v| v.as_str())
+            .expect("mission id")
+            .to_string();
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri(format!("/mission/{mission_id}"))
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let get_payload: Value = serde_json::from_slice(&get_body).expect("json");
+        assert_eq!(
+            get_payload
+                .get("mission")
+                .and_then(|v| v.get("work_items"))
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn mission_created_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/mission")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "title": "Event contract",
+                    "goal": "Capture mission.created shape",
+                    "work_items": [{"work_item_id":"w-1","title":"Task"}]
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let create_payload: Value = serde_json::from_slice(&create_body).expect("json");
+        let mission_id = create_payload
+            .get("mission")
+            .and_then(|v| v.get("mission_id"))
+            .and_then(|v| v.as_str())
+            .expect("mission_id");
+
+        let event = next_event_of_type(&mut rx, "mission.created").await;
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": event.properties,
+        });
+        let expected = json!({
+            "type": "mission.created",
+            "properties": {
+                "missionID": mission_id,
+                "workItemCount": 1
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn mission_updated_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/mission")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "title": "Mission update contract",
+                    "goal": "Capture mission.updated shape",
+                    "work_items": [{"work_item_id":"w-1","title":"Task"}]
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let create_payload: Value = serde_json::from_slice(&create_body).expect("json");
+        let mission_id = create_payload
+            .get("mission")
+            .and_then(|v| v.get("mission_id"))
+            .and_then(|v| v.as_str())
+            .expect("mission_id")
+            .to_string();
+
+        let apply_req = Request::builder()
+            .method("POST")
+            .uri(format!("/mission/{mission_id}/event"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "event": {
+                        "type": "mission_started",
+                        "mission_id": mission_id
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("apply request");
+        let apply_resp = app
+            .clone()
+            .oneshot(apply_req)
+            .await
+            .expect("apply response");
+        assert_eq!(apply_resp.status(), StatusCode::OK);
+
+        let event = next_event_of_type(&mut rx, "mission.updated").await;
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": event.properties,
+        });
+        let expected = json!({
+            "type": "mission.updated",
+            "properties": {
+                "missionID": mission_id,
+                "revision": 2,
+                "status": "running",
+                "commandCount": 0
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn mission_apply_event_moves_item_to_rework_on_reviewer_denial() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/mission")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "title": "Gate flow",
+                    "goal": "Validate reducer flow",
+                    "work_items": [{"work_item_id":"w-1","title":"Patch logic"}]
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body");
+        let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+        let mission_id = create_payload
+            .get("mission")
+            .and_then(|v| v.get("mission_id"))
+            .and_then(|v| v.as_str())
+            .expect("mission id")
+            .to_string();
+
+        let run_finished_req = Request::builder()
+            .method("POST")
+            .uri(format!("/mission/{mission_id}/event"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "event": {
+                        "type": "run_finished",
+                        "mission_id": mission_id,
+                        "work_item_id": "w-1",
+                        "run_id": "run-1",
+                        "status": "success"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("run finished request");
+        let run_finished_resp = app
+            .clone()
+            .oneshot(run_finished_req)
+            .await
+            .expect("run finished response");
+        assert_eq!(run_finished_resp.status(), StatusCode::OK);
+
+        let deny_req = Request::builder()
+            .method("POST")
+            .uri(format!("/mission/{mission_id}/event"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "event": {
+                        "type": "approval_denied",
+                        "mission_id": mission_id,
+                        "work_item_id": "w-1",
+                        "approval_id": "review-1",
+                        "reason": "needs revision"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("deny request");
+        let deny_resp = app.clone().oneshot(deny_req).await.expect("deny response");
+        assert_eq!(deny_resp.status(), StatusCode::OK);
+        let deny_body = to_bytes(deny_resp.into_body(), usize::MAX)
+            .await
+            .expect("deny body");
+        let deny_payload: Value = serde_json::from_slice(&deny_body).expect("deny json");
+        assert_eq!(
+            deny_payload
+                .get("mission")
+                .and_then(|v| v.get("work_items"))
+                .and_then(|v| v.get(0))
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("rework")
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_create_run_now_and_history_roundtrip() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-1",
+                    "name": "Daily digest",
+                    "schedule": { "interval_seconds": { "seconds": 60 } },
+                    "entrypoint": "mission.default",
+                    "creator_type": "user",
+                    "creator_id": "u-1"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-1/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_count": 2,
+                    "reason": "manual smoke check"
+                })
+                .to_string(),
+            ))
+            .expect("run_now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run_now response");
+        assert_eq!(run_now_resp.status(), StatusCode::OK);
+
+        let history_req = Request::builder()
+            .method("GET")
+            .uri("/routines/routine-1/history?limit=10")
+            .body(Body::empty())
+            .expect("history request");
+        let history_resp = app
+            .clone()
+            .oneshot(history_req)
+            .await
+            .expect("history response");
+        assert_eq!(history_resp.status(), StatusCode::OK);
+        let history_body = to_bytes(history_resp.into_body(), usize::MAX)
+            .await
+            .expect("history body");
+        let history_payload: Value = serde_json::from_slice(&history_body).expect("history json");
+        assert_eq!(
+            history_payload.get("count").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            history_payload
+                .get("events")
+                .and_then(|v| v.get(0))
+                .and_then(|v| v.get("run_count"))
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_patch_can_pause_routine() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-2",
+                    "name": "Research routine",
+                    "schedule": { "interval_seconds": { "seconds": 120 } },
+                    "entrypoint": "mission.default"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let patch_req = Request::builder()
+            .method("PATCH")
+            .uri("/routines/routine-2")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "status": "paused"
+                })
+                .to_string(),
+            ))
+            .expect("patch request");
+        let patch_resp = app
+            .clone()
+            .oneshot(patch_req)
+            .await
+            .expect("patch response");
+        assert_eq!(patch_resp.status(), StatusCode::OK);
+        let patch_body = to_bytes(patch_resp.into_body(), usize::MAX)
+            .await
+            .expect("patch body");
+        let patch_payload: Value = serde_json::from_slice(&patch_body).expect("patch json");
+        assert_eq!(
+            patch_payload
+                .get("routine")
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("paused")
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_run_now_blocks_external_side_effects_by_default() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-ext-blocked",
+                    "name": "External email sender",
+                    "schedule": { "interval_seconds": { "seconds": 300 } },
+                    "entrypoint": "connector.email.reply",
+                    "requires_approval": true,
+                    "external_integrations_allowed": false
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-ext-blocked/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("run_now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run_now response");
+        assert_eq!(run_now_resp.status(), StatusCode::FORBIDDEN);
+
+        let history_req = Request::builder()
+            .method("GET")
+            .uri("/routines/routine-ext-blocked/history?limit=5")
+            .body(Body::empty())
+            .expect("history request");
+        let history_resp = app
+            .clone()
+            .oneshot(history_req)
+            .await
+            .expect("history response");
+        assert_eq!(history_resp.status(), StatusCode::OK);
+        let history_body = to_bytes(history_resp.into_body(), usize::MAX)
+            .await
+            .expect("history body");
+        let history_payload: Value = serde_json::from_slice(&history_body).expect("history json");
+        assert_eq!(
+            history_payload
+                .get("events")
+                .and_then(|v| v.get(0))
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("blocked_policy")
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_run_now_requires_approval_for_external_side_effects_when_enabled() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-ext-approval",
+                    "name": "External draft workflow",
+                    "schedule": { "interval_seconds": { "seconds": 300 } },
+                    "entrypoint": "connector.email.reply",
+                    "requires_approval": true,
+                    "external_integrations_allowed": true
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-ext-approval/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("run_now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run_now response");
+        assert_eq!(run_now_resp.status(), StatusCode::OK);
+        let run_now_body = to_bytes(run_now_resp.into_body(), usize::MAX)
+            .await
+            .expect("run_now body");
+        let run_now_payload: Value = serde_json::from_slice(&run_now_body).expect("run_now json");
+        assert_eq!(
+            run_now_payload.get("status").and_then(|v| v.as_str()),
+            Some("pending_approval")
+        );
+
+        let history_req = Request::builder()
+            .method("GET")
+            .uri("/routines/routine-ext-approval/history?limit=5")
+            .body(Body::empty())
+            .expect("history request");
+        let history_resp = app
+            .clone()
+            .oneshot(history_req)
+            .await
+            .expect("history response");
+        assert_eq!(history_resp.status(), StatusCode::OK);
+        let history_body = to_bytes(history_resp.into_body(), usize::MAX)
+            .await
+            .expect("history body");
+        let history_payload: Value = serde_json::from_slice(&history_body).expect("history json");
+        assert_eq!(
+            history_payload
+                .get("events")
+                .and_then(|v| v.get(0))
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("pending_approval")
+        );
+    }
+
+    #[tokio::test]
+    async fn routine_fired_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-fired-contract",
+                    "name": "Routine fired contract",
+                    "schedule": { "interval_seconds": { "seconds": 300 } },
+                    "entrypoint": "mission.default"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-fired-contract/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "run_count": 2 }).to_string()))
+            .expect("run now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run now response");
+        assert_eq!(run_now_resp.status(), StatusCode::OK);
+
+        let event = next_event_of_type(&mut rx, "routine.fired").await;
+        let mut properties = event
+            .properties
+            .as_object()
+            .cloned()
+            .expect("properties object");
+        let fired_at_ms = properties
+            .remove("firedAtMs")
+            .and_then(|v| v.as_u64())
+            .expect("firedAtMs");
+        assert!(fired_at_ms > 0);
+
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": properties,
+        });
+        let expected = json!({
+            "type": "routine.fired",
+            "properties": {
+                "routineID": "routine-fired-contract",
+                "runCount": 2,
+                "triggerType": "manual"
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn routine_approval_required_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-approval-contract",
+                    "name": "Routine approval contract",
+                    "schedule": { "interval_seconds": { "seconds": 300 } },
+                    "entrypoint": "connector.email.reply",
+                    "requires_approval": true,
+                    "external_integrations_allowed": true
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-approval-contract/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("run now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run now response");
+        assert_eq!(run_now_resp.status(), StatusCode::OK);
+
+        let event = next_event_of_type(&mut rx, "routine.approval_required").await;
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": event.properties,
+        });
+        let expected = json!({
+            "type": "routine.approval_required",
+            "properties": {
+                "routineID": "routine-approval-contract",
+                "runCount": 1,
+                "triggerType": "manual",
+                "reason": "manual approval required before external side effects (manual)"
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn routine_blocked_event_contract_snapshot() {
+        let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/routines")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "routine_id": "routine-blocked-contract",
+                    "name": "Routine blocked contract",
+                    "schedule": { "interval_seconds": { "seconds": 300 } },
+                    "entrypoint": "connector.email.reply",
+                    "requires_approval": true,
+                    "external_integrations_allowed": false
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/routines/routine-blocked-contract/run_now")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("run now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run now response");
+        assert_eq!(run_now_resp.status(), StatusCode::FORBIDDEN);
+
+        let event = next_event_of_type(&mut rx, "routine.blocked").await;
+        let snapshot = json!({
+            "type": event.event_type,
+            "properties": event.properties,
+        });
+        let expected = json!({
+            "type": "routine.blocked",
+            "properties": {
+                "routineID": "routine-blocked-contract",
+                "runCount": 1,
+                "triggerType": "manual",
+                "reason": "external integrations are disabled by policy"
+            }
+        });
+        assert_eq!(snapshot, expected);
+    }
+
+    #[tokio::test]
+    async fn memory_put_enforces_default_write_scope() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/memory/put")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-1",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "project"
+                    },
+                    "kind": "note",
+                    "content": "should fail without write scope",
+                    "classification": "internal"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn memory_put_then_search_in_session_scope() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let put_req = Request::builder()
+            .method("POST")
+            .uri("/memory/put")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-2",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "kind": "solution_capsule",
+                    "content": "retry budget extension pattern",
+                    "classification": "internal",
+                    "artifact_refs": ["artifact://run-2/task-1/patch.diff"]
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let search_req = Request::builder()
+            .method("POST")
+            .uri("/memory/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-2",
+                    "query": "budget extension",
+                    "read_scopes": ["session"],
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "limit": 5
+                })
+                .to_string(),
+            ))
+            .expect("search request");
+        let search_resp = app.oneshot(search_req).await.expect("response");
+        assert_eq!(search_resp.status(), StatusCode::OK);
+        let body = to_bytes(search_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let result_count = payload
+            .get("results")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
+        assert!(result_count >= 1);
+    }
+
+    #[tokio::test]
+    async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let capability = json!({
+            "run_id": "run-3",
+            "subject": "reviewer-user",
+            "org_id": "org-1",
+            "workspace_id": "ws-1",
+            "project_id": "proj-1",
+            "memory": {
+                "read_tiers": ["session", "project"],
+                "write_tiers": ["session"],
+                "promote_targets": ["project"],
+                "require_review_for_promote": true,
+                "allow_auto_use_tiers": ["curated"]
+            },
+            "expires_at": 9999999999999u64
+        });
+
+        let put_req = Request::builder()
+            .method("POST")
+            .uri("/memory/put")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-3",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "kind": "solution_capsule",
+                    "content": ["-----BEGIN PRIVATE ", "KEY-----"].concat(),
+                    "classification": "restricted",
+                    "capability": capability
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+        let put_body = to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .expect("put body");
+        let put_payload: Value = serde_json::from_slice(&put_body).expect("put json");
+        let memory_id = put_payload
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("memory id")
+            .to_string();
+
+        let promote_req = Request::builder()
+            .method("POST")
+            .uri("/memory/promote")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-3",
+                    "source_memory_id": memory_id,
+                    "from_tier": "session",
+                    "to_tier": "project",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "reason": "promote test",
+                    "review": {
+                        "required": true,
+                        "reviewer_id": "user-1",
+                        "approval_id": "appr-1"
+                    },
+                    "capability": capability
+                })
+                .to_string(),
+            ))
+            .expect("promote request");
+        let promote_resp = app
+            .clone()
+            .oneshot(promote_req)
+            .await
+            .expect("promote response");
+        assert_eq!(promote_resp.status(), StatusCode::OK);
+        let promote_body = to_bytes(promote_resp.into_body(), usize::MAX)
+            .await
+            .expect("promote body");
+        let promote_payload: Value = serde_json::from_slice(&promote_body).expect("promote json");
+        assert_eq!(
+            promote_payload.get("promoted").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            promote_payload
+                .get("scrub_report")
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("blocked")
+        );
+
+        let audit_req = Request::builder()
+            .method("GET")
+            .uri("/memory/audit?run_id=run-3")
+            .body(Body::empty())
+            .expect("audit request");
+        let audit_resp = app
+            .clone()
+            .oneshot(audit_req)
+            .await
+            .expect("audit response");
+        assert_eq!(audit_resp.status(), StatusCode::OK);
+        let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+            .await
+            .expect("audit body");
+        let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+        let blocked_promote_exists = audit_payload
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|events| {
+                events.iter().any(|event| {
+                    event.get("action").and_then(|v| v.as_str()) == Some("memory_promote")
+                        && event.get("status").and_then(|v| v.as_str()) == Some("blocked")
+                })
+            })
+            .unwrap_or(false);
+        assert!(blocked_promote_exists);
     }
 }

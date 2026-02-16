@@ -1536,6 +1536,96 @@ mod tests {
     }
 
     #[test]
+    fn parse_stream_event_envelope_handles_mission_events_contract_shape() {
+        let payload = serde_json::json!({
+            "type": "mission.created",
+            "properties": {
+                "missionID": "m-123",
+                "workItemCount": 2
+            }
+        });
+        let envelope = parse_stream_event_envelope(payload.clone()).expect("envelope");
+        assert_eq!(envelope.event_type, "mission.created");
+        assert_eq!(envelope.session_id, None);
+        assert_eq!(envelope.run_id, None);
+        assert_eq!(envelope.agent_id, None);
+        assert_eq!(envelope.channel, None);
+        assert_eq!(
+            envelope
+                .payload
+                .get("properties")
+                .and_then(|p| p.get("missionID"))
+                .and_then(|v| v.as_str()),
+            Some("m-123")
+        );
+        assert_eq!(
+            envelope
+                .payload
+                .get("properties")
+                .and_then(|p| p.get("workItemCount"))
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn parse_stream_event_envelope_handles_routine_policy_events_contract_shape() {
+        let payloads = vec![
+            serde_json::json!({
+                "type": "routine.fired",
+                "properties": {
+                    "routineID": "r-1",
+                    "runCount": 1,
+                    "triggerType": "manual",
+                    "firedAtMs": 123
+                }
+            }),
+            serde_json::json!({
+                "type": "routine.approval_required",
+                "properties": {
+                    "routineID": "r-2",
+                    "runCount": 1,
+                    "triggerType": "manual",
+                    "reason": "manual approval required before external side effects (manual)"
+                }
+            }),
+            serde_json::json!({
+                "type": "routine.blocked",
+                "properties": {
+                    "routineID": "r-3",
+                    "runCount": 1,
+                    "triggerType": "manual",
+                    "reason": "external integrations are disabled by policy"
+                }
+            }),
+        ];
+
+        for payload in payloads {
+            let envelope = parse_stream_event_envelope(payload.clone()).expect("envelope");
+            assert!(envelope.event_type.starts_with("routine."));
+            assert_eq!(envelope.session_id, None);
+            assert_eq!(envelope.run_id, None);
+            assert_eq!(
+                envelope
+                    .payload
+                    .get("properties")
+                    .and_then(|p| p.get("routineID"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty()),
+                Some(true)
+            );
+            assert_eq!(
+                envelope
+                    .payload
+                    .get("properties")
+                    .and_then(|p| p.get("runCount"))
+                    .and_then(|v| v.as_u64()),
+                Some(1)
+            );
+        }
+    }
+
+    #[test]
     fn extract_stream_error_reads_session_error() {
         let payload = serde_json::json!({
             "type": "session.error",

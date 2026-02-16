@@ -4806,6 +4806,87 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_sse_mission_event_surfaces_raw_contract_payload() {
+        let mut buffer = String::from(
+            "data: {\"type\":\"mission.created\",\"properties\":{\"missionID\":\"m-123\",\"workItemCount\":2}}\n\n",
+        );
+        let event = parse_sse_event(&mut buffer);
+        match event {
+            Some(StreamEvent::Raw { event_type, data }) => {
+                assert_eq!(event_type, "mission.created");
+                assert_eq!(
+                    data.get("missionID").and_then(|v| v.as_str()),
+                    Some("m-123")
+                );
+                assert_eq!(data.get("workItemCount").and_then(|v| v.as_u64()), Some(2));
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_sse_routine_events_surface_raw_contract_payload() {
+        let cases = [
+            (
+                "routine.fired",
+                serde_json::json!({
+                    "routineID":"r-1",
+                    "runCount":1,
+                    "triggerType":"manual",
+                    "firedAtMs":123
+                }),
+            ),
+            (
+                "routine.approval_required",
+                serde_json::json!({
+                    "routineID":"r-2",
+                    "runCount":1,
+                    "triggerType":"manual",
+                    "reason":"manual approval required before external side effects (manual)"
+                }),
+            ),
+            (
+                "routine.blocked",
+                serde_json::json!({
+                    "routineID":"r-3",
+                    "runCount":1,
+                    "triggerType":"manual",
+                    "reason":"external integrations are disabled by policy"
+                }),
+            ),
+        ];
+
+        for (event_type, properties) in cases {
+            let payload = serde_json::json!({
+                "type": event_type,
+                "properties": properties
+            })
+            .to_string();
+            let mut buffer = format!("data: {payload}\n\n");
+            let event = parse_sse_event(&mut buffer);
+            match event {
+                Some(StreamEvent::Raw {
+                    event_type: parsed_type,
+                    data,
+                }) => {
+                    assert_eq!(parsed_type, event_type);
+                    assert_eq!(data.get("runCount").and_then(|v| v.as_u64()), Some(1));
+                    assert_eq!(
+                        data.get("routineID").and_then(|v| v.as_str()),
+                        Some(
+                            properties
+                                .get("routineID")
+                                .and_then(|v| v.as_str())
+                                .expect("routineID")
+                        )
+                    );
+                }
+                other => panic!("Unexpected event: {:?}", other),
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_provider_catalog_legacy_array_shape() {
         let raw = serde_json::json!([
             {
