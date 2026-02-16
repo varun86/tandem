@@ -632,6 +632,22 @@ impl App {
         ("deny", "Deny a pending request"),
         ("answer", "Answer a question"),
         ("requests", "Open pending request center"),
+        ("routines", "List scheduled routines"),
+        ("routine_create", "Create interval routine"),
+        ("routine_edit", "Edit routine interval"),
+        ("routine_pause", "Pause a routine"),
+        ("routine_resume", "Resume a routine"),
+        ("routine_run_now", "Trigger a routine now"),
+        ("routine_delete", "Delete a routine"),
+        ("routine_history", "Show routine execution history"),
+        ("missions", "List engine missions"),
+        ("mission_create", "Create an engine mission"),
+        ("mission_get", "Get mission details"),
+        ("mission_event", "Apply mission event JSON"),
+        ("mission_start", "Apply mission_started"),
+        ("mission_review_ok", "Approve review gate"),
+        ("mission_test_ok", "Approve test gate"),
+        ("mission_review_no", "Deny review gate"),
         ("config", "Show configuration"),
     ];
 
@@ -4311,6 +4327,29 @@ APPROVALS:
   /answer <id> <reply>    Send raw permission reply (allow/deny/once/always/reject)
   /requests               Open pending request center
 
+ROUTINES:
+  /routines                               List routines
+  /routine_create <id> <sec> <entrypoint> Create an interval routine
+  /routine_edit <id> <sec>                Update interval schedule
+  /routine_pause <id>                     Pause routine
+  /routine_resume <id>                    Resume routine
+  /routine_run_now <id> [count]           Trigger routine immediately
+  /routine_delete <id>                    Delete routine
+  /routine_history <id> [limit]           Show routine history
+
+MISSIONS:
+  /missions                                List missions
+  /mission_create <title> :: <goal>        Create mission (supports optional work item title after third :: segment)
+  /mission_get <mission_id>                Show mission details
+  /mission_event <mission_id> <event_json> Apply mission event payload JSON
+  /mission_start <mission_id>              Quick mission_started event
+  /mission_review_ok <mission_id> <work_item_id> [approval_id]
+                                           Quick approval_granted for review
+  /mission_test_ok <mission_id> <work_item_id> [approval_id]
+                                           Quick approval_granted for test
+  /mission_review_no <mission_id> <work_item_id> [reason]
+                                           Quick approval_denied for review
+
 CONFIG:
   /config            Show configuration
 
@@ -5140,6 +5179,464 @@ MULTI-AGENT KEYS:
                     "Failed to rename session.".to_string()
                 } else {
                     "Not in a chat session.".to_string()
+                }
+            }
+
+            "routines" => {
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                match client.routines_list().await {
+                    Ok(routines) => {
+                        if routines.is_empty() {
+                            return "No routines configured.".to_string();
+                        }
+                        let lines = routines
+                            .into_iter()
+                            .map(|routine| {
+                                let schedule = match routine.schedule {
+                                    crate::net::client::RoutineSchedule::IntervalSeconds {
+                                        seconds,
+                                    } => format!("interval:{}s", seconds),
+                                    crate::net::client::RoutineSchedule::Cron { expression } => {
+                                        format!("cron:{expression}")
+                                    }
+                                };
+                                format!(
+                                    "- {} [{}] {} ({})",
+                                    routine.routine_id, routine.name, schedule, routine.entrypoint
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Routines:\n{}", lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to list routines: {}", err),
+                }
+            }
+
+            "routine_create" => {
+                if args.len() < 3 {
+                    return "Usage: /routine_create <id> <interval_seconds> <entrypoint>"
+                        .to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0].to_string();
+                let interval_seconds = match args[1].parse::<u64>() {
+                    Ok(seconds) if seconds > 0 => seconds,
+                    _ => return "interval_seconds must be a positive integer.".to_string(),
+                };
+                let entrypoint = args[2..].join(" ");
+                let request = crate::net::client::RoutineCreateRequest {
+                    routine_id: Some(routine_id.clone()),
+                    name: routine_id.clone(),
+                    schedule: crate::net::client::RoutineSchedule::IntervalSeconds {
+                        seconds: interval_seconds,
+                    },
+                    timezone: None,
+                    misfire_policy: Some(crate::net::client::RoutineMisfirePolicy::RunOnce),
+                    entrypoint: entrypoint.clone(),
+                    args: Some(json!({})),
+                    creator_type: Some("user".to_string()),
+                    creator_id: Some("tui".to_string()),
+                    requires_approval: Some(true),
+                    external_integrations_allowed: Some(false),
+                    next_fire_at_ms: None,
+                };
+                match client.routines_create(request).await {
+                    Ok(routine) => format!(
+                        "Created routine {} ({}s -> {}).",
+                        routine.routine_id, interval_seconds, routine.entrypoint
+                    ),
+                    Err(err) => format!("Failed to create routine: {}", err),
+                }
+            }
+
+            "routine_edit" => {
+                if args.len() != 2 {
+                    return "Usage: /routine_edit <id> <interval_seconds>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                let interval_seconds = match args[1].parse::<u64>() {
+                    Ok(seconds) if seconds > 0 => seconds,
+                    _ => return "interval_seconds must be a positive integer.".to_string(),
+                };
+                let request = crate::net::client::RoutinePatchRequest {
+                    schedule: Some(crate::net::client::RoutineSchedule::IntervalSeconds {
+                        seconds: interval_seconds,
+                    }),
+                    ..Default::default()
+                };
+                match client.routines_patch(routine_id, request).await {
+                    Ok(_) => format!(
+                        "Updated routine {} schedule to every {}s.",
+                        routine_id, interval_seconds
+                    ),
+                    Err(err) => format!("Failed to edit routine: {}", err),
+                }
+            }
+
+            "routine_pause" => {
+                if args.len() != 1 {
+                    return "Usage: /routine_pause <id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                let request = crate::net::client::RoutinePatchRequest {
+                    status: Some(crate::net::client::RoutineStatus::Paused),
+                    ..Default::default()
+                };
+                match client.routines_patch(routine_id, request).await {
+                    Ok(_) => format!("Paused routine {}.", routine_id),
+                    Err(err) => format!("Failed to pause routine: {}", err),
+                }
+            }
+
+            "routine_resume" => {
+                if args.len() != 1 {
+                    return "Usage: /routine_resume <id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                let request = crate::net::client::RoutinePatchRequest {
+                    status: Some(crate::net::client::RoutineStatus::Active),
+                    ..Default::default()
+                };
+                match client.routines_patch(routine_id, request).await {
+                    Ok(_) => format!("Resumed routine {}.", routine_id),
+                    Err(err) => format!("Failed to resume routine: {}", err),
+                }
+            }
+
+            "routine_run_now" => {
+                if args.is_empty() {
+                    return "Usage: /routine_run_now <id> [run_count]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                let run_count = if args.len() > 1 {
+                    match args[1].parse::<u32>() {
+                        Ok(count) if count > 0 => Some(count),
+                        _ => return "run_count must be a positive integer.".to_string(),
+                    }
+                } else {
+                    None
+                };
+                let request = crate::net::client::RoutineRunNowRequest {
+                    run_count,
+                    reason: Some("manual_tui".to_string()),
+                };
+                match client.routines_run_now(routine_id, request).await {
+                    Ok(resp) => format!(
+                        "Triggered routine {} (run_count={}).",
+                        resp.routine_id, resp.run_count
+                    ),
+                    Err(err) => format!("Failed to trigger routine: {}", err),
+                }
+            }
+
+            "routine_delete" => {
+                if args.len() != 1 {
+                    return "Usage: /routine_delete <id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                match client.routines_delete(routine_id).await {
+                    Ok(true) => format!("Deleted routine {}.", routine_id),
+                    Ok(false) => format!("Routine not found: {}", routine_id),
+                    Err(err) => format!("Failed to delete routine: {}", err),
+                }
+            }
+
+            "routine_history" => {
+                if args.is_empty() {
+                    return "Usage: /routine_history <id> [limit]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let routine_id = args[0];
+                let limit = if args.len() > 1 {
+                    match args[1].parse::<usize>() {
+                        Ok(value) => Some(value),
+                        Err(_) => return "limit must be a positive integer.".to_string(),
+                    }
+                } else {
+                    Some(10)
+                };
+                match client.routines_history(routine_id, limit).await {
+                    Ok(events) => {
+                        if events.is_empty() {
+                            return format!("No history for routine {}.", routine_id);
+                        }
+                        let lines = events
+                            .iter()
+                            .map(|event| {
+                                format!(
+                                    "- {} run_count={} status={} at={}",
+                                    event.trigger_type,
+                                    event.run_count,
+                                    event.status,
+                                    event.fired_at_ms
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Routine history ({}):\n{}", routine_id, lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to load routine history: {}", err),
+                }
+            }
+
+            "missions" => {
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                match client.mission_list().await {
+                    Ok(missions) => {
+                        if missions.is_empty() {
+                            return "No missions found.".to_string();
+                        }
+                        let lines = missions
+                            .into_iter()
+                            .map(|mission| {
+                                format!(
+                                    "- {} [{}] {} (work_items={})",
+                                    mission.mission_id,
+                                    format!("{:?}", mission.status).to_lowercase(),
+                                    mission.spec.title,
+                                    mission.work_items.len()
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Missions:\n{}", lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to list missions: {}", err),
+                }
+            }
+
+            "mission_create" => {
+                if args.is_empty() {
+                    return "Usage: /mission_create <title> :: <goal> [:: work_item_title]"
+                        .to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let raw = args.join(" ");
+                let segments = raw
+                    .split("::")
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>();
+                if segments.len() < 2 {
+                    return "Usage: /mission_create <title> :: <goal> [:: work_item_title]"
+                        .to_string();
+                }
+                let work_items = if let Some(work_item_title) = segments.get(2) {
+                    vec![crate::net::client::MissionCreateWorkItem {
+                        work_item_id: None,
+                        title: (*work_item_title).to_string(),
+                        detail: None,
+                        assigned_agent: None,
+                    }]
+                } else {
+                    vec![crate::net::client::MissionCreateWorkItem {
+                        work_item_id: None,
+                        title: "Initial implementation".to_string(),
+                        detail: Some("Auto-seeded work item".to_string()),
+                        assigned_agent: None,
+                    }]
+                };
+                let request = crate::net::client::MissionCreateRequest {
+                    title: segments[0].to_string(),
+                    goal: segments[1].to_string(),
+                    work_items,
+                };
+                match client.mission_create(request).await {
+                    Ok(mission) => format!(
+                        "Created mission {}: {}",
+                        mission.mission_id, mission.spec.title
+                    ),
+                    Err(err) => format!("Failed to create mission: {}", err),
+                }
+            }
+
+            "mission_get" => {
+                if args.len() != 1 {
+                    return "Usage: /mission_get <mission_id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                match client.mission_get(args[0]).await {
+                    Ok(mission) => {
+                        let item_lines = mission
+                            .work_items
+                            .iter()
+                            .map(|item| {
+                                format!(
+                                    "- {} [{}]",
+                                    item.title,
+                                    format!("{:?}", item.status).to_lowercase()
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!(
+                            "Mission {} [{}]\nTitle: {}\nGoal: {}\nWork Items:\n{}",
+                            mission.mission_id,
+                            format!("{:?}", mission.status).to_lowercase(),
+                            mission.spec.title,
+                            mission.spec.goal,
+                            if item_lines.is_empty() {
+                                "- (none)".to_string()
+                            } else {
+                                item_lines.join("\n")
+                            }
+                        )
+                    }
+                    Err(err) => format!("Failed to get mission: {}", err),
+                }
+            }
+
+            "mission_event" => {
+                if args.len() < 2 {
+                    return "Usage: /mission_event <mission_id> <event_json>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let mission_id = args[0];
+                let raw_json = args[1..].join(" ");
+                let event = match serde_json::from_str::<Value>(&raw_json) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return format!("Invalid event JSON: {}", err);
+                    }
+                };
+                match client.mission_apply_event(mission_id, event).await {
+                    Ok(result) => format!(
+                        "Applied event to mission {} (revision={}, commands={})",
+                        result.mission.mission_id,
+                        result.mission.revision,
+                        result.commands.len()
+                    ),
+                    Err(err) => format!("Failed to apply mission event: {}", err),
+                }
+            }
+
+            "mission_start" => {
+                if args.len() != 1 {
+                    return "Usage: /mission_start <mission_id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let mission_id = args[0];
+                let event = serde_json::json!({
+                    "type": "mission_started",
+                    "mission_id": mission_id
+                });
+                match client.mission_apply_event(mission_id, event).await {
+                    Ok(result) => format!(
+                        "Mission started {} (revision={})",
+                        result.mission.mission_id, result.mission.revision
+                    ),
+                    Err(err) => format!("Failed to start mission: {}", err),
+                }
+            }
+
+            "mission_review_ok" => {
+                if args.len() < 2 {
+                    return "Usage: /mission_review_ok <mission_id> <work_item_id> [approval_id]"
+                        .to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let mission_id = args[0];
+                let work_item_id = args[1];
+                let approval_id = args.get(2).copied().unwrap_or("review-1");
+                let event = serde_json::json!({
+                    "type": "approval_granted",
+                    "mission_id": mission_id,
+                    "work_item_id": work_item_id,
+                    "approval_id": approval_id
+                });
+                match client.mission_apply_event(mission_id, event).await {
+                    Ok(result) => format!(
+                        "Review approved for {}:{} (revision={})",
+                        mission_id, work_item_id, result.mission.revision
+                    ),
+                    Err(err) => format!("Failed to approve review: {}", err),
+                }
+            }
+
+            "mission_test_ok" => {
+                if args.len() < 2 {
+                    return "Usage: /mission_test_ok <mission_id> <work_item_id> [approval_id]"
+                        .to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let mission_id = args[0];
+                let work_item_id = args[1];
+                let approval_id = args.get(2).copied().unwrap_or("test-1");
+                let event = serde_json::json!({
+                    "type": "approval_granted",
+                    "mission_id": mission_id,
+                    "work_item_id": work_item_id,
+                    "approval_id": approval_id
+                });
+                match client.mission_apply_event(mission_id, event).await {
+                    Ok(result) => format!(
+                        "Test approved for {}:{} (revision={})",
+                        mission_id, work_item_id, result.mission.revision
+                    ),
+                    Err(err) => format!("Failed to approve test: {}", err),
+                }
+            }
+
+            "mission_review_no" => {
+                if args.len() < 2 {
+                    return "Usage: /mission_review_no <mission_id> <work_item_id> [reason]"
+                        .to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let mission_id = args[0];
+                let work_item_id = args[1];
+                let reason = if args.len() > 2 {
+                    args[2..].join(" ")
+                } else {
+                    "needs_revision".to_string()
+                };
+                let event = serde_json::json!({
+                    "type": "approval_denied",
+                    "mission_id": mission_id,
+                    "work_item_id": work_item_id,
+                    "approval_id": "review-1",
+                    "reason": reason
+                });
+                match client.mission_apply_event(mission_id, event).await {
+                    Ok(result) => format!(
+                        "Review denied for {}:{} (revision={})",
+                        mission_id, work_item_id, result.mission.revision
+                    ),
+                    Err(err) => format!("Failed to deny review: {}", err),
                 }
             }
 
