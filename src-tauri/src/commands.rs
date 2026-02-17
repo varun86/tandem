@@ -18,8 +18,11 @@ use crate::orchestrator::{
 };
 use crate::python_env;
 use crate::sidecar::{
-    ActiveRunStatusResponse, CreateSessionRequest, FilePartInput, ModelInfo, ModelSpec, Project,
-    ProviderInfo, SendMessageRequest, Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
+    ActiveRunStatusResponse, CreateSessionRequest, FilePartInput, MissionApplyEventResult,
+    MissionCreateRequest, MissionState, ModelInfo, ModelSpec, Project, ProviderInfo,
+    RoutineCreateRequest, RoutineHistoryEvent, RoutinePatchRequest, RoutineRunNowRequest,
+    RoutineRunNowResponse, RoutineSpec, SendMessageRequest, Session, SessionMessage, SidecarState,
+    StreamEvent, TodoItem,
 };
 use crate::sidecar_manager::{self, SidecarStatus};
 use crate::state::{AppState, AppStateInfo, ProvidersConfig};
@@ -4646,6 +4649,85 @@ pub async fn reply_question(
 #[tauri::command]
 pub async fn reject_question(state: State<'_, AppState>, request_id: String) -> Result<()> {
     state.sidecar.reject_question(&request_id).await
+}
+
+// ============================================================================
+// Routines
+// ============================================================================
+
+#[tauri::command]
+pub async fn routines_list(state: State<'_, AppState>) -> Result<Vec<RoutineSpec>> {
+    state.sidecar.routines_list().await
+}
+
+#[tauri::command]
+pub async fn routines_create(
+    state: State<'_, AppState>,
+    request: RoutineCreateRequest,
+) -> Result<RoutineSpec> {
+    state.sidecar.routines_create(request).await
+}
+
+#[tauri::command]
+pub async fn routines_patch(
+    state: State<'_, AppState>,
+    routine_id: String,
+    request: RoutinePatchRequest,
+) -> Result<RoutineSpec> {
+    state.sidecar.routines_patch(&routine_id, request).await
+}
+
+#[tauri::command]
+pub async fn routines_delete(state: State<'_, AppState>, routine_id: String) -> Result<bool> {
+    state.sidecar.routines_delete(&routine_id).await
+}
+
+#[tauri::command]
+pub async fn routines_run_now(
+    state: State<'_, AppState>,
+    routine_id: String,
+    request: Option<RoutineRunNowRequest>,
+) -> Result<RoutineRunNowResponse> {
+    state
+        .sidecar
+        .routines_run_now(&routine_id, request.unwrap_or_default())
+        .await
+}
+
+#[tauri::command]
+pub async fn routines_history(
+    state: State<'_, AppState>,
+    routine_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<RoutineHistoryEvent>> {
+    state.sidecar.routines_history(&routine_id, limit).await
+}
+
+#[tauri::command]
+pub async fn mission_list(state: State<'_, AppState>) -> Result<Vec<MissionState>> {
+    state.sidecar.mission_list().await
+}
+
+#[tauri::command]
+pub async fn mission_create(
+    state: State<'_, AppState>,
+    request: MissionCreateRequest,
+) -> Result<MissionState> {
+    state.sidecar.mission_create(request).await
+}
+
+#[tauri::command]
+pub async fn mission_get(state: State<'_, AppState>, mission_id: String) -> Result<MissionState> {
+    state.sidecar.mission_get(&mission_id).await
+}
+
+#[tauri::command]
+pub async fn mission_apply_event(
+    state: State<'_, AppState>,
+    mission_id: String,
+    event: serde_json::Value,
+) -> Result<MissionApplyEventResult> {
+    state.sidecar.mission_apply_event(&mission_id, event).await
 }
 
 // ============================================================================

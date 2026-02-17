@@ -7271,6 +7271,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tandem-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "tandem-providers"
 version = "0.1.0"
 dependencies = [
@@ -7314,6 +7323,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tandem-core",
+ "tandem-memory",
+ "tandem-orchestrator",
  "tandem-providers",
  "tandem-runtime",
  "tandem-skills",

@@ -2,6 +2,13 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## Unreleased
+
+- Engine-native orchestration platform rollout: mission runtime APIs, shared resources blackboard, governed memory promotion/audit, and routine scheduler/policy gates.
+- Desktop and TUI now have parity mission/routine control paths against engine-hosted APIs.
+- Phase 6 contract hardening (`W-019`) completed: mission/routine lifecycle events promoted to stable after snapshot + client parity validation.
+- Design control-plane docs (`docs/design/*`) now track execution IDs (`W-###`), progress logs, decisions, and release contract matrices.
+
 ## v0.3.0 (Beta) - 2026-02-15
 
 - Core: Added `copilot` and `cohere` providers; updated default Gemini model to `gemini-2.5-flash`.

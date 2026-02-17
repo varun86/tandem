@@ -4,6 +4,14 @@
 
 ### Highlights
 
+- **Massive orchestration platform expansion**: Added engine-native mission runtime, shared resources blackboard, tiered governed memory promotion, routine scheduler + policy gates, and Desktop/TUI parity controls.
+- **Mission runtime now first-class**: New engine mission APIs support create/list/get/apply-event flows backed by shared reducer state and reviewer/tester rework gates.
+- **Shared resource coordination layer**: Added revisioned blackboard APIs + SSE streams and status indexer updates derived from run/tool lifecycle events.
+- **Memory learning with guardrails**: Implemented scoped `session/project/team/curated` governance with capability gating, scrub pipeline, and audit trails (`/memory/audit`).
+- **Routine automation safety model**: Added user-creatable routines with scheduler durability, misfire behavior, manual `run_now`, lifecycle SSE, and explicit connector side-effect policy enforcement.
+- **Phase 6 contract hardening complete (`W-019`)**: Mission/routine event families are now stable SDK contracts after server snapshot tests and Desktop/TUI parity consumption checks.
+- **Control-plane discipline added**: Build flow now tracks work IDs, decision log, and progress cadence in `docs/design` to keep multi-file pushes coordinated.
+
 - **Keystore/runtime auth realignment**: Provider keys now flow through runtime auth (`PUT /auth/{provider}`) instead of config-secret patch paths.
 - **Config secret write blocking**: `PATCH /config` and `PATCH /global/config` now reject `api_key`/`apiKey` with `400 CONFIG_SECRET_REJECTED`.
 - **Desktop/TUI transport update**: Desktop and TUI now push provider keys from keystore to runtime auth on connect/start rather than persisting keys via config patch payloads.

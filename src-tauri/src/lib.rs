@@ -597,6 +597,18 @@ pub fn run() {
             commands::list_questions,
             commands::reply_question,
             commands::reject_question,
+            // Routine controls
+            commands::routines_list,
+            commands::routines_create,
+            commands::routines_patch,
+            commands::routines_delete,
+            commands::routines_run_now,
+            commands::routines_history,
+            // Engine mission controls
+            commands::mission_list,
+            commands::mission_create,
+            commands::mission_get,
+            commands::mission_apply_event,
             // Execution planning / staging area
             commands::stage_tool_operation,
             commands::get_staged_operations,

@@ -25,6 +25,8 @@ tandem-providers = { path = "../tandem-providers" }
 tandem-runtime = { path = "../tandem-runtime" }
 tandem-tools = { path = "../tandem-tools" }
 tandem-skills = { path = "../tandem-skills" }
+tandem-memory = { path = "../tandem-memory" }
+tandem-orchestrator = { path = "../tandem-orchestrator" }
 tandem-types = { path = "../tandem-types" }
 tandem-wire = { path = "../tandem-wire" }
 

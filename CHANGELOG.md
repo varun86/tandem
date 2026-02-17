@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Engine-Native Mission Runtime**: Added mission APIs (`POST /mission`, `GET /mission`, `GET /mission/{id}`, `POST /mission/{id}/event`) backed by shared orchestrator reducer state.
+- **Shared Orchestrator Crate**: Introduced `crates/tandem-orchestrator` with reusable mission models (`MissionSpec`, `MissionState`, `WorkItem`, `MissionEvent`, `MissionCommand`) and reducer interface.
+- **Default Mission Gates**: Added reviewer/tester reducer transitions with rework handling and completion signaling.
+- **Shared Resources Blackboard**: Added revisioned shared resource store + APIs (`GET/PUT/PATCH/DELETE /resource/{*key}`, `GET /resource?prefix=...`) and SSE stream (`GET /resource/events`).
+- **Status Indexer**: Added engine-derived run status indexing into shared resources (`run/{sessionID}/status`) from session/tool events.
+- **Memory Governance APIs**: Added scoped memory endpoints (`POST /memory/put`, `POST /memory/promote`, `POST /memory/search`, `GET /memory/audit`) with capability checks and partition validation.
+- **Tiered Memory Promotion Pipeline**: Added scrub + audit promotion flow for `session/project/team/curated` memory tiers with explicit promotion controls.
+- **Routine Scheduler + APIs**: Added routine persistence/scheduler and APIs (`POST/GET /routines`, `PATCH/DELETE /routines/{id}`, `POST /routines/{id}/run_now`, `GET /routines/{id}/history`, `GET /routines/events`).
+- **Routine Policy Gates**: Added external side-effect gates emitting lifecycle events (`routine.fired`, `routine.approval_required`, `routine.blocked`) with history states.
+- **Desktop + TUI Mission/Routine Parity**: Added Desktop sidecar + TUI client command parity for mission/routine observe/control workflows.
+
 ### Security
 
 - **Provider Secret Drift Fix**: Re-aligned engine auth flow to prevent provider API keys from being persisted via config patch APIs.
@@ -16,12 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Platform Boundary Formalization**: Moved to engine-first orchestrator ownership for durable mission/resource/routine state, with Desktop/TUI as control-center clients.
+- **Release Contract Stability**: Promoted mission and routine event families to stable SDK contracts after snapshot and client-parity verification.
+- **Design Control Plane**: Added/standardized architecture control docs (`docs/design/*`) with linked workboard/progress/decisions workflow (`W-###`).
 - **TUI Key Sync Transport**: TUI now syncs unlocked keystore credentials to engine runtime via `/auth/{provider}` instead of writing keys through `/config`.
 - **Desktop Runtime Auth Sync**: Desktop now pushes provider credentials to sidecar runtime auth after sidecar start/restart, aligning with keystore-first secret handling.
 - **Config Layers**: Added an in-memory runtime config layer for ephemeral provider auth material (merged into effective config, never persisted).
 
 ### Fixed
 
+- **Spec/API Drift**: Synced docs with implemented APIs (including routine delete and memory audit routes) and cleaned stale orchestrator roadmap claims from active specs.
+- **Progress Tracking Integrity**: Repaired progress log table formatting and upgraded phase tracking to continue under `W-016+` control-plane flow.
 - **Plaintext Key Persistence Gap**: Fixed a regression where provider API keys could end up in Tandem config files under `%APPDATA%/tandem` when clients used config patch flows.
 - **OpenRouter Auth Regression After Scrub**: Fixed post-scrub provider failures by wiring runtime auth to provider resolution instead of relying on persisted config secrets.
 - **Browser CORS for Engine API**: Added CORS support to engine HTTP routes so browser-based examples using `X-Tandem-Token` work with preflight requests.
