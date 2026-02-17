@@ -6,6 +6,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 - No unreleased changes.
 
+## v0.3.2 - 2026-02-17
+
+- TUI: Fixed startup PIN flow to unlock existing vaults instead of forcing create-PIN when keystore is empty.
+- TUI: Fixed first-run provider onboarding to force setup when unlocked keystore has no provider keys.
+
 ## v0.3.0 - 2026-02-17
 
 - Core: Added `copilot` and `cohere` providers; updated default Gemini model to `gemini-2.5-flash`.

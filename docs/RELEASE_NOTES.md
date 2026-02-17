@@ -1,3 +1,15 @@
+# Tandem v0.3.2 Release Notes
+
+## Release Date: 2026-02-17
+
+### Highlights
+
+- **TUI PIN persistence fix**: Existing users with a valid `vault.key` now correctly enter unlock flow on startup, instead of being forced back into create-PIN flow when the keystore is empty or missing.
+- **First-run provider onboarding fix**: After unlock, TUI now opens setup when no provider keys are configured in the unlocked keystore, ensuring API key setup is not skipped.
+- **TUI startup flow hardening**: PIN-state detection now keys off vault existence, while provider onboarding keys off actual stored provider keys.
+
+---
+
 # Tandem v0.3.1 Release Notes
 
 ## Release Date: 2026-02-17

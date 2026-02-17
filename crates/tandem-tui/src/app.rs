@@ -1140,7 +1140,13 @@ impl App {
             }
         };
 
-        if providers.connected.is_empty() {
+        let needs_first_key_setup = self
+            .keystore
+            .as_ref()
+            .map(|keystore| keystore.list_keys().is_empty())
+            .unwrap_or(false);
+
+        if providers.connected.is_empty() || needs_first_key_setup {
             self.state = AppState::SetupWizard {
                 step: SetupStep::Welcome,
                 provider_catalog: Some(providers),
@@ -1300,17 +1306,6 @@ impl App {
             return Some(paths.canonical_root);
         }
         None
-    }
-
-    fn keystore_missing_or_empty(&self) -> bool {
-        let Some(dir) = &self.config_dir else {
-            return false;
-        };
-        let keystore_path = dir.join("tandem.keystore");
-        match SecureKeyStore::is_empty_on_disk(&keystore_path) {
-            Ok(empty) => empty,
-            Err(_) => true,
-        }
     }
 
     fn engine_binary_name() -> &'static str {
@@ -2035,7 +2030,9 @@ impl App {
                     self.state = AppState::PinPrompt {
                         input: String::new(),
                         error: None,
-                        mode: if self.vault_key.is_some() && !self.keystore_missing_or_empty() {
+                        // If a vault key exists, unlock flow should always be used.
+                        // An empty/missing keystore can be recreated after successful unlock.
+                        mode: if self.vault_key.is_some() {
                             PinPromptMode::UnlockExisting
                         } else {
                             PinPromptMode::CreateNew

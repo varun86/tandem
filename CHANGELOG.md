@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - No unreleased changes.
 
+## [0.3.2] - 2026-02-17
+
+### Fixed
+
+- **TUI PIN startup flow**: Startup now correctly enters unlock mode whenever a vault key exists, preventing repeated create-PIN prompts across restarts.
+- **TUI provider key onboarding**: First-run setup now opens when no provider keys exist in the unlocked keystore, so provider API key entry is no longer skipped.
+- **TUI onboarding state logic**: Startup PIN detection and provider onboarding checks now use separate, correct signals (vault existence vs. configured keys).
+
 ## [0.3.1] - 2026-02-17
 
 ### Fixed
@@ -766,7 +774,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/frumu-ai/tandem/compare/v0.3.1...v0.3.2
 [0.2.25]: https://github.com/frumu-ai/tandem/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/frumu-ai/tandem/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/frumu-ai/tandem/compare/v0.2.22...v0.2.23
