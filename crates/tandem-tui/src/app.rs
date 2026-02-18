@@ -610,6 +610,7 @@ use crate::crypto::{
 };
 use anyhow::anyhow;
 use std::fs;
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command as StdCommand, Stdio};
 use std::time::Instant;
@@ -648,6 +649,8 @@ pub struct App {
     pub engine_lease_last_renewed: Option<Instant>,
     pub engine_api_token: Option<String>,
     pub engine_api_token_backend: Option<String>,
+    pub engine_base_url_override: Option<String>,
+    pub engine_connection_source: EngineConnectionSource,
     pub pending_model_provider: Option<String>,
     pub autocomplete_items: Vec<(String, String)>,
     pub autocomplete_index: usize,
@@ -655,6 +658,52 @@ pub struct App {
     pub show_autocomplete: bool,
     pub action_tx: Option<tokio::sync::mpsc::UnboundedSender<Action>>,
     pub quit_armed_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineStalePolicy {
+    AutoReplace,
+    Fail,
+    Warn,
+}
+
+impl EngineStalePolicy {
+    fn from_env() -> Self {
+        match std::env::var("TANDEM_ENGINE_STALE_POLICY")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("fail") => Self::Fail,
+            Some("warn") => Self::Warn,
+            _ => Self::AutoReplace,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::AutoReplace => "auto_replace",
+            Self::Fail => "fail",
+            Self::Warn => "warn",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineConnectionSource {
+    Unknown,
+    SharedAttached,
+    ManagedLocal,
+}
+
+impl EngineConnectionSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::SharedAttached => "shared-attached",
+            Self::ManagedLocal => "managed-local",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -862,6 +911,28 @@ impl App {
         )
     }
 
+    fn engine_target_base_url(&self) -> String {
+        self.engine_base_url_override
+            .clone()
+            .unwrap_or_else(Self::configured_engine_base_url)
+    }
+
+    fn engine_base_url_for_port(port: u16) -> String {
+        format!("http://{}:{}", DEFAULT_ENGINE_HOST, port)
+    }
+
+    fn pick_spawn_port() -> u16 {
+        let configured = Self::configured_engine_port();
+        if TcpListener::bind((DEFAULT_ENGINE_HOST, configured)).is_ok() {
+            return configured;
+        }
+        TcpListener::bind((DEFAULT_ENGINE_HOST, 0))
+            .ok()
+            .and_then(|listener| listener.local_addr().ok().map(|addr| addr.port()))
+            .filter(|port| *port != 0)
+            .unwrap_or(configured)
+    }
+
     fn masked_engine_api_token(token: &str) -> String {
         let trimmed = token.trim();
         if trimmed.is_empty() || trimmed.len() <= 8 {
@@ -972,6 +1043,8 @@ impl App {
             engine_lease_last_renewed: None,
             engine_api_token,
             engine_api_token_backend,
+            engine_base_url_override: None,
+            engine_connection_source: EngineConnectionSource::Unknown,
             pending_model_provider: None,
             autocomplete_items: Vec::new(),
             autocomplete_index: 0,
@@ -1533,6 +1606,10 @@ impl App {
         }
         let patch = patch_digits.parse::<u64>().ok()?;
         Some((major, minor, patch))
+    }
+
+    fn format_semver_triplet(version: (u64, u64, u64)) -> String {
+        format!("{}.{}.{}", version.0, version.1, version.2)
     }
 
     fn desired_engine_version() -> Option<(u64, u64, u64)> {
@@ -4533,16 +4610,61 @@ impl App {
                     self.connection_status = "Searching for engine...".to_string();
                     // Check if running
                     let client = EngineClient::new_with_token(
-                        Self::configured_engine_base_url(),
+                        self.engine_target_base_url(),
                         self.engine_api_token.clone(),
                     );
-                    if let Ok(healthy) = client.check_health().await {
-                        if healthy {
-                            self.connection_status =
-                                "Connected. Verifying readiness...".to_string();
-                            self.client = Some(client.clone());
-                            let _ = self.finalize_connecting(&client).await;
-                            return;
+                    if let Ok(status) = client.get_engine_status().await {
+                        if status.healthy {
+                            let required = Self::desired_engine_version();
+                            let connected = Self::parse_semver_triplet(&status.version);
+                            let stale = match (required, connected) {
+                                (Some(required), Some(connected)) => connected < required,
+                                _ => false,
+                            };
+                            if stale {
+                                let policy = EngineStalePolicy::from_env();
+                                let required_text = required
+                                    .map(Self::format_semver_triplet)
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let connected_text = connected
+                                    .map(Self::format_semver_triplet)
+                                    .unwrap_or_else(|| status.version.clone());
+                                match policy {
+                                    EngineStalePolicy::AutoReplace => {
+                                        self.connection_status = format!(
+                                            "Found stale engine {} (required {}). Starting fresh managed engine...",
+                                            connected_text, required_text
+                                        );
+                                        self.client = None;
+                                    }
+                                    EngineStalePolicy::Fail => {
+                                        self.connection_status = format!(
+                                            "Detected stale engine {} (required {}). Set TANDEM_ENGINE_STALE_POLICY=auto_replace or run /engine restart.",
+                                            connected_text, required_text
+                                        );
+                                        return;
+                                    }
+                                    EngineStalePolicy::Warn => {
+                                        self.connection_status = format!(
+                                            "Warning: stale engine {} (required {}), continuing due to TANDEM_ENGINE_STALE_POLICY=warn.",
+                                            connected_text, required_text
+                                        );
+                                        self.engine_connection_source =
+                                            EngineConnectionSource::SharedAttached;
+                                        self.client = Some(client.clone());
+                                        let _ = self.finalize_connecting(&client).await;
+                                        return;
+                                    }
+                                }
+                            } else {
+                                self.connection_status =
+                                    "Connected. Verifying readiness...".to_string();
+                                self.engine_connection_source =
+                                    EngineConnectionSource::SharedAttached;
+                                self.client = Some(client.clone());
+                                let _ = self.finalize_connecting(&client).await;
+                                return;
+                            }
                         }
                     }
 
@@ -4576,7 +4698,8 @@ impl App {
                         };
 
                         let mut spawned = false;
-                        let configured_port = Self::configured_engine_port().to_string();
+                        let spawn_port = Self::pick_spawn_port();
+                        let configured_port = spawn_port.to_string();
                         if let Some(binary_path) = engine_binary {
                             let mut cmd = Command::new(binary_path);
                             cmd.kill_on_drop(!Self::shared_engine_mode_enabled());
@@ -4587,6 +4710,10 @@ impl App {
                             cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cmd.spawn() {
                                 self.engine_process = Some(child);
+                                self.engine_base_url_override =
+                                    Some(Self::engine_base_url_for_port(spawn_port));
+                                self.engine_connection_source =
+                                    EngineConnectionSource::ManagedLocal;
                                 spawned = true;
                             }
                         }
@@ -4601,6 +4728,10 @@ impl App {
                             cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cmd.spawn() {
                                 self.engine_process = Some(child);
+                                self.engine_base_url_override =
+                                    Some(Self::engine_base_url_for_port(spawn_port));
+                                self.engine_connection_source =
+                                    EngineConnectionSource::ManagedLocal;
                                 spawned = true;
                             }
                         }
@@ -4622,6 +4753,10 @@ impl App {
                             cargo_cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cargo_cmd.spawn() {
                                 self.engine_process = Some(child);
+                                self.engine_base_url_override =
+                                    Some(Self::engine_base_url_for_port(spawn_port));
+                                self.engine_connection_source =
+                                    EngineConnectionSource::ManagedLocal;
                                 spawned = true;
                             }
                         }
@@ -4787,12 +4922,19 @@ MULTI-AGENT KEYS:
                     if let Some(client) = &self.client {
                         match client.get_engine_status().await {
                             Ok(status) => {
+                                let required = Self::desired_engine_version()
+                                    .map(Self::format_semver_triplet)
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let stale_policy = EngineStalePolicy::from_env();
                                 format!(
-                                    "Engine Status:\n  Healthy: {}\n  Version: {}\n  Mode: {}\n  Endpoint: {}",
+                                    "Engine Status:\n  Healthy: {}\n  Version: {}\n  Required: {}\n  Mode: {}\n  Endpoint: {}\n  Source: {}\n  Stale policy: {}",
                                     if status.healthy { "Yes" } else { "No" },
                                     status.version,
+                                    required,
                                     status.mode,
-                                    client.base_url()
+                                    client.base_url(),
+                                    self.engine_connection_source.as_str(),
+                                    stale_policy.as_str()
                                 )
                             }
                             Err(e) => format!("Failed to get engine status: {}", e),
@@ -4806,6 +4948,8 @@ MULTI-AGENT KEYS:
                     self.release_engine_lease().await;
                     self.stop_engine_process().await;
                     self.client = None;
+                    self.engine_base_url_override = None;
+                    self.engine_connection_source = EngineConnectionSource::Unknown;
                     self.provider_catalog = None;
                     sleep(std::time::Duration::from_millis(300)).await;
                     self.state = AppState::Connecting;

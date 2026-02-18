@@ -1,3 +1,17 @@
+# Tandem v0.3.6 Release Notes
+
+## Release Date: 2026-02-18
+
+### Highlights
+
+- **TUI stale-engine guard at connect time**: TUI now validates connected engine version before attaching to shared endpoints.
+- **Automatic stale replacement by default**: New `TANDEM_ENGINE_STALE_POLICY` defaults to `auto_replace`, so stale engines are replaced with a fresh managed runtime.
+- **Managed-port fallback**: If shared/default port is occupied by stale runtime, TUI selects an available local port and continues.
+- **Deterministic runtime diagnostics**: `/engine status` now includes required version, stale policy, and connection source (`shared-attached` vs `managed-local`).
+- **Release line alignment**: Rust crates, app manifests, and npm wrappers are all bumped to `0.3.6`.
+
+---
+
 # Tandem v0.3.3 Release Notes
 
 ## Release Date: 2026-02-18

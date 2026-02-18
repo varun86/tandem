@@ -6,6 +6,14 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 - No unreleased changes.
 
+## v0.3.6 - 2026-02-18
+
+- TUI startup reliability: Added stale shared-engine detection at connect time (version-aware).
+- TUI auto-recovery: Added `TANDEM_ENGINE_STALE_POLICY` (default `auto_replace`) so stale engines are replaced automatically instead of silently attached.
+- TUI port fallback: When stale/default shared port is occupied, TUI now spawns managed engine on an available port.
+- TUI diagnostics: `/engine status` now includes required version, active stale policy, and connection source (`shared-attached` or `managed-local`).
+- Release alignment: Bumped Rust crates, app manifests, and npm wrapper packages to `0.3.6`.
+
 ## v0.3.3 - 2026-02-18
 
 - Agent Teams: Added server-side Agent Teams foundations in `tandem-server` with shared spawn-policy gating across orchestrator/UI/tool entrypoints.

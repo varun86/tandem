@@ -32,7 +32,13 @@ tandem-tui
 
 The TUI will attempt to connect to the local engine. If the engine is not running, the TUI will display a connection error or waiting status.
 
+When a shared engine is already running, TUI now checks engine version before attaching. If the running engine is older than the TUI-required version, TUI defaults to replacing it with a fresh managed engine.
+
 ## Troubleshooting
 
 - **Connection Refused**: Ensure `tandem-engine` is running in a separate terminal.
 - **Port Conflicts**: If port 39731 is in use, change the engine's port via `TANDEM_ENGINE_PORT`.
+- **Stale Shared Engine**: Control startup behavior with `TANDEM_ENGINE_STALE_POLICY`:
+  - `auto_replace` (default): replace stale engine automatically.
+  - `fail`: stop with upgrade instructions.
+  - `warn`: continue and attach anyway.

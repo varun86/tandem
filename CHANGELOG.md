@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - No unreleased changes.
 
+## [0.3.6] - 2026-02-18
+
+### Fixed
+
+- **TUI stale shared-engine attach**: TUI now checks connected engine version during startup and applies stale-policy gating before attaching to an existing shared engine.
+- **Default self-healing startup**: Added `TANDEM_ENGINE_STALE_POLICY` with default `auto_replace` so stale engines are replaced by a fresh managed engine automatically.
+- **Port collision recovery**: When default/shared engine port is occupied by a stale process, TUI now falls back to an available local port for managed startup.
+- **Runtime visibility**: `/engine status` now reports required engine version, stale policy, and connection source (`shared-attached` vs `managed-local`) to make diagnosis deterministic.
+
 ## [0.3.5] - 2026-02-18
 
 ### Added
@@ -798,7 +807,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/frumu-ai/tandem/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/frumu-ai/tandem/compare/v0.3.2...v0.3.5
 [0.3.2]: https://github.com/frumu-ai/tandem/compare/v0.3.1...v0.3.2
 [0.2.25]: https://github.com/frumu-ai/tandem/compare/v0.2.24...v0.2.25
