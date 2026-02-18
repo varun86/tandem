@@ -347,6 +347,12 @@ Engine-specific build/run/smoke instructions (including `pnpm tauri dev` sidecar
 Engine CLI usage reference (commands, flags, examples): see `docs/ENGINE_CLI.md`.
 Engine runtime communication contract (desktop/TUI <-> engine): see `docs/ENGINE_COMMUNICATION.md`.
 
+### Maintainer Release Note
+
+- Desktop binary/app release: `.github/workflows/release.yml` (tag pattern `v*`).
+- Registry publish (crates.io + npm wrappers): `.github/workflows/publish-registries.yml` (manual trigger or tag pattern `publish-v*`).
+- The two workflows are intentionally separate.
+
 ## Project Structure
 
 ```

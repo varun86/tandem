@@ -611,7 +611,7 @@ use crate::crypto::{
 use anyhow::anyhow;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{Command as StdCommand, Stdio};
 use std::time::Instant;
 use tandem_core::{
     engine_api_token_file_path, load_or_create_engine_api_token, migrate_legacy_storage_if_needed,
@@ -1515,6 +1515,48 @@ impl App {
         Err(anyhow!("Extracted engine binary not found"))
     }
 
+    fn parse_semver_triplet(raw: &str) -> Option<(u64, u64, u64)> {
+        let token = raw
+            .split_whitespace()
+            .find(|part| part.chars().filter(|c| *c == '.').count() >= 2)?;
+        let core = token.trim_start_matches('v');
+        let mut parts = core.split('.');
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let minor = parts.next()?.parse::<u64>().ok()?;
+        let patch_str = parts.next()?;
+        let patch_digits = patch_str
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>();
+        if patch_digits.is_empty() {
+            return None;
+        }
+        let patch = patch_digits.parse::<u64>().ok()?;
+        Some((major, minor, patch))
+    }
+
+    fn desired_engine_version() -> Option<(u64, u64, u64)> {
+        Self::parse_semver_triplet(env!("CARGO_PKG_VERSION"))
+    }
+
+    fn installed_engine_version(path: &std::path::Path) -> Option<(u64, u64, u64)> {
+        let output = StdCommand::new(path).arg("--version").output().ok()?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Self::parse_semver_triplet(&stdout).or_else(|| Self::parse_semver_triplet(&stderr))
+    }
+
+    fn engine_binary_is_stale(path: &std::path::Path) -> bool {
+        let Some(desired) = Self::desired_engine_version() else {
+            return false;
+        };
+        let Some(installed) = Self::installed_engine_version(path) else {
+            // If we cannot determine a version, keep existing behavior and accept it.
+            return false;
+        };
+        installed < desired
+    }
+
     async fn ensure_engine_binary(&mut self) -> anyhow::Result<Option<PathBuf>> {
         if let Some(path) = &self.engine_binary_path {
             if path
@@ -1522,9 +1564,16 @@ impl App {
                 .map(|m| m.len() >= MIN_ENGINE_BINARY_SIZE)
                 .unwrap_or(false)
             {
-                return Ok(Some(path.clone()));
+                if Self::engine_binary_is_stale(path) {
+                    self.engine_download_phase =
+                        Some("Cached engine is stale; refreshing binary".to_string());
+                    self.engine_binary_path = None;
+                } else {
+                    return Ok(Some(path.clone()));
+                }
+            } else {
+                self.engine_binary_path = None;
             }
-            self.engine_binary_path = None;
         }
 
         if cfg!(debug_assertions) {
@@ -1534,17 +1583,24 @@ impl App {
                 self.engine_download_total_bytes = None;
                 self.engine_downloaded_bytes = 0;
                 self.engine_download_phase = Some("Using local dev engine binary".to_string());
-                return Ok(Some(path));
+                return Ok(Some(path.clone()));
             }
         }
 
         if let Some(path) = Self::find_desktop_bundled_engine_binary() {
-            self.engine_binary_path = Some(path.clone());
-            self.engine_download_active = false;
-            self.engine_download_total_bytes = None;
-            self.engine_downloaded_bytes = 0;
-            self.engine_download_phase = Some("Using desktop bundled engine binary".to_string());
-            return Ok(Some(path));
+            if Self::engine_binary_is_stale(&path) {
+                self.engine_download_phase = Some(
+                    "Desktop bundled engine is stale; using updated sidecar binary".to_string(),
+                );
+            } else {
+                self.engine_binary_path = Some(path.clone());
+                self.engine_download_active = false;
+                self.engine_download_total_bytes = None;
+                self.engine_downloaded_bytes = 0;
+                self.engine_download_phase =
+                    Some("Using desktop bundled engine binary".to_string());
+                return Ok(Some(path));
+            }
         }
 
         let Some(binaries_dir) = Self::shared_binaries_dir() else {
@@ -1558,12 +1614,17 @@ impl App {
             .map(|m| m.len() >= MIN_ENGINE_BINARY_SIZE)
             .unwrap_or(false)
         {
-            self.engine_binary_path = Some(binary_path.clone());
-            self.engine_download_active = false;
-            self.engine_download_total_bytes = None;
-            self.engine_downloaded_bytes = 0;
-            self.engine_download_phase = Some("Using cached engine binary".to_string());
-            return Ok(Some(binary_path));
+            if Self::engine_binary_is_stale(&binary_path) {
+                self.engine_download_phase =
+                    Some("Local sidecar engine is stale; downloading latest".to_string());
+            } else {
+                self.engine_binary_path = Some(binary_path.clone());
+                self.engine_download_active = false;
+                self.engine_download_total_bytes = None;
+                self.engine_downloaded_bytes = 0;
+                self.engine_download_phase = Some("Using cached engine binary".to_string());
+                return Ok(Some(binary_path));
+            }
         }
 
         fs::create_dir_all(&binaries_dir)?;

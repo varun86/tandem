@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - No unreleased changes.
 
+## [0.3.5] - 2026-02-18
+
+### Added
+
+- **Separate Registry Publish Workflow**: Added isolated GitHub Actions registry workflow (`publish-registries.yml`) for crates.io + npm publishing with dedicated triggers, environment gates, and dry-run support.
+- **CI Publish Scripts**: Added CI-safe publish helpers for crates and npm (`scripts/publish-crates-ci.sh`, `scripts/publish-npm-ci.sh`, `scripts/publish-npm-ci.ps1`) with idempotent skip behavior for already-published versions.
+
+### Changed
+
+- **npm Wrapper Bin Layout**: Updated `@frumu/tandem` and `@frumu/tandem-tui` wrappers to ship stable JS bin launchers (`bin/*.js`) and use `bin/native/*` for downloaded binaries, improving npm/pnpm shim generation reliability.
+- **npm Wrapper Postinstall**: Simplified wrapper postinstall command to `node scripts/install.js` to avoid package-manager-specific env var path issues.
+- **Release Docs**: Expanded release process docs to include the new separate registry publish flow.
+
+### Fixed
+
+- **Cross-platform Wrapper Install Reliability**: Fixed Windows/pnpm failures where bin shims were not created before postinstall and where postinstall path resolution could fail in some package-manager environments.
+- **TUI Sidecar Engine Freshness**: TUI now detects stale cached/bundled sidecar engine binaries and auto-refreshes them based on version comparison, preventing old sidecar versions from being reused.
+
 ## [0.3.3] - 2026-02-18
 
 ### Added

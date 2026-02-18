@@ -2,6 +2,12 @@
 
 This document outlines the steps to create and publish a new release of Tandem.
 
+> [!IMPORTANT]
+> Binary/app release and registry publishing are intentionally separated:
+>
+> - `.github/workflows/release.yml` handles desktop binaries + GitHub Release assets.
+> - `.github/workflows/publish-registries.yml` handles crates.io and npm publishing.
+
 ## Overview
 
 Tandem uses **Git tags** to trigger automated builds and releases. When you push a tag matching the pattern `v*.*.*` (e.g., `v0.1.10`), GitHub Actions automatically:
@@ -9,6 +15,58 @@ Tandem uses **Git tags** to trigger automated builds and releases. When you push
 - Builds the application for all platforms (Windows, macOS, Linux)
 - Creates a GitHub Release with the built artifacts
 - Publishes the release notes
+
+## Registry Publish Workflow (Crates + npm)
+
+Use the separate workflow `.github/workflows/publish-registries.yml` to publish registries.
+
+### Triggers
+
+- Manual: **Actions -> Publish Registries -> Run workflow**
+- Tag-based: push a dedicated tag `publish-v<version>` (for example `publish-v0.3.3`)
+
+### Guardrails
+
+- Uses protected environment `registry-publish` for approval-gated publish jobs.
+- Requires crates secret:
+  - `CARGO_REGISTRY_TOKEN`
+- npm publishing uses **Trusted Publishing (OIDC)** in GitHub Actions (no `NPM_TOKEN` required in CI).
+- Validates manifest versions before publishing.
+- Skips already-published crate/npm versions so reruns are safe.
+
+### Recommended Registry Publish Sequence
+
+1. Ensure target version is already committed in manifests.
+2. Run `publish-registries.yml` manually first with `dry_run=true`.
+3. Re-run with `dry_run=false` after approval.
+4. (Optional) use `publish-v<version>` tag for auditable repeatable trigger.
+
+### Local npm Publishing (if needed)
+
+For local manual npm publish (outside GitHub Actions), authenticate with npm CLI first:
+
+```bash
+npm login
+```
+
+Then publish from package folders:
+
+```bash
+cd packages/tandem-engine && npm publish --access public
+cd packages/tandem-tui && npm publish --access public
+```
+
+Or use helper scripts:
+
+```bash
+./scripts/publish-npm-ci.sh --dry-run
+./scripts/publish-npm-ci.sh
+```
+
+```powershell
+.\scripts\publish-npm-ci.ps1 -DryRun
+.\scripts\publish-npm-ci.ps1
+```
 
 ## Prerequisites
 

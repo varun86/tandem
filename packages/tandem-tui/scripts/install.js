@@ -42,7 +42,7 @@ function getArtifactInfo() {
 }
 
 const { artifactName, binaryName, isWindows } = getArtifactInfo();
-const binDir = path.join(__dirname, '..', 'bin');
+const binDir = path.join(__dirname, '..', 'bin', 'native');
 const destPath = path.join(binDir, binaryName);
 
 if (!fs.existsSync(binDir)) {

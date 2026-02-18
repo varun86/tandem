@@ -1,0 +1,274 @@
+name: Publish Registries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example: 0.3.3)"
+        required: true
+        type: string
+      publish_crates:
+        description: "Publish crates.io packages"
+        required: true
+        default: true
+        type: boolean
+      publish_npm:
+        description: "Publish npm wrappers"
+        required: true
+        default: true
+        type: boolean
+      dry_run:
+        description: "Run preflight and publish dry-runs only"
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "publish-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    outputs:
+      resolved_version: ${{ steps.resolve.outputs.resolved_version }}
+      crates_enabled: ${{ steps.resolve.outputs.crates_enabled }}
+      npm_enabled: ${{ steps.resolve.outputs.npm_enabled }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve inputs / tag contract
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          event_name="${{ github.event_name }}"
+          if [[ "$event_name" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+            crates_enabled="${{ inputs.publish_crates }}"
+            npm_enabled="${{ inputs.publish_npm }}"
+            dry_run="${{ inputs.dry_run }}"
+          else
+            ref="${GITHUB_REF_NAME}"
+            if [[ "$ref" =~ ^publish-v(.+)$ ]]; then
+              version="${BASH_REMATCH[1]}"
+            else
+              echo "Invalid publish tag format: $ref"
+              exit 1
+            fi
+            crates_enabled="true"
+            npm_enabled="true"
+            dry_run="false"
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version is not valid semver-like: $version"
+            exit 1
+          fi
+
+          echo "resolved_version=$version" >> "$GITHUB_OUTPUT"
+          echo "crates_enabled=$crates_enabled" >> "$GITHUB_OUTPUT"
+          echo "npm_enabled=$npm_enabled" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved version: $version"
+          echo "Publish crates: $crates_enabled"
+          echo "Publish npm: $npm_enabled"
+          echo "Dry run: $dry_run"
+
+      - name: Validate manifest versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.resolve.outputs.resolved_version }}"
+
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          version = "${{ steps.resolve.outputs.resolved_version }}"
+
+          def read_json_version(path: str) -> str:
+              return json.loads(Path(path).read_text())["version"]
+
+          def read_cargo_version(path: str) -> str:
+              data = Path(path).read_text()
+              m = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', data)
+              if not m:
+                  raise SystemExit(f"Could not find package.version in {path}")
+              return m.group(1)
+
+          checks = [
+              ("package.json", read_json_version("package.json")),
+              ("src-tauri/Cargo.toml", read_cargo_version("src-tauri/Cargo.toml")),
+              ("src-tauri/tauri.conf.json", read_json_version("src-tauri/tauri.conf.json")),
+              ("packages/tandem-engine/package.json", read_json_version("packages/tandem-engine/package.json")),
+              ("packages/tandem-tui/package.json", read_json_version("packages/tandem-tui/package.json")),
+          ]
+
+          bad = [(path, got) for path, got in checks if got != version]
+          if bad:
+              for path, got in bad:
+                  print(f"Version mismatch: {path} -> {got} (expected {version})")
+              raise SystemExit(1)
+
+          print(f"Version checks passed for {version}")
+          PY
+
+      - name: Cargo dependency graph check
+        run: |
+          cargo check -p tandem-ai -p tandem-tui -p tandem-server -p tandem-core -p tandem-tools -p tandem-memory
+
+      - name: Cargo package precheck in publish order
+        shell: bash
+        run: |
+          set -euo pipefail
+          crates=(
+            "crates/tandem-types"
+            "crates/tandem-wire"
+            "crates/tandem-observability"
+            "crates/tandem-memory"
+            "crates/tandem-skills"
+            "crates/tandem-tools"
+            "crates/tandem-providers"
+            "crates/tandem-orchestrator"
+            "crates/tandem-core"
+            "crates/tandem-runtime"
+            "crates/tandem-server"
+            "crates/tandem-tui"
+            "engine"
+          )
+          for crate in "${crates[@]}"; do
+            echo "Packaging precheck: $crate"
+            (cd "$crate" && cargo package --allow-dirty >/dev/null)
+          done
+
+  publish_crates:
+    name: Publish Crates
+    needs: preflight
+    if: needs.preflight.outputs.crates_enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: registry-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate crates token
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "Missing required secret: CARGO_REGISTRY_TOKEN"
+            exit 1
+          fi
+
+      - name: Publish crates (or dry-run)
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          PUBLISH_CRATES_LOG: publish-crates.log
+        run: |
+          set -euo pipefail
+          chmod +x scripts/publish-crates-ci.sh
+          if [[ "${{ needs.preflight.outputs.dry_run }}" == "true" ]]; then
+            ./scripts/publish-crates-ci.sh --dry-run
+          else
+            ./scripts/publish-crates-ci.sh
+          fi
+
+      - name: Upload crates publish log
+        uses: actions/upload-artifact@v4
+        with:
+          name: crates-publish-log
+          path: publish-crates.log
+          if-no-files-found: warn
+
+  publish_npm:
+    name: Publish npm Wrappers
+    needs: [preflight, publish_crates]
+    if: |
+      needs.preflight.outputs.npm_enabled == 'true' &&
+      (needs.preflight.outputs.crates_enabled != 'true' || needs.publish_crates.result == 'success')
+    runs-on: ubuntu-latest
+    environment: registry-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish npm wrappers (or dry-run)
+        shell: bash
+        env:
+          PUBLISH_NPM_LOG: publish-npm.log
+        run: |
+          set -euo pipefail
+          chmod +x scripts/publish-npm-ci.sh
+          if [[ "${{ needs.preflight.outputs.dry_run }}" == "true" ]]; then
+            ./scripts/publish-npm-ci.sh --dry-run
+          else
+            ./scripts/publish-npm-ci.sh --provenance
+          fi
+
+      - name: Upload npm publish log
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-publish-log
+          path: publish-npm.log
+          if-no-files-found: warn
+
+  summary:
+    name: Publish Summary
+    runs-on: ubuntu-latest
+    needs: [preflight, publish_crates, publish_npm]
+    if: always()
+    steps:
+      - name: Summarize run
+        shell: bash
+        run: |
+          {
+            echo "## Registry Publish Summary"
+            echo ""
+            echo "- Version: \`${{ needs.preflight.outputs.resolved_version }}\`"
+            echo "- Dry run: \`${{ needs.preflight.outputs.dry_run }}\`"
+            echo "- Crates enabled: \`${{ needs.preflight.outputs.crates_enabled }}\`"
+            echo "- npm enabled: \`${{ needs.preflight.outputs.npm_enabled }}\`"
+            echo ""
+            echo "### Job Results"
+            echo "- preflight: \`${{ needs.preflight.result }}\`"
+            echo "- publish_crates: \`${{ needs.publish_crates.result }}\`"
+            echo "- publish_npm: \`${{ needs.publish_npm.result }}\`"
+            echo ""
+            echo "If a job failed, inspect uploaded artifacts (\`crates-publish-log\`, \`npm-publish-log\`) and rerun with the same version; already-published packages are skipped."
+          } >> "$GITHUB_STEP_SUMMARY"
