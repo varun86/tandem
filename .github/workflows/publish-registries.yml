@@ -141,32 +141,74 @@ jobs:
         run: |
           cargo check -p tandem-ai -p tandem-tui -p tandem-server -p tandem-core -p tandem-tools -p tandem-memory
 
-      - name: Cargo package precheck in publish order
+      - name: Cargo publish-order manifest precheck
         shell: bash
         run: |
           set -euo pipefail
-          crates=(
-            "crates/tandem-types"
-            "crates/tandem-wire"
-            "crates/tandem-observability"
-            "crates/tandem-memory"
-            "crates/tandem-skills"
-            "crates/tandem-tools"
-            "crates/tandem-providers"
-            "crates/tandem-orchestrator"
-            "crates/tandem-core"
-            "crates/tandem-runtime"
-            "crates/tandem-server"
-            "crates/tandem-tui"
-            "engine"
+          # NOTE:
+          # `cargo package`/`cargo publish --dry-run` attempts crates.io version
+          # resolution for path dependencies rewritten to semver, which fails
+          # before earlier crates in this same publish chain have propagated.
+          # So preflight validates publish-order + manifest coherence statically.
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          crates = [
+              "crates/tandem-types",
+              "crates/tandem-wire",
+              "crates/tandem-observability",
+              "crates/tandem-memory",
+              "crates/tandem-skills",
+              "crates/tandem-tools",
+              "crates/tandem-providers",
+              "crates/tandem-orchestrator",
+              "crates/tandem-core",
+              "crates/tandem-runtime",
+              "crates/tandem-server",
+              "crates/tandem-tui",
+              "engine",
+          ]
+
+          versions = {}
+          names = {}
+          order = {}
+          for idx, crate in enumerate(crates):
+              path = Path(crate) / "Cargo.toml"
+              if not path.exists():
+                  raise SystemExit(f"Missing Cargo.toml for {crate}")
+              text = path.read_text()
+              m_name = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', text)
+              m_ver = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', text)
+              if not m_name or not m_ver:
+                  raise SystemExit(f"Missing package name/version in {path}")
+              name = m_name.group(1)
+              version = m_ver.group(1)
+              names[crate] = name
+              versions[name] = version
+              order[name] = idx
+
+          dep_re = re.compile(
+              r'(?m)^\s*(tandem-[A-Za-z0-9_-]+)\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"[^}]*version\s*=\s*"([^"]+)"[^}]*\}'
           )
-          for crate in "${crates[@]}"; do
-            echo "Packaging precheck: $crate"
-            # Use --no-verify here so preflight doesn't require crates.io to
-            # already contain intra-workspace versions that will be published
-            # later in this same ordered flow.
-            (cd "$crate" && cargo package --allow-dirty --no-verify >/dev/null)
-          done
+          for crate in crates:
+              path = Path(crate) / "Cargo.toml"
+              text = path.read_text()
+              for dep_name, dep_path, dep_ver in dep_re.findall(text):
+                  if dep_name not in versions:
+                      continue
+                  expected = versions[dep_name]
+                  if dep_ver != expected:
+                      raise SystemExit(
+                          f"Version mismatch in {path}: {dep_name}={dep_ver}, expected {expected}"
+                      )
+                  if order[dep_name] > order[names[crate]]:
+                      raise SystemExit(
+                          f"Publish order violation: {names[crate]} depends on {dep_name} but appears earlier"
+                      )
+
+          print("Cargo manifest precheck passed for publish order and tandem-* dependency versions.")
+          PY
 
   publish_crates:
     name: Publish Crates

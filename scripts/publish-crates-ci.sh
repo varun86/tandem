@@ -51,6 +51,10 @@ mkdir -p "$(dirname "$LOG_FILE")"
 echo "Publishing crates in deterministic order..." | tee -a "$LOG_FILE"
 if [[ "$DRY_RUN" == "true" ]]; then
   echo "Mode: dry-run" | tee -a "$LOG_FILE"
+  echo "Dry-run note: skipping cargo package/publish because crates.io dependency" | tee -a "$LOG_FILE"
+  echo "resolution for unpublished intra-workspace versions is expected to fail." | tee -a "$LOG_FILE"
+  echo "Running workspace compile check instead." | tee -a "$LOG_FILE"
+  cargo check -p tandem-ai -p tandem-tui -p tandem-server -p tandem-core -p tandem-tools -p tandem-memory 2>&1 | tee -a "$LOG_FILE"
 fi
 
 publish_args=()
@@ -68,13 +72,8 @@ for crate in "${CRATES[@]}"; do
   echo "Processing $crate" | tee -a "$LOG_FILE"
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    set +e
-    output="$(
-      cd "$crate" &&
-        cargo package --allow-dirty --no-verify 2>&1
-    )"
-    code=$?
-    set -e
+    echo "DRY-RUN SKIP $crate (publish-time crates.io resolution intentionally not executed)" | tee -a "$LOG_FILE"
+    continue
   else
     set +e
     output="$(
