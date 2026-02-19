@@ -5,13 +5,11 @@ Owner: Platform / Agent Runtime
 
 ## In Progress
 
-- [ ] `ACC-007` Replace polling refresh with SSE-driven live updates in desktop command center.
-- [ ] `ACC-008` Normalize tool-approval payload shape from server so UI can always approve/deny without fallback parsing.
+- [ ] `ACC-009` Add mission timeline/event rail (spawn chain, state transitions, failures, cancellations).
+- [ ] `ACC-010` Add mission/instance search + filter chips (role, status, mission, parent).
 
 ## Ready Next
 
-- [ ] `ACC-009` Add mission timeline/event rail (spawn chain, state transitions, failures, cancellations).
-- [ ] `ACC-010` Add mission/instance search + filter chips (role, status, mission, parent).
 - [ ] `ACC-011` Add guided spawn flow for non-developers (simple mode + advanced mode).
 - [ ] `ACC-012` Add command-center “health strip” (SSE connected, last event time, refresh mode).
 
@@ -33,8 +31,9 @@ Owner: Platform / Agent Runtime
 - [x] `ACC-004` Add desktop Agent Command Center surface in orchestrator panel.
 - [x] `ACC-005` Add command-center spawn approvals actions (approve/deny) in desktop UI.
 - [x] `ACC-006` Add mission and instance drill-down details + tool-approval action path in desktop UI.
+- [x] `ACC-007` Add SSE-driven refresh trigger in desktop command center for `agent_team.*` event stream updates (polling fallback retained).
+- [x] `ACC-008` Normalize `/agent-team/approvals` tool-approval payload contract (`approvalID`, `sessionID`, `toolCallID`, `tool`, `args`, `status`) and consume typed shape in desktop.
 
 ## Risks / Notes
 
-- Tool approval payload currently arrives as loosely typed JSON in `/agent-team/approvals`; parser fallback is in place, but a strict typed contract is still pending (`ACC-008`).
-- Current desktop live view uses polling; SSE integration is needed for smoother updates and lower latency (`ACC-007`).
+- Current desktop live view keeps polling as fallback; SSE now acts as a fast-path trigger for command-center refresh.

@@ -1213,7 +1213,16 @@ export interface AgentTeamSpawnApproval {
 
 export interface AgentTeamApprovals {
   spawn_approvals: AgentTeamSpawnApproval[];
-  tool_approvals: Record<string, unknown>[];
+  tool_approvals: AgentTeamToolApproval[];
+}
+
+export interface AgentTeamToolApproval {
+  approval_id: string;
+  session_id?: string | null;
+  tool_call_id: string;
+  tool?: string | null;
+  args?: Record<string, unknown> | null;
+  status: string;
 }
 
 export interface AgentTeamSpawnRequest {

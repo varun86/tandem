@@ -34,6 +34,7 @@ use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
+use tandem_channels::start_channel_listeners;
 use tandem_types::{
     CreateSessionRequest, EngineEvent, Message, MessagePart, MessagePartInput, MessageRole,
     SendMessageRequest, Session, TodoItem,
@@ -124,6 +125,21 @@ struct AttachSessionInput {
 #[derive(Debug, Deserialize)]
 struct WorkspaceOverrideInput {
     ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentTeamToolApprovalOutput {
+    #[serde(rename = "approvalID")]
+    approval_id: String,
+    #[serde(rename = "sessionID", skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(rename = "toolCallID")]
+    tool_call_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Value>,
+    status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -445,6 +461,21 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         agent_team_supervisor_state,
     ));
 
+    // --- Channel listeners (optional) ---
+    // Reads TANDEM_TELEGRAM_BOT_TOKEN, TANDEM_DISCORD_BOT_TOKEN, TANDEM_SLACK_BOT_TOKEN etc.
+    // If no channels are configured the server starts normally without them.
+    let channel_listener_set = match tandem_channels::config::ChannelsConfig::from_env() {
+        Ok(config) => {
+            tracing::info!("tandem-channels: starting configured channel listeners");
+            let set = start_channel_listeners(config).await;
+            Some(set)
+        }
+        Err(e) => {
+            tracing::info!("tandem-channels: no channels configured ({})", e);
+            None
+        }
+    };
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -457,6 +488,9 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     status_indexer.abort();
     routine_scheduler.abort();
     agent_team_supervisor.abort();
+    if let Some(mut set) = channel_listener_set {
+        set.abort_all();
+    }
     result?;
     Ok(())
 }
@@ -646,7 +680,10 @@ fn app_router(state: AppState) -> Router {
         .route("/memory", get(memory_list))
         .route("/memory/{id}", axum::routing::delete(memory_delete))
         .route("/channels/status", get(channels_status))
-        .route("/channels/{name}", put(channels_put).delete(channels_delete))
+        .route(
+            "/channels/{name}",
+            put(channels_put).delete(channels_delete),
+        )
         .route("/admin/reload-config", post(admin_reload_config))
         .route("/mission", get(mission_list).post(mission_create))
         .route("/mission/{id}", get(mission_get))
@@ -4153,6 +4190,14 @@ async fn agent_team_approvals(State(state): State<AppState>) -> Json<Value> {
                 .map(|sid| session_ids.contains(sid))
                 .unwrap_or(false)
         })
+        .map(|req| AgentTeamToolApprovalOutput {
+            approval_id: req.id.clone(),
+            session_id: req.session_id.clone(),
+            tool_call_id: req.id,
+            tool: req.tool,
+            args: req.args,
+            status: req.status,
+        })
         .collect::<Vec<_>>();
     Json(json!({
         "spawnApprovals": spawn,
@@ -4207,7 +4252,9 @@ async fn agent_team_approve_spawn(
     Path(id): Path<String>,
     Json(input): Json<AgentTeamCancelInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let reason = input.reason.unwrap_or_else(|| "approved by user".to_string());
+    let reason = input
+        .reason
+        .unwrap_or_else(|| "approved by user".to_string());
     let Some(result) = state
         .agent_teams
         .approve_spawn_approval(&state, &id, Some(reason.as_str()))
@@ -6759,9 +6806,15 @@ mod tests {
                 .to_string(),
             ))
             .expect("spawn request");
-        let spawn_resp = app.clone().oneshot(spawn_req).await.expect("spawn response");
+        let spawn_resp = app
+            .clone()
+            .oneshot(spawn_req)
+            .await
+            .expect("spawn response");
         assert_eq!(spawn_resp.status(), StatusCode::OK);
-        let spawn_body = to_bytes(spawn_resp.into_body(), usize::MAX).await.expect("body");
+        let spawn_body = to_bytes(spawn_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
         let spawn_payload: Value = serde_json::from_slice(&spawn_body).expect("json");
         let child_session_id = spawn_payload
             .get("sessionID")
@@ -6786,7 +6839,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("prompt request");
-        let prompt_resp = app.clone().oneshot(prompt_req).await.expect("prompt response");
+        let prompt_resp = app
+            .clone()
+            .oneshot(prompt_req)
+            .await
+            .expect("prompt response");
         assert_eq!(prompt_resp.status(), StatusCode::NO_CONTENT);
 
         let denied_event = tokio::time::timeout(Duration::from_secs(5), async {
@@ -6807,10 +6864,7 @@ mod tests {
             Some(child_session_id.as_str())
         );
         assert_eq!(
-            denied_event
-                .properties
-                .get("tool")
-                .and_then(|v| v.as_str()),
+            denied_event.properties.get("tool").and_then(|v| v.as_str()),
             Some("websearch")
         );
     }
@@ -7123,7 +7177,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("start request");
-        let start_resp = app.clone().oneshot(start_req).await.expect("start response");
+        let start_resp = app
+            .clone()
+            .oneshot(start_req)
+            .await
+            .expect("start response");
         assert_eq!(start_resp.status(), StatusCode::OK);
         let start_body = to_bytes(start_resp.into_body(), usize::MAX)
             .await
@@ -7228,9 +7286,15 @@ mod tests {
                 .to_string(),
             ))
             .expect("spawn request");
-        let spawn_resp = app.clone().oneshot(spawn_req).await.expect("spawn response");
+        let spawn_resp = app
+            .clone()
+            .oneshot(spawn_req)
+            .await
+            .expect("spawn response");
         assert_eq!(spawn_resp.status(), StatusCode::OK);
-        let spawn_body = to_bytes(spawn_resp.into_body(), usize::MAX).await.expect("spawn body");
+        let spawn_body = to_bytes(spawn_resp.into_body(), usize::MAX)
+            .await
+            .expect("spawn body");
         let spawn_payload: Value = serde_json::from_slice(&spawn_body).expect("json");
         let session_id = spawn_payload
             .get("sessionID")
@@ -7260,7 +7324,9 @@ mod tests {
             .expect("list request");
         let list_resp = app.oneshot(list_req).await.expect("list response");
         assert_eq!(list_resp.status(), StatusCode::OK);
-        let list_body = to_bytes(list_resp.into_body(), usize::MAX).await.expect("list body");
+        let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("list body");
         let list_payload: Value = serde_json::from_slice(&list_body).expect("json");
         assert_eq!(
             list_payload
@@ -7403,7 +7469,10 @@ mod tests {
             .uri("/agent-team/approvals")
             .body(Body::empty())
             .expect("approvals request");
-        let approvals_resp = app.oneshot(approvals_req).await.expect("approvals response");
+        let approvals_resp = app
+            .oneshot(approvals_req)
+            .await
+            .expect("approvals response");
         assert_eq!(approvals_resp.status(), StatusCode::OK);
         let approvals_body = to_bytes(approvals_resp.into_body(), usize::MAX)
             .await
@@ -7483,7 +7552,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("spawn 1");
-        let spawn_1_resp = app.clone().oneshot(spawn_1_req).await.expect("spawn 1 response");
+        let spawn_1_resp = app
+            .clone()
+            .oneshot(spawn_1_req)
+            .await
+            .expect("spawn 1 response");
         assert_eq!(spawn_1_resp.status(), StatusCode::OK);
         let spawn_1_body = to_bytes(spawn_1_resp.into_body(), usize::MAX)
             .await
@@ -7524,7 +7597,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("spawn 2");
-        let spawn_2_resp = app.clone().oneshot(spawn_2_req).await.expect("spawn 2 response");
+        let spawn_2_resp = app
+            .clone()
+            .oneshot(spawn_2_req)
+            .await
+            .expect("spawn 2 response");
         assert_eq!(spawn_2_resp.status(), StatusCode::FORBIDDEN);
         let spawn_2_body = to_bytes(spawn_2_resp.into_body(), usize::MAX)
             .await
@@ -7595,7 +7672,11 @@ mod tests {
                     .to_string(),
                 ))
                 .expect("spawn request");
-            let spawn_resp = app.clone().oneshot(spawn_req).await.expect("spawn response");
+            let spawn_resp = app
+                .clone()
+                .oneshot(spawn_req)
+                .await
+                .expect("spawn response");
             assert_eq!(spawn_resp.status(), StatusCode::OK);
         }
 
@@ -7718,7 +7799,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("start request");
-        let start_resp = app.clone().oneshot(start_req).await.expect("start response");
+        let start_resp = app
+            .clone()
+            .oneshot(start_req)
+            .await
+            .expect("start response");
         assert_eq!(start_resp.status(), StatusCode::OK);
 
         let cancel_req = Request::builder()
@@ -7736,7 +7821,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("cancel request");
-        let cancel_resp = app.clone().oneshot(cancel_req).await.expect("cancel response");
+        let cancel_resp = app
+            .clone()
+            .oneshot(cancel_req)
+            .await
+            .expect("cancel response");
         assert_eq!(cancel_resp.status(), StatusCode::OK);
         let cancel_body = to_bytes(cancel_resp.into_body(), usize::MAX)
             .await
@@ -8489,7 +8578,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("memory put request");
-        let put_resp = app.clone().oneshot(put_req).await.expect("memory put response");
+        let put_resp = app
+            .clone()
+            .oneshot(put_req)
+            .await
+            .expect("memory put response");
         assert_eq!(put_resp.status(), StatusCode::OK);
         let put_body = to_bytes(put_resp.into_body(), usize::MAX)
             .await
@@ -8520,9 +8613,8 @@ mod tests {
             .get("items")
             .and_then(|v| v.as_array())
             .map(|rows| {
-                rows.iter().any(|row| {
-                    row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str())
-                })
+                rows.iter()
+                    .any(|row| row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str()))
             })
             .unwrap_or(false);
         assert!(contains);
@@ -8561,5 +8653,3 @@ mod tests {
         }
     }
 }
-
-

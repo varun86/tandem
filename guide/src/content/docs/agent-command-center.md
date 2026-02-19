@@ -9,6 +9,7 @@ The Agent Command Center is the desktop control surface for Agent Teams.
 - Spawn agents with policy-logged justification.
 - View mission rollups and instance status in real time.
 - Approve or deny queued spawn requests.
+- Approve or deny queued tool approvals for agent-team sessions.
 - Cancel individual instances or full missions.
 - Track pending tool approvals for agent-team sessions.
 
@@ -25,6 +26,7 @@ The Agent Command Center is the desktop control surface for Agent Teams.
   - clear mission and instance counters
 - Fast feedback:
   - periodic refresh for missions, instances, and approvals
+  - SSE-triggered refresh when `agent_team.*` events stream in
   - inline error messages on denied/failed actions
 
 ## Safety Notes

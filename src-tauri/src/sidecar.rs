@@ -1324,7 +1324,22 @@ pub struct AgentTeamApprovals {
     #[serde(rename = "spawnApprovals", default)]
     pub spawn_approvals: Vec<AgentTeamSpawnApproval>,
     #[serde(rename = "toolApprovals", default)]
-    pub tool_approvals: Vec<serde_json::Value>,
+    pub tool_approvals: Vec<AgentTeamToolApproval>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTeamToolApproval {
+    #[serde(rename = "approvalID")]
+    pub approval_id: String,
+    #[serde(rename = "sessionID", default)]
+    pub session_id: Option<String>,
+    #[serde(rename = "toolCallID")]
+    pub tool_call_id: String,
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default)]
+    pub args: Option<serde_json::Value>,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1425,7 +1440,7 @@ struct AgentTeamApprovalsResponse {
     #[serde(rename = "spawnApprovals", default)]
     spawn_approvals: Vec<AgentTeamSpawnApproval>,
     #[serde(rename = "toolApprovals", default)]
-    tool_approvals: Vec<serde_json::Value>,
+    tool_approvals: Vec<AgentTeamToolApproval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

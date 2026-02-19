@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveTool,
   agentTeamApproveSpawn,
@@ -11,10 +11,12 @@ import {
   agentTeamListTemplates,
   agentTeamSpawn,
   denyTool,
+  onSidecarEventV2,
   type AgentTeamApprovals,
   type AgentTeamInstance,
   type AgentTeamMissionSummary,
   type AgentTeamTemplate,
+  type StreamEventEnvelopeV2,
 } from "@/lib/tauri";
 import { Button } from "@/components/ui";
 import { CheckCircle2, PauseCircle, PlayCircle, ShieldAlert, XCircle } from "lucide-react";
@@ -39,6 +41,7 @@ export function AgentCommandCenter() {
   const [selectedInstanceDetailId, setSelectedInstanceDetailId] = useState<string | null>(null);
   const [justification, setJustification] = useState("Delegate focused task execution.");
   const [actionReason, setActionReason] = useState("Reviewed in command center.");
+  const refreshTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -70,6 +73,38 @@ export function AgentCommandCenter() {
     return () => clearInterval(id);
   }, [load]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    const setup = async () => {
+      unlisten = await onSidecarEventV2((envelope: StreamEventEnvelopeV2) => {
+        const payload = envelope?.payload;
+        if (!payload || payload.type !== "raw") {
+          return;
+        }
+        if (!payload.event_type.startsWith("agent_team.")) {
+          return;
+        }
+        if (refreshTimerRef.current !== null) {
+          return;
+        }
+        refreshTimerRef.current = window.setTimeout(() => {
+          refreshTimerRef.current = null;
+          void load();
+        }, 250);
+      });
+    };
+    void setup();
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [load]);
+
   const byStatus = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const instance of instances) {
@@ -92,47 +127,7 @@ export function AgentCommandCenter() {
     [instances, selectedInstanceDetailId]
   );
 
-  const toolApprovals = useMemo(() => {
-    const getString = (obj: Record<string, unknown>, keys: string[]): string | null => {
-      for (const key of keys) {
-        const value = obj[key];
-        if (typeof value === "string" && value.trim()) {
-          return value;
-        }
-      }
-      return null;
-    };
-
-    return approvals.tool_approvals.map((raw, index) => {
-      const obj = (raw ?? {}) as Record<string, unknown>;
-      const sessionId =
-        getString(obj, ["sessionID", "sessionId", "session_id"]) ??
-        getString((obj.request as Record<string, unknown>) || {}, [
-          "sessionID",
-          "sessionId",
-          "session_id",
-        ]);
-      const toolCallId =
-        getString(obj, ["toolCallID", "toolCallId", "tool_call_id", "callID", "id"]) ??
-        getString((obj.tool as Record<string, unknown>) || {}, [
-          "callID",
-          "toolCallID",
-          "toolCallId",
-          "id",
-        ]);
-      const toolName =
-        getString(obj, ["tool", "toolName", "name"]) ??
-        getString((obj.tool as Record<string, unknown>) || {}, ["name", "tool"]);
-
-      return {
-        id: getString(obj, ["id", "requestID", "requestId"]) || `tool-approval-${index}`,
-        sessionId,
-        toolCallId,
-        toolName: toolName || "tool",
-        raw: obj,
-      };
-    });
-  }, [approvals.tool_approvals]);
+  const toolApprovals = approvals.tool_approvals;
 
   const handleSpawn = async () => {
     if (!justification.trim()) {
@@ -531,20 +526,23 @@ export function AgentCommandCenter() {
           </div>
           <div className="space-y-2">
             {toolApprovals.map((approval) => (
-              <div key={approval.id} className="rounded border border-rose-500/30 bg-black/10 p-2">
+              <div
+                key={approval.approval_id}
+                className="rounded border border-rose-500/30 bg-black/10 p-2"
+              >
                 <div className="text-xs text-rose-100">
-                  {approval.toolName}{" "}
-                  {approval.sessionId ? (
+                  {approval.tool || "tool"}{" "}
+                  {approval.session_id ? (
                     <>
-                      in <span className="font-mono">{approval.sessionId}</span>
+                      in <span className="font-mono">{approval.session_id}</span>
                     </>
                   ) : null}
                 </div>
-                {approval.sessionId && approval.toolCallId ? (
+                {approval.session_id && approval.tool_call_id ? (
                   <div className="mt-2 flex gap-2">
                     <Button
                       size="sm"
-                      onClick={() => void handleApproveTool(approval.sessionId!, approval.toolCallId!)}
+                      onClick={() => void handleApproveTool(approval.session_id!, approval.tool_call_id)}
                     >
                       <CheckCircle2 className="mr-1 h-4 w-4" />
                       Approve Tool
@@ -552,7 +550,7 @@ export function AgentCommandCenter() {
                     <Button
                       size="sm"
                       variant="danger"
-                      onClick={() => void handleDenyTool(approval.sessionId!, approval.toolCallId!)}
+                      onClick={() => void handleDenyTool(approval.session_id!, approval.tool_call_id)}
                     >
                       <XCircle className="mr-1 h-4 w-4" />
                       Deny Tool
