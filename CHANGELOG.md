@@ -7,13 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Model/provider routing is now strict end-to-end: chat, queue, rewind, undo, and command-center/orchestrator dispatches now require explicit provider+model instead of silently falling back.
-- Fixed persistent model-selection drift by saving picker selections to `providers_config.selected_model` from both Chat and Command Center model selectors.
-- Provider execution now respects per-request model overrides in runtime calls (instead of default-model bleed-through), preventing unintended `gpt-4o-mini` execution when another model is selected.
-- OpenRouter attribution headers are now sent consistently from provider calls so requests are identified as Tandem instead of unknown source.
-- Memory startup reliability improved: corrupted/incompatible vector DB state is detected, backed up, and self-healed automatically, preventing repeated startup failures (`chunks iter error` / SQL logic errors).
+- No unreleased changes.
 
 ## [0.3.8] - 2026-02-19
 
@@ -48,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Desktop channel token persistence across restart**: Fixed a vault-unlock/startup race where channel bot tokens (Telegram/Discord/Slack) could fail to rehydrate into sidecar env before restart, causing saved channel connections to appear unconfigured after engine/app restart.
+- **Model/provider routing hardening**: Chat, queue, rewind, undo, and command-center/orchestrator dispatches now require explicit provider+model instead of silently falling back.
+- **Model selection persistence**: Fixed picker drift by persisting `providers_config.selected_model` from both Chat and Command Center selectors.
+- **Provider runtime model override**: Provider calls now honor per-request model overrides, preventing unintended fallback execution (for example `gpt-4o-mini` when another model is selected).
+- **OpenRouter attribution**: Added consistent request attribution headers so calls are identified as Tandem instead of unknown source.
+- **Memory startup self-heal**: Corrupted/incompatible vector DB state is now detected, backed up, and auto-recovered to prevent repeated startup failures (`chunks iter error` / SQL logic errors).
 
 ## [0.3.7] - 2026-02-18
 

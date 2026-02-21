@@ -4,11 +4,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## Unreleased
 
-- Fixed incorrect model/provider execution routing where requests could run on fallback/default models instead of the selected model.
-- Fixed chat + command-center model picker persistence by saving explicit `selected_model` routing in provider config.
-- Fixed provider-side model override behavior so runtime calls honor the request model for completions/streaming.
-- Added OpenRouter attribution headers for Tandem-origin requests.
-- Fixed memory manager startup failures caused by malformed/incompatible vector tables with automatic backup + self-heal recovery.
+- No unreleased changes.
 
 ## v0.3.8 - 2026-02-19
 
@@ -29,6 +25,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Agent-Team approvals: Added explicit spawn approval decision endpoints (`POST /agent-team/approvals/spawn/{id}/approve|deny`).
 - Docs: Updated engine command reference for web admin flags and headless control surface.
 - Desktop channels: Fixed a startup race so saved Telegram/Discord/Slack bot-token connections persist correctly across app/engine restarts after vault unlock.
+- Model routing: Fixed provider/model dispatch so selected models are used across chat/session/orchestrator flows instead of fallback defaults.
+- Model selection persistence: Chat and Command Center now persist explicit `selected_model` routing in provider config.
+- Provider runtime behavior: Streaming/completion calls now honor per-request model overrides.
+- OpenRouter attribution: Added Tandem-origin headers for provider requests.
+- Memory reliability: Added startup backup + self-heal recovery for malformed/incompatible memory vector tables.
 
 ## v0.3.7 - 2026-02-18
 

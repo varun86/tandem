@@ -1,15 +1,3 @@
-# Tandem Release Notes
-
-## Unreleased Hotfixes (2026-02-21)
-
-- Fixed incorrect model/provider execution routing so selected models are used consistently across Chat and Command Center flows.
-- Fixed model picker persistence by writing selected provider/model into `providers_config.selected_model`.
-- Fixed provider runtime override behavior so per-request model selection is honored during streaming/completions.
-- Added OpenRouter attribution headers to identify Tandem-origin traffic.
-- Fixed memory initialization failures from malformed/incompatible vector DB state with startup backup + self-heal recovery.
-
----
-
 # Tandem v0.3.8 Release Notes
 
 ## Release Date: 2026-02-19
@@ -37,6 +25,11 @@
   - `POST /agent-team/approvals/spawn/{id}/approve`
   - `POST /agent-team/approvals/spawn/{id}/deny`
 - **Control Center role routing migration**: Orchestrator model routing now supports canonical role-map keys (`orchestrator`, `delegator`, `worker`, `watcher`, `reviewer`, `tester`) with compatibility aliases from legacy keys (`planner`, `builder`, `validator`, `researcher`).
+- **Model/provider routing fix**: Fixed request routing so selected provider/model is used consistently across chat, queue, command center, and orchestrator dispatch paths.
+- **Model selection persistence fix**: Chat and Command Center selectors now persist `providers_config.selected_model`.
+- **Provider runtime model-override fix**: Streaming and completion provider calls now honor explicit per-request model overrides.
+- **OpenRouter attribution fix**: Added Tandem-origin request headers for OpenRouter calls.
+- **Memory startup self-heal**: Added backup + auto-recovery for malformed/incompatible memory vector DB state during initialization.
 
 ### Orchestrator Routing Migration Notes
 
