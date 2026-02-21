@@ -31,6 +31,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Shell robustness: Empty shell calls now fail fast with `BASH_COMMAND_MISSING` instead of hanging until timeout.
 - Windows compatibility: Added translation for common Unix-style agent shell commands (`ls -la`, `find ... -type f -name ...`) to PowerShell equivalents.
 - Stream stability: Reduced false stream watchdog degraded events while tools are still pending.
+- Command Center reliability: Added strict `read`/`write` tool-arg validation (JSON object + non-empty `path`) with fail-fast `INVALID_TOOL_ARGS` handling to prevent endless retry loops.
+- Orchestrator error clarity: Replaced generic Windows `os error 3` workspace mismatch messaging with structured classification (`WORKSPACE_NOT_FOUND`, path-not-found fail-fast, timeout codes).
+- Workspace safety: Task child sessions now pin explicitly to orchestrator workspace path and preflight-check workspace existence before session creation.
+- Tool history integrity: Tool execution IDs now include session/message/part context to avoid cross-session `part_id` collisions in diagnostics.
+- File-tool stability: Increased `read`/`write` timeout budget to reduce premature synthetic timeout terminals on larger repos.
 - Engine memory tools:
   - Added `memory_store` for persisting agent-learned memory in `session`/`project`/`global` tiers.
   - Added `memory_list` for browsing/auditing stored memory by scope/tier.

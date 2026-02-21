@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Command Center tool-arg hardening**: `read`/`write` tool calls now validate argument shape (`JSON object` + non-empty `path`) and fail fast with structured `INVALID_TOOL_ARGS` instead of retry loops.
+- **Workspace/path error taxonomy**: Replaced broad Windows `os error 3` pause messaging with clearer classification (`WORKSPACE_NOT_FOUND`, path-not-found fail-fast) so runs stop/recover deterministically.
+- **Orchestrator retry-loop suppression**: Invalid tool args and path-not-found failures now fail task attempts directly instead of repeatedly re-queuing.
+- **Task session workspace pinning**: Child task sessions are now pinned to the orchestrator workspace path, with preflight checks before session creation.
+- **Tool timeout resilience for file ops**: Increased `read`/`write` tool timeouts to reduce premature synthetic terminal errors on larger workspaces.
+- **Tool history ID collision fix**: Tool execution IDs now include session/message/part context (not just `part_id`) to prevent cross-session overwrite/correlation drift.
+- **Structured stream error codes**: Stream tool/session terminal events now carry optional `error_code` metadata for clearer diagnostics in orchestrator + UI.
+- **Builder prompt guardrails**: Builder-agent prompt now explicitly requires valid JSON tool args and non-empty `path` for file tools.
+
 - **Desktop channel token persistence across restart**: Fixed a vault-unlock/startup race where channel bot tokens (Telegram/Discord/Slack) could fail to rehydrate into sidecar env before restart, causing saved channel connections to appear unconfigured after engine/app restart.
 - **Model/provider routing hardening**: Chat, queue, rewind, undo, and command-center/orchestrator dispatches now require explicit provider+model instead of silently falling back.
 - **Model selection persistence**: Fixed picker drift by persisting `providers_config.selected_model` from both Chat and Command Center selectors.

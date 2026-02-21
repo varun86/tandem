@@ -119,6 +119,8 @@ Output ONLY the JSON array, no other text."#,
 1. Make the necessary code changes to complete this task
 2. Write a brief note explaining what you did
 3. Include verification hints for the validator
+4. If the task/criteria mention creating or updating files, you MUST use `write`, `edit`, or `apply_patch`
+   and ensure the target file exists in the workspace before finishing.
 
 ## Rules
 - Only modify files within the workspace
@@ -130,6 +132,9 @@ Output ONLY the JSON array, no other text."#,
   - Run `glob` with pattern `**/*` (or `*` as fallback) and summarize results.
   - Cite at least a few observed paths (or explicitly report that no non-metadata files were found).
   - Do not rely on assumptions without tool-produced evidence.
+- Tool arguments MUST be valid JSON objects. Never emit empty `{{}}` for file tools.
+- For `read`/`write`, always include a non-empty string `path` field.
+- If your tool call arguments are malformed, the task will fail immediately.
 
 Complete this task now."#,
             title = task.title,

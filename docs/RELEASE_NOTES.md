@@ -29,6 +29,11 @@
 - **OpenRouter attribution fix**: Added Tandem-origin request headers for OpenRouter calls.
 - **Memory startup self-heal**: Added backup + auto-recovery for malformed/incompatible memory vector DB state during initialization.
 - **Command Center status/launch reliability**: Fixed paused/failed state mapping and disabled launch while runs are active to prevent duplicate swarm starts.
+- **Command Center retry-loop fix (Windows/path failures)**: Added strict `read`/`write` argument validation (`JSON object` + non-empty `path`) with fail-fast `INVALID_TOOL_ARGS` handling to stop endless task retries.
+- **Structured orchestrator error taxonomy**: Replaced generic `os error 3` workspace mismatch messaging with explicit categories (`WORKSPACE_NOT_FOUND`, path-not-found fail-fast, timeout codes).
+- **Workspace pinning + preflight**: Child task sessions now pin to the orchestrator workspace and validate workspace existence before session creation.
+- **Tool-history correlation integrity**: Tool execution IDs now include session/message/part context to prevent cross-session `part_id` collision overwrite.
+- **File-tool timeout tuning**: Increased `read`/`write` timeout budget to reduce premature synthetic timeout terminal events.
 - **Autonomous swarm approvals**: Command Center/orchestrator sessions now auto-allow shell permissions in autonomous mode instead of repeatedly prompting.
 - **Shell timeout/hang prevention**: Empty shell calls now fail immediately with explicit `BASH_COMMAND_MISSING` rather than stalling until watchdog timeout.
 - **Windows shell translation**: Added automatic translation for common Unix-style agent commands (`ls -la`, `find ... -type f -name ...`) into PowerShell equivalents on Windows.

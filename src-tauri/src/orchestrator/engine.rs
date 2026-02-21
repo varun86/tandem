@@ -13,8 +13,10 @@ use crate::orchestrator::{
 };
 use crate::sidecar::SidecarManager;
 use crate::stream_hub::StreamHub;
+use ignore::WalkBuilder;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
@@ -52,6 +54,32 @@ fn extract_text_from_message_part(part: &serde_json::Value) -> Option<String> {
     }
 
     None
+}
+
+fn is_nested_agent_tool(tool_name: &str) -> bool {
+    let normalized = tool_name
+        .split(':')
+        .next_back()
+        .unwrap_or(tool_name)
+        .trim()
+        .to_lowercase();
+    matches!(normalized.as_str(), "task" | "spawn_agent")
+}
+
+#[derive(Clone, Debug)]
+struct FileFingerprint {
+    size: u64,
+    modified_ms: u128,
+    content_hash: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct WorkspaceChangeSummary {
+    has_changes: bool,
+    created: Vec<String>,
+    updated: Vec<String>,
+    deleted: Vec<String>,
+    diff_text: String,
 }
 
 // ============================================================================
@@ -140,6 +168,9 @@ impl OrchestratorEngine {
             "todowrite",
             "todo_write",
             "update_todo_list",
+            "websearch",
+            "webfetch_document",
+            "batch",
             "task",
         ] {
             rules.push(crate::sidecar::PermissionRule {
@@ -156,6 +187,18 @@ impl OrchestratorEngine {
     const RELAXED_MAX_TOTAL_TOKENS: u64 = 100_000_000;
     const RELAXED_MAX_WALL_TIME_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
     const RELAXED_MAX_SUBAGENT_RUNS: u32 = 100_000;
+
+    fn extract_error_code(error: &str) -> Option<String> {
+        let trimmed = error.trim();
+        if let Some(rest) = trimmed.strip_prefix('[') {
+            let end = rest.find(']')?;
+            let code = &rest[..end];
+            if !code.trim().is_empty() {
+                return Some(code.trim().to_string());
+            }
+        }
+        None
+    }
 
     fn is_rate_limit_error(error: &str) -> bool {
         let e = error.to_lowercase();
@@ -192,13 +235,27 @@ impl OrchestratorEngine {
             || e.contains("stream_idle_timeout")
     }
 
-    fn is_workspace_path_mismatch_error(error: &str) -> bool {
+    fn is_workspace_not_found_error(error: &str) -> bool {
         let e = error.to_lowercase();
-        // Windows canonical message for missing/invalid working directory.
+        e.contains("[workspace_not_found]")
+            || e.contains("workspace root not found")
+            || e.contains("working directory does not exist")
+    }
+
+    fn is_path_not_found_error(error: &str) -> bool {
+        let e = error.to_lowercase();
         e.contains("(os error 3)")
             || e.contains("the system cannot find the path specified")
             || e.contains("system cannot find the path specified")
             || e.contains("os error 3")
+    }
+
+    fn is_invalid_tool_args_error(error: &str) -> bool {
+        let e = error.to_lowercase();
+        e.contains("[invalid_tool_args]")
+            || e.contains("invalid tool args")
+            || e.contains("tool args must be a json object")
+            || e.contains("missing required 'path'")
     }
 
     fn should_clear_error_on_resume(error: &str) -> bool {
@@ -206,7 +263,7 @@ impl OrchestratorEngine {
             || Self::is_rate_limit_error(error)
             || Self::is_provider_quota_error(error)
             || Self::is_auth_error(error)
-            || Self::is_workspace_path_mismatch_error(error)
+            || Self::is_workspace_not_found_error(error)
             || error
                 .to_lowercase()
                 .contains("run paused so you can resume and continue")
@@ -383,12 +440,6 @@ impl OrchestratorEngine {
             let run = self.run.read().await;
             run.session_id.clone()
         };
-
-        // Record budget
-        {
-            let mut tracker = self.budget_tracker.write().await;
-            tracker.record_subagent_run();
-        }
 
         // Send message and wait for response
         let response = self
@@ -829,6 +880,7 @@ impl OrchestratorEngine {
                 task_id: task_id.clone(),
                 timestamp: chrono::Utc::now(),
             });
+            let workspace_before = self.capture_workspace_snapshot().await?;
 
             // Build context for execution role
             let file_context = self.get_task_file_context(&task).await?;
@@ -850,7 +902,6 @@ impl OrchestratorEngine {
             // Record budget
             {
                 let mut tracker = self.budget_tracker.write().await;
-                tracker.record_subagent_run();
                 tracker.record_iteration();
             }
 
@@ -864,8 +915,23 @@ impl OrchestratorEngine {
                 tracker.record_tokens(None, Some(builder_response.len()));
             }
 
-            // Get changes for validation
-            let changes_diff = self.get_recent_changes().await?;
+            // Get per-task workspace changes for validation.
+            let workspace_changes = self
+                .get_recent_changes_since(&workspace_before)
+                .await?;
+            if self.task_requires_workspace_changes(&task) && !workspace_changes.has_changes {
+                let hinted_targets = Self::extract_target_file_hints(&task);
+                let target_hint = if hinted_targets.is_empty() {
+                    "the expected artifact file".to_string()
+                } else {
+                    hinted_targets.join(", ")
+                };
+                return Err(TandemError::Orchestrator(format!(
+                    "Task requires file changes but none were captured. Use write/edit/apply_patch to update {} before completing.",
+                    target_hint
+                )));
+            }
+            let changes_diff = workspace_changes.diff_text;
 
             // Build validator prompt
             let validator_prompt = AgentPrompts::build_validator_prompt(
@@ -875,11 +941,6 @@ impl OrchestratorEngine {
             );
 
             // Call validator
-            {
-                let mut tracker = self.budget_tracker.write().await;
-                tracker.record_subagent_run();
-            }
-
             let validator_response = self
                 .call_agent_for_task_with_recovery(
                     &task,
@@ -1054,9 +1115,16 @@ impl OrchestratorEngine {
         let quota_exceeded = Self::is_provider_quota_error(error);
         let auth_failed = Self::is_auth_error(error);
         let transient_timeout = Self::is_transient_timeout_error(error);
-        let workspace_path_mismatch = Self::is_workspace_path_mismatch_error(error);
-        let should_pause =
-            rate_limited || quota_exceeded || auth_failed || transient_timeout || workspace_path_mismatch;
+        let workspace_not_found = Self::is_workspace_not_found_error(error);
+        let invalid_tool_args = Self::is_invalid_tool_args_error(error);
+        let path_not_found = Self::is_path_not_found_error(error);
+        let error_code = Self::extract_error_code(error);
+        let should_pause = rate_limited
+            || quota_exceeded
+            || auth_failed
+            || transient_timeout
+            || workspace_not_found;
+        let should_fail_fast = invalid_tool_args || path_not_found;
 
         let session_id = {
             let mut run = self.run.write().await;
@@ -1086,9 +1154,9 @@ impl OrchestratorEngine {
                             "Provider authentication failed (401/403). Check API key/provider selection and retry."
                                 .to_string(),
                         );
-                    } else if workspace_path_mismatch {
+                    } else if workspace_not_found {
                         t.error_message = Some(
-                            "Workspace/path mismatch detected (Windows path error). Verify workspace path and use cross-platform tools, then continue."
+                            "Workspace root not found. Verify workspace path and continue."
                                 .to_string(),
                         );
                     } else if transient_timeout {
@@ -1103,14 +1171,30 @@ impl OrchestratorEngine {
                     } else if auth_failed {
                         "Paused: provider authentication failed (401/403). Check API key/provider selection and continue."
                             .to_string()
-                    } else if workspace_path_mismatch {
-                        "Paused: workspace/path mismatch detected (os error 3). Verify workspace path and continue."
+                    } else if workspace_not_found {
+                        "Paused: workspace root not found. Verify workspace path and continue."
                             .to_string()
                     } else if transient_timeout {
                         "Paused: transient tool timeout detected. Resume run to continue."
                             .to_string()
                     } else {
                         "Paused: provider rate-limited. Switch model/provider and retry."
+                            .to_string()
+                    });
+                } else if should_fail_fast {
+                    t.state = TaskState::Failed;
+                    t.error_message = Some(if invalid_tool_args {
+                        "Task failed: invalid tool arguments emitted by agent. Fix argument shape and retry."
+                            .to_string()
+                    } else {
+                        "Task failed: target path not found (os error 3). Verify file path and retry."
+                            .to_string()
+                    });
+                    run.error_message = Some(if invalid_tool_args {
+                        "Invalid tool args detected. Update prompt/tool argument shape before retrying."
+                            .to_string()
+                    } else {
+                        "Path not found detected (os error 3). Verify workspace/file paths before retrying."
                             .to_string()
                     });
                 } else {
@@ -1145,7 +1229,14 @@ impl OrchestratorEngine {
             task_id,
             session_id.as_deref(),
             "EXEC_FINISHED",
-            Some(format!("error: {}", error)),
+            Some(format!(
+                "error: {}{}",
+                error,
+                error_code
+                    .as_deref()
+                    .map(|code| format!(" code={}", code))
+                    .unwrap_or_default()
+            )),
         );
 
         Ok(())
@@ -1153,6 +1244,13 @@ impl OrchestratorEngine {
 
     async fn get_or_create_task_session_id(&self, task: &Task) -> Result<String> {
         use crate::sidecar::CreateSessionRequest;
+
+        if !self.workspace_path.is_dir() {
+            return Err(TandemError::Sidecar(format!(
+                "[WORKSPACE_NOT_FOUND] workspace root not found: {}",
+                self.workspace_path.display()
+            )));
+        }
 
         if let Some(existing) = self.task_sessions.read().await.get(&task.id).cloned() {
             return Ok(existing);
@@ -1197,14 +1295,12 @@ impl OrchestratorEngine {
             model,
             provider,
             permission,
-            // Prefer base session paths if they still exist; otherwise fall back to engine workspace.
-            // If neither exists, omit directory/workspace_root so sidecar can use its default.
-            directory: Self::existing_dir_string_from_opt(base_session.directory.as_deref())
-                .or_else(|| Self::existing_dir_string(&self.workspace_path)),
+            // Pin task sessions to the known engine workspace to avoid drift across projects.
+            directory: Some(self.workspace_path.to_string_lossy().to_string()),
             workspace_root: Self::existing_dir_string_from_opt(
                 base_session.workspace_root.as_deref(),
             )
-            .or_else(|| Self::existing_dir_string(&self.workspace_path)),
+            .or_else(|| Some(self.workspace_path.to_string_lossy().to_string())),
         };
 
         let session = self.sidecar.create_session(request).await?;
@@ -1237,23 +1333,56 @@ impl OrchestratorEngine {
         prompt: &str,
         role: AgentRole,
     ) -> Result<String> {
-        match self
-            .call_agent(Some(&task.id), session_id.as_str(), prompt, role)
-            .await
-        {
-            Ok(response) => Ok(response),
-            Err(e) if is_sidecar_session_not_found(&e) => {
-                tracing::warn!(
-                    "Task {} session {} missing (404). Recreating task session and retrying once.",
-                    task.id,
-                    session_id
-                );
-                self.invalidate_task_session(&task.id).await;
-                *session_id = self.get_or_create_task_session_id(task).await?;
-                self.call_agent(Some(&task.id), session_id.as_str(), prompt, role)
-                    .await
+        let max_timeout_retries = {
+            let run = self.run.read().await;
+            run.config.max_timeout_retries_per_task_attempt
+        };
+        let mut timeout_retries_used: u32 = 0;
+        let mut session_recreated_after_404 = false;
+
+        loop {
+            match self
+                .call_agent(Some(&task.id), session_id.as_str(), prompt, role)
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(e) if is_sidecar_session_not_found(&e) && !session_recreated_after_404 => {
+                    session_recreated_after_404 = true;
+                    tracing::warn!(
+                        "Task {} session {} missing (404). Recreating task session and retrying once.",
+                        task.id,
+                        session_id
+                    );
+                    self.invalidate_task_session(&task.id).await;
+                    *session_id = self.get_or_create_task_session_id(task).await?;
+                }
+                Err(e)
+                    if Self::is_transient_timeout_error(&e.to_string())
+                        && timeout_retries_used < max_timeout_retries =>
+                {
+                    timeout_retries_used += 1;
+                    tracing::warn!(
+                        "Task {} role {:?} timed out on session {} (retry {}/{}). Recreating task session and retrying.",
+                        task.id,
+                        role,
+                        session_id,
+                        timeout_retries_used,
+                        max_timeout_retries
+                    );
+                    self.emit_task_trace(
+                        &task.id,
+                        Some(session_id.as_str()),
+                        "AGENT_TIMEOUT_RETRY",
+                        Some(format!(
+                            "retry={}/{} role={:?}",
+                            timeout_retries_used, max_timeout_retries, role
+                        )),
+                    );
+                    self.invalidate_task_session(&task.id).await;
+                    *session_id = self.get_or_create_task_session_id(task).await?;
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => Err(e),
         }
     }
 
@@ -1405,10 +1534,18 @@ impl OrchestratorEngine {
 
         let mut stream = self.stream_hub.subscribe();
         let mut active_session_id = session_id.to_string();
+        let agent_call_timeout_secs = {
+            let run = self.run.read().await;
+            run.config.max_agent_call_secs.max(60)
+        };
 
         // Then send message to sidecar
         let mut request = SendMessageRequest::text(prompt.to_string());
         request.model = model_spec.clone();
+        {
+            let mut tracker = self.budget_tracker.write().await;
+            tracker.record_subagent_run();
+        }
         if let Err(e) = self
             .sidecar
             .append_message_and_start_run(&active_session_id, request)
@@ -1424,6 +1561,10 @@ impl OrchestratorEngine {
                 active_session_id = self.recreate_base_run_session().await?;
                 let mut retry_request = SendMessageRequest::text(prompt.to_string());
                 retry_request.model = model_spec;
+                {
+                    let mut tracker = self.budget_tracker.write().await;
+                    tracker.record_subagent_run();
+                }
                 self.sidecar
                     .append_message_and_start_run(&active_session_id, retry_request)
                     .await?;
@@ -1438,186 +1579,246 @@ impl OrchestratorEngine {
         let mut first_tool_finished = false;
         let mut stalled_windows: usize = 0;
         const MAX_STALLED_WINDOWS_BEFORE_FAIL: usize = 4;
+        let mut last_relevant_event_at = Instant::now();
 
         // Add a hard timeout to prevent hanging forever (even if the sidecar only sends heartbeats).
         // Planning can legitimately take a while (large repos, slower models, cold starts).
         // Keep this reasonably high so we don't fail healthy runs, but still fail-fast for true hangs.
-        let timeout = tokio::time::Duration::from_secs(300);
+        let timeout = tokio::time::Duration::from_secs(agent_call_timeout_secs);
         let consume = async {
             let per_event_timeout = tokio::time::Duration::from_secs(60);
             loop {
                 let next = tokio::time::timeout(per_event_timeout, stream.recv()).await;
                 let event = match next {
-                    Ok(Ok(env)) => {
-                        stalled_windows = 0;
-                        env.payload
-                    }
+                    Ok(Ok(env)) => Some(env.payload),
                     Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
                         tracing::warn!("Orchestrator stream lagged by {} events", skipped);
                         continue;
                     }
                     Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
                     Err(_) => {
-                        stalled_windows = stalled_windows.saturating_add(1);
-                        tracing::warn!(
-                            "No SSE events for {}s (window {}/{}), probing active run for session {}",
-                            stalled_windows * 60,
-                            stalled_windows,
-                            MAX_STALLED_WINDOWS_BEFORE_FAIL,
-                            active_session_id
-                        );
-
-                        match self.sidecar.get_active_run(&active_session_id).await {
-                            Ok(Some(active)) => {
+                        // Still run the per-session stall detection below even when no event arrived.
+                        None
+                    }
+                };
+                if let Some(event) = event.as_ref() {
+                    match event {
+                        StreamEvent::Content {
+                            session_id: sid,
+                            delta,
+                            content: full_content,
+                            ..
+                        } => {
+                            if sid == &active_session_id {
+                                // Prefer delta if available, otherwise use full content
+                                if let Some(text) = delta {
+                                    content.push_str(text);
+                                    tracing::debug!("Got content delta: {} chars", text.len());
+                                } else if !full_content.is_empty() && content.is_empty() {
+                                    content = full_content.clone();
+                                    tracing::debug!(
+                                        "Got full content: {} chars",
+                                        full_content.len()
+                                    );
+                                }
+                            }
+                        }
+                        StreamEvent::SessionIdle { session_id: sid } => {
+                            if sid == &active_session_id {
+                                tracing::info!(
+                                    "Session {} is idle, response complete",
+                                    active_session_id
+                                );
+                                break;
+                            }
+                        }
+                        StreamEvent::ToolStart {
+                            session_id: sid,
+                            part_id,
+                            tool,
+                            ..
+                        } => {
+                            if sid == &active_session_id && first_tool_part_id.is_none() {
+                                first_tool_part_id = Some(part_id.clone());
                                 if let Some(task_id) = task_id {
                                     self.emit_task_trace(
                                         task_id,
                                         Some(&active_session_id),
-                                        "STREAM_STALLED",
-                                        Some(format!(
-                                            "run={} last_activity_ms={}",
-                                            active.run_id, active.last_activity_at_ms
-                                        )),
+                                        "FIRST_TOOL_CALL",
+                                        Some(tool.clone()),
                                     );
                                 }
-
-                                if stalled_windows >= MAX_STALLED_WINDOWS_BEFORE_FAIL {
-                                    errors.push(format!(
-                                        "No SSE events received for {}s while run {} remained active",
-                                        stalled_windows * 60,
-                                        active.run_id
-                                    ));
-                                    break;
-                                }
-
-                                continue;
                             }
-                            Ok(None) => {
-                                tracing::info!(
-                                    "No active run found for {}; treating stall as terminal boundary",
-                                    active_session_id
-                                );
-                                if content.trim().is_empty() {
-                                    if let Some(recovered) = self
-                                        .recover_agent_response_from_history(&active_session_id)
-                                        .await
-                                    {
-                                        content = recovered;
-                                    }
+                            if sid == &active_session_id && is_nested_agent_tool(tool) {
+                                let mut tracker = self.budget_tracker.write().await;
+                                tracker.record_subagent_run();
+                                if let Some(task_id) = task_id {
+                                    self.emit_task_trace(
+                                        task_id,
+                                        Some(&active_session_id),
+                                        "AGENT_CALL_NESTED",
+                                        Some(format!("via_tool={}", tool)),
+                                    );
+                                }
+                            }
+                        }
+                        StreamEvent::ToolEnd {
+                            session_id: sid,
+                            part_id,
+                            tool,
+                            error,
+                            ..
+                        } => {
+                            if sid == &active_session_id
+                                && !first_tool_finished
+                                && first_tool_part_id.as_deref() == Some(part_id)
+                            {
+                                first_tool_finished = true;
+                                if let Some(task_id) = task_id {
+                                    let detail = match error.as_ref() {
+                                        Some(e) => Some(format!("{}:{}", tool, e)),
+                                        None => Some(tool.clone()),
+                                    };
+                                    self.emit_task_trace(
+                                        task_id,
+                                        Some(&active_session_id),
+                                        "TOOL_CALL_FINISHED",
+                                        detail,
+                                    );
+                                }
+                            }
+                        }
+                        StreamEvent::SessionError {
+                            session_id: sid,
+                            error,
+                            error_code,
+                        } => {
+                            if sid == &active_session_id {
+                                tracing::error!("Session {} error: {}", active_session_id, error);
+                                if let Some(code) = error_code {
+                                    errors.push(format!("[{}] {}", code, error));
+                                } else {
+                                    errors.push(error.clone());
                                 }
                                 break;
                             }
-                            Err(probe_err) => {
-                                tracing::warn!(
-                                    "Failed to probe active run for {} during stall recovery: {}",
-                                    active_session_id,
-                                    probe_err
-                                );
-                                if stalled_windows >= MAX_STALLED_WINDOWS_BEFORE_FAIL {
-                                    errors.push(format!(
-                                        "No SSE events received for {}s and run probe failed: {}",
-                                        stalled_windows * 60,
-                                        probe_err
-                                    ));
-                                    break;
-                                }
-                                continue;
-                            }
                         }
+                        StreamEvent::Raw { event_type, data } => {
+                            tracing::debug!(
+                                "Raw event for orchestrator: {} - {:?}",
+                                event_type,
+                                data
+                            );
+                        }
+                        _ => {}
                     }
                 };
-                match &event {
-                    StreamEvent::Content {
-                        session_id: sid,
-                        delta,
-                        content: full_content,
-                        ..
-                    } => {
-                        if sid == &active_session_id {
-                            // Prefer delta if available, otherwise use full content
-                            if let Some(text) = delta {
-                                content.push_str(text);
-                                tracing::debug!("Got content delta: {} chars", text.len());
-                            } else if !full_content.is_empty() && content.is_empty() {
-                                content = full_content.clone();
-                                tracing::debug!("Got full content: {} chars", full_content.len());
-                            }
-                        }
-                    }
-                    StreamEvent::SessionIdle { session_id: sid } => {
-                        if sid == &active_session_id {
-                            tracing::info!(
-                                "Session {} is idle, response complete",
-                                active_session_id
+
+                let is_relevant_event = match event.as_ref() {
+                    Some(StreamEvent::Content {
+                        session_id: sid, ..
+                    })
+                    | Some(StreamEvent::SessionIdle { session_id: sid })
+                    | Some(StreamEvent::ToolStart {
+                        session_id: sid, ..
+                    })
+                    | Some(StreamEvent::ToolEnd {
+                        session_id: sid, ..
+                    })
+                    | Some(StreamEvent::SessionError {
+                        session_id: sid, ..
+                    }) => sid == &active_session_id,
+                    _ => false,
+                };
+
+                if is_relevant_event {
+                    stalled_windows = 0;
+                    last_relevant_event_at = Instant::now();
+                    continue;
+                }
+
+                let elapsed = last_relevant_event_at.elapsed().as_secs();
+                let next_window_secs = (stalled_windows as u64 + 1) * 60;
+                if elapsed < next_window_secs {
+                    continue;
+                }
+
+                stalled_windows = stalled_windows.saturating_add(1);
+                tracing::warn!(
+                    "No relevant SSE events for session {} for {}s (window {}/{}), probing active run",
+                    active_session_id,
+                    elapsed,
+                    stalled_windows,
+                    MAX_STALLED_WINDOWS_BEFORE_FAIL
+                );
+
+                match self.sidecar.get_active_run(&active_session_id).await {
+                    Ok(Some(active)) => {
+                        if let Some(task_id) = task_id {
+                            self.emit_task_trace(
+                                task_id,
+                                Some(&active_session_id),
+                                "STREAM_STALLED",
+                                Some(format!(
+                                    "run={} last_activity_ms={} stalled_for_secs={}",
+                                    active.run_id, active.last_activity_at_ms, elapsed
+                                )),
                             );
+                        }
+
+                        if stalled_windows >= MAX_STALLED_WINDOWS_BEFORE_FAIL {
+                            errors.push(format!(
+                                "No relevant SSE events for {}s while run {} remained active (session {})",
+                                elapsed, active.run_id, active_session_id
+                            ));
                             break;
                         }
                     }
-                    StreamEvent::ToolStart {
-                        session_id: sid,
-                        part_id,
-                        tool,
-                        ..
-                    } => {
-                        if sid == &active_session_id && first_tool_part_id.is_none() {
-                            first_tool_part_id = Some(part_id.clone());
-                            if let Some(task_id) = task_id {
-                                self.emit_task_trace(
-                                    task_id,
-                                    Some(&active_session_id),
-                                    "FIRST_TOOL_CALL",
-                                    Some(tool.clone()),
-                                );
+                    Ok(None) => {
+                        tracing::info!(
+                            "No active run found for {}; treating session stall as terminal boundary",
+                            active_session_id
+                        );
+                        if content.trim().is_empty() {
+                            if let Some(recovered) = self
+                                .recover_agent_response_from_history(&active_session_id)
+                                .await
+                            {
+                                content = recovered;
                             }
                         }
+                        break;
                     }
-                    StreamEvent::ToolEnd {
-                        session_id: sid,
-                        part_id,
-                        tool,
-                        error,
-                        ..
-                    } => {
-                        if sid == &active_session_id
-                            && !first_tool_finished
-                            && first_tool_part_id.as_deref() == Some(part_id)
-                        {
-                            first_tool_finished = true;
-                            if let Some(task_id) = task_id {
-                                let detail = match error.as_ref() {
-                                    Some(e) => Some(format!("{}:{}", tool, e)),
-                                    None => Some(tool.clone()),
-                                };
-                                self.emit_task_trace(
-                                    task_id,
-                                    Some(&active_session_id),
-                                    "TOOL_CALL_FINISHED",
-                                    detail,
-                                );
-                            }
-                        }
-                    }
-                    StreamEvent::SessionError {
-                        session_id: sid,
-                        error,
-                    } => {
-                        if sid == &active_session_id {
-                            tracing::error!("Session {} error: {}", active_session_id, error);
-                            errors.push(error.clone());
+                    Err(probe_err) => {
+                        tracing::warn!(
+                            "Failed to probe active run for {} during stall recovery: {}",
+                            active_session_id,
+                            probe_err
+                        );
+                        if stalled_windows >= MAX_STALLED_WINDOWS_BEFORE_FAIL {
+                            errors.push(format!(
+                                "No relevant SSE events for {}s and run probe failed for session {}: {}",
+                                elapsed, active_session_id, probe_err
+                            ));
                             break;
                         }
                     }
-                    StreamEvent::Raw { event_type, data } => {
-                        tracing::debug!("Raw event for orchestrator: {} - {:?}", event_type, data);
-                    }
-                    _ => {}
                 }
             }
         };
 
         if tokio::time::timeout(timeout, consume).await.is_err() {
-            tracing::warn!("Agent call timed out after {:?}", timeout);
-            errors.push(format!("Timed out after {:?}", timeout));
+            tracing::warn!(
+                "Agent call timed out after {:?} (task={:?} role={:?} session={})",
+                timeout,
+                task_id,
+                role,
+                active_session_id
+            );
+            errors.push(format!(
+                "Timed out after {:?} (task={:?} role={:?} session={})",
+                timeout, task_id, role, active_session_id
+            ));
         }
 
         if content.trim().is_empty() && errors.is_empty() {
@@ -1750,10 +1951,199 @@ impl OrchestratorEngine {
         ))
     }
 
-    /// Get recent changes (git diff)
-    async fn get_recent_changes(&self) -> Result<String> {
-        // TODO: Implement git diff capture
-        Ok("No changes captured".to_string())
+    fn should_track_workspace_path(rel_path: &str) -> bool {
+        let normalized = rel_path.replace('\\', "/");
+        !normalized.is_empty()
+            && !normalized.starts_with(".git/")
+            && normalized != ".git"
+            && !normalized.starts_with(".tandem/")
+            && normalized != ".tandem"
+            && !normalized.starts_with("node_modules/")
+            && !normalized.starts_with("target/")
+    }
+
+    fn hash_file_contents(path: &Path) -> Option<u64> {
+        let bytes = std::fs::read(path).ok()?;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
+    async fn capture_workspace_snapshot(&self) -> Result<HashMap<String, FileFingerprint>> {
+        let root = self.workspace_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut snapshot: HashMap<String, FileFingerprint> = HashMap::new();
+            let mut walker = WalkBuilder::new(&root);
+            walker.hidden(false);
+            walker.git_ignore(true);
+            walker.git_global(true);
+            walker.git_exclude(true);
+            for entry in walker.build().flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let rel = match path.strip_prefix(&root) {
+                    Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                    Err(_) => continue,
+                };
+                if !Self::should_track_workspace_path(&rel) {
+                    continue;
+                }
+                let meta = match std::fs::metadata(path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                let modified_ms = meta
+                    .modified()
+                    .ok()
+                    .and_then(|ts| {
+                        ts.duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_millis())
+                    })
+                    .unwrap_or(0);
+                let size = meta.len();
+                let content_hash = if size <= 1_048_576 {
+                    Self::hash_file_contents(path)
+                } else {
+                    None
+                };
+                snapshot.insert(
+                    rel,
+                    FileFingerprint {
+                        size,
+                        modified_ms,
+                        content_hash,
+                    },
+                );
+            }
+            Ok::<_, TandemError>(snapshot)
+        })
+        .await
+        .map_err(|e| TandemError::Orchestrator(format!("workspace snapshot task failed: {}", e)))?
+    }
+
+    fn summarize_workspace_changes(
+        before: &HashMap<String, FileFingerprint>,
+        after: &HashMap<String, FileFingerprint>,
+    ) -> WorkspaceChangeSummary {
+        let mut created = Vec::new();
+        let mut updated = Vec::new();
+        let mut deleted = Vec::new();
+
+        for (path, after_meta) in after {
+            match before.get(path) {
+                None => created.push(path.clone()),
+                Some(before_meta) => {
+                    let changed = before_meta.size != after_meta.size
+                        || before_meta.modified_ms != after_meta.modified_ms
+                        || before_meta.content_hash != after_meta.content_hash;
+                    if changed {
+                        updated.push(path.clone());
+                    }
+                }
+            }
+        }
+        for path in before.keys() {
+            if !after.contains_key(path) {
+                deleted.push(path.clone());
+            }
+        }
+
+        created.sort();
+        updated.sort();
+        deleted.sort();
+
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Workspace changes: {} created, {} updated, {} deleted",
+            created.len(),
+            updated.len(),
+            deleted.len()
+        ));
+        for path in created.iter().take(20) {
+            lines.push(format!("+ {}", path));
+        }
+        for path in updated.iter().take(40) {
+            lines.push(format!("~ {}", path));
+        }
+        for path in deleted.iter().take(20) {
+            lines.push(format!("- {}", path));
+        }
+
+        WorkspaceChangeSummary {
+            has_changes: !(created.is_empty() && updated.is_empty() && deleted.is_empty()),
+            created,
+            updated,
+            deleted,
+            diff_text: lines.join("\n"),
+        }
+    }
+
+    async fn get_recent_changes_since(
+        &self,
+        before: &HashMap<String, FileFingerprint>,
+    ) -> Result<WorkspaceChangeSummary> {
+        let after = self.capture_workspace_snapshot().await?;
+        Ok(Self::summarize_workspace_changes(before, &after))
+    }
+
+    fn task_requires_workspace_changes(&self, task: &Task) -> bool {
+        let mut text = format!("{} {}", task.title, task.description);
+        if !task.acceptance_criteria.is_empty() {
+            text.push(' ');
+            text.push_str(&task.acceptance_criteria.join(" "));
+        }
+        let lowered = text.to_lowercase();
+        let write_keywords = [
+            "write", "create", "update", "modify", "edit", "save", "file", "document", "artifact",
+            "markdown", ".md", ".ts", ".tsx", ".rs", ".json", ".yaml", ".yml", ".py", ".js",
+        ];
+        write_keywords.iter().any(|kw| lowered.contains(kw))
+    }
+
+    fn extract_target_file_hints(task: &Task) -> Vec<String> {
+        let mut tokens = Vec::new();
+        tokens.extend(task.title.split_whitespace().map(|s| s.to_string()));
+        tokens.extend(task.description.split_whitespace().map(|s| s.to_string()));
+        for criterion in &task.acceptance_criteria {
+            tokens.extend(criterion.split_whitespace().map(|s| s.to_string()));
+        }
+        let mut hints = HashSet::new();
+        for raw in tokens {
+            let token = raw
+                .trim_matches(|c: char| {
+                    c == '`'
+                        || c == '"'
+                        || c == '\''
+                        || c == ','
+                        || c == '.'
+                        || c == ';'
+                        || c == ':'
+                        || c == '('
+                        || c == ')'
+                })
+                .to_string();
+            if token.contains('/')
+                || token.contains('\\')
+                || token.contains(".md")
+                || token.contains(".ts")
+                || token.contains(".tsx")
+                || token.contains(".rs")
+                || token.contains(".json")
+                || token.contains(".yaml")
+                || token.contains(".yml")
+                || token.contains(".py")
+                || token.contains(".js")
+            {
+                hints.insert(token);
+            }
+        }
+        let mut out: Vec<String> = hints.into_iter().collect();
+        out.sort();
+        out.truncate(5);
+        out
     }
 
     // ========================================================================
@@ -2554,7 +2944,8 @@ impl OrchestratorEngine {
             run.config.max_wall_time_secs = 60 * 60;
             changed = true;
         }
-        if matches!(run.source, RunSource::CommandCenter) && run.config.max_wall_time_secs <= 60 * 60
+        if matches!(run.source, RunSource::CommandCenter)
+            && run.config.max_wall_time_secs <= 60 * 60
         {
             run.config.max_wall_time_secs = 48 * 60 * 60;
             changed = true;

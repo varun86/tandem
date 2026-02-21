@@ -669,6 +669,8 @@ pub struct SessionErrorProps {
     #[serde(rename = "sessionID")]
     pub session_id: String,
     pub error: String,
+    #[serde(default, rename = "errorCode")]
+    pub error_code: Option<String>,
 }
 
 /// Permission asked event properties (reserved for future use)
@@ -750,6 +752,8 @@ pub enum StreamEvent {
         tool: String,
         result: Option<serde_json::Value>,
         error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error_code: Option<String>,
     },
     /// Session status changed
     SessionStatus { session_id: String, status: String },
@@ -778,7 +782,12 @@ pub enum StreamEvent {
     /// Session is idle (generation complete)
     SessionIdle { session_id: String },
     /// Session error
-    SessionError { session_id: String, error: String },
+    SessionError {
+        session_id: String,
+        error: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error_code: Option<String>,
+    },
     /// Permission requested
     PermissionAsked {
         session_id: String,
@@ -4592,11 +4601,25 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                         .and_then(|s| s.get("status"))
                         .and_then(|s| s.as_str())
                         .or_else(|| part.get("state").and_then(|s| s.as_str()));
-                    let args = state_value
+                    let raw_args = state_value
                         .and_then(|s| s.get("input"))
                         .cloned()
                         .or_else(|| part.get("args").cloned())
                         .unwrap_or(serde_json::Value::Null);
+                    let args = match normalize_tool_args(&tool, &raw_args) {
+                        Ok(value) => value,
+                        Err(reason) => {
+                            let error_code = "INVALID_TOOL_ARGS";
+                            return Some(StreamEvent::SessionError {
+                                session_id: session_id.clone(),
+                                error: tagged_error(
+                                    error_code,
+                                    &format!("tool='{}' {}", tool, reason),
+                                ),
+                                error_code: Some(error_code.to_string()),
+                            });
+                        }
+                    };
                     let has_output = state_value.and_then(|s| s.get("output")).is_some()
                         || part.get("result").is_some()
                         || part.get("output").is_some();
@@ -4646,6 +4669,8 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                                     None
                                 }
                             });
+                            let error_code =
+                                derive_tool_error_code(state_value, part, error.as_deref(), state);
                             Some(StreamEvent::ToolEnd {
                                 session_id,
                                 message_id,
@@ -4653,6 +4678,7 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                                 tool,
                                 result,
                                 error,
+                                error_code,
                             })
                         }
                         _ => None,
@@ -4690,7 +4716,12 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
 
             if let Some(error_value) = info.get("error") {
                 if let Some(error) = extract_error_message(error_value) {
-                    return Some(StreamEvent::SessionError { session_id, error });
+                    return Some(StreamEvent::SessionError {
+                        session_id,
+                        error_code: extract_error_code(error_value)
+                            .or_else(|| classify_error_code(&error)),
+                        error,
+                    });
                 }
             }
 
@@ -4811,7 +4842,13 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
             let error_value = props.get("error").unwrap_or(&serde_json::Value::Null);
             let error =
                 extract_error_message(error_value).unwrap_or_else(|| error_value.to_string());
-            Some(StreamEvent::SessionError { session_id, error })
+            Some(StreamEvent::SessionError {
+                session_id,
+                error_code: extract_error_code(props)
+                    .or_else(|| extract_error_code(error_value))
+                    .or_else(|| classify_error_code(&error)),
+                error,
+            })
         }
         "file.edited" => {
             let file_path = props.get("file").and_then(|s| s.as_str())?.to_string();
@@ -5099,6 +5136,114 @@ fn extract_error_message(value: &serde_json::Value) -> Option<String> {
         serde_json::Value::Null => None,
         _ => Some(value.to_string()),
     }
+}
+
+fn classify_error_code(message: &str) -> Option<String> {
+    let msg = message.to_ascii_lowercase();
+    if msg.contains("invalid_tool_args")
+        || msg.contains("invalid tool args")
+        || msg.contains("missing required 'path'")
+        || msg.contains("tool args must be a json object")
+    {
+        return Some("INVALID_TOOL_ARGS".to_string());
+    }
+    if msg.contains("workspace_not_found") || msg.contains("workspace root not found") {
+        return Some("WORKSPACE_NOT_FOUND".to_string());
+    }
+    if msg.contains("exceeded timeout")
+        || msg.contains("timed out")
+        || msg.contains("stream_idle_timeout")
+    {
+        return Some("TOOL_TIMEOUT".to_string());
+    }
+    if msg.contains("(os error 3)") || msg.contains("system cannot find the path specified") {
+        return Some("PATH_NOT_FOUND".to_string());
+    }
+    None
+}
+
+fn normalize_tool_args(
+    tool: &str,
+    args: &serde_json::Value,
+) -> std::result::Result<serde_json::Value, String> {
+    let needs_path_validation =
+        matches!(tool.trim().to_ascii_lowercase().as_str(), "read" | "write");
+    if !needs_path_validation {
+        return Ok(args.clone());
+    }
+
+    let parsed = match args {
+        serde_json::Value::Object(_) => args.clone(),
+        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw)
+            .map_err(|_| "tool args string was not valid JSON".to_string())?,
+        serde_json::Value::Null => {
+            return Err("tool args cannot be null".to_string());
+        }
+        _ => {
+            return Err("tool args must be a JSON object".to_string());
+        }
+    };
+
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| "tool args must be a JSON object".to_string())?;
+    let path = obj
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if path.is_empty() {
+        return Err("missing required 'path' string".to_string());
+    }
+
+    Ok(parsed)
+}
+
+fn extract_error_code(value: &serde_json::Value) -> Option<String> {
+    if let Some(code) = value.get("errorCode").and_then(|v| v.as_str()) {
+        return Some(code.to_string());
+    }
+    if let Some(code) = value.get("code").and_then(|v| v.as_str()) {
+        return Some(code.to_string());
+    }
+    if let Some(code) = value
+        .get("error")
+        .and_then(|v| v.get("code"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(code.to_string());
+    }
+    if let Some(code) = value
+        .get("data")
+        .and_then(|v| v.get("error"))
+        .and_then(|v| v.get("code"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(code.to_string());
+    }
+    None
+}
+
+fn derive_tool_error_code(
+    state_value: Option<&serde_json::Value>,
+    part: &serde_json::Value,
+    error: Option<&str>,
+    state: &str,
+) -> Option<String> {
+    if let Some(code) = state_value.and_then(extract_error_code) {
+        return Some(code);
+    }
+    if let Some(code) = extract_error_code(part) {
+        return Some(code);
+    }
+    if matches!(state, "timeout" | "timed_out") {
+        return Some("TOOL_TIMEOUT".to_string());
+    }
+    error.and_then(classify_error_code)
+}
+
+fn tagged_error(error_code: &str, message: &str) -> String {
+    format!("[{}] {}", error_code, message)
 }
 
 fn parse_provider_catalog_response(raw: serde_json::Value) -> Option<ProviderCatalogResponse> {
@@ -5496,6 +5641,7 @@ mod tests {
                 tool,
                 result,
                 error,
+                ..
             }) => {
                 assert_eq!(session_id, "ses_123");
                 assert_eq!(message_id, "msg_456");
