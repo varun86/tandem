@@ -899,6 +899,7 @@ fn app_router(state: AppState) -> Router {
             axum::routing::patch(automations_patch).delete(automations_delete),
         )
         .route("/automations/{id}/run_now", post(automations_run_now))
+        .route("/automations/{id}/history", get(automations_history))
         .route("/automations/runs", get(automations_runs_all))
         .route("/automations/{id}/runs", get(automations_runs))
         .route("/automations/runs/{run_id}", get(automations_run_get))
@@ -909,6 +910,10 @@ fn app_router(state: AppState) -> Router {
         .route("/automations/runs/{run_id}/deny", post(automations_run_deny))
         .route("/automations/runs/{run_id}/pause", post(automations_run_pause))
         .route("/automations/runs/{run_id}/resume", post(automations_run_resume))
+        .route(
+            "/automations/runs/{run_id}/artifacts",
+            get(automations_run_artifacts).post(automations_run_artifact_add),
+        )
         .route("/resource", get(resource_list))
         .route("/resource/events", get(resource_events))
         .route(
@@ -5914,6 +5919,20 @@ async fn automations_run_now(
     })))
 }
 
+async fn automations_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<RoutineHistoryQuery>,
+) -> Json<Value> {
+    let response = routines_history(State(state), Path(id.clone()), Query(query)).await;
+    let mut payload = response.0;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("automationID".to_string(), Value::String(id));
+        object.remove("routineID");
+    }
+    Json(payload)
+}
+
 async fn automations_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -6039,6 +6058,40 @@ async fn automations_run_resume(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "Run mapping failed", "code": "AUTOMATION_RUN_MAPPING_FAILED"})),
+            )
+    })?;
+    Ok(Json(json!({ "ok": true, "run": routine_run_to_automation_wire(run) })))
+}
+
+async fn automations_run_artifacts(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let response = routines_run_artifacts(State(state), Path(run_id.clone())).await?;
+    let mut payload = response.0;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("automationRunID".to_string(), Value::String(run_id));
+        object.remove("runID");
+    }
+    Ok(Json(payload))
+}
+
+async fn automations_run_artifact_add(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<RoutineRunArtifactInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let response = routines_run_artifact_add(State(state), Path(run_id), Json(input)).await?;
+    let run = response
+        .0
+        .get("run")
+        .and_then(|v| serde_json::from_value::<RoutineRunRecord>(v.clone()).ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    json!({"error": "Run mapping failed", "code": "AUTOMATION_RUN_MAPPING_FAILED"}),
+                ),
             )
         })?;
     Ok(Json(json!({ "ok": true, "run": routine_run_to_automation_wire(run) })))
@@ -6410,6 +6463,7 @@ async fn openapi_doc() -> Json<Value> {
             "/automations":{"get":{"summary":"List automations"},"post":{"summary":"Create automation"}},
             "/automations/{id}":{"patch":{"summary":"Update automation"},"delete":{"summary":"Delete automation"}},
             "/automations/{id}/run_now":{"post":{"summary":"Trigger automation immediately"}},
+            "/automations/{id}/history":{"get":{"summary":"List automation history"}},
             "/automations/{id}/runs":{"get":{"summary":"List runs for an automation"}},
             "/automations/runs":{"get":{"summary":"List automation runs"}},
             "/automations/runs/{run_id}":{"get":{"summary":"Get an automation run"}},
@@ -6417,6 +6471,7 @@ async fn openapi_doc() -> Json<Value> {
             "/automations/runs/{run_id}/deny":{"post":{"summary":"Deny a pending automation run"}},
             "/automations/runs/{run_id}/pause":{"post":{"summary":"Pause an automation run"}},
             "/automations/runs/{run_id}/resume":{"post":{"summary":"Resume a paused automation run"}},
+            "/automations/runs/{run_id}/artifacts":{"get":{"summary":"List automation run artifacts"},"post":{"summary":"Attach artifact to automation run"}},
             "/automations/events":{"get":{"summary":"SSE stream for automation run events"}},
             "/resource":{"get":{"summary":"List shared resources by prefix"}},
             "/resource/{key}":{"get":{"summary":"Get shared resource"},"put":{"summary":"Put shared resource with optional revision guard"},"patch":{"summary":"Patch shared resource with optional revision guard"},"delete":{"summary":"Delete shared resource with optional revision guard"}},
@@ -9767,6 +9822,84 @@ mod tests {
                 .and_then(|v| v.get("objective"))
                 .and_then(|v| v.as_str()),
             Some("Generate a daily digest with clear sources.")
+        );
+        let run_id = run_now_payload
+            .get("run")
+            .and_then(|v| v.get("run_id"))
+            .and_then(|v| v.as_str())
+            .expect("automation run_id in run_now response")
+            .to_string();
+
+        let history_req = Request::builder()
+            .method("GET")
+            .uri("/automations/auto-digest/history?limit=5")
+            .body(Body::empty())
+            .expect("automation history request");
+        let history_resp = app
+            .clone()
+            .oneshot(history_req)
+            .await
+            .expect("automation history response");
+        assert_eq!(history_resp.status(), StatusCode::OK);
+        let history_body = to_bytes(history_resp.into_body(), usize::MAX)
+            .await
+            .expect("automation history body");
+        let history_payload: Value =
+            serde_json::from_slice(&history_body).expect("automation history json");
+        assert_eq!(
+            history_payload
+                .get("automationID")
+                .and_then(|v| v.as_str()),
+            Some("auto-digest")
+        );
+
+        let add_artifact_req = Request::builder()
+            .method("POST")
+            .uri(format!("/automations/runs/{run_id}/artifacts"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "uri": "file://reports/daily-digest.md",
+                    "kind": "report",
+                    "label": "Daily Digest",
+                })
+                .to_string(),
+            ))
+            .expect("automation add artifact request");
+        let add_artifact_resp = app
+            .clone()
+            .oneshot(add_artifact_req)
+            .await
+            .expect("automation add artifact response");
+        assert_eq!(add_artifact_resp.status(), StatusCode::OK);
+
+        let list_artifacts_req = Request::builder()
+            .method("GET")
+            .uri(format!("/automations/runs/{run_id}/artifacts"))
+            .body(Body::empty())
+            .expect("automation list artifacts request");
+        let list_artifacts_resp = app
+            .clone()
+            .oneshot(list_artifacts_req)
+            .await
+            .expect("automation list artifacts response");
+        assert_eq!(list_artifacts_resp.status(), StatusCode::OK);
+        let list_artifacts_body = to_bytes(list_artifacts_resp.into_body(), usize::MAX)
+            .await
+            .expect("automation list artifacts body");
+        let list_artifacts_payload: Value =
+            serde_json::from_slice(&list_artifacts_body).expect("automation list artifacts json");
+        assert_eq!(
+            list_artifacts_payload
+                .get("automationRunID")
+                .and_then(|v| v.as_str()),
+            Some(run_id.as_str())
+        );
+        assert!(
+            list_artifacts_payload
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|count| count >= 1)
         );
     }
 

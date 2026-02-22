@@ -1337,6 +1337,358 @@ struct RoutineRunArtifactsResponse {
     artifacts: Vec<RoutineRunArtifact>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationMission {
+    objective: String,
+    #[serde(default)]
+    success_criteria: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    briefing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entrypoint_compat: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationToolPolicy {
+    #[serde(default)]
+    run_allowlist: Vec<String>,
+    #[serde(default)]
+    external_integrations_allowed: bool,
+    #[serde(default)]
+    orchestrator_only_tool_calls: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationApprovalPolicy {
+    #[serde(default)]
+    requires_approval: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationPolicy {
+    #[serde(default)]
+    tool: AutomationToolPolicy,
+    #[serde(default)]
+    approval: AutomationApprovalPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AutomationSpec {
+    automation_id: String,
+    name: String,
+    status: RoutineStatus,
+    schedule: RoutineSchedule,
+    timezone: String,
+    misfire_policy: RoutineMisfirePolicy,
+    #[serde(default)]
+    mode: String,
+    mission: AutomationMission,
+    #[serde(default)]
+    policy: AutomationPolicy,
+    #[serde(default)]
+    output_targets: Vec<String>,
+    creator_type: String,
+    creator_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    next_fire_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_fired_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationMissionSnapshot {
+    objective: String,
+    #[serde(default)]
+    success_criteria: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entrypoint_compat: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AutomationPolicySnapshot {
+    #[serde(default)]
+    tool: AutomationToolPolicy,
+    #[serde(default)]
+    approval: AutomationApprovalPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AutomationRunRecord {
+    run_id: String,
+    automation_id: String,
+    trigger_type: String,
+    run_count: u32,
+    status: RoutineRunStatus,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fired_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finished_at_ms: Option<u64>,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    mission_snapshot: AutomationMissionSnapshot,
+    #[serde(default)]
+    policy_snapshot: AutomationPolicySnapshot,
+    #[serde(default)]
+    requires_approval: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    denial_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    paused_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+    #[serde(default)]
+    output_targets: Vec<String>,
+    #[serde(default)]
+    artifacts: Vec<RoutineRunArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationListResponse {
+    automations: Vec<AutomationSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationRecordResponse {
+    automation: AutomationSpec,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationRunsResponse {
+    runs: Vec<AutomationRunRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationRunResponse {
+    run: AutomationRunRecord,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationRunNowResponse {
+    ok: bool,
+    status: String,
+    run: AutomationRunRecord,
+}
+
+fn routine_request_to_automation_create(request: RoutineCreateRequest) -> serde_json::Value {
+    let mission_objective = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("prompt"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("Execute scheduled automation.")
+        .to_string();
+    let mission_success = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("success_criteria"))
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.as_str())
+                .map(str::trim)
+                .filter(|row| !row.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mode = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("mode"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("standalone");
+    let orchestrator_only_tool_calls = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("orchestrator_only_tool_calls"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    serde_json::json!({
+        "automation_id": request.routine_id,
+        "name": request.name,
+        "schedule": request.schedule,
+        "timezone": request.timezone,
+        "misfire_policy": request.misfire_policy,
+        "mode": mode,
+        "mission": {
+            "objective": mission_objective,
+            "success_criteria": mission_success,
+            "briefing": request
+                .args
+                .as_ref()
+                .and_then(|args| args.get("briefing"))
+                .cloned(),
+            "entrypoint_compat": request.entrypoint,
+        },
+        "policy": {
+            "tool": {
+                "run_allowlist": request.allowed_tools.unwrap_or_default(),
+                "external_integrations_allowed": request.external_integrations_allowed.unwrap_or(false),
+                "orchestrator_only_tool_calls": orchestrator_only_tool_calls,
+            },
+            "approval": {
+                "requires_approval": request.requires_approval.unwrap_or(true),
+            }
+        },
+        "output_targets": request.output_targets.unwrap_or_default(),
+        "creator_type": request.creator_type,
+        "creator_id": request.creator_id,
+        "next_fire_at_ms": request.next_fire_at_ms,
+    })
+}
+
+fn routine_patch_to_automation_patch(request: RoutinePatchRequest) -> serde_json::Value {
+    let mission = if request.args.is_some() || request.entrypoint.is_some() {
+        Some(serde_json::json!({
+            "objective": request
+                .args
+                .as_ref()
+                .and_then(|args| args.get("prompt"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string),
+            "success_criteria": request
+                .args
+                .as_ref()
+                .and_then(|args| args.get("success_criteria"))
+                .cloned(),
+            "briefing": request
+                .args
+                .as_ref()
+                .and_then(|args| args.get("briefing"))
+                .cloned(),
+            "entrypoint_compat": request.entrypoint,
+        }))
+    } else {
+        None
+    };
+    serde_json::json!({
+        "name": request.name,
+        "status": request.status,
+        "schedule": request.schedule,
+        "timezone": request.timezone,
+        "misfire_policy": request.misfire_policy,
+        "mode": request
+            .args
+            .as_ref()
+            .and_then(|args| args.get("mode"))
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        "mission": mission,
+        "policy": {
+            "tool": {
+                "run_allowlist": request.allowed_tools,
+                "external_integrations_allowed": request.external_integrations_allowed,
+                "orchestrator_only_tool_calls": request
+                    .args
+                    .as_ref()
+                    .and_then(|args| args.get("orchestrator_only_tool_calls"))
+                    .and_then(|v| v.as_bool()),
+            },
+            "approval": {
+                "requires_approval": request.requires_approval,
+            }
+        },
+        "output_targets": request.output_targets,
+        "next_fire_at_ms": request.next_fire_at_ms,
+    })
+}
+
+fn automation_to_routine(spec: AutomationSpec) -> RoutineSpec {
+    let mut args_obj = serde_json::Map::new();
+    args_obj.insert(
+        "prompt".to_string(),
+        serde_json::Value::String(spec.mission.objective),
+    );
+    args_obj.insert(
+        "success_criteria".to_string(),
+        serde_json::json!(spec.mission.success_criteria),
+    );
+    args_obj.insert("mode".to_string(), serde_json::Value::String(spec.mode));
+    if let Some(briefing) = spec.mission.briefing {
+        args_obj.insert("briefing".to_string(), serde_json::Value::String(briefing));
+    }
+    args_obj.insert(
+        "orchestrator_only_tool_calls".to_string(),
+        serde_json::Value::Bool(spec.policy.tool.orchestrator_only_tool_calls),
+    );
+    RoutineSpec {
+        routine_id: spec.automation_id,
+        name: spec.name,
+        status: spec.status,
+        schedule: spec.schedule,
+        timezone: spec.timezone,
+        misfire_policy: spec.misfire_policy,
+        entrypoint: spec
+            .mission
+            .entrypoint_compat
+            .unwrap_or_else(|| "mission.default".to_string()),
+        args: serde_json::Value::Object(args_obj),
+        allowed_tools: spec.policy.tool.run_allowlist,
+        output_targets: spec.output_targets,
+        creator_type: spec.creator_type,
+        creator_id: spec.creator_id,
+        requires_approval: spec.policy.approval.requires_approval,
+        external_integrations_allowed: spec.policy.tool.external_integrations_allowed,
+        next_fire_at_ms: spec.next_fire_at_ms,
+        last_fired_at_ms: spec.last_fired_at_ms,
+    }
+}
+
+fn automation_run_to_routine_run(run: AutomationRunRecord) -> RoutineRunRecord {
+    let mut args_obj = serde_json::Map::new();
+    args_obj.insert(
+        "prompt".to_string(),
+        serde_json::Value::String(run.mission_snapshot.objective),
+    );
+    args_obj.insert(
+        "success_criteria".to_string(),
+        serde_json::json!(run.mission_snapshot.success_criteria),
+    );
+    args_obj.insert("mode".to_string(), serde_json::Value::String(run.mode));
+    args_obj.insert(
+        "orchestrator_only_tool_calls".to_string(),
+        serde_json::Value::Bool(run.policy_snapshot.tool.orchestrator_only_tool_calls),
+    );
+    RoutineRunRecord {
+        run_id: run.run_id,
+        routine_id: run.automation_id,
+        trigger_type: run.trigger_type,
+        run_count: run.run_count,
+        status: run.status,
+        created_at_ms: run.created_at_ms,
+        updated_at_ms: run.updated_at_ms,
+        fired_at_ms: run.fired_at_ms,
+        started_at_ms: run.started_at_ms,
+        finished_at_ms: run.finished_at_ms,
+        requires_approval: run
+            .policy_snapshot
+            .approval
+            .requires_approval
+            || run.requires_approval,
+        approval_reason: run.approval_reason,
+        denial_reason: run.denial_reason,
+        paused_reason: run.paused_reason,
+        detail: run.detail,
+        entrypoint: run
+            .mission_snapshot
+            .entrypoint_compat
+            .unwrap_or_else(|| "mission.default".to_string()),
+        args: serde_json::Value::Object(args_obj),
+        allowed_tools: run.policy_snapshot.tool.run_allowlist,
+        output_targets: run.output_targets,
+        artifacts: run.artifacts,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MissionStatus {
@@ -3668,29 +4020,34 @@ impl SidecarManager {
 
     pub async fn routines_create(&self, request: RoutineCreateRequest) -> Result<RoutineSpec> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines", self.base_url().await?);
+        let url = format!("{}/automations", self.base_url().await?);
+        let body = routine_request_to_automation_create(request);
         let response = self
             .http_client
             .post(&url)
-            .json(&request)
+            .json(&body)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to create routine: {}", e)))?;
-        let payload: RoutineRecordResponse = self.handle_response(response).await?;
-        Ok(payload.routine)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to create automation: {}", e)))?;
+        let payload: AutomationRecordResponse = self.handle_response(response).await?;
+        Ok(automation_to_routine(payload.automation))
     }
 
     pub async fn routines_list(&self) -> Result<Vec<RoutineSpec>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines", self.base_url().await?);
+        let url = format!("{}/automations", self.base_url().await?);
         let response = self
             .http_client
             .get(&url)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to list routines: {}", e)))?;
-        let payload: RoutineListResponse = self.handle_response(response).await?;
-        Ok(payload.routines)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to list automations: {}", e)))?;
+        let payload: AutomationListResponse = self.handle_response(response).await?;
+        Ok(payload
+            .automations
+            .into_iter()
+            .map(automation_to_routine)
+            .collect::<Vec<_>>())
     }
 
     pub async fn routines_patch(
@@ -3699,29 +4056,34 @@ impl SidecarManager {
         request: RoutinePatchRequest,
     ) -> Result<RoutineSpec> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/{}", self.base_url().await?, routine_id);
+        let url = format!("{}/automations/{}", self.base_url().await?, routine_id);
+        let body = routine_patch_to_automation_patch(request);
         let response = self
             .http_client
             .patch(&url)
-            .json(&request)
+            .json(&body)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to patch routine: {}", e)))?;
-        let payload: RoutineRecordResponse = self.handle_response(response).await?;
-        Ok(payload.routine)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to patch automation: {}", e)))?;
+        let payload: AutomationRecordResponse = self.handle_response(response).await?;
+        Ok(automation_to_routine(payload.automation))
     }
 
     pub async fn routines_delete(&self, routine_id: &str) -> Result<bool> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/{}", self.base_url().await?, routine_id);
+        let url = format!("{}/automations/{}", self.base_url().await?, routine_id);
         let response = self
             .http_client
             .delete(&url)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to delete routine: {}", e)))?;
-        let payload: RoutineDeleteResponse = self.handle_response(response).await?;
-        Ok(payload.deleted)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to delete automation: {}", e)))?;
+        let payload: serde_json::Value = self.handle_response(response).await?;
+        Ok(payload
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .or_else(|| payload.get("deleted").and_then(|v| v.as_bool()))
+            .unwrap_or(false))
     }
 
     pub async fn routines_run_now(
@@ -3730,15 +4092,22 @@ impl SidecarManager {
         request: RoutineRunNowRequest,
     ) -> Result<RoutineRunNowResponse> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/{}/run_now", self.base_url().await?, routine_id);
+        let url = format!("{}/automations/{}/run_now", self.base_url().await?, routine_id);
         let response = self
             .http_client
             .post(&url)
             .json(&request)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to trigger routine: {}", e)))?;
-        self.handle_response(response).await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to trigger automation: {}", e)))?;
+        let payload: AutomationRunNowResponse = self.handle_response(response).await?;
+        Ok(RoutineRunNowResponse {
+            ok: payload.ok,
+            status: payload.status,
+            routine_id: payload.run.automation_id,
+            run_count: payload.run.run_count,
+            fired_at_ms: payload.run.fired_at_ms,
+        })
     }
 
     pub async fn routines_history(
@@ -3747,7 +4116,7 @@ impl SidecarManager {
         limit: Option<usize>,
     ) -> Result<Vec<RoutineHistoryEvent>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/{}/history", self.base_url().await?, routine_id);
+        let url = format!("{}/automations/{}/history", self.base_url().await?, routine_id);
         let mut request = self.http_client.get(&url);
         if let Some(limit) = limit {
             request = request.query(&[("limit", limit)]);
@@ -3766,7 +4135,7 @@ impl SidecarManager {
         limit: Option<usize>,
     ) -> Result<Vec<RoutineRunRecord>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/{}/runs", self.base_url().await?, routine_id);
+        let url = format!("{}/automations/{}/runs", self.base_url().await?, routine_id);
         let mut request = self.http_client.get(&url);
         if let Some(limit) = limit {
             request = request.query(&[("limit", limit)]);
@@ -3774,9 +4143,13 @@ impl SidecarManager {
         let response = request
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to load routine runs: {}", e)))?;
-        let payload: RoutineRunsResponse = self.handle_response(response).await?;
-        Ok(payload.runs)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to load automation runs: {}", e)))?;
+        let payload: AutomationRunsResponse = self.handle_response(response).await?;
+        Ok(payload
+            .runs
+            .into_iter()
+            .map(automation_run_to_routine_run)
+            .collect::<Vec<_>>())
     }
 
     pub async fn routines_runs_all(
@@ -3785,7 +4158,7 @@ impl SidecarManager {
         limit: Option<usize>,
     ) -> Result<Vec<RoutineRunRecord>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/runs", self.base_url().await?);
+        let url = format!("{}/automations/runs", self.base_url().await?);
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(id) = routine_id {
             query.push(("routine_id", id.to_string()));
@@ -3800,23 +4173,27 @@ impl SidecarManager {
             .send()
             .await
             .map_err(|e| {
-                TandemError::Sidecar(format!("Failed to load all routine runs: {}", e))
+                TandemError::Sidecar(format!("Failed to load all automation runs: {}", e))
             })?;
-        let payload: RoutineRunsResponse = self.handle_response(response).await?;
-        Ok(payload.runs)
+        let payload: AutomationRunsResponse = self.handle_response(response).await?;
+        Ok(payload
+            .runs
+            .into_iter()
+            .map(automation_run_to_routine_run)
+            .collect::<Vec<_>>())
     }
 
     pub async fn routines_run_get(&self, run_id: &str) -> Result<RoutineRunRecord> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/runs/{}", self.base_url().await?, run_id);
+        let url = format!("{}/automations/runs/{}", self.base_url().await?, run_id);
         let response = self
             .http_client
             .get(&url)
             .send()
             .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to load routine run: {}", e)))?;
-        let payload: RoutineRunResponse = self.handle_response(response).await?;
-        Ok(payload.run)
+            .map_err(|e| TandemError::Sidecar(format!("Failed to load automation run: {}", e)))?;
+        let payload: AutomationRunResponse = self.handle_response(response).await?;
+        Ok(automation_run_to_routine_run(payload.run))
     }
 
     async fn routine_run_decision(
@@ -3827,7 +4204,7 @@ impl SidecarManager {
     ) -> Result<RoutineRunRecord> {
         self.check_circuit_breaker().await?;
         let url = format!(
-            "{}/routines/runs/{}/{}",
+            "{}/automations/runs/{}/{}",
             self.base_url().await?,
             run_id,
             action
@@ -3840,12 +4217,12 @@ impl SidecarManager {
             .await
             .map_err(|e| {
                 TandemError::Sidecar(format!(
-                    "Failed routine run {} action for {}: {}",
+                    "Failed automation run {} action for {}: {}",
                     action, run_id, e
                 ))
             })?;
-        let payload: RoutineRunResponse = self.handle_response(response).await?;
-        Ok(payload.run)
+        let payload: AutomationRunResponse = self.handle_response(response).await?;
+        Ok(automation_run_to_routine_run(payload.run))
     }
 
     pub async fn routines_run_approve(
@@ -3882,7 +4259,11 @@ impl SidecarManager {
 
     pub async fn routines_run_artifacts(&self, run_id: &str) -> Result<Vec<RoutineRunArtifact>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/runs/{}/artifacts", self.base_url().await?, run_id);
+        let url = format!(
+            "{}/automations/runs/{}/artifacts",
+            self.base_url().await?,
+            run_id
+        );
         let response = self
             .http_client
             .get(&url)
@@ -3901,7 +4282,11 @@ impl SidecarManager {
         request: RoutineRunArtifactAddRequest,
     ) -> Result<RoutineRunRecord> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/routines/runs/{}/artifacts", self.base_url().await?, run_id);
+        let url = format!(
+            "{}/automations/runs/{}/artifacts",
+            self.base_url().await?,
+            run_id
+        );
         let response = self
             .http_client
             .post(&url)
