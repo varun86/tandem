@@ -4023,14 +4023,29 @@ impl SidecarManager {
     pub async fn routines_create(&self, request: RoutineCreateRequest) -> Result<RoutineSpec> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/automations", self.base_url().await?);
+        let legacy_request = request.clone();
         let body = routine_request_to_automation_create(request);
-        let response = self
+        let mut response = self
             .http_client
             .post(&url)
             .json(&body)
             .send()
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to create automation: {}", e)))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            let legacy_url = format!("{}/routines", self.base_url().await?);
+            response = self
+                .http_client
+                .post(&legacy_url)
+                .json(&legacy_request)
+                .send()
+                .await
+                .map_err(|e| {
+                    TandemError::Sidecar(format!("Failed to create legacy routine: {}", e))
+                })?;
+            let payload: RoutineRecordResponse = self.handle_response(response).await?;
+            return Ok(payload.routine);
+        }
         let payload: AutomationRecordResponse = self.handle_response(response).await?;
         Ok(automation_to_routine(payload.automation))
     }
@@ -4038,12 +4053,25 @@ impl SidecarManager {
     pub async fn routines_list(&self) -> Result<Vec<RoutineSpec>> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/automations", self.base_url().await?);
-        let response = self
+        let mut response = self
             .http_client
             .get(&url)
             .send()
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to list automations: {}", e)))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            let legacy_url = format!("{}/routines", self.base_url().await?);
+            response = self
+                .http_client
+                .get(&legacy_url)
+                .send()
+                .await
+                .map_err(|e| {
+                    TandemError::Sidecar(format!("Failed to list legacy routines: {}", e))
+                })?;
+            let payload: RoutineListResponse = self.handle_response(response).await?;
+            return Ok(payload.routines);
+        }
         let payload: AutomationListResponse = self.handle_response(response).await?;
         Ok(payload
             .automations
@@ -4176,7 +4204,7 @@ impl SidecarManager {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        let response = self
+        let mut response = self
             .http_client
             .get(&url)
             .query(&query)
@@ -4185,6 +4213,20 @@ impl SidecarManager {
             .map_err(|e| {
                 TandemError::Sidecar(format!("Failed to load all automation runs: {}", e))
             })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            let legacy_url = format!("{}/routines/runs", self.base_url().await?);
+            response = self
+                .http_client
+                .get(&legacy_url)
+                .query(&query)
+                .send()
+                .await
+                .map_err(|e| {
+                    TandemError::Sidecar(format!("Failed to load all legacy routine runs: {}", e))
+                })?;
+            let payload: RoutineRunsResponse = self.handle_response(response).await?;
+            return Ok(payload.runs);
+        }
         let payload: AutomationRunsResponse = self.handle_response(response).await?;
         Ok(payload
             .runs
