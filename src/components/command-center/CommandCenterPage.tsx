@@ -18,6 +18,9 @@ import {
   setProvidersConfig,
   mcpListServers,
   mcpListTools,
+  routinesCreate,
+  routinesList,
+  routinesPatch,
   routinesRunApprove,
   routinesRunDeny,
   routinesRunPause,
@@ -25,6 +28,7 @@ import {
   routinesRunsAll,
   type McpRemoteTool,
   type McpServerRecord,
+  type RoutineSpec,
   type RoutineRunRecord,
   onSidecarEventV2,
   type FileEntry,
@@ -209,6 +213,15 @@ export function CommandCenterPage({
   const [routineRuns, setRoutineRuns] = useState<RoutineRunRecord[]>([]);
   const [routineRunsLoading, setRoutineRunsLoading] = useState(false);
   const [routineActionBusyRunId, setRoutineActionBusyRunId] = useState<string | null>(null);
+  const [routines, setRoutines] = useState<RoutineSpec[]>([]);
+  const [routinesLoading, setRoutinesLoading] = useState(false);
+  const [createRoutineLoading, setCreateRoutineLoading] = useState(false);
+  const [routineNameDraft, setRoutineNameDraft] = useState("MCP Automation");
+  const [routineEntrypointDraft, setRoutineEntrypointDraft] = useState("mission.default");
+  const [routineIntervalSecondsDraft, setRoutineIntervalSecondsDraft] = useState(300);
+  const [routineAllowedToolsDraft, setRoutineAllowedToolsDraft] = useState<string[]>([]);
+  const [routineRequiresApprovalDraft, setRoutineRequiresApprovalDraft] = useState(true);
+  const [routineExternalAllowedDraft, setRoutineExternalAllowedDraft] = useState(true);
   const [showLogsDrawer, setShowLogsDrawer] = useState(false);
   const [autoApproveTargetRunId, setAutoApproveTargetRunId] = useState<string | null>(null);
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState<FileEntry | null>(null);
@@ -256,6 +269,20 @@ export function CommandCenterPage({
     }
     return Array.from(ids);
   }, [activeRunSessionId, selectedRunSessionId, tasks]);
+  const mcpToolIds = useMemo(
+    () =>
+      [...new Set(mcpTools.map((tool) => tool.namespaced_name))]
+        .filter((tool) => tool.trim().length > 0)
+        .sort(),
+    [mcpTools]
+  );
+  const allowlistChoices = useMemo(
+    () =>
+      [...new Set(["read", "write", "bash", "websearch", ...mcpToolIds])]
+        .filter((tool) => tool.trim().length > 0)
+        .sort(),
+    [mcpToolIds]
+  );
 
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
@@ -402,11 +429,39 @@ export function CommandCenterPage({
     }
   }, []);
 
+  const loadRoutines = useCallback(async () => {
+    setRoutinesLoading(true);
+    try {
+      const rows = await routinesList();
+      rows.sort((a, b) => a.routine_id.localeCompare(b.routine_id));
+      setRoutines(rows);
+    } catch {
+      setRoutines([]);
+    } finally {
+      setRoutinesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadRoutineRuns();
     const timer = setInterval(() => void loadRoutineRuns(), 10000);
     return () => clearInterval(timer);
   }, [loadRoutineRuns]);
+
+  useEffect(() => {
+    void loadRoutines();
+    const timer = setInterval(() => void loadRoutines(), 15000);
+    return () => clearInterval(timer);
+  }, [loadRoutines]);
+
+  useEffect(() => {
+    if (routineAllowedToolsDraft.length > 0) return;
+    if (mcpToolIds.length === 0) return;
+    setRoutineAllowedToolsDraft(["read", mcpToolIds[0]]);
+    if (routineEntrypointDraft === "mission.default") {
+      setRoutineEntrypointDraft(mcpToolIds[0]);
+    }
+  }, [mcpToolIds, routineAllowedToolsDraft.length, routineEntrypointDraft]);
 
   useEffect(() => {
     if (!autoApproveTargetRunId || !snapshot || runId !== autoApproveTargetRunId) {
@@ -559,6 +614,62 @@ export function CommandCenterPage({
       setError(`Routine run action failed: ${message}`);
     } finally {
       setRoutineActionBusyRunId(null);
+    }
+  };
+
+  const toggleRoutineAllowedTool = (toolId: string) => {
+    setRoutineAllowedToolsDraft((prev) => {
+      if (prev.includes(toolId)) {
+        return prev.filter((row) => row !== toolId);
+      }
+      return [...prev, toolId];
+    });
+  };
+
+  const handleCreateRoutine = async () => {
+    const trimmedName = routineNameDraft.trim();
+    if (!trimmedName) {
+      setError("Routine name is required.");
+      return;
+    }
+    const intervalSeconds = Math.max(1, Math.floor(routineIntervalSecondsDraft));
+    setCreateRoutineLoading(true);
+    try {
+      await routinesCreate({
+        name: trimmedName,
+        schedule: {
+          interval_seconds: {
+            seconds: intervalSeconds,
+          },
+        },
+        entrypoint: routineEntrypointDraft.trim() || "mission.default",
+        args: {},
+        allowed_tools: routineAllowedToolsDraft,
+        requires_approval: routineRequiresApprovalDraft,
+        external_integrations_allowed: routineExternalAllowedDraft,
+      });
+      await Promise.all([loadRoutines(), loadRoutineRuns()]);
+      setRoutineNameDraft("MCP Automation");
+      setRoutineIntervalSecondsDraft(300);
+      const at = new Date().toLocaleTimeString();
+      setEventFeed((prev) => [`${at} routine created ${trimmedName}`, ...prev].slice(0, 40));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(`Create routine failed: ${message}`);
+    } finally {
+      setCreateRoutineLoading(false);
+    }
+  };
+
+  const handleToggleRoutineStatus = async (routine: RoutineSpec) => {
+    try {
+      await routinesPatch(routine.routine_id, {
+        status: routine.status === "active" ? "paused" : "active",
+      });
+      await loadRoutines();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(`Update routine failed: ${message}`);
     }
   };
 
@@ -964,6 +1075,136 @@ export function CommandCenterPage({
               >
                 Advanced Controls
               </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs uppercase tracking-wide text-text-subtle">Automation Wiring</div>
+            <div className="text-xs text-text-muted">
+              {routinesLoading ? "Refreshing..." : `${routines.length} configured`}
+            </div>
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="rounded-md border border-border bg-surface-elevated/40 p-3">
+              <div className="text-xs font-semibold text-text">Create Scheduled Bot</div>
+              <div className="mt-2 space-y-2">
+                <input
+                  value={routineNameDraft}
+                  onChange={(event) => setRoutineNameDraft(event.target.value)}
+                  className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
+                  placeholder="Routine name"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={routineIntervalSecondsDraft}
+                    onChange={(event) =>
+                      setRoutineIntervalSecondsDraft(Number.parseInt(event.target.value || "300", 10))
+                    }
+                    className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
+                    placeholder="Interval seconds"
+                  />
+                  <select
+                    value={routineEntrypointDraft}
+                    onChange={(event) => setRoutineEntrypointDraft(event.target.value)}
+                    className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
+                  >
+                    <option value="mission.default">mission.default</option>
+                    {mcpToolIds.map((toolId) => (
+                      <option key={toolId} value={toolId}>
+                        {toolId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-text-subtle">
+                  <label className="inline-flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={routineRequiresApprovalDraft}
+                      onChange={(event) => setRoutineRequiresApprovalDraft(event.target.checked)}
+                    />
+                    Requires approval
+                  </label>
+                  <label className="inline-flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={routineExternalAllowedDraft}
+                      onChange={(event) => setRoutineExternalAllowedDraft(event.target.checked)}
+                    />
+                    External allowed
+                  </label>
+                </div>
+                <div className="rounded border border-border bg-surface p-2">
+                  <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                    Allowed Tools
+                  </div>
+                  <div className="mt-1 max-h-32 space-y-1 overflow-y-auto pr-1">
+                    {allowlistChoices.map((toolId) => (
+                      <label
+                        key={`allowlist-${toolId}`}
+                        className="flex items-center gap-2 text-[11px] text-text"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={routineAllowedToolsDraft.includes(toolId)}
+                          onChange={() => toggleRoutineAllowedTool(toolId)}
+                        />
+                        <span className="truncate font-mono text-[10px]">{toolId}</span>
+                      </label>
+                    ))}
+                    {allowlistChoices.length === 0 ? (
+                      <div className="text-[11px] text-text-muted">
+                        No tools available yet. Connect MCP servers to populate options.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={createRoutineLoading}
+                  onClick={() => void handleCreateRoutine()}
+                >
+                  {createRoutineLoading ? "Creating..." : "Create routine"}
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-md border border-border bg-surface-elevated/40 p-3">
+              <div className="text-xs font-semibold text-text">Configured Routines</div>
+              <div className="mt-2 space-y-2">
+                {routines.slice(0, 8).map((routine) => (
+                  <div
+                    key={routine.routine_id}
+                    className="rounded border border-border bg-surface px-2 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-text">{routine.name}</div>
+                        <div className="truncate text-[11px] text-text-muted">{routine.routine_id}</div>
+                        <div className="truncate text-[11px] text-text-subtle">
+                          {routine.entrypoint} · {routine.status}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void handleToggleRoutineStatus(routine)}
+                      >
+                        {routine.status === "active" ? "Pause" : "Resume"}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {!routinesLoading && routines.length === 0 ? (
+                  <div className="rounded border border-border bg-surface px-2 py-2 text-xs text-text-muted">
+                    No routines configured.
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

@@ -878,6 +878,84 @@ export async function mcpListTools(): Promise<McpRemoteTool[]> {
   return invoke("mcp_list_tools");
 }
 
+export type RoutineStatus = "active" | "paused";
+
+export type RoutineSchedule =
+  | { interval_seconds: { seconds: number } }
+  | { cron: { expression: string } };
+
+export type RoutineMisfirePolicy =
+  | { type: "skip" }
+  | { type: "run_once" }
+  | { type: "catch_up"; max_runs: number };
+
+export interface RoutineSpec {
+  routine_id: string;
+  name: string;
+  status: RoutineStatus;
+  schedule: RoutineSchedule;
+  timezone: string;
+  misfire_policy: RoutineMisfirePolicy;
+  entrypoint: string;
+  args: Record<string, unknown>;
+  allowed_tools: string[];
+  creator_type: string;
+  creator_id: string;
+  requires_approval: boolean;
+  external_integrations_allowed: boolean;
+  next_fire_at_ms?: number | null;
+  last_fired_at_ms?: number | null;
+}
+
+export interface RoutineCreateRequest {
+  routine_id?: string;
+  name: string;
+  schedule: RoutineSchedule;
+  timezone?: string;
+  misfire_policy?: RoutineMisfirePolicy;
+  entrypoint: string;
+  args?: Record<string, unknown>;
+  allowed_tools?: string[];
+  creator_type?: string;
+  creator_id?: string;
+  requires_approval?: boolean;
+  external_integrations_allowed?: boolean;
+  next_fire_at_ms?: number;
+}
+
+export interface RoutinePatchRequest {
+  name?: string;
+  status?: RoutineStatus;
+  schedule?: RoutineSchedule;
+  timezone?: string;
+  misfire_policy?: RoutineMisfirePolicy;
+  entrypoint?: string;
+  args?: Record<string, unknown>;
+  allowed_tools?: string[];
+  requires_approval?: boolean;
+  external_integrations_allowed?: boolean;
+  next_fire_at_ms?: number;
+}
+
+export async function routinesList(): Promise<RoutineSpec[]> {
+  return invoke("routines_list");
+}
+
+export async function routinesCreate(request: RoutineCreateRequest): Promise<RoutineSpec> {
+  return invoke("routines_create", { request });
+}
+
+export async function routinesPatch(
+  routineId: string,
+  request: RoutinePatchRequest
+): Promise<RoutineSpec> {
+  return invoke("routines_patch", { routineId, request });
+}
+
+export async function routinesDelete(routineId: string): Promise<boolean> {
+  return invoke("routines_delete", { routineId });
+}
+
 export type RoutineRunStatus =
   | "queued"
   | "pending_approval"
