@@ -174,21 +174,25 @@ jobs:
             engine_asset: tandem-engine-linux-x64.tar.gz
             tui_asset: tandem-tui-linux-x64.tar.gz
             standalone_archive: tar.gz
+            upload_updater_json: false
           - platform: macos-latest
             target: x86_64-apple-darwin
             engine_asset: tandem-engine-darwin-x64.zip
             tui_asset: tandem-tui-darwin-x64.zip
             standalone_archive: zip
+            upload_updater_json: false
           - platform: macos-latest
             target: aarch64-apple-darwin
             engine_asset: tandem-engine-darwin-arm64.zip
             tui_asset: tandem-tui-darwin-arm64.zip
             standalone_archive: zip
+            upload_updater_json: false
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             engine_asset: tandem-engine-windows-x64.zip
             tui_asset: tandem-tui-windows-x64.zip
             standalone_archive: zip
+            upload_updater_json: true
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -298,6 +302,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
+          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Build and upload (macOS, signed/notarized)
         if: ${{ matrix.platform == 'macos-latest' && env.MACOS_SIGNING_ENABLED == 'true' }}
@@ -324,6 +329,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
+          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Verify macOS DMG (Gatekeeper)
         if: ${{ matrix.platform == 'macos-latest' }}
@@ -404,6 +410,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
+          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Package standalone engine/tui assets (Windows)
         if: ${{ matrix.platform == 'windows-latest' }}
