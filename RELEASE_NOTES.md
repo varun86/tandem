@@ -72,6 +72,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added automation model-routing controls and presets (OpenRouter/OpenCode Zen examples) and emitted `routine.run.model_selected` events.
   - Hardened automation `model_policy` validation/patch semantics (including clear with `model_policy: {}`).
   - Expanded guide docs for MCP automated agent setup, headless operation, provider onboarding, and release-readiness checklist.
+- Contributor thanks:
+  - Thanks to [@iridite](https://github.com/iridite) for PR #12 (ProviderCard i18n namespace fix).
+  - Thanks for earlier file-reading migration work moving document extraction toward shared engine-side crate usage (`tandem-document`).
 
 ## v0.3.7 - 2026-02-18
 

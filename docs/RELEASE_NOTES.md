@@ -65,6 +65,12 @@
 - **Server model policy hardening**: Added strict `model_policy` validation in automation create/patch handlers and explicit clear semantics (`model_policy: {}`).
 - **Docs rollout for automated agents**: Expanded MCP automated agent guide with headless setup, provider onboarding (Arcade/Composio), mission quality guidance, model-policy examples, and release test checklist.
 
+### Contributor Thanks
+
+- Thanks to [@iridite](https://github.com/iridite) for:
+  - **PR #12**: Provider settings i18n namespace fix (`ProviderCard` translation resolution).
+  - Earlier document-read architecture work that moved file-reading extraction from app-local paths toward shared engine-side usage via the `tandem-document` crate.
+
 ### Orchestrator Routing Migration Notes
 
 - Legacy run payloads and API requests using `planner`/`builder`/`validator` continue to load and are normalized automatically.
