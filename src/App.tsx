@@ -83,7 +83,7 @@ import {
   Blocks,
   Loader2,
 } from "lucide-react";
-import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.10.md?raw";
+import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.11.md?raw";
 
 const WHATS_NEW_SEEN_KEY = "tandem_whats_new_seen_version";
 

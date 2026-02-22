@@ -2,7 +2,7 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.3.10 (Unreleased)
+## v0.3.11 (Unreleased)
 
 - Issue #14 fix (custom providers + live model lists):
   - Fixed `custom` provider routing so custom endpoint/model selections are honored for chat/automation dispatch.
