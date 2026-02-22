@@ -1,5 +1,5 @@
 import express from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -111,6 +111,9 @@ const handleProxyReq = (proxyReq, req) => {
   if (req.headers.accept && req.headers.accept === 'text/event-stream') {
     proxyReq.setHeader('Cache-Control', 'no-cache');
   }
+
+  // express.json() consumes request streams; re-write JSON bodies for proxied PUT/PATCH/POST.
+  fixRequestBody(proxyReq, req);
 };
 
 const runControlScript = async (action) => {
@@ -248,7 +251,6 @@ app.use(
     on: {
       proxyReq: handleProxyReq,
     },
-    onProxyReq: handleProxyReq,
   })
 );
 
