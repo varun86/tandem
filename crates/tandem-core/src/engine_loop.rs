@@ -325,8 +325,12 @@ impl EngineLoop {
                 if active_agent.tools.is_some() {
                     tool_schemas.retain(|schema| agent_can_use_tool(&active_agent, &schema.name));
                 }
-                if let Some(allowed_tools) =
-                    self.session_allowed_tools.read().await.get(&session_id).cloned()
+                if let Some(allowed_tools) = self
+                    .session_allowed_tools
+                    .read()
+                    .await
+                    .get(&session_id)
+                    .cloned()
                 {
                     if !allowed_tools.is_empty() {
                         tool_schemas.retain(|schema| {
@@ -859,9 +863,7 @@ impl EngineLoop {
             .cloned()
         {
             if !allowed_tools.is_empty() && !allowed_tools.iter().any(|name| name == &tool) {
-                return Ok(Some(format!(
-                    "Tool `{tool}` is not allowed for this run."
-                )));
+                return Ok(Some(format!("Tool `{tool}` is not allowed for this run.")));
             }
         }
         if let Some(hook) = self.tool_policy_hook.read().await.clone() {
@@ -2343,10 +2345,18 @@ fn should_force_workspace_probe(user_text: &str, completion: &str) -> bool {
     let asked_for_project_context = [
         "what is this project",
         "what's this project",
+        "what project is this",
         "explain this project",
         "analyze this project",
         "inspect this project",
         "look at the project",
+        "summarize this project",
+        "show me this project",
+        "what files are in",
+        "show files",
+        "list files",
+        "read files",
+        "browse files",
         "use glob",
         "run glob",
     ]
@@ -2360,12 +2370,25 @@ fn should_force_workspace_probe(user_text: &str, completion: &str) -> bool {
     let assistant_claimed_no_access = [
         "can't inspect",
         "cannot inspect",
+        "unable to inspect",
+        "unable to directly inspect",
+        "can't access",
+        "cannot access",
+        "unable to access",
+        "can't read files",
+        "cannot read files",
+        "unable to read files",
+        "tool restriction",
+        "tool restrictions",
         "don't have visibility",
+        "no visibility",
         "haven't been able to inspect",
         "i don't know what this project is",
         "need your help to",
         "sandbox",
+        "restriction",
         "system restriction",
+        "permissions restrictions",
     ]
     .iter()
     .any(|needle| reply.contains(needle));
@@ -3864,5 +3887,3 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(prompt.contains("Path style: windows"));
     }
 }
-
-

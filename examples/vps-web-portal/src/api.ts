@@ -143,10 +143,21 @@ export class EngineAPI {
         "No default provider/model configured. Open Provider Setup and choose a tool-capable model."
       );
     }
-    if (!isLikelyToolCapableModel(spec.modelID)) {
-      throw new Error(toolCapablePolicyReason(spec.modelID));
+    if (isLikelyToolCapableModel(spec.modelID)) {
+      return spec;
     }
-    return spec;
+
+    const fallback = await this.resolveToolCapableFallbackSpec(spec.providerID);
+    if (fallback) {
+      this.cachedModelSpec = fallback;
+      this.cachedModelSpecAtMs = Date.now();
+      console.warn(
+        `[portal] model '${spec.modelID}' is weak for tool calls; auto-switching to '${fallback.modelID}'.`
+      );
+      return fallback;
+    }
+
+    throw new Error(toolCapablePolicyReason(spec.modelID));
   }
 
   private async resolveEngineModelSpec(): Promise<EngineModelSpec | null> {
@@ -195,6 +206,52 @@ export class EngineAPI {
       // Keep request flow working even if model discovery fails.
     }
 
+    return null;
+  }
+
+  private async resolveToolCapableFallbackSpec(
+    preferredProviderId?: string
+  ): Promise<EngineModelSpec | null> {
+    try {
+      const [cfg, catalog] = await Promise.all([
+        this.getProvidersConfig(),
+        this.getProviderCatalog(),
+      ]);
+      const connected = (catalog.connected || []).filter(Boolean);
+      if (connected.length === 0) return null;
+
+      const entries = new Map((catalog.all || []).map((entry) => [entry.id, entry]));
+      const candidates: EngineModelSpec[] = [];
+
+      const orderedProviders = [
+        ...(preferredProviderId ? [preferredProviderId] : []),
+        ...connected.filter((id) => id !== preferredProviderId),
+      ];
+
+      for (const providerId of orderedProviders) {
+        if (!connected.includes(providerId)) continue;
+        const providerCfgModel = asString(cfg.providers?.[providerId]?.default_model);
+        if (providerCfgModel) {
+          candidates.push({ providerID: providerId, modelID: providerCfgModel });
+        }
+        const models = Object.keys(entries.get(providerId)?.models || {});
+        for (const modelId of models) {
+          candidates.push({ providerID: providerId, modelID: modelId });
+        }
+      }
+
+      const seen = new Set<string>();
+      for (const candidate of candidates) {
+        const key = `${candidate.providerID}:${candidate.modelID}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (isLikelyToolCapableModel(candidate.modelID)) {
+          return candidate;
+        }
+      }
+    } catch {
+      // Keep request flow working even if fallback discovery fails.
+    }
     return null;
   }
 
@@ -426,6 +483,7 @@ export class EngineAPI {
     command: string
   ): Promise<{
     ok?: boolean;
+    cwd?: string;
     output?: string;
     stdout?: string;
     stderr?: string;
@@ -436,13 +494,16 @@ export class EngineAPI {
       throw new Error("Command is empty");
     }
     const [bin, ...args] = parts;
-    return this.request<{ ok?: boolean; output?: string; stdout?: string; stderr?: string }>(
-      `/session/${encodeURIComponent(sessionId)}/command`,
-      {
-        method: "POST",
-        body: JSON.stringify({ command: bin, args }),
-      }
-    );
+    return this.request<{
+      ok?: boolean;
+      cwd?: string;
+      output?: string;
+      stdout?: string;
+      stderr?: string;
+    }>(`/session/${encodeURIComponent(sessionId)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ command: bin, args }),
+    });
   }
 
   async listPermissions(): Promise<PermissionSnapshotResponse> {

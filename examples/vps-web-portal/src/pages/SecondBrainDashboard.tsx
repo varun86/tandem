@@ -26,6 +26,7 @@ interface PendingApproval {
 }
 
 const SECOND_BRAIN_SESSION_KEY = "tandem_portal_second_brain_session_id";
+const SECOND_BRAIN_PRIME_MARKER = "[SECOND_BRAIN_PRIMED_V1]";
 const RUN_TIMEOUT_MS = 45000;
 
 const buildChatEvents = (
@@ -79,6 +80,38 @@ export const SecondBrainDashboard: React.FC = () => {
       ];
       return next.slice(-120);
     });
+  };
+
+  const buildSecondBrainPrimePrompt = (workspacePath: string): string =>
+    `${SECOND_BRAIN_PRIME_MARKER}
+You are a Second Brain AI assistant with live tool access.
+Current workspace root: ${workspacePath}
+
+Operational rules:
+1. Never claim sandbox/permission restrictions unless a tool returns an explicit denial/error.
+2. For questions about files, folders, or current directory, run a tool first (for example bash with "pwd", or list/glob/read) and report the actual result.
+3. If a tool fails, include the exact failure message and suggest the next concrete step.
+4. When users ask you to learn a folder, use memory_store to index local files and output summary stats to 'out/index_stats.json'.
+5. When answering questions, write detailed output to 'out/answers.md' and cite file paths in your chat reply.`;
+
+  const ensureSecondBrainPrimed = async (sid: string, workspacePath: string) => {
+    try {
+      const history = await api.getSessionMessages(sid);
+      const alreadyPrimed = history.some((m) =>
+        (m.parts || []).some(
+          (p) =>
+            p.type === "text" &&
+            typeof p.text === "string" &&
+            p.text.includes(SECOND_BRAIN_PRIME_MARKER)
+        )
+      );
+      if (alreadyPrimed) return;
+      await api.sendMessage(sid, buildSecondBrainPrimePrompt(workspacePath));
+      addTrace(`Applied Second Brain priming for ${sid.substring(0, 8)}.`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      addTrace(`Priming check failed: ${errorMessage}`);
+    }
   };
 
   const readSessionWorkspace = async (sid: string): Promise<string | null> => {
@@ -334,6 +367,7 @@ export const SecondBrainDashboard: React.FC = () => {
       const workspacePath = (await readSessionWorkspace(sid)) || "unknown";
       setCurrentWorkspace(workspacePath);
       addTrace(`Session workspace: ${workspacePath}`);
+      await ensureSecondBrainPrimed(sid, workspacePath);
       const history = await api.getSessionMessages(sid);
       const restored = buildChatEvents(history);
 
@@ -394,17 +428,7 @@ export const SecondBrainDashboard: React.FC = () => {
         setSessionId(sid);
         const workspacePath = (await readSessionWorkspace(sid)) || ".";
         setCurrentWorkspace(workspacePath);
-        // System prompt sets up the MCP expectation for new sessions only.
-        const prompt = `You are a Second Brain AI assistant with live tool access.
-Current workspace root: ${workspacePath}
-
-Operational rules:
-1. Never claim sandbox/permission restrictions unless a tool returns an explicit denial/error.
-2. For questions about files, folders, or current directory, run a tool first (for example bash with "pwd", or list/glob/read) and report the actual result.
-3. If a tool fails, include the exact failure message and suggest the next concrete step.
-4. When users ask you to learn a folder, use memory_store to index local files and output summary stats to 'out/index_stats.json'.
-5. When answering questions, write detailed output to 'out/answers.md' and cite file paths in your chat reply.`;
-        await api.sendMessage(sid, prompt);
+        await ensureSecondBrainPrimed(sid, workspacePath);
         addTrace(
           `Created new session ${sid.substring(0, 8)} with workspace ${workspacePath} and primed instructions.`
         );
@@ -531,6 +555,64 @@ Operational rules:
       return;
     }
 
+    if (
+      /\b(what\s+is\s+this\s+project|what's\s+this\s+project|what\s+project\s+is\s+this|explain\s+this\s+project|summari[sz]e\s+this\s+project|inspect\s+this\s+project)\b/i.test(
+        userMsg
+      )
+    ) {
+      addTrace("Project-summary question detected; executing deterministic workspace checks.");
+      try {
+        const cwdRes = await api.runSessionCommand(sessionId, "pwd");
+        const cwd = (cwdRes.stdout || cwdRes.output || currentWorkspace || "(unknown)")
+          .toString()
+          .trim();
+
+        const lsRes = await api.runSessionCommand(sessionId, "ls -la");
+        const listing = (lsRes.stdout || lsRes.output || lsRes.stderr || "(no output)")
+          .toString()
+          .trim()
+          .replace(/\r\n/g, "\n");
+
+        let readmePreview = "";
+        try {
+          const readmeRes = await api.runSessionCommand(sessionId, "head -n 80 README.md");
+          const readmeOut = (readmeRes.stdout || readmeRes.output || readmeRes.stderr || "")
+            .toString()
+            .trim()
+            .replace(/\r\n/g, "\n");
+          if (readmeOut.length > 0) {
+            readmePreview = `\n\nREADME.md (first lines):\n${readmeOut}`;
+          }
+        } catch {
+          // Non-fatal; many repos do not have README.md in workspace root.
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Math.random().toString(),
+            role: "agent",
+            type: "text",
+            content: `Workspace: ${cwd}\n\nTop-level listing:\n${listing}${readmePreview}`,
+          },
+        ]);
+        addTrace("Deterministic project summary returned from workspace commands.");
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        addTrace(`Deterministic project summary failed: ${errorMessage}`);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Math.random().toString(),
+            role: "agent",
+            type: "text",
+            content: `Could not inspect project files directly: ${errorMessage}`,
+          },
+        ]);
+      }
+      return;
+    }
+
     setIsThinking(true);
     addTrace("Submitting prompt to async run.");
 
@@ -572,6 +654,7 @@ Operational rules:
       setSessionId(sid);
       const workspacePath = (await readSessionWorkspace(sid)) || ".";
       setCurrentWorkspace(workspacePath);
+      await ensureSecondBrainPrimed(sid, workspacePath);
       addTrace(`Session reset. New session ${sid.substring(0, 8)}.`);
       addTrace(`Session workspace: ${workspacePath}`);
       void refreshToolCatalog();

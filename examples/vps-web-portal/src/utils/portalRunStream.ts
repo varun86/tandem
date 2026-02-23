@@ -113,12 +113,53 @@ export const attachPortalRunStream = (
         return;
       }
 
+      if (data.type === "permission.asked") {
+        const tool = String(data?.properties?.tool || data?.properties?.permission || "tool");
+        const requestId = String(data?.properties?.requestID || "").trim();
+        handlers.addSystemLog(
+          requestId
+            ? `Permission requested for ${tool} (${requestId.substring(0, 8)}).`
+            : `Permission requested for ${tool}.`
+        );
+        return;
+      }
+
+      if (data.type === "permission.replied") {
+        const reply = String(data?.properties?.reply || "unknown");
+        const requestId = String(data?.properties?.requestID || "").trim();
+        handlers.addSystemLog(
+          requestId
+            ? `Permission reply: ${reply} (${requestId.substring(0, 8)}).`
+            : `Permission reply: ${reply}.`
+        );
+        return;
+      }
+
+      if (data.type === "tool.loop_guard.triggered") {
+        const tool = String(data?.properties?.tool || "tool");
+        const reason = String(data?.properties?.reason || "guard");
+        handlers.addSystemLog(`Tool loop guard triggered for ${tool}: ${reason}.`);
+        return;
+      }
+
+      if (data.type === "tool.args.recovered") {
+        const tool = String(data?.properties?.tool || "tool");
+        handlers.addSystemLog(`Recovered tool arguments for ${tool}.`);
+        return;
+      }
+
       if (data.type !== "message.part.updated") return;
       const part = data?.properties?.part;
       if (!part) return;
 
-      if (part.type === "tool") {
-        const status = part?.state?.status;
+      if (part.type === "tool" || part.type === "tool-invocation" || part.type === "tool-result") {
+        const rawState = part?.state;
+        const status =
+          typeof rawState === "string"
+            ? rawState
+            : typeof rawState?.status === "string"
+              ? rawState.status
+              : undefined;
         if (status === "running" || status === "in_progress" || status === "pending") {
           handlers.onToolStart({ tool: String(part.tool || "tool") });
           return;
@@ -131,7 +172,12 @@ export const attachPortalRunStream = (
           status === "canceled" ||
           status === "denied"
         ) {
-          const rawResult = part?.state?.result ?? part?.state?.output ?? part?.result ?? "";
+          const rawResult =
+            part?.result ??
+            part?.error ??
+            (typeof rawState === "object" ? rawState?.result : undefined) ??
+            (typeof rawState === "object" ? rawState?.output : undefined) ??
+            "";
           const result =
             typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult || {});
           handlers.onToolEnd({ tool: String(part.tool || "tool"), result });

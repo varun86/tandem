@@ -3419,23 +3419,63 @@ async fn command_list() -> Json<Value> {
         {"id":"cargo-check","command":"cargo","args":["check","-p","tandem-engine"]}
     ]))
 }
-async fn run_command(Json(input): Json<CommandRunInput>) -> Result<Json<Value>, StatusCode> {
+async fn run_command(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CommandRunInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_root = session
+        .workspace_root
+        .as_deref()
+        .and_then(tandem_core::normalize_workspace_path)
+        .or_else(|| tandem_core::normalize_workspace_path(&session.directory));
+    let default_cwd = tandem_core::normalize_workspace_path(&session.directory)
+        .or_else(|| workspace_root.clone())
+        .unwrap_or_else(|| ".".to_string());
+
     let command = input.command.ok_or(StatusCode::BAD_REQUEST)?;
     let mut cmd = Command::new(&command);
     cmd.args(input.args);
-    if let Some(cwd) = input.cwd {
-        cmd.current_dir(cwd);
-    }
+    let effective_cwd = if let Some(requested_cwd) = input.cwd {
+        let normalized = tandem_core::normalize_workspace_path(&requested_cwd)
+            .unwrap_or_else(|| requested_cwd.trim().to_string());
+        if normalized.is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if let Some(root) = workspace_root.as_ref() {
+            let requested_path = PathBuf::from(&normalized);
+            let candidate = if requested_path.is_absolute() {
+                requested_path
+            } else {
+                PathBuf::from(root).join(requested_path)
+            };
+            if !tandem_core::is_within_workspace_root(&candidate, &PathBuf::from(root)) {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+        normalized
+    } else {
+        default_cwd
+    };
+    cmd.current_dir(&effective_cwd);
+
     let output = cmd
         .output()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({
         "ok": output.status.success(),
+        "cwd": effective_cwd,
         "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
         "stderr": String::from_utf8_lossy(&output.stderr).to_string()
     })))
 }
+
 async fn run_shell(Json(input): Json<ShellRunInput>) -> Result<Json<Value>, StatusCode> {
     let command = input.command.ok_or(StatusCode::BAD_REQUEST)?;
     let mut cmd = Command::new("powershell");
