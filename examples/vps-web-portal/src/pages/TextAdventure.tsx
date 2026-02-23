@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "../api";
 import { MessageSquareQuote, ChevronRight, RotateCcw } from "lucide-react";
+import { handleCommonRunEvent } from "../utils/liveEventDebug";
 
 interface GameEvent {
   id: string;
@@ -238,6 +239,27 @@ Keep responses under 3 paragraphs plus the 3 choices.`;
           sawRunEvent = true;
         }
 
+        const handledCommon = handleCommonRunEvent(
+          data,
+          ({ content }) => addEvent({ type: "system", content: content.toUpperCase() }),
+          (status) => {
+            if (
+              status === "completed" ||
+              status === "failed" ||
+              status === "error" ||
+              status === "cancelled" ||
+              status === "canceled" ||
+              status === "timeout" ||
+              status === "timed_out"
+            ) {
+              void finalize();
+            }
+          }
+        );
+        if (handledCommon) {
+          return;
+        }
+
         if (
           data.type === "message.part.updated" &&
           data.properties?.part?.type === "text" &&
@@ -268,23 +290,6 @@ Keep responses under 3 paragraphs plus the 3 choices.`;
             options: qData.options || ["Look around", "Check pockets", "Call out for help"],
             questionId: qData.question_id,
           });
-        } else if (
-          data.type === "run.status.updated" &&
-          (data.properties?.status === "completed" || data.properties?.status === "failed")
-        ) {
-          void finalize();
-        } else if (
-          data.type === "session.run.finished" &&
-          (data.properties?.status === "completed" || data.properties?.status === "failed")
-        ) {
-          void finalize();
-        } else if (data.type === "session.error") {
-          addEvent({
-            type: "system",
-            content: `ENGINE ERROR: ${data.properties?.error?.message || "Unknown error"}`,
-          });
-        } else if (data.type === "session.status" && data.properties?.status) {
-          addEvent({ type: "system", content: `STATUS: ${String(data.properties.status)}` });
         }
       } catch {
         addEvent({ type: "system", content: "STREAM EVENT PARSE ERROR." });

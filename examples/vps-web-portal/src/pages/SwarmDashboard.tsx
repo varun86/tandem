@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { Loader2, Users } from "lucide-react";
+import { handleCommonRunEvent } from "../utils/liveEventDebug";
 
 interface AgentResponse {
   persona: string;
@@ -177,6 +178,34 @@ export const SwarmDashboard: React.FC = () => {
               if (data.type !== "server.connected" && data.type !== "engine.lifecycle.ready") {
                 sawRunEvent = true;
               }
+
+              const handledCommon = handleCommonRunEvent(
+                data,
+                ({ content }) => {
+                  if (/engine error/i.test(content)) {
+                    setAgents((prev) => {
+                      const updated = [...prev];
+                      updated[index].loading = false;
+                      updated[index].error = content;
+                      return updated;
+                    });
+                  }
+                },
+                (status) => {
+                  if (
+                    status === "completed" ||
+                    status === "failed" ||
+                    status === "error" ||
+                    status === "cancelled" ||
+                    status === "canceled" ||
+                    status === "timeout" ||
+                    status === "timed_out"
+                  ) {
+                    void finalizeAgent();
+                  }
+                }
+              );
+              if (handledCommon) return;
 
               if (
                 data.type === "message.part.updated" &&

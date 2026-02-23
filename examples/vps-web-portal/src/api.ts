@@ -143,7 +143,7 @@ export class EngineAPI {
         "No default provider/model configured. Open Provider Setup and choose a tool-capable model."
       );
     }
-    if (isLikelyToolCapableModel(spec.modelID)) {
+    if (isLikelyToolCapableModel(spec.modelID, spec.providerID)) {
       return spec;
     }
 
@@ -245,7 +245,7 @@ export class EngineAPI {
         const key = `${candidate.providerID}:${candidate.modelID}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (isLikelyToolCapableModel(candidate.modelID)) {
+        if (isLikelyToolCapableModel(candidate.modelID, candidate.providerID)) {
           return candidate;
         }
       }
