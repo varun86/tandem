@@ -2184,5 +2184,3 @@ pub fn emit_mission_budget_exhausted(
         }),
     ));
 }
-
-

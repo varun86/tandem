@@ -109,5 +109,3 @@ pub fn build_mode_permission_rules(
 pub fn default_tui_permission_rules() -> Vec<PermissionRuleTemplate> {
     build_mode_permission_rules(None)
 }
-
-

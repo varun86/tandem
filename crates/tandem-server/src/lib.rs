@@ -2742,5 +2742,3 @@ mod tests {
         assert!(prompt.contains("Output Targets: none configured"));
     }
 }
-
-

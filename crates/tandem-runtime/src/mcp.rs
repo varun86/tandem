@@ -95,7 +95,8 @@ impl McpRegistry {
     }
 
     pub async fn add(&self, name: String, transport: String) {
-        self.add_or_update(name, transport, HashMap::new(), true).await;
+        self.add_or_update(name, transport, HashMap::new(), true)
+            .await;
     }
 
     pub async fn add_or_update(
@@ -304,8 +305,9 @@ impl McpRegistry {
             return Err(format!("MCP server '{server_name}' is not connected"));
         }
 
-        let endpoint = parse_remote_endpoint(&server.transport)
-            .ok_or_else(|| "MCP tools/call currently supports HTTP/S transports only".to_string())?;
+        let endpoint = parse_remote_endpoint(&server.transport).ok_or_else(|| {
+            "MCP tools/call currently supports HTTP/S transports only".to_string()
+        })?;
 
         let request = json!({
             "jsonrpc": "2.0",
@@ -604,8 +606,7 @@ async fn post_json_rpc(
             payload.chars().take(400).collect::<String>()
         ));
     }
-    serde_json::from_str::<Value>(&payload)
-        .map_err(|e| format!("Invalid MCP JSON response: {e}"))
+    serde_json::from_str::<Value>(&payload).map_err(|e| format!("Invalid MCP JSON response: {e}"))
 }
 
 fn render_mcp_content(value: &Value) -> String {
