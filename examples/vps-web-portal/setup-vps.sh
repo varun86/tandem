@@ -281,6 +281,10 @@ If you intentionally need pnpm fallback, set SETUP_ALLOW_PNPM_FALLBACK=1."
     fi
   fi
   run_as_service_user rm -f "$SERVICE_HOME/.local/share/pnpm/tandem-engine" >/dev/null 2>&1 || true
+  run_as_service_user rm -f "$npm_install_prefix/bin/tandem-engine" >/dev/null 2>&1 || true
+  if [[ -n "${NPM_GLOBAL_BIN_PATH:-}" ]]; then
+    run_as_service_user rm -f "$NPM_GLOBAL_BIN_PATH/tandem-engine" >/dev/null 2>&1 || true
+  fi
   run_as_service_user "$npm_path" --prefix "$npm_install_prefix" install -g @frumu/tandem
 }
 
@@ -341,11 +345,11 @@ if [[ -n "$ENGINE_PATH" ]]; then
     log "Reinstalling @frumu/tandem with npm because resolved binary is unusable"
     install_tandem_engine "$NPM_PATH" "$PNPM_PATH"
     ENGINE_PATH="$(resolve_tandem_engine || true)"
-    if [[ -z "$ENGINE_PATH" ]]; then
-      fail "tandem-engine is still unusable after npm reinstall"
-    fi
-    if ! validate_tandem_engine; then
-      fail "tandem-engine is still unusable after npm reinstall"
+    if [[ -n "$ENGINE_PATH" ]]; then
+      if ! validate_tandem_engine; then
+        log "tandem-engine is still unusable after npm reinstall; forcing npx fallback runtime"
+        ENGINE_PATH=""
+      fi
     fi
   fi
 fi
