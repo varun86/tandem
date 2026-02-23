@@ -607,6 +607,10 @@ cd "$PROJECT_DIR"
 NPM_PATH="$(resolve_cmd_path_for_user npm)"
 if [[ -n "$NPM_PATH" && -x "$NPM_PATH" ]]; then
   log "Installing/building portal with npm"
+  # This example app intentionally tracks dependency ranges without npm lockfile.
+  # Remove any ad-hoc package-lock (often produced by `npm audit fix --force`) to
+  # avoid stale peer-resolution conflicts on VPS bootstrap.
+  run_as_service_user rm -f "$PROJECT_DIR/package-lock.json"
   # npm (notably npm 11/arborist) can crash when reifying over pnpm-linked node_modules.
   # If a previous install used pnpm, purge local install artifacts before npm install.
   if [[ -d "$PROJECT_DIR/node_modules/.pnpm" || -f "$PROJECT_DIR/node_modules/.modules.yaml" ]]; then
