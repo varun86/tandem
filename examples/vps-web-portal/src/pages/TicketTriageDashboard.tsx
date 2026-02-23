@@ -24,6 +24,49 @@ export const TicketTriageDashboard: React.FC = () => {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  const syncSessionHistoryIntoLogs = async (sessionId: string) => {
+    try {
+      const messages = await api.getSessionMessages(sessionId);
+      const restored: LogEvent[] = messages.flatMap((m) => {
+        if (m.info?.role === "assistant" || m.info?.role === "user") {
+          const text = (m.parts || [])
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("\n")
+            .trim();
+          if (text) {
+            return {
+              id: Math.random().toString(),
+              timestamp: new Date(),
+              type: "text" as const,
+              content: m.info?.role === "assistant" ? text : `User: ${text}`,
+            };
+          }
+        }
+        return [];
+      });
+      const assistantRestored = restored.filter((entry) => !entry.content.startsWith("User:"));
+      if (assistantRestored.length === 0) {
+        addLog({
+          type: "system",
+          content: "Run completed with no assistant transcript in session history.",
+        });
+        return;
+      }
+      setLogs((prev) => {
+        const existingText = new Set(
+          prev.filter((item) => item.type === "text").map((item) => item.content)
+        );
+        const missing = assistantRestored.filter((item) => !existingText.has(item.content));
+        if (missing.length === 0) return prev;
+        return [...prev, ...missing];
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      addLog({ type: "system", content: `Failed to sync session history: ${errorMessage}` });
+    }
+  };
+
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
@@ -46,11 +89,14 @@ export const TicketTriageDashboard: React.FC = () => {
           toolResult: result,
         }),
       onFinalize: (status) => {
-        addLog({
-          type: "system",
-          content: `Ticket triage finished with status: ${status}. Draft awaits approval in out/drafts.`,
-        });
-        setIsRunning(false);
+        void (async () => {
+          addLog({
+            type: "system",
+            content: `Ticket triage finished with status: ${status}. Draft awaits approval in out/drafts.`,
+          });
+          await syncSessionHistoryIntoLogs(sessionId);
+          setIsRunning(false);
+        })();
       },
     });
   };
