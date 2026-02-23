@@ -425,6 +425,10 @@ If Tandem saves you time or helps you keep your data private while using AI, con
 
 [❤️ Become a Sponsor](https://github.com/sponsors/frumu-ai)
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=frumu-ai/tandem&type=date&logscale&legend=top-left)](https://www.star-history.com/#frumu-ai/tandem&type=date&logscale&legend=top-left)
+
 ## License
 
 - Repository license text: [MIT](LICENSE)

@@ -5048,6 +5048,57 @@ fn websearch_query_present(args: Option<&serde_json::Value>) -> bool {
     args.and_then(extract_websearch_query).is_some()
 }
 
+fn extract_file_tool_path(args: &serde_json::Value) -> Option<String> {
+    for key in ["filePath", "absolute_path", "path", "file"] {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_write_tool_content(args: &serde_json::Value) -> Option<String> {
+    for key in ["content", "body", "text"] {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn missing_file_tool_arg_reason(
+    normalized_tool: &str,
+    args: Option<&serde_json::Value>,
+) -> Option<&'static str> {
+    let Some(args) = args else {
+        return Some("FILE_PATH_MISSING_APPROVAL");
+    };
+
+    let path_missing = extract_file_tool_path(args).is_none();
+    match normalized_tool {
+        "write" | "write_file" | "create_file" => {
+            if path_missing {
+                return Some("FILE_PATH_MISSING_APPROVAL");
+            }
+            if extract_write_tool_content(args).is_none() {
+                return Some("WRITE_CONTENT_MISSING_APPROVAL");
+            }
+            None
+        }
+        "read" | "edit" | "delete" | "delete_file" => {
+            if path_missing {
+                Some("FILE_PATH_MISSING_APPROVAL")
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn set_websearch_query(
     args: Option<serde_json::Value>,
     query: &str,
@@ -5248,6 +5299,59 @@ pub async fn approve_tool(
         ));
     }
 
+    let is_file_tool = matches!(
+        normalized_tool.as_deref(),
+        Some("write" | "write_file" | "create_file" | "read" | "edit" | "delete" | "delete_file")
+    );
+    if is_file_tool {
+        if missing_file_tool_arg_reason(
+            normalized_tool.as_deref().unwrap_or_default(),
+            effective_args.as_ref(),
+        )
+        .is_some()
+        {
+            if let Some(cached_args) = state
+                .permission_args_cache
+                .lock()
+                .await
+                .get(&tool_call_id)
+                .cloned()
+            {
+                if missing_file_tool_arg_reason(
+                    normalized_tool.as_deref().unwrap_or_default(),
+                    Some(&cached_args),
+                )
+                .is_none()
+                {
+                    tracing::warn!(
+                        "[approve_tool] recovered file tool args from request cache request_id={}",
+                        tool_call_id
+                    );
+                    effective_args = Some(cached_args);
+                }
+            }
+        }
+
+        if let Some(reason) = missing_file_tool_arg_reason(
+            normalized_tool.as_deref().unwrap_or_default(),
+            effective_args.as_ref(),
+        ) {
+            tracing::warn!(
+                "[approve_tool] denying file tool due to missing args reason={} request_id={} args={:?}",
+                reason,
+                tool_call_id,
+                effective_args
+            );
+            state
+                .permission_args_cache
+                .lock()
+                .await
+                .remove(&tool_call_id);
+            let _ = state.sidecar.deny_tool(&session_id, &tool_call_id).await;
+            return Err(TandemError::PermissionDenied(reason.to_string()));
+        }
+    }
+
     // Keep session-level intent fresh once query is present.
     if normalized_tool.as_deref() == Some("websearch") {
         if let Some(args_val) = effective_args.as_ref() {
@@ -5307,7 +5411,7 @@ pub async fn approve_tool(
     // Note: OpenCode's tool names are "write", "delete", "read", "bash", "list", "search", etc.
     if let (Some(tool_name), Some(args_val)) = (effective_tool.clone(), effective_args.clone()) {
         let is_file_tool = matches!(
-            tool_name.as_str(),
+            normalize_tool_name_for_approval(tool_name.as_str()).as_str(),
             "write" | "write_file" | "create_file" | "delete" | "delete_file"
         );
 
@@ -5316,13 +5420,7 @@ pub async fn approve_tool(
 
             // Try to extract a file path from args
             // OpenCode uses "filePath" for write operations
-            let path_str = args_val
-                .get("filePath")
-                .and_then(|v| v.as_str())
-                .or_else(|| args_val.get("absolute_path").and_then(|v| v.as_str()))
-                .or_else(|| args_val.get("path").and_then(|v| v.as_str()))
-                .or_else(|| args_val.get("file").and_then(|v| v.as_str()))
-                .map(|s| s.to_string());
+            let path_str = extract_file_tool_path(&args_val);
 
             tracing::info!("[approve_tool] Extracted path: {:?}", path_str);
 
