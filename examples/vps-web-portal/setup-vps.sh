@@ -414,8 +414,24 @@ STATE_DIR="${TANDEM_STATE_DIR:-/srv/tandem}"
 ENGINE_ENV_PATH="/etc/tandem/engine.env"
 ENGINE_CONFIG_PATH="$STATE_DIR/config.json"
 
+# By default, allow the engine to read/write in the service user's home so
+# workspace selection in the portal can target repos under /home/$SERVICE_USER.
+# Operators can disable this by setting TANDEM_ALLOW_HOME_ACCESS=0/false/off.
+ALLOW_HOME_ACCESS="${TANDEM_ALLOW_HOME_ACCESS:-1}"
+if [[ "$ALLOW_HOME_ACCESS" =~ ^(0|false|off|no)$ ]]; then
+  ENGINE_RW_PATHS="$STATE_DIR"
+else
+  ENGINE_RW_PATHS="$STATE_DIR $SERVICE_HOME"
+fi
+
 "${SUDO_CMD[@]}" mkdir -p /etc/tandem "$STATE_DIR"
 "${SUDO_CMD[@]}" chown -R "$SERVICE_USER":"$SERVICE_USER" "$STATE_DIR"
+"${SUDO_CMD[@]}" mkdir -p "$SERVICE_HOME"
+
+if [[ "$ENGINE_RW_PATHS" == *"$SERVICE_HOME"* ]]; then
+  log "Security warning: tandem-engine systemd sandbox will allow access to service home '$SERVICE_HOME'"
+  log "To disable home access, run setup with TANDEM_ALLOW_HOME_ACCESS=0"
+fi
 
 EXISTING_ENGINE_ENV="$("${SUDO_CMD[@]}" sh -c "test -f '$ENGINE_ENV_PATH' && cat '$ENGINE_ENV_PATH' || true")"
 PROVIDER_KEY_REGEX='^(OPENROUTER_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GROQ_API_KEY|MISTRAL_API_KEY|COHERE_API_KEY|TOGETHER_API_KEY|GITHUB_TOKEN)='
@@ -519,7 +535,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$STATE_DIR
+ReadWritePaths=$ENGINE_RW_PATHS
 
 [Install]
 WantedBy=multi-user.target
@@ -545,7 +561,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$STATE_DIR
+ReadWritePaths=$ENGINE_RW_PATHS
 
 [Install]
 WantedBy=multi-user.target
