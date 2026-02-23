@@ -3156,7 +3156,7 @@ async fn prepare_prompt_with_memory_context(
         let meta = default_memory_retrieval_meta();
         tracing::info!(
             target: "tandem.memory",
-            "🧠 memory_retrieval status=skipped used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
+            "ðŸ§  memory_retrieval status=skipped used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
             meta.used,
             meta.chunks_total,
             meta.session_chunks,
@@ -3185,7 +3185,7 @@ async fn prepare_prompt_with_memory_context(
         let meta = default_memory_retrieval_meta();
         tracing::info!(
             target: "tandem.memory",
-            "🧠 memory_retrieval status=unavailable used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
+            "ðŸ§  memory_retrieval status=unavailable used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
             meta.used,
             meta.chunks_total,
             meta.session_chunks,
@@ -3247,7 +3247,7 @@ async fn prepare_prompt_with_memory_context(
             };
             tracing::warn!(
                 target: "tandem.memory",
-                "🧠 memory_retrieval status=error session_id={} error={}",
+                "ðŸ§  memory_retrieval status=error session_id={} error={}",
                 session_id,
                 e
             );
@@ -3262,7 +3262,7 @@ async fn prepare_prompt_with_memory_context(
 
     tracing::info!(
         target: "tandem.memory",
-        "🧠 memory_retrieval status=ok used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
+        "ðŸ§  memory_retrieval status=ok used={} chunks_total={} session_chunks={} history_chunks={} project_fact_chunks={} latency_ms={} query_hash={} score_min={:?} score_max={:?}",
         meta.used,
         meta.chunks_total,
         meta.session_chunks,
@@ -4655,7 +4655,12 @@ pub async fn rewind_to_message(
                     action: "allow".to_string(),
                 },
                 crate::sidecar::PermissionRule {
-                    permission: "webfetch_document".to_string(),
+                    permission: "webfetch".to_string(),
+                    pattern: "*".to_string(),
+                    action: "allow".to_string(),
+                },
+                crate::sidecar::PermissionRule {
+                    permission: "webfetch_html".to_string(),
                     pattern: "*".to_string(),
                     action: "allow".to_string(),
                 },
@@ -6279,19 +6284,21 @@ Use this capability for finding information, verifying facts, or gathering data 
 
 ## Best Practices:
 1. **Search First:** Always start with `websearch` to find valid, up-to-date URLs.
-2. **Avoid Dead Links:** Do not `webfetch_document` URLs that likely don't exist or are deep links without verifying them first.
+2. **Avoid Dead Links:** Do not `webfetch` URLs that likely don't exist or are deep links without verifying them first.
 3. **Handle Blocking:** Many sites (e.g., Statista, Airbnb, LinkedIn) block bots.
-   - If `webfetch_document` returns 403/404/Timeout:
+   - If `webfetch` returns 403/404/Timeout:
      - Do NOT retry the exact same URL immediately.
      - Try searching for the specific information on a different site.
      - Try fetching the root domain or a generic page if appropriate.
-4. **Prefer Text:** `webfetch_document` works best on content-heavy pages (docs, blogs, articles). It may fail on heavy SPAs.
+4. **Prefer Text:** `webfetch` works best on content-heavy pages (docs, blogs, articles). It may fail on heavy SPAs.
+5. **Use HTML Only When Needed:** Use `webfetch_html` only when raw DOM/HTML is explicitly required.
 
 ## Workflow:
 1. **Search:** `websearch` query: "latest real estate trends asia 2025"
 2. **Select:** Pick 1-2 promising URLs from the search results.
-3. **Fetch:** `webfetch_document` url: "..."
+3. **Fetch:** `webfetch` url: "..."
 4. **Fallback:** If fetch fails, go back to step 1 with a refined query or try the next URL.
+5. **Raw HTML (optional):** `webfetch_html` url: "..."
 "#.to_string(),
                     json_schema: serde_json::json!({
                         "strategy": "Search -> Select -> Fetch -> Fallback",
@@ -6625,7 +6632,7 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
                             r#"          <a:p>
             <a:pPr lvl="0">
               <a:buFont typeface="Arial"/>
-              <a:buChar char="•"/>
+              <a:buChar char="â€¢"/>
             </a:pPr>
             <a:r>
               <a:rPr lang="en-US" sz="1800">
@@ -8311,7 +8318,8 @@ fn orchestrator_permission_rules() -> Vec<crate::sidecar::PermissionRule> {
         "todo_write".to_string(),
         "update_todo_list".to_string(),
         "websearch".to_string(),
-        "webfetch_document".to_string(),
+        "webfetch".to_string(),
+        "webfetch_html".to_string(),
         "task".to_string(),
     ];
 
@@ -8329,7 +8337,8 @@ fn orchestrator_permission_rules() -> Vec<crate::sidecar::PermissionRule> {
         "todo_write",
         "update_todo_list",
         "websearch",
-        "webfetch_document",
+        "webfetch",
+        "webfetch_html",
         "task",
     ] {
         rules.push(crate::sidecar::PermissionRule {
@@ -9368,3 +9377,5 @@ mod tests {
         }
     }
 }
+
+

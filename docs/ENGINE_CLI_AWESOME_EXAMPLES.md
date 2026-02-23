@@ -173,8 +173,8 @@ Inspect `metadata`:
 ### Web Research
 
 ```bash
-tandem-engine tool --json '{"tool":"webfetch","args":{"url":"https://github.com/frumu-ai/tandem"}}'
-tandem-engine tool --json '{"tool":"webfetch_document","args":{"url":"https://github.com/frumu-ai/tandem","return":"both","mode":"auto"}}'
+tandem-engine tool --json '{"tool":"webfetch","args":{"url":"https://github.com/frumu-ai/tandem","return":"both","mode":"auto"}}'
+tandem-engine tool --json '{"tool":"webfetch_html","args":{"url":"https://github.com/frumu-ai/tandem"}}'
 tandem-engine tool --json '{"tool":"websearch","args":{"query":"Tandem engine SSE events","limit":5}}'
 ```
 
@@ -553,3 +553,4 @@ tandem-engine run "Draft a migration plan for moving from single-session tooling
 ```bash
 tandem-engine tool --json '{"tool":"batch","args":{"tool_calls":[{"tool":"glob","args":{"pattern":"tandem/docs/*.md"}},{"tool":"read","args":{"path":"tandem/docs/ENGINE_CLI.md"}},{"tool":"grep","args":{"pattern":"token","path":"tandem/docs"}}]}}'
 ```
+

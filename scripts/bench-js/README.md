@@ -1,6 +1,6 @@
 # JS Benchmark for WebFetch
 
-This directory contains a Node.js benchmark script to compare against the Rust `webfetch_document` tool.
+This directory contains a Node.js benchmark script to compare against the Rust `webfetch` tool.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ node bench.mjs ../urls.txt
 - Uses `turndown` to convert the cleaned HTML to Markdown.
 - Measures elapsed time and RSS memory usage.
 
-### Rust (`webfetch_document`)
+### Rust (`webfetch`)
 
 - Fetches URL.
 - Uses Regex to strip `<script>`, `<style>`, `<noscript>` tags.
@@ -47,7 +47,7 @@ Both implementations perform equivalent work: HTTP fetch -> HTML Parsing/Cleanin
 
 ### Content Efficiency
 
-In addition to speed, the `webfetch_document` tool significantly reduces the payload size sent to the LLM by stripping noise and converting to Markdown.
+In addition to speed, the `webfetch` tool significantly reduces the payload size sent to the LLM by stripping noise and converting to Markdown.
 
 - **Reduction**: Typically **~70-80%** reduction in character count compared to raw HTML.
 - **Impact**: This drastic reduction happens _concurrently_ with the fetch and parse, meaning the engine delivers a highly optimized, token-efficient payload in a fraction of the time it takes other tools to just fetch the raw content.
@@ -71,7 +71,7 @@ node bench_server.mjs ../urls.txt
 
 ## Server Feature Benchmark
 
-For broader server capabilities (not just `webfetch_document`), use:
+For broader server capabilities (not just `webfetch`), use:
 
 ```bash
 npm run bench:features
@@ -116,3 +116,4 @@ Reports are written to:
 
 - `bench_features_results.json`
 - `bench_features_results.tsv`
+

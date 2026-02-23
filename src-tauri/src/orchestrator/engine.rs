@@ -156,7 +156,8 @@ impl OrchestratorEngine {
                 "todo_write",
                 "update_todo_list",
                 "websearch",
-                "webfetch_document",
+                "webfetch",
+                "webfetch_html",
                 "task",
             ],
             AgentRole::Worker | AgentRole::Builder => vec![
@@ -174,7 +175,8 @@ impl OrchestratorEngine {
                 "todo_write",
                 "update_todo_list",
                 "websearch",
-                "webfetch_document",
+                "webfetch",
+                "webfetch_html",
             ],
             AgentRole::Watcher | AgentRole::Researcher => vec![
                 "ls",
@@ -185,7 +187,8 @@ impl OrchestratorEngine {
                 "codesearch",
                 "read",
                 "websearch",
-                "webfetch_document",
+                "webfetch",
+                "webfetch_html",
             ],
             AgentRole::Reviewer | AgentRole::Validator | AgentRole::Tester => vec![
                 "ls",
@@ -196,7 +199,8 @@ impl OrchestratorEngine {
                 "codesearch",
                 "read",
                 "websearch",
-                "webfetch_document",
+                "webfetch",
+                "webfetch_html",
             ],
         }
     }
@@ -217,7 +221,8 @@ impl OrchestratorEngine {
             "todo_write",
             "update_todo_list",
             "websearch",
-            "webfetch_document",
+            "webfetch",
+            "webfetch_html",
             "bash",
             "task",
             "spawn_agent",
@@ -254,7 +259,8 @@ impl OrchestratorEngine {
             "todo_write",
             "update_todo_list",
             "websearch",
-            "webfetch_document",
+            "webfetch",
+            "webfetch_html",
             "task",
         ] {
             if allow_set.contains(permission) {
@@ -3477,3 +3483,5 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         }
     }
 }
+
+

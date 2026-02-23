@@ -146,8 +146,8 @@ function buildMissionDraft(brief: string, tools: string[]): MissionDraft {
       ? "Verifier confirms output quality before completion."
       : "Completes without blocked policy or approval timeout.",
   ];
-  if (tools.some((tool) => tool === "webfetch_document")) {
-    successCriteria.push("Uses webfetch_document for web content extraction when relevant.");
+  if (tools.some((tool) => tool === "webfetch")) {
+    successCriteria.push("Uses webfetch for markdown-first web content extraction when relevant.");
   }
   return { objective, successCriteria, suggestedMode };
 }
@@ -377,7 +377,7 @@ export function AgentAutomationPage({
         name: "Daily MCP Research",
         intervalSeconds: 86400,
         entrypoint: "mission.default",
-        allowedTools: ["websearch", "webfetch_document", "read", "write"],
+        allowedTools: ["websearch", "webfetch", "read", "write"],
         requiresApproval: true,
         externalAllowed: true,
         outputTargets: ["file://reports/daily-mcp-research.md"],
@@ -397,7 +397,7 @@ export function AgentAutomationPage({
         name: "Issue Triage Bot",
         intervalSeconds: 900,
         entrypoint: "mission.default",
-        allowedTools: ["read", "write", "websearch", "webfetch_document"],
+        allowedTools: ["read", "write", "websearch", "webfetch"],
         requiresApproval: true,
         externalAllowed: true,
         outputTargets: ["file://reports/issue-triage.json"],
@@ -417,7 +417,7 @@ export function AgentAutomationPage({
         name: "Release Reporter",
         intervalSeconds: 3600,
         entrypoint: "mission.default",
-        allowedTools: ["read", "websearch", "webfetch_document", "write"],
+        allowedTools: ["read", "websearch", "webfetch", "write"],
         requiresApproval: false,
         externalAllowed: true,
         outputTargets: ["file://reports/release-status.md"],
@@ -610,7 +610,8 @@ export function AgentAutomationPage({
           "write",
           "bash",
           "websearch",
-          "webfetch_document",
+          "webfetch",
+          "webfetch_html",
           ...mcpToolIds,
         ]),
       ]
@@ -639,7 +640,7 @@ export function AgentAutomationPage({
 
   useEffect(() => {
     if (routineAllowedToolsDraft.length > 0) return;
-    const defaults = ["read", "websearch", "webfetch_document"];
+    const defaults = ["read", "websearch", "webfetch"];
     if (mcpToolIds.length > 0) {
       defaults.push(mcpToolIds[0]);
     }
@@ -1747,8 +1748,8 @@ export function AgentAutomationPage({
                     >
                       <div className="text-xs font-semibold text-text">{server.name}</div>
                       <div className="mt-0.5 text-[11px] text-text-muted">
-                        {server.enabled ? "enabled" : "disabled"} ·{" "}
-                        {server.connected ? "connected" : "disconnected"} · {count} tools
+                        {server.enabled ? "enabled" : "disabled"} Â·{" "}
+                        {server.connected ? "connected" : "disconnected"} Â· {count} tools
                       </div>
                       {server.last_error ? (
                         <div className="mt-1 text-[11px] text-red-300">{server.last_error}</div>
@@ -1804,3 +1805,5 @@ export function AgentAutomationPage({
     </div>
   );
 }
+
+

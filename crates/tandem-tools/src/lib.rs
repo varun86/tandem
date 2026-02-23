@@ -48,10 +48,7 @@ impl ToolRegistry {
         map.insert("glob".to_string(), Arc::new(GlobTool));
         map.insert("grep".to_string(), Arc::new(GrepTool));
         map.insert("webfetch".to_string(), Arc::new(WebFetchTool));
-        map.insert(
-            "webfetch_document".to_string(),
-            Arc::new(WebFetchDocumentTool),
-        );
+        map.insert("webfetch_html".to_string(), Arc::new(WebFetchHtmlTool));
         map.insert("mcp_debug".to_string(), Arc::new(McpDebugTool));
         map.insert("websearch".to_string(), Arc::new(WebSearchTool));
         map.insert("codesearch".to_string(), Arc::new(CodeSearchTool));
@@ -1174,26 +1171,6 @@ impl Tool for WebFetchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "webfetch".to_string(),
-            description: "Fetch URL text".to_string(),
-            input_schema: json!({"type":"object","properties":{"url":{"type":"string"}}}),
-        }
-    }
-    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let url = args["url"].as_str().unwrap_or("");
-        let body = reqwest::get(url).await?.text().await?;
-        Ok(ToolResult {
-            output: body.chars().take(20_000).collect(),
-            metadata: json!({"truncated": body.len() > 20_000}),
-        })
-    }
-}
-
-struct WebFetchDocumentTool;
-#[async_trait]
-impl Tool for WebFetchDocumentTool {
-    fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "webfetch_document".to_string(),
             description: "Fetch URL content and return a structured markdown document".to_string(),
             input_schema: json!({
                 "type":"object",
@@ -1217,7 +1194,7 @@ impl Tool for WebFetchDocumentTool {
             });
         }
         let mode = args["mode"].as_str().unwrap_or("auto");
-        let return_mode = args["return"].as_str().unwrap_or("both");
+        let return_mode = args["return"].as_str().unwrap_or("markdown");
         let timeout_ms = args["timeout_ms"]
             .as_u64()
             .unwrap_or(15_000)
@@ -1225,54 +1202,20 @@ impl Tool for WebFetchDocumentTool {
         let max_bytes = args["max_bytes"].as_u64().unwrap_or(500_000).min(5_000_000) as usize;
         let max_redirects = args["max_redirects"].as_u64().unwrap_or(5).min(20) as usize;
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(timeout_ms))
-            .redirect(reqwest::redirect::Policy::limited(max_redirects))
-            .build()?;
-
         let started = std::time::Instant::now();
-        let res = client
-            .get(url)
-            .header(
-                "Accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
-            .send()
-            .await?;
-        let final_url = res.url().to_string();
-        let content_type = res
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-
-        let mut stream = res.bytes_stream();
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut truncated = false;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            if buffer.len() + chunk.len() > max_bytes {
-                let remaining = max_bytes.saturating_sub(buffer.len());
-                buffer.extend_from_slice(&chunk[..remaining]);
-                truncated = true;
-                break;
-            }
-            buffer.extend_from_slice(&chunk);
-        }
-        let raw = String::from_utf8_lossy(&buffer).to_string();
+        let fetched = fetch_url_with_limits(url, timeout_ms, max_bytes, max_redirects).await?;
+        let raw = String::from_utf8_lossy(&fetched.buffer).to_string();
 
         let cleaned = strip_html_noise(&raw);
         let title = extract_title(&cleaned).unwrap_or_default();
         let canonical = extract_canonical(&cleaned);
         let links = extract_links(&cleaned);
 
-        let markdown = if content_type.contains("html") || content_type.is_empty() {
+        let markdown = if fetched.content_type.contains("html") || fetched.content_type.is_empty() {
             html2md::parse_html(&cleaned)
         } else {
             cleaned.clone()
         };
-
         let text = markdown_to_text(&markdown);
 
         let markdown_out = if return_mode == "text" {
@@ -1296,9 +1239,9 @@ impl Tool for WebFetchDocumentTool {
 
         let output = json!({
             "url": url,
-            "final_url": final_url,
+            "final_url": fetched.final_url,
             "title": title,
-            "content_type": content_type,
+            "content_type": fetched.content_type,
             "markdown": markdown_out,
             "text": text_out,
             "links": links,
@@ -1307,13 +1250,13 @@ impl Tool for WebFetchDocumentTool {
                 "mode": mode
             },
             "stats": {
-                "bytes_in": buffer.len(),
+                "bytes_in": fetched.buffer.len(),
                 "bytes_out": markdown_chars,
                 "raw_chars": raw_chars,
                 "markdown_chars": markdown_chars,
                 "reduction_pct": reduction_pct,
                 "elapsed_ms": started.elapsed().as_millis(),
-                "truncated": truncated
+                "truncated": fetched.truncated
             }
         });
 
@@ -1321,12 +1264,119 @@ impl Tool for WebFetchDocumentTool {
             output: serde_json::to_string_pretty(&output)?,
             metadata: json!({
                 "url": url,
-                "final_url": final_url,
-                "content_type": content_type,
-                "truncated": truncated
+                "final_url": fetched.final_url,
+                "content_type": fetched.content_type,
+                "truncated": fetched.truncated
             }),
         })
     }
+}
+
+struct WebFetchHtmlTool;
+#[async_trait]
+impl Tool for WebFetchHtmlTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "webfetch_html".to_string(),
+            description: "Fetch URL and return raw HTML content".to_string(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string"},
+                    "max_bytes":{"type":"integer"},
+                    "timeout_ms":{"type":"integer"},
+                    "max_redirects":{"type":"integer"}
+                }
+            }),
+        }
+    }
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let url = args["url"].as_str().unwrap_or("").trim();
+        if url.is_empty() {
+            return Ok(ToolResult {
+                output: "url is required".to_string(),
+                metadata: json!({"url": url}),
+            });
+        }
+        let timeout_ms = args["timeout_ms"]
+            .as_u64()
+            .unwrap_or(15_000)
+            .clamp(1_000, 120_000);
+        let max_bytes = args["max_bytes"].as_u64().unwrap_or(500_000).min(5_000_000) as usize;
+        let max_redirects = args["max_redirects"].as_u64().unwrap_or(5).min(20) as usize;
+
+        let started = std::time::Instant::now();
+        let fetched = fetch_url_with_limits(url, timeout_ms, max_bytes, max_redirects).await?;
+        let output = String::from_utf8_lossy(&fetched.buffer).to_string();
+
+        Ok(ToolResult {
+            output,
+            metadata: json!({
+                "url": url,
+                "final_url": fetched.final_url,
+                "content_type": fetched.content_type,
+                "truncated": fetched.truncated,
+                "bytes_in": fetched.buffer.len(),
+                "elapsed_ms": started.elapsed().as_millis()
+            }),
+        })
+    }
+}
+
+struct FetchedResponse {
+    final_url: String,
+    content_type: String,
+    buffer: Vec<u8>,
+    truncated: bool,
+}
+
+async fn fetch_url_with_limits(
+    url: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+    max_redirects: usize,
+) -> anyhow::Result<FetchedResponse> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .redirect(reqwest::redirect::Policy::limited(max_redirects))
+        .build()?;
+
+    let res = client
+        .get(url)
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .send()
+        .await?;
+    let final_url = res.url().to_string();
+    let content_type = res
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let mut stream = res.bytes_stream();
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if buffer.len() + chunk.len() > max_bytes {
+            let remaining = max_bytes.saturating_sub(buffer.len());
+            buffer.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        buffer.extend_from_slice(&chunk);
+    }
+
+    Ok(FetchedResponse {
+        final_url,
+        content_type,
+        buffer,
+        truncated,
+    })
 }
 
 fn strip_html_noise(input: &str) -> String {

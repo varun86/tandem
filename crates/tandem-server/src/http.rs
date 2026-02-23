@@ -586,7 +586,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     ));
 
     // --- Memory hygiene background task (runs every 12 hours) ---
-    // Opens a fresh connection to memory.sqlite each cycle — safe because WAL
+    // Opens a fresh connection to memory.sqlite each cycle â€” safe because WAL
     // mode allows concurrent readers alongside the main engine connection.
     let hygiene_task = tokio::spawn(async move {
         // Initial delay so startup is not impacted.
@@ -10024,7 +10024,7 @@ mod tests {
                     },
                     "policy": {
                         "tool": {
-                            "run_allowlist": ["read", "websearch", "webfetch_document", "write"],
+                            "run_allowlist": ["read", "websearch", "webfetch", "write"],
                             "external_integrations_allowed": true
                         },
                         "approval": {
@@ -10974,3 +10974,5 @@ mod tests {
             .contains("not allowed for routine"));
     }
 }
+
+

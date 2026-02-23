@@ -1734,7 +1734,7 @@ async fn evaluate_capability_deny(
         return Some(format!("tool `{tool}` not in agent allowlist"));
     }
 
-    if matches!(tool, "websearch" | "webfetch" | "webfetch_document") {
+    if matches!(tool, "websearch" | "webfetch" | "webfetch_html") {
         if !caps.net_scopes.enabled {
             return Some("network disabled for this agent instance".to_string());
         }
@@ -2184,3 +2184,5 @@ pub fn emit_mission_budget_exhausted(
         }),
     ));
 }
+
+

@@ -2,7 +2,14 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.3.14 (Unreleased)
+## v0.3.15 (Unreleased)
+
+- Breaking web tool migration:
+  - `webfetch_document` was removed.
+  - `webfetch` is now markdown-first and returns structured JSON output by default.
+  - Use `webfetch_html` when raw HTML output is explicitly required.
+
+## v0.3.14
 
 - AI hotfix: endless update prompt/version skew
   - Desktop now prefers bundled engine binaries when AppData sidecar binaries are stale, preventing false "You have v0.3.0" prompts after upgrading.

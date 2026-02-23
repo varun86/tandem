@@ -31,10 +31,10 @@ The Tandem Engine tool registry currently exposes the following tools.
 
 ## Web
 
-- **`webfetch`**: Fetch raw URL text.
-  - Input: `url` (string)
-- **`webfetch_document`**: Fetch URL and return structured Markdown.
-  - Input: `url` (string)
+- **`webfetch`**: Fetch URL and return structured Markdown/JSON output.
+  - Input: `url` (string), optional `mode`, `return`, `max_bytes`, `timeout_ms`, `max_redirects`
+- **`webfetch_html`**: Fetch URL and return raw HTML text.
+  - Input: `url` (string), optional `max_bytes`, `timeout_ms`, `max_redirects`
 
 ## System
 
@@ -54,3 +54,4 @@ The Tandem Engine tool registry currently exposes the following tools.
 - **`apply_patch`**: Apply a unified diff patch.
 - **`batch`**: Execute multiple tools in a batch.
 - **`lsp`**: Interact with the Language Server Protocol.
+

@@ -3,7 +3,7 @@
 **Owner:** Tandem Engine  
 **Status:** Feature request (TODO)  
 **Priority:** High (quality + cost + UX win for research/tools)  
-**Motivation:** Replace “HTML soup” with clean, structured Markdown for agents, without relying on Cloudflare’s paid Markdown-for-Agents feature.
+**Motivation:** Replace â€œHTML soupâ€ with clean, structured Markdown for agents, without relying on Cloudflareâ€™s paid Markdown-for-Agents feature.
 
 ---
 
@@ -14,7 +14,7 @@ When agents fetch web pages today, they often receive:
 - low-signal content that wastes tokens
 - inconsistent structure that hurts extraction/summarization
 
-Cloudflare offers “Markdown for Agents” but it’s gated behind Pro/Business plans. We want the same (or better) capability built into **tandem-engine** as a **proprietary/local-first** feature that works on **any site**.
+Cloudflare offers â€œMarkdown for Agentsâ€ but itâ€™s gated behind Pro/Business plans. We want the same (or better) capability built into **tandem-engine** as a **proprietary/local-first** feature that works on **any site**.
 
 ---
 
@@ -52,7 +52,7 @@ Implication: the new feature must either (a) replace the current `webfetch` impl
 
 - Full JS-rendering / headless browser execution (no remote JS)
 - Pixel-perfect table reconstruction for every site
-- Perfect paywalled/blocked page handling beyond “best-effort”
+- Perfect paywalled/blocked page handling beyond â€œbest-effortâ€
 
 ---
 
@@ -67,8 +67,8 @@ Implication: the new feature must either (a) replace the current `webfetch` impl
       "final_url": "https://example.com/page?ref=1",
       "title": "Example Title",
       "content_type": "text/html",
-      "markdown": "# Example Title\n\n…",
-      "text": "Example Title\n\n…",
+      "markdown": "# Example Title\n\nâ€¦",
+      "text": "Example Title\n\nâ€¦",
       "links": [
         {"text": "Some Link", "href": "https://example.com/other"}
       ],
@@ -97,9 +97,9 @@ Suggested args:
 
 ### Backward-compat / replacement path for current `webfetch`
 
-To stay compatible with Tandem’s tool system:
+To stay compatible with Tandemâ€™s tool system:
 - Option 1 (preferred): keep the tool name `webfetch` but change `output` to be a JSON string matching `WebDocument` and include a compact `text` fallback at the top-level for legacy consumers.
-- Option 2: introduce a new tool `webfetch_document` (or `webfetch_markdown`) returning `WebDocument`, and keep `webfetch` returning raw text for legacy behavior.
+- Option 2: introduce a new tool `webfetch` (or `webfetch_markdown`) returning `WebDocument`, and keep `webfetch` returning raw text for legacy behavior.
 
 Document the return shape in tool schema/metadata so the UI and agents can rely on deterministic fields.
 
@@ -121,11 +121,11 @@ Document the return shape in tool schema/metadata so the UI and agents can rely 
    - Phase 2 adds readability-grade extraction.
 
 4. Convert to Markdown
-   - Headings → `#`, `##`, `###`
-   - Lists → `-` / `1.`
-   - Code/pre → fenced code blocks in output (engine output may use triple-backticks; this doc avoids them only for export stability)
-   - Links → `[text](url)`
-   - Images → optional (default: drop or keep only alt + URL)
+   - Headings â†’ `#`, `##`, `###`
+   - Lists â†’ `-` / `1.`
+   - Code/pre â†’ fenced code blocks in output (engine output may use triple-backticks; this doc avoids them only for export stability)
+   - Links â†’ `[text](url)`
+   - Images â†’ optional (default: drop or keep only alt + URL)
 
 5. Post-process
    - Normalize whitespace, collapse repeated blank lines.
@@ -172,11 +172,11 @@ Document the return shape in tool schema/metadata so the UI and agents can rely 
 ### Phase 1 (MVP)
 - Harden fetch (timeouts/caps/redirects/SSRF baseline)
 - Simple boilerplate stripping
-- “Best container by text density” heuristic
+- â€œBest container by text densityâ€ heuristic
 - Convert cleaned DOM to Markdown
 - Return `markdown + text + title + links`
 
-Success criteria: most docs/blog posts become readable and 3–10x smaller than raw HTML.
+Success criteria: most docs/blog posts become readable and 3â€“10x smaller than raw HTML.
 
 ### Phase 2 (Quality upgrade)
 - Add readability-style extraction for `mode=article`
@@ -237,4 +237,5 @@ Include: URL, bytes in/out, elapsed_ms, mode, success/failure, failure reason.
 
 ## Notes / Rationale
 
-Cloudflare’s feature validates the value (token savings + structure), but gating makes it unreliable as a baseline. Tandem should own this capability to keep “research and build with AI” smooth, cheap, and consistent for everyone.
+Cloudflareâ€™s feature validates the value (token savings + structure), but gating makes it unreliable as a baseline. Tandem should own this capability to keep â€œresearch and build with AIâ€ smooth, cheap, and consistent for everyone.
+

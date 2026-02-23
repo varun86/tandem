@@ -1460,7 +1460,8 @@ fn is_read_only_tool(tool_name: &str) -> bool {
             | "ls"
             | "lsp"
             | "websearch"
-            | "webfetch_document"
+            | "webfetch"
+            | "webfetch_html"
     )
 }
 
@@ -3863,3 +3864,5 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(prompt.contains("Path style: windows"));
     }
 }
+
+

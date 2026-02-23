@@ -17,7 +17,7 @@ const EDIT_TOOLS = new Set([
   "patch",
 ]);
 const TERMINAL_TOOLS = new Set(["bash", "shell", "cmd", "terminal", "run_command"]);
-const INTERNET_TOOLS = new Set(["websearch", "webfetch"]);
+const INTERNET_TOOLS = new Set(["websearch", "webfetch", "webfetch_html"]);
 const VALID_BASE_MODES = new Set(["immediate", "plan", "orchestrate", "coder", "ask", "explore"]);
 
 function unique(values: string[]): string[] {
@@ -92,7 +92,7 @@ function applyBoundaryRules(
 }
 
 function withInternetToggle(tools: string[], allowInternet: boolean): string[] {
-  if (allowInternet) return unique([...tools, "websearch", "webfetch"]);
+  if (allowInternet) return unique([...tools, "websearch", "webfetch", "webfetch_html"]);
   return tools.filter((tool) => !INTERNET_TOOLS.has(tool));
 }
 
@@ -280,3 +280,5 @@ export function parseModeFromAiOutput(input: string): ModeDefinition {
 export function skillLocationForWorkspace(workspacePath?: string | null): SkillLocation {
   return workspacePath ? "project" : "global";
 }
+
+

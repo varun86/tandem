@@ -96,7 +96,8 @@ tandem-engine run "Summarize this repository https://github.com/frumu-ai/tandem"
 Direct tools:
 
 ```bash
-tandem-engine tool --json '{"tool":"webfetch_document","args":{"url":"https://github.com/frumu-ai/tandem","return":"both","mode":"auto"}}'
+tandem-engine tool --json '{"tool":"webfetch","args":{"url":"https://github.com/frumu-ai/tandem","return":"both","mode":"auto"}}'
+tandem-engine tool --json '{"tool":"webfetch_html","args":{"url":"https://github.com/frumu-ai/tandem"}}'
 tandem-engine tool --json '{"tool":"websearch","args":{"query":"frumu tandem engine architecture","limit":5}}'
 ```
 
@@ -323,3 +324,4 @@ When `--state-dir` is omitted:
 - `invalid hostname or port`: verify `--hostname` / `--port`
 
 For Windows users, run these commands in WSL for the same behavior.
+

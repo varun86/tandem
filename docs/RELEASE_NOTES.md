@@ -1,4 +1,18 @@
-# Tandem v0.3.14 Release Notes (Unreleased)
+# Tandem v0.3.15 Release Notes (Unreleased)
+
+### Highlights
+
+- **Breaking web tool migration**:
+  - Removed `webfetch_document`.
+  - `webfetch` now returns structured markdown-first JSON output by default.
+  - Added `webfetch_html` for explicit raw HTML fallback.
+  - Migration examples:
+    - Old: `{"tool":"webfetch_document","args":{"url":"https://example.com","return":"both","mode":"auto"}}`
+    - New: `{"tool":"webfetch","args":{"url":"https://example.com","return":"both","mode":"auto"}}`
+
+---
+
+# Tandem v0.3.14 Release Notes
 
 ### Highlights
 

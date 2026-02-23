@@ -54,7 +54,7 @@ run_line() {
   url="${line#*$'\t'}"
   safe_url="${url//\\/\\\\}"
   safe_url="${safe_url//\"/\\\"}"
-  payload="{\"tool\":\"webfetch_document\",\"args\":{\"url\":\"$safe_url\",\"return\":\"text\"}}"
+  payload="{\"tool\":\"webfetch\",\"args\":{\"url\":\"$safe_url\",\"return\":\"text\"}}"
   if [ "$time_mode" = "gnu" ]; then
     { "$time_bin" -f "%e %M" "$engine_bin" tool --json - <<< "$payload" > /dev/null; } 2> "$out_dir/$idx.time"
     read -r elapsed rss_kb < "$out_dir/$idx.time"
@@ -114,3 +114,4 @@ else:
     print("p95_rss_kb=unknown")
 print(f"results_file={path}")
 PY
+

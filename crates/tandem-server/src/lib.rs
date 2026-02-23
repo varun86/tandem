@@ -2690,7 +2690,7 @@ mod tests {
                 "success_criteria": ["All blockers listed", "Output artifact written"],
                 "orchestrator_only_tool_calls": true
             }),
-            allowed_tools: vec!["read".to_string(), "webfetch_document".to_string()],
+            allowed_tools: vec!["read".to_string(), "webfetch".to_string()],
             output_targets: vec!["file://reports/release-readiness.md".to_string()],
             artifacts: vec![],
         };
@@ -2701,7 +2701,7 @@ mod tests {
         assert!(prompt.contains("Mode: orchestrated"));
         assert!(prompt.contains("Plan -> Do -> Verify -> Notify"));
         assert!(prompt.contains("only the orchestrator may execute tools"));
-        assert!(prompt.contains("Allowed Tools: read, webfetch_document"));
+        assert!(prompt.contains("Allowed Tools: read, webfetch"));
         assert!(prompt.contains("file://reports/release-readiness.md"));
     }
 
@@ -2742,3 +2742,5 @@ mod tests {
         assert!(prompt.contains("Output Targets: none configured"));
     }
 }
+
+

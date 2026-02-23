@@ -122,9 +122,10 @@ State directory resolution order:
 ## Tool testing (CLI)
 
 Use the `tool` subcommand to invoke built-in tools directly with JSON input.
-`webfetch_document` is especially useful because it converts noisy HTML into clean Markdown,
+`webfetch` is especially useful because it converts noisy HTML into clean Markdown,
 extracts links + metadata, and reports size reductions. It should work against any public
 HTTP/HTTPS webpage (subject to site limits, auth, or anti-bot protections).
+Use `webfetch_html` when raw HTML is explicitly required.
 
 The Markdown output is returned inline on stdout as JSON in the `output` field:
 
@@ -144,7 +145,7 @@ Size savings example (proven from the Frumu.ai run above):
 
 ```powershell
 @'
-{"tool":"webfetch_document","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
+{"tool":"webfetch","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
 '@ | cargo run -p tandem-ai -- tool --json -
 ```
 
@@ -158,7 +159,7 @@ Size savings example (proven from the Frumu.ai run above):
 
 ```bash
 cat << 'JSON' | cargo run -p tandem-ai -- tool --json -
-{"tool":"webfetch_document","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
+{"tool":"webfetch","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
 JSON
 ```
 
@@ -482,3 +483,4 @@ Select-String -Path "$env:APPDATA\tandem\logs\tandem.desktop.*.jsonl" -Pattern "
 Select-String -Path "$env:APPDATA\tandem\logs\tandem.engine.*.jsonl" -Pattern "provider.call.start"
 Select-String -Path "$env:APPDATA\tandem\logs\tandem.desktop.*.jsonl" -Pattern "stream.subscribe.error|stream.disconnected|stream.watchdog.no_events"
 ```
+

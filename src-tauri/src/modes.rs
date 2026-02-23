@@ -116,7 +116,7 @@ static KNOWN_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "run_command",
         "websearch",
         "webfetch",
-        "webfetch_document",
+        "webfetch_html",
         "todo_write",
         "todowrite",
         "new_task",
@@ -730,3 +730,5 @@ mod tests {
         assert!(is_tool_allowed(&mode, "skill"));
     }
 }
+
+

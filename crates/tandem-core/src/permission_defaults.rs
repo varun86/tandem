@@ -76,7 +76,7 @@ pub fn build_mode_permission_rules(
         });
     }
 
-    if allows_any(allowed_tools, &["webfetch", "webfetch_document"]) {
+    if allows_any(allowed_tools, &["webfetch"]) {
         rules.push(PermissionRuleTemplate {
             permission: "webfetch".to_string(),
             pattern: "*".to_string(),
@@ -84,9 +84,9 @@ pub fn build_mode_permission_rules(
         });
     }
 
-    if allows_any(allowed_tools, &["webfetch_document"]) {
+    if allows_any(allowed_tools, &["webfetch_html"]) {
         rules.push(PermissionRuleTemplate {
-            permission: "webfetch_document".to_string(),
+            permission: "webfetch_html".to_string(),
             pattern: "*".to_string(),
             action: "allow".to_string(),
         });
@@ -109,3 +109,5 @@ pub fn build_mode_permission_rules(
 pub fn default_tui_permission_rules() -> Vec<PermissionRuleTemplate> {
     build_mode_permission_rules(None)
 }
+
+

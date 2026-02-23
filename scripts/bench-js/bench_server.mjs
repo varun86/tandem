@@ -18,7 +18,7 @@ async function fetchTool(url) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        tool: 'webfetch_document',
+        tool: 'webfetch',
         args: { url }
       }),
       signal: controller.signal
@@ -151,3 +151,4 @@ async function main() {
 }
 
 main().catch(console.error);
+

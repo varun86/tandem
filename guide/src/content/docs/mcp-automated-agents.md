@@ -203,7 +203,7 @@ curl -sS -X POST http://127.0.0.1:39731/routines \
     "entrypoint": "mission.default",
     "allowed_tools": [
       "websearch",
-      "webfetch_document",
+      "webfetch",
       "read",
       "write",
       "mcp.arcade.search"
@@ -228,7 +228,7 @@ curl -sS -X POST http://127.0.0.1:39731/routines \
       "read",
       "write",
       "websearch",
-      "webfetch_document",
+      "webfetch",
       "mcp.composio.github_issues_list",
       "mcp.composio.github_issue_comment_create"
     ],
@@ -251,7 +251,7 @@ curl -sS -X POST http://127.0.0.1:39731/routines \
     "allowed_tools": [
       "read",
       "websearch",
-      "webfetch_document",
+      "webfetch",
       "write",
       "mcp.arcade.search"
     ],
@@ -473,7 +473,7 @@ Use this checklist before shipping:
 2. Automation creation:
    - create standalone + orchestrated bots
    - verify interval is interpreted as seconds
-   - verify `webfetch_document` appears in allowed tools
+   - verify `webfetch` appears in allowed tools (and `webfetch_html` when raw HTML fallback is needed)
 3. Model routing:
    - apply a preset (OpenRouter/OpenCode Zen)
    - verify selected provider/model appears in routine/run cards
@@ -500,3 +500,4 @@ Use this checklist before shipping:
 - [WebMCP for Agents](./webmcp-for-agents/)
 - [Engine Commands](./reference/engine-commands/)
 - [Tools Reference](./reference/tools/)
+

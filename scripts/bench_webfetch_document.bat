@@ -45,7 +45,7 @@ set "PS_SCRIPT=%TEMP%\bench_%RANDOM%.ps1"
   echo   $ps = [powershell]::Create^(^); $ps.RunspacePool = $pool
   echo   $script = { param^($u, $bin^)
   echo     try {
-  echo       $payload = @{ tool = 'webfetch_document'; args = @{ url = $u; return = 'text' } } ^| ConvertTo-Json -Compress
+  echo       $payload = @{ tool = 'webfetch'; args = @{ url = $u; return = 'text' } } ^| ConvertTo-Json -Compress
   echo       $sw = [System.Diagnostics.Stopwatch]::StartNew^(^)
   echo       $psi = New-Object System.Diagnostics.ProcessStartInfo
   echo       $psi.FileName = $bin
@@ -136,3 +136,4 @@ set "PS_SCRIPT=%TEMP%\bench_%RANDOM%.ps1"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%"
 del "%PS_SCRIPT%"
+
