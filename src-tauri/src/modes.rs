@@ -730,5 +730,3 @@ mod tests {
         assert!(is_tool_allowed(&mode, "skill"));
     }
 }
-
-
