@@ -11,7 +11,7 @@ interface ModelOption {
 
 export const ProviderSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { refreshProviderStatus, providerConfigured } = useAuth();
+  const { refreshProviderStatus } = useAuth();
 
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [config, setConfig] = useState<ProvidersConfigResponse | null>(null);
@@ -89,13 +89,9 @@ export const ProviderSetup: React.FC = () => {
   };
 
   useEffect(() => {
-    if (providerConfigured) {
-      navigate("/research", { replace: true });
-      return;
-    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerConfigured]);
+  }, []);
 
   useEffect(() => {
     if (!providerId) return;

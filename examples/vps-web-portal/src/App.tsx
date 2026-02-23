@@ -1,5 +1,12 @@
-import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  Link,
+  useNavigate,
+} from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { Login } from "./pages/Login";
 import { ProviderSetup } from "./pages/ProviderSetup";
@@ -24,6 +31,7 @@ import {
   LogOut,
   Cable,
   ShieldCheck,
+  Settings,
   GitPullRequest,
   FileWarning,
   DatabaseZap,
@@ -47,6 +55,21 @@ const ProviderReadyRoute = ({ children }: { children: React.ReactNode }) => {
 
 const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
   const { logout } = useAuth();
+  const navigate = useNavigate();
+  const [showSetupHint, setShowSetupHint] = useState(false);
+
+  useEffect(() => {
+    const key = "tandem_portal_setup_hint_dismissed";
+    if (!localStorage.getItem(key)) {
+      setShowSetupHint(true);
+    }
+  }, []);
+
+  const dismissSetupHint = () => {
+    localStorage.setItem("tandem_portal_setup_hint_dismissed", "1");
+    setShowSetupHint(false);
+  };
+
   return (
     <div className="flex h-screen bg-gray-950">
       {/* Sidebar */}
@@ -58,6 +81,12 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
           </h1>
         </div>
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+          <Link
+            to="/setup"
+            className="flex items-center gap-3 text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded-md"
+          >
+            <Settings size={20} /> Provider Setup
+          </Link>
           <Link
             to="/research"
             className="flex items-center gap-3 text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded-md"
@@ -149,6 +178,39 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
 
       {/* Main Content */}
       <div className="flex-1 overflow-auto">{children}</div>
+
+      {showSetupHint && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-5 shadow-2xl">
+            <div className="flex items-center gap-2 text-white">
+              <Settings className="text-emerald-500" size={20} />
+              <h3 className="text-lg font-semibold">Provider Setup</h3>
+            </div>
+            <p className="mt-3 text-sm text-gray-300">
+              Configure your default provider and model from{" "}
+              <span className="font-medium">Provider Setup</span> so example runs use the expected
+              model every time.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={dismissSetupHint}
+                className="rounded-md border border-gray-700 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
+              >
+                Dismiss
+              </button>
+              <button
+                onClick={() => {
+                  dismissSetupHint();
+                  navigate("/setup");
+                }}
+                className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                Open Setup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

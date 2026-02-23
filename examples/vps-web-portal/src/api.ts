@@ -24,11 +24,19 @@ const parseRunId = (payload: JsonObject): string => {
   throw new Error("Run ID missing in engine response");
 };
 
+const asEpochMs = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return Date.now();
+  // Engine may return seconds in some payloads.
+  return value < 1_000_000_000_000 ? Math.trunc(value * 1000) : Math.trunc(value);
+};
+
 export class EngineAPI {
   private baseUrl: string;
   private portalBaseUrl: string;
   private token: string | null;
   private requestTimeoutMs: number;
+  private cachedModelSpec: EngineModelSpec | null = null;
+  private cachedModelSpecAtMs = 0;
 
   constructor(token: string | null = null) {
     this.baseUrl = "/engine";
@@ -54,6 +62,61 @@ export class EngineAPI {
       "Content-Type": "application/json",
       ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
     };
+  }
+
+  private pickFirstModelId(models?: Record<string, ProviderModelEntry>): string | null {
+    if (!models) return null;
+    const keys = Object.keys(models);
+    return keys.length > 0 ? keys[0] : null;
+  }
+
+  private async resolveEngineModelSpec(): Promise<EngineModelSpec | null> {
+    const now = Date.now();
+    if (this.cachedModelSpec && now - this.cachedModelSpecAtMs < 30000) {
+      return this.cachedModelSpec;
+    }
+
+    try {
+      const [cfg, catalog] = await Promise.all([
+        this.getProvidersConfig(),
+        this.getProviderCatalog(),
+      ]);
+      const connected = new Set((catalog.connected || []).filter(Boolean));
+      const entries = new Map((catalog.all || []).map((entry) => [entry.id, entry]));
+
+      const defaultProviderId = asString(cfg.default) || asString(catalog.default);
+      if (defaultProviderId && connected.has(defaultProviderId)) {
+        const defaultModelId = asString(cfg.providers?.[defaultProviderId]?.default_model);
+        if (defaultModelId) {
+          const spec = {
+            providerID: defaultProviderId,
+            modelID: defaultModelId,
+          };
+          this.cachedModelSpec = spec;
+          this.cachedModelSpecAtMs = now;
+          return spec;
+        }
+      }
+
+      for (const providerId of connected) {
+        const modelId =
+          asString(cfg.providers?.[providerId]?.default_model) ||
+          this.pickFirstModelId(entries.get(providerId)?.models);
+        if (modelId) {
+          const spec = {
+            providerID: providerId,
+            modelID: modelId,
+          };
+          this.cachedModelSpec = spec;
+          this.cachedModelSpecAtMs = now;
+          return spec;
+        }
+      }
+    } catch {
+      // Keep request flow working even if model discovery fails.
+    }
+
+    return null;
   }
 
   private async request<T>(
@@ -107,9 +170,15 @@ export class EngineAPI {
   }
 
   async createSession(title = "Web Portal Session"): Promise<string> {
+    const modelSpec = await this.resolveEngineModelSpec();
+    const payload: JsonObject = { title, directory: "." };
+    if (modelSpec) {
+      payload.model = modelSpec;
+      payload.provider = modelSpec.providerID;
+    }
     const data = await this.request<{ id: string }>(`/session`, {
       method: "POST",
-      body: JSON.stringify({ title, directory: "." }),
+      body: JSON.stringify(payload),
     });
     return data.id;
   }
@@ -131,7 +200,43 @@ export class EngineAPI {
     if (query?.workspace) params.set("workspace", query.workspace);
 
     const qs = params.toString() ? `?${params.toString()}` : "";
-    return this.request<SessionListResponse>(`/session${qs}`);
+    const raw = await this.request<unknown>(`/session${qs}`);
+
+    if (Array.isArray(raw)) {
+      const sessions = raw
+        .filter((item): item is SessionRecord => !!item && typeof item === "object")
+        .map((item) => {
+          const obj = item as JsonObject;
+          const created =
+            asEpochMs((obj as { created_at_ms?: unknown }).created_at_ms) ||
+            asEpochMs((obj.time as JsonObject | undefined)?.created) ||
+            Date.now();
+          return {
+            ...(obj as SessionRecord),
+            created_at_ms: created,
+          };
+        });
+      return { sessions, count: sessions.length };
+    }
+
+    const wrapped = (raw || {}) as JsonObject;
+    const sessionsRaw = Array.isArray(wrapped.sessions) ? wrapped.sessions : [];
+    const sessions = sessionsRaw.map((item) => {
+      const obj = item as JsonObject;
+      const created =
+        asEpochMs((obj as { created_at_ms?: unknown }).created_at_ms) ||
+        asEpochMs((obj.time as JsonObject | undefined)?.created) ||
+        Date.now();
+      return {
+        ...(obj as SessionRecord),
+        created_at_ms: created,
+      };
+    });
+    const count =
+      typeof wrapped.count === "number" && Number.isFinite(wrapped.count)
+        ? wrapped.count
+        : sessions.length;
+    return { sessions, count };
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -141,9 +246,12 @@ export class EngineAPI {
   }
 
   async sendMessage(sessionId: string, text: string): Promise<void> {
+    const modelSpec = await this.resolveEngineModelSpec();
+    const payload: JsonObject = { parts: [{ type: "text", text }] };
+    if (modelSpec) payload.model = modelSpec;
     await this.request<void>(`/session/${encodeURIComponent(sessionId)}/message`, {
       method: "POST",
-      body: JSON.stringify({ parts: [{ type: "text", text }] }),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -151,7 +259,9 @@ export class EngineAPI {
     sessionId: string,
     messageText?: string
   ): Promise<{ runId: string; attachPath: string }> {
-    const payload = messageText ? { parts: [{ type: "text", text: messageText }] } : {};
+    const modelSpec = await this.resolveEngineModelSpec();
+    const payload: JsonObject = messageText ? { parts: [{ type: "text", text: messageText }] } : {};
+    if (modelSpec) payload.model = modelSpec;
     const data = await this.request<JsonObject>(
       `/session/${encodeURIComponent(sessionId)}/prompt_async?return=run`,
       {
@@ -499,6 +609,11 @@ export class EngineAPI {
 
 // Global singleton
 export const api = new EngineAPI();
+
+export interface EngineModelSpec {
+  providerID: string;
+  modelID: string;
+}
 
 export interface SystemHealth {
   ready?: boolean;

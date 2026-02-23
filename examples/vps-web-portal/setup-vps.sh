@@ -40,6 +40,11 @@ run_as_service_user() {
   fi
 }
 
+resolve_cmd_path_for_user() {
+  local cmd_name="$1"
+  run_as_service_user bash -c "command -v \"$cmd_name\" 2>/dev/null || true"
+}
+
 SERVICE_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$SERVICE_HOME/.local/share/pnpm"
 if compgen -G "$SERVICE_HOME/.nvm/versions/node/*/bin" >/dev/null; then
   while IFS= read -r bin_dir; do
@@ -69,7 +74,7 @@ resolve_node() {
       fi
     done
 
-  candidate="$(run_as_service_user command -v node 2>/dev/null || true)"
+  candidate="$(resolve_cmd_path_for_user node)"
   if [[ -n "$candidate" && -x "$candidate" ]]; then
     echo "$candidate"
     return 0
@@ -95,7 +100,7 @@ resolve_pnpm() {
     return 0
   fi
 
-  candidate="$(run_as_service_user command -v pnpm 2>/dev/null || true)"
+  candidate="$(resolve_cmd_path_for_user pnpm)"
   if [[ -n "$candidate" && -x "$candidate" ]]; then
     echo "$candidate"
     return 0
@@ -115,7 +120,7 @@ resolve_tandem_engine() {
     fi
   done
 
-  candidate="$(run_as_service_user command -v tandem-engine 2>/dev/null || true)"
+  candidate="$(resolve_cmd_path_for_user tandem-engine)"
   if [[ -n "$candidate" && -x "$candidate" ]]; then
     echo "$candidate"
     return 0
@@ -125,7 +130,7 @@ resolve_tandem_engine() {
 
 resolve_npx() {
   local candidate
-  candidate="$(run_as_service_user command -v npx 2>/dev/null || true)"
+  candidate="$(resolve_cmd_path_for_user npx)"
   if [[ -n "$candidate" && -x "$candidate" ]]; then
     echo "$candidate"
     return 0
@@ -147,8 +152,17 @@ engine_cmd() {
 
 install_tandem_engine() {
   local pnpm_resolved="$1"
+  local npm_path
+
+  npm_path="$(resolve_cmd_path_for_user npm)"
+  if [[ -n "$npm_path" && -x "$npm_path" ]]; then
+    log "Installing @frumu/tandem with npm for user '$SERVICE_USER'"
+    run_as_service_user "$npm_path" install -g @frumu/tandem
+    return 0
+  fi
+
   if [[ -n "$pnpm_resolved" ]]; then
-    log "Installing @frumu/tandem with pnpm for user '$SERVICE_USER'"
+    log "npm unavailable; installing @frumu/tandem with pnpm for user '$SERVICE_USER'"
     if [[ "$pnpm_resolved" == "corepack:pnpm" ]]; then
       run_as_service_user corepack pnpm add -g @frumu/tandem
     else
@@ -157,15 +171,8 @@ install_tandem_engine() {
     return 0
   fi
 
-  local npm_path
-  npm_path="$(run_as_service_user command -v npm 2>/dev/null || true)"
-  if [[ -n "$npm_path" && -x "$npm_path" ]]; then
-    log "pnpm unavailable; installing @frumu/tandem with npm for user '$SERVICE_USER'"
-    run_as_service_user "$npm_path" install -g @frumu/tandem
-    return 0
-  fi
-
-  fail "Could not find pnpm or npm for user '$SERVICE_USER'. Checked: \
+  fail "Could not find npm or pnpm for user '$SERVICE_USER'. Checked: \
+$(resolve_cmd_path_for_user npm || echo '<npm-missing>'), \
 ${PNPM_HOME:-<unset>}/pnpm, $SERVICE_HOME/.local/share/pnpm/pnpm, corepack pnpm, PATH=$SERVICE_PATH"
 }
 
@@ -432,7 +439,7 @@ if [[ -n "$PNPM_PATH" ]]; then
     run_as_service_user "$PNPM_PATH" run build
   fi
 else
-  NPM_PATH="$(run_as_service_user command -v npm 2>/dev/null || true)"
+  NPM_PATH="$(resolve_cmd_path_for_user npm)"
   if [[ -z "$NPM_PATH" || ! -x "$NPM_PATH" ]]; then
     fail "Cannot build portal: neither pnpm nor npm available for user '$SERVICE_USER'"
   fi

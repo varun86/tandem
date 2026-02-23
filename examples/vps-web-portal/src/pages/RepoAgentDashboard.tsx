@@ -188,8 +188,8 @@ Use your tools to achieve this.`;
               addLog({ type: "text", content: data.properties.delta });
             }
           } else if (
-            data.type === "run.status.updated" &&
-            (data.properties.status === "completed" || data.properties.status === "failed")
+            (data.type === "run.status.updated" || data.type === "session.run.finished") &&
+            (data.properties?.status === "completed" || data.properties?.status === "failed")
           ) {
             finalizeRun(data.properties.status);
           }
@@ -236,10 +236,10 @@ Use your tools to achieve this.`;
         ) {
           addLog({ type: "text", content: data.properties.delta });
         } else if (
-          data.type === "run.status.updated" &&
-          (data.properties.status === "completed" || data.properties.status === "failed")
+          (data.type === "run.status.updated" || data.type === "session.run.finished") &&
+          (data.properties?.status === "completed" || data.properties?.status === "failed")
         ) {
-          addLog({ type: "system", content: `Approval run finished: ${data.properties.status}` });
+          addLog({ type: "system", content: `Approval run finished: ` });
           setIsRunning(false);
           eventSource.close();
         }
@@ -367,6 +367,7 @@ Use your tools to achieve this.`;
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}
+          query="Repo:"
           className="w-full"
         />
       </div>

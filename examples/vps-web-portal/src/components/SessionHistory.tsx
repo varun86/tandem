@@ -7,12 +7,14 @@ interface SessionHistoryProps {
   onSelectSession: (sessionId: string) => void;
   currentSessionId?: string | null;
   className?: string;
+  query?: string;
 }
 
 export const SessionHistory: React.FC<SessionHistoryProps> = ({
   onSelectSession,
   currentSessionId,
   className = "",
+  query,
 }) => {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +26,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
       setLoading(true);
       setError(null);
       // Fetch the last 20 sessions globally
-      const res = await api.listSessions({ pageSize: 20 });
+      const res = await api.listSessions({ pageSize: 20, q: query || undefined });
       setSessions(res.sessions || []);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load history";
@@ -36,7 +38,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
 
   useEffect(() => {
     void loadSessions();
-  }, []);
+  }, [query]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -94,7 +96,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {sessions.length === 0 ? (
           <div className="text-gray-500 text-sm p-4 text-center italic">
-            No past sessions found.
+            No matching sessions found.
           </div>
         ) : (
           sessions.map((session) => {

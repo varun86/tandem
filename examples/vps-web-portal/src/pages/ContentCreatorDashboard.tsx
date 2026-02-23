@@ -186,8 +186,8 @@ Complete all steps autonomously without stopping.`;
               addLog({ type: "text", content: data.properties.delta });
             }
           } else if (
-            data.type === "run.status.updated" &&
-            (data.properties.status === "completed" || data.properties.status === "failed")
+            (data.type === "run.status.updated" || data.type === "session.run.finished") &&
+            (data.properties?.status === "completed" || data.properties?.status === "failed")
           ) {
             finalizeRun(data.properties.status);
           }

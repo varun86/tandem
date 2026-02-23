@@ -77,8 +77,8 @@ using the invoking user (via `SUDO_USER`) and discovered absolute binary paths a
 
 Tool resolution is deterministic and does not depend on interactive shell startup files (`.bashrc`, `.profile`):
 
-1. Prefer `pnpm` (`PNPM_HOME`, user-local and common system paths, then `corepack pnpm`).
-2. Fallback to `npm` if `pnpm` is not available.
+1. Prefer `npm` for `@frumu/tandem` global install (ensures native postinstall runs consistently).
+2. Fallback to `pnpm` (`PNPM_HOME`, user-local and common system paths, then `corepack pnpm`) if `npm` is unavailable.
 3. Resolve `node` and `tandem-engine` from absolute paths for use in systemd `ExecStart`.
 4. If no standalone `tandem-engine` binary is usable, fallback to `npx -y @frumu/tandem`.
 

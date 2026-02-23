@@ -353,6 +353,7 @@ export const ResearchDashboard: React.FC = () => {
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}
+          query="Research:"
           className="w-full"
         />
       </div>
