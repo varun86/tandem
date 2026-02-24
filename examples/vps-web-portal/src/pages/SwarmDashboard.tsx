@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Loader2, Users } from "lucide-react";
 import { handleCommonRunEvent } from "../utils/liveEventDebug";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 
 interface AgentResponse {
   persona: string;
   response: string;
   loading: boolean;
   error: string | null;
+  logs: string[];
 }
 
 const personas = [
@@ -33,9 +37,29 @@ const SWARM_SESSION_KEY = "tandem_portal_swarm_sessions";
 export const SwarmDashboard: React.FC = () => {
   const [query, setQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const logContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [agents, setAgents] = useState<AgentResponse[]>(
-    personas.map((p) => ({ persona: p.name, response: "", loading: false, error: null }))
+    personas.map((p) => ({
+      persona: p.name,
+      response: "",
+      loading: false,
+      error: null,
+      logs: ["Idle. Waiting for run."],
+    }))
   );
+  const appendAgentLog = (index: number, message: string) => {
+    const stamp = new Date().toLocaleTimeString();
+    setAgents((prev) => {
+      const updated = [...prev];
+      const current = updated[index];
+      if (!current) return prev;
+      updated[index] = {
+        ...current,
+        logs: [...current.logs, `${stamp} | ${message}`].slice(-40),
+      };
+      return updated;
+    });
+  };
 
   const loadAgentResponse = async (personaName: string, sessionId: string) => {
     try {
@@ -54,6 +78,10 @@ export const SwarmDashboard: React.FC = () => {
             updated[idx].response = finalText;
             updated[idx].loading = false;
             updated[idx].error = null;
+            updated[idx].logs = [
+              ...updated[idx].logs,
+              `${new Date().toLocaleTimeString()} | Loaded final response (${finalText.length} chars)`,
+            ].slice(-40);
           }
           return updated;
         });
@@ -85,6 +113,17 @@ export const SwarmDashboard: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      agents.forEach((agent) => {
+        const el = logContainerRefs.current[agent.persona];
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [agents]);
+
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || isRunning) return;
@@ -92,7 +131,15 @@ export const SwarmDashboard: React.FC = () => {
     setIsRunning(true);
 
     // Reset state
-    setAgents(personas.map((p) => ({ persona: p.name, response: "", loading: true, error: null })));
+    setAgents(
+      personas.map((p) => ({
+        persona: p.name,
+        response: "",
+        loading: true,
+        error: null,
+        logs: [`${new Date().toLocaleTimeString()} | Run queued`],
+      }))
+    );
 
     // Fan out requests to 3 distinct agent sessions in parallel
     await Promise.all(
@@ -100,6 +147,7 @@ export const SwarmDashboard: React.FC = () => {
         try {
           // 1. Create a dedicated session for this persona
           const sessionId = await api.createSession(`Swarm: ${persona.name}`);
+          appendAgentLog(index, `Session created: ${sessionId.slice(0, 8)}...`);
           const raw = localStorage.getItem(SWARM_SESSION_KEY);
           const currentMap = raw ? (JSON.parse(raw) as Record<string, string>) : {};
           currentMap[persona.name] = sessionId;
@@ -108,16 +156,20 @@ export const SwarmDashboard: React.FC = () => {
           // 2. Start the run
           const fullPrompt = `${persona.prompt}\n\n${query}`;
           const { runId } = await api.startAsyncRun(sessionId, fullPrompt);
+          appendAgentLog(index, `Run started: ${runId.slice(0, 8)}...`);
 
           // 3. Listen to the event stream
           const eventSource = new EventSource(api.getEventStreamUrl(sessionId, runId));
           let finalized = false;
           let sawRunEvent = false;
+          let sawFirstDelta = false;
+          const startedAt = Date.now();
           const watchdog = window.setTimeout(async () => {
             if (finalized || sawRunEvent) return;
             try {
               const runState = await api.getActiveRun(sessionId);
               if (!runState?.active) {
+                appendAgentLog(index, "Run inactive before live events arrived.");
                 setAgents((prev) => {
                   const updated = [...prev];
                   updated[index].loading = false;
@@ -137,7 +189,9 @@ export const SwarmDashboard: React.FC = () => {
                 }
                 return updated;
               });
+              appendAgentLog(index, "Run active, waiting for first delta.");
             } catch {
+              appendAgentLog(index, "No live events yet; run state poll failed.");
               setAgents((prev) => {
                 const updated = [...prev];
                 updated[index].error = "No live events yet and failed to query run state.";
@@ -150,6 +204,7 @@ export const SwarmDashboard: React.FC = () => {
             try {
               const runState = await api.getActiveRun(sessionId);
               if (!runState?.active) {
+                appendAgentLog(index, "Run became inactive during poll.");
                 setAgents((prev) => {
                   const updated = [...prev];
                   updated[index].loading = false;
@@ -170,8 +225,13 @@ export const SwarmDashboard: React.FC = () => {
             finalized = true;
             window.clearTimeout(watchdog);
             window.clearInterval(runStatePoll);
+            appendAgentLog(index, `Finalizing run (${Date.now() - startedAt}ms elapsed)`);
             await loadAgentResponse(persona.name, sessionId);
             eventSource.close();
+          };
+
+          eventSource.onopen = () => {
+            appendAgentLog(index, "SSE stream connected.");
           };
 
           eventSource.onmessage = (evt) => {
@@ -184,6 +244,7 @@ export const SwarmDashboard: React.FC = () => {
               const handledCommon = handleCommonRunEvent(
                 data,
                 ({ content }) => {
+                  appendAgentLog(index, `System: ${content}`);
                   if (/engine error/i.test(content)) {
                     setAgents((prev) => {
                       const updated = [...prev];
@@ -194,6 +255,7 @@ export const SwarmDashboard: React.FC = () => {
                   }
                 },
                 (status) => {
+                  appendAgentLog(index, `Run status: ${status}`);
                   if (
                     status === "completed" ||
                     status === "failed" ||
@@ -214,6 +276,10 @@ export const SwarmDashboard: React.FC = () => {
                 data.properties?.part?.type === "text" &&
                 data.properties?.delta
               ) {
+                if (!sawFirstDelta) {
+                  sawFirstDelta = true;
+                  appendAgentLog(index, `First delta received (${Date.now() - startedAt}ms).`);
+                }
                 setAgents((prev) => {
                   const updated = [...prev];
                   updated[index].response += data.properties.delta;
@@ -223,13 +289,19 @@ export const SwarmDashboard: React.FC = () => {
                 data.type === "run.status.updated" &&
                 (data.properties?.status === "completed" || data.properties?.status === "failed")
               ) {
+                appendAgentLog(index, `run.status.updated: ${String(data.properties?.status)}`);
                 void finalizeAgent();
               } else if (
                 data.type === "session.run.finished" &&
                 (data.properties?.status === "completed" || data.properties?.status === "failed")
               ) {
+                appendAgentLog(index, `session.run.finished: ${String(data.properties?.status)}`);
                 void finalizeAgent();
               } else if (data.type === "session.error") {
+                appendAgentLog(
+                  index,
+                  `session.error: ${String(data.properties?.error?.message || "unknown error")}`
+                );
                 setAgents((prev) => {
                   const updated = [...prev];
                   updated[index].loading = false;
@@ -240,6 +312,7 @@ export const SwarmDashboard: React.FC = () => {
                 void finalizeAgent();
               }
             } catch {
+              appendAgentLog(index, "Failed to parse stream event payload.");
               setAgents((prev) => {
                 const updated = [...prev];
                 updated[index].loading = false;
@@ -253,6 +326,7 @@ export const SwarmDashboard: React.FC = () => {
           eventSource.onerror = () => {
             window.clearTimeout(watchdog);
             window.clearInterval(runStatePoll);
+            appendAgentLog(index, "SSE stream disconnected.");
             setAgents((prev) => {
               const updated = [...prev];
               updated[index].loading = false;
@@ -263,6 +337,7 @@ export const SwarmDashboard: React.FC = () => {
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
+          appendAgentLog(index, `Failed to start agent: ${errorMessage || "unknown error"}`);
           setAgents((prev) => {
             const updated = [...prev];
             updated[index].loading = false;
@@ -317,13 +392,37 @@ export const SwarmDashboard: React.FC = () => {
               <span className="font-semibold text-gray-200">{agent.persona}</span>
               {agent.loading && <Loader2 size={16} className="text-purple-500 animate-spin" />}
             </div>
-            <div className="flex-1 p-4 overflow-y-auto text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-              {agent.response ||
-                (agent.loading ? (
-                  <span className="text-gray-600 italic">Thinking...</span>
+            <div className="border-b border-gray-800 bg-gray-950/70 px-4 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Live log</div>
+              <div
+                ref={(el) => {
+                  logContainerRefs.current[agent.persona] = el;
+                }}
+                className="max-h-24 overflow-y-auto rounded border border-gray-800 bg-gray-950 px-2 py-1 text-[11px] font-mono text-gray-400"
+              >
+                {agent.logs.length > 0 ? (
+                  agent.logs.map((line, idx) => (
+                    <div key={`${agent.persona}-log-${idx}`} className="truncate">
+                      {line}
+                    </div>
+                  ))
                 ) : (
-                  <span className="text-gray-600 italic">Waiting for input.</span>
-                ))}
+                  <div>Waiting for logs...</div>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 p-4 overflow-y-auto text-sm text-gray-300 leading-relaxed">
+              {agent.response ? (
+                <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-gray-900/70 prose-pre:border prose-pre:border-gray-700 prose-a:text-blue-400 hover:prose-a:text-blue-300">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                    {agent.response}
+                  </ReactMarkdown>
+                </div>
+              ) : agent.loading ? (
+                <span className="text-gray-600 italic">Thinking...</span>
+              ) : (
+                <span className="text-gray-600 italic">Waiting for input.</span>
+              )}
               {agent.error && <p className="text-red-400 mt-2">{agent.error}</p>}
             </div>
           </div>

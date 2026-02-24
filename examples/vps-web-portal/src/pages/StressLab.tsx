@@ -65,9 +65,9 @@ export const StressLab: React.FC = () => {
   const [cycleDelay, setCycleDelay] = useState(1200);
   const [cycleDelayInput, setCycleDelayInput] = useState("1200");
   const [prompt, setPrompt] = useState("");
-  const [scenarioMode, setScenarioMode] = useState<"remote" | "file" | "inline" | "providerless">(
-    "remote"
-  );
+  const [scenarioMode, setScenarioMode] = useState<
+    "remote" | "file" | "inline" | "shared_edit" | "providerless"
+  >("remote");
   const [providerlessProfile, setProviderlessProfile] = useState<
     | "command_only"
     | "get_session_only"
@@ -79,6 +79,15 @@ export const StressLab: React.FC = () => {
   const [providerlessRunner, setProviderlessRunner] = useState<"browser" | "server">("server");
   const [filePath, setFilePath] = useState("/srv/tandem/docs/overview.md");
   const [inlineBody, setInlineBody] = useState("# Summary\n- Highlight");
+  const sharedEditFixture = useMemo(
+    () =>
+      Array.from(
+        { length: 200 },
+        (_, idx) =>
+          `- Line ${idx + 1}: Tandem benchmark fixture sentence ${idx + 1} about reliability, latency, and observability.`
+      ).join("\n"),
+    []
+  );
   const [providerlessCommand, setProviderlessCommand] = useState("pwd");
   const [soakSecondsInput, setSoakSecondsInput] = useState("60");
   const [isRunning, setIsRunning] = useState(false);
@@ -103,6 +112,7 @@ export const StressLab: React.FC = () => {
   const [opencodeHealth, setOpencodeHealth] = useState<string>("unknown");
   const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [showSharedFixture, setShowSharedFixture] = useState(false);
   const eventLogRef = useRef<HTMLDivElement | null>(null);
 
   const stressActiveRef = useRef(false);
@@ -159,6 +169,12 @@ export const StressLab: React.FC = () => {
     if (scenarioMode === "file") {
       return `Use the read tool to open ${filePath} and summarize its key sections in one markdown paragraph.`;
     }
+    if (scenarioMode === "shared_edit") {
+      return (
+        "Edit the shared 200-line markdown fixture for clarity. Return improved markdown and " +
+        `a 5-item bullet list of key edits.\n\n${sharedEditFixture}`
+      );
+    }
     if (scenarioMode === "inline") {
       return `Summarize the following markdown blob:\n\n${inlineBody}`;
     }
@@ -167,6 +183,7 @@ export const StressLab: React.FC = () => {
     scenarioMode,
     filePath,
     inlineBody,
+    sharedEditFixture,
     providerlessCommand,
     providerlessProfile,
     providerlessRunner,
@@ -177,6 +194,11 @@ export const StressLab: React.FC = () => {
     const suffix = prompt.trim();
     return suffix ? `${basePrompt}\n\n${suffix}` : basePrompt;
   }, [basePrompt, prompt]);
+
+  const basePromptPreview = useMemo(() => {
+    if (scenarioMode !== "shared_edit") return basePrompt;
+    return showSharedFixture ? basePrompt : `${basePrompt.split("\n").slice(0, 3).join("\n")}\n…`;
+  }, [basePrompt, scenarioMode, showSharedFixture]);
 
   useEffect(() => {
     promptRef.current = currentPrompt;
@@ -245,12 +267,16 @@ export const StressLab: React.FC = () => {
   };
 
   const buildSoakReport = useCallback((durationSec: number, samples: number[], errors: number) => {
+    const attempts = samples.length + errors;
+    const errorRate = attempts > 0 ? (errors / attempts) * 100 : 0;
     if (samples.length === 0) {
       return [
         "Soak Results (providerless mixed)",
         `Duration: ${durationSec}s`,
         "Samples: 0",
+        `Attempts: ${attempts}`,
         `Errors: ${errors}`,
+        `Provider error rate: ${errorRate.toFixed(1)}%`,
         "No successful samples captured.",
       ].join("\n");
     }
@@ -264,7 +290,9 @@ export const StressLab: React.FC = () => {
       "Soak Results (providerless mixed)",
       `Duration: ${durationSec}s`,
       `Samples: ${samples.length}`,
+      `Attempts: ${attempts}`,
       `Errors: ${errors}`,
+      `Provider error rate: ${errorRate.toFixed(1)}%`,
       `Avg: ${Math.round(avg)}ms`,
       `P50: ${Math.round(p50)}ms`,
       `P95: ${Math.round(p95)}ms`,
@@ -495,11 +523,21 @@ export const StressLab: React.FC = () => {
             );
             setSoakReport(report);
           }
+          if (scenarioRef.current !== "providerless") {
+            void refreshComparisonData();
+          }
           addEventLog("Stress lab run completed");
         }
       }
     },
-    [addEventLog, addRunRecord, attachAndTrack, buildSoakReport, updateRunRecord]
+    [
+      addEventLog,
+      addRunRecord,
+      attachAndTrack,
+      buildSoakReport,
+      refreshComparisonData,
+      updateRunRecord,
+    ]
   );
 
   const startStress = useCallback(() => {
@@ -532,9 +570,9 @@ export const StressLab: React.FC = () => {
         durationSeconds: soakSecondsRef.current,
         cycleDelayMs: nextCycleDelay,
         command: providerlessCommandRef.current,
-        prompt: promptRef.current,
+        prompt: prompt.trim(),
         filePath,
-        inlineBody,
+        inlineBody: scenarioRef.current === "shared_edit" ? "" : inlineBody,
       });
       serverSoakStreamRef.current?.close();
       const stream = new EventSource(streamUrl);
@@ -614,6 +652,9 @@ export const StressLab: React.FC = () => {
         } catch {
           addEventLog("Server run completed");
         }
+        if (scenarioRef.current !== "providerless") {
+          void refreshComparisonData();
+        }
         stream.close();
         serverSoakStreamRef.current = null;
         stressActiveRef.current = false;
@@ -635,7 +676,7 @@ export const StressLab: React.FC = () => {
     for (let workerId = 1; workerId <= nextConcurrency; workerId += 1) {
       void runWorkerLoop(workerId);
     }
-  }, [addEventLog, concurrencyInput, cycleDelayInput, filePath, inlineBody, runWorkerLoop]);
+  }, [addEventLog, concurrencyInput, cycleDelayInput, filePath, inlineBody, prompt, runWorkerLoop]);
 
   const stopStress = useCallback(() => {
     stressActiveRef.current = false;
@@ -658,13 +699,16 @@ export const StressLab: React.FC = () => {
 
   const metrics = useMemo(() => {
     if (providerlessRunner === "server") {
+      const total = serverSoakMetrics.completed + serverSoakMetrics.errored;
+      const errorRatePercent = total > 0 ? (serverSoakMetrics.errored / total) * 100 : 0;
       return {
         completed: serverSoakMetrics.completed,
         errored: serverSoakMetrics.errored,
         active: isRunning ? concurrency : 0,
-        total: serverSoakMetrics.completed + serverSoakMetrics.errored,
+        total,
         averageLatency: serverSoakMetrics.avgLatency,
         averageFirstDelta: 0,
+        errorRatePercent,
       };
     }
 
@@ -694,6 +738,7 @@ export const StressLab: React.FC = () => {
       total: runRecords.length,
       averageLatency,
       averageFirstDelta,
+      errorRatePercent: runRecords.length > 0 ? (errored.length / runRecords.length) * 100 : 0,
     };
   }, [
     concurrency,
@@ -743,12 +788,23 @@ export const StressLab: React.FC = () => {
     [runRecords]
   );
 
-  const selectedOpencodeScenarioName = useMemo(() => {
+  const desiredOpencodeScenarioName = useMemo(() => {
     if (scenarioMode === "remote") return "remote_prompt";
     if (scenarioMode === "file") return "file_prompt";
+    if (scenarioMode === "shared_edit") return "shared_edit_prompt";
     if (scenarioMode === "inline") return "inline_prompt";
     return null;
   }, [scenarioMode]);
+
+  const selectedOpencodeScenarioName = useMemo(() => {
+    if (!opencodeLatest || !desiredOpencodeScenarioName) return desiredOpencodeScenarioName;
+    const exact = opencodeLatest.scenarios.some(
+      (entry) => entry.name === desiredOpencodeScenarioName
+    );
+    if (exact) return desiredOpencodeScenarioName;
+    if (desiredOpencodeScenarioName === "shared_edit_prompt") return "inline_prompt";
+    return desiredOpencodeScenarioName;
+  }, [desiredOpencodeScenarioName, opencodeLatest]);
 
   const selectedOpencodeScenario = useMemo<OpencodeBenchScenarioResult | null>(() => {
     if (!opencodeLatest || !selectedOpencodeScenarioName) return null;
@@ -872,13 +928,16 @@ export const StressLab: React.FC = () => {
               { value: "remote", label: "Remote docs" },
               { value: "file", label: "Local file read" },
               { value: "inline", label: "Inline markdown" },
-              { value: "providerless", label: "Providerless engine" },
+              { value: "shared_edit", label: "Shared 200-line edit" },
+              { value: "providerless", label: "Providerless (Tandem-only smoke)" },
             ].map((option) => (
               <button
                 key={option.value}
                 type="button"
                 onClick={() =>
-                  setScenarioMode(option.value as "remote" | "file" | "inline" | "providerless")
+                  setScenarioMode(
+                    option.value as "remote" | "file" | "inline" | "shared_edit" | "providerless"
+                  )
                 }
                 disabled={isRunning}
                 className={`px-3 py-1 rounded-full text-xs border ${
@@ -954,6 +1013,30 @@ export const StressLab: React.FC = () => {
               />
             </div>
           )}
+          {scenarioMode === "shared_edit" && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-gray-400">
+                  Shared markdown fixture (200 lines)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowSharedFixture((prev) => !prev)}
+                  className="rounded border border-gray-700 px-2 py-1 text-[11px] text-gray-300"
+                >
+                  {showSharedFixture ? "Collapse fixture" : "Expand fixture"}
+                </button>
+              </div>
+              {showSharedFixture && (
+                <textarea
+                  rows={8}
+                  readOnly
+                  value={sharedEditFixture}
+                  className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-gray-300 text-xs font-mono"
+                />
+              )}
+            </div>
+          )}
           {scenarioMode === "providerless" && (
             <div className="space-y-3">
               <div className="space-y-1">
@@ -1011,10 +1094,15 @@ export const StressLab: React.FC = () => {
               </div>
             </div>
           )}
-          <p className="text-[11px] text-gray-500">{basePrompt}</p>
+          <p className="text-[11px] text-gray-500 whitespace-pre-wrap">{basePromptPreview}</p>
+          <p className="text-[11px] text-gray-500">
+            Comparison mode includes only shared LLM scenarios (`remote`, `file`, `inline`,
+            `shared_edit`). Providerless is a Tandem internal smoke/perf test and is excluded from
+            OpenCode deltas.
+          </p>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-5">
           <Card label="Completed" value={metrics.completed} icon={<Sparkles />} />
           <Card label="Errored" value={metrics.errored} icon={<Activity />} />
           <Card
@@ -1023,140 +1111,16 @@ export const StressLab: React.FC = () => {
             icon={<Bolt />}
           />
           <Card
+            label="Provider error rate"
+            value={`${metrics.errorRatePercent.toFixed(1)}%`}
+            icon={<Activity />}
+          />
+          <Card
             label="Avg first delta"
             value={`${Math.round(metrics.averageFirstDelta)} ms`}
             icon={<Sparkles />}
           />
         </section>
-
-        <section className="rounded-lg border border-sky-800/60 bg-sky-950/30 p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-sky-200">Tandem vs OpenCode (latest)</h2>
-            <button
-              type="button"
-              onClick={() => void refreshComparisonData()}
-              disabled={comparisonLoading}
-              className="rounded border border-sky-700 px-2 py-1 text-xs text-sky-100 disabled:opacity-40"
-            >
-              {comparisonLoading ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
-            <div className="rounded border border-gray-700 p-2">
-              OpenCode health: <span className="font-semibold">{opencodeHealth}</span>
-            </div>
-            <div className="rounded border border-gray-700 p-2">
-              Latest run:{" "}
-              <span className="font-semibold">
-                {opencodeLatest ? new Date(opencodeLatest.timestamp_utc).toLocaleString() : "n/a"}
-              </span>
-            </div>
-            <div className="rounded border border-gray-700 p-2">
-              30d points: <span className="font-semibold">{opencodeHistory?.count ?? 0}</span>
-            </div>
-            <div className="rounded border border-gray-700 p-2">
-              Scenario:{" "}
-              <span className="font-semibold">{selectedOpencodeScenarioName ?? "n/a"}</span>
-            </div>
-          </div>
-          {comparisonError && (
-            <p className="text-xs text-rose-300">Comparison load failed: {comparisonError}</p>
-          )}
-          {scenarioMode === "providerless" ? (
-            <p className="text-xs text-gray-400">
-              OpenCode does not support providerless scenario. Switch to remote/file/inline for
-              direct comparison.
-            </p>
-          ) : scenarioComparison ? (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-              <div className="rounded border border-gray-700 p-2">
-                Tandem avg/p95: {Math.round(scenarioComparison.tandemAvgMs)} /{" "}
-                {Math.round(scenarioComparison.tandemP95Ms)}ms
-              </div>
-              <div className="rounded border border-gray-700 p-2">
-                OpenCode avg/p95: {Math.round(scenarioComparison.opencodeAvgMs)} /{" "}
-                {Math.round(scenarioComparison.opencodeP95Ms)}ms
-              </div>
-              <div className="rounded border border-gray-700 p-2">
-                Avg delta (T - O):{" "}
-                <span
-                  className={
-                    scenarioComparison.tandemAvgMs <= scenarioComparison.opencodeAvgMs
-                      ? "text-emerald-300"
-                      : "text-rose-300"
-                  }
-                >
-                  {Math.round(scenarioComparison.tandemAvgMs - scenarioComparison.opencodeAvgMs)}ms
-                </span>
-              </div>
-              <div className="rounded border border-gray-700 p-2">
-                OpenCode errors/latest: {scenarioComparison.opencodeErrors} (30d avg:{" "}
-                {Math.round(history30dScenarioAvg)}ms)
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400">
-              Run a Tandem test in this scenario to compute deltas against OpenCode latest results.
-            </p>
-          )}
-        </section>
-
-        {scenarioMode === "providerless" && providerlessProfile === "diagnostic_sweep" && (
-          <section className="rounded-lg border border-sky-700/60 bg-sky-900/10 p-4 space-y-2">
-            <h2 className="text-sm font-semibold text-sky-200">
-              One-Shot Sweep Averages ({diagnosticStats.count} workers)
-            </h2>
-            {diagnosticStats.count > 0 ? (
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-                <div className="rounded border border-gray-700 p-2">
-                  command: {Math.round(diagnosticStats.commandMs / diagnosticStats.count)}ms
-                </div>
-                <div className="rounded border border-gray-700 p-2">
-                  getSession: {Math.round(diagnosticStats.getMs / diagnosticStats.count)}ms
-                </div>
-                <div className="rounded border border-gray-700 p-2">
-                  listSessions: {Math.round(diagnosticStats.listMs / diagnosticStats.count)}ms
-                </div>
-                <div className="rounded border border-gray-700 p-2">
-                  mixed: {Math.round(diagnosticStats.mixedMs / diagnosticStats.count)}ms
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-sky-200/70">Run the sweep once to populate averages.</p>
-            )}
-          </section>
-        )}
-
-        {(providerlessRunner === "server" ||
-          (scenarioMode === "providerless" && providerlessProfile === "soak_mixed")) && (
-          <section className="rounded-lg border border-emerald-700/60 bg-emerald-900/10 p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-emerald-200">
-                {providerlessRunner === "server"
-                  ? "Server Stream Result (Copy/Paste)"
-                  : "Soak Result (Copy/Paste)"}
-              </h2>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!soakReport.trim()) return;
-                  void navigator.clipboard.writeText(soakReport);
-                }}
-                disabled={!soakReport.trim()}
-                className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-200 disabled:opacity-40"
-              >
-                Copy Report
-              </button>
-            </div>
-            <textarea
-              value={soakReport}
-              readOnly
-              rows={10}
-              placeholder="Run a timed soak test to generate a report."
-              className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-white text-xs font-mono"
-            />
-          </section>
-        )}
 
         <section className="rounded-lg border border-gray-800 bg-gray-900/80 p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -1230,6 +1194,142 @@ export const StressLab: React.FC = () => {
             />
           </div>
         </section>
+
+        <section className="rounded-lg border border-sky-800/60 bg-sky-950/30 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-sky-200">Tandem vs OpenCode (latest)</h2>
+            <button
+              type="button"
+              onClick={() => void refreshComparisonData()}
+              disabled={comparisonLoading}
+              className="rounded border border-sky-700 px-2 py-1 text-xs text-sky-100 disabled:opacity-40"
+            >
+              {comparisonLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+            <div className="rounded border border-gray-700 p-2">
+              OpenCode health: <span className="font-semibold">{opencodeHealth}</span>
+            </div>
+            <div className="rounded border border-gray-700 p-2">
+              Latest run:{" "}
+              <span className="font-semibold">
+                {opencodeLatest ? new Date(opencodeLatest.timestamp_utc).toLocaleString() : "n/a"}
+              </span>
+            </div>
+            <div className="rounded border border-gray-700 p-2">
+              30d points: <span className="font-semibold">{opencodeHistory?.count ?? 0}</span>
+            </div>
+            <div className="rounded border border-gray-700 p-2">
+              Scenario:{" "}
+              <span className="font-semibold">
+                {selectedOpencodeScenarioName ?? "n/a"}
+                {desiredOpencodeScenarioName === "shared_edit_prompt" &&
+                selectedOpencodeScenarioName === "inline_prompt"
+                  ? " (fallback)"
+                  : ""}
+              </span>
+            </div>
+          </div>
+          {comparisonError && (
+            <p className="text-xs text-rose-300">Comparison load failed: {comparisonError}</p>
+          )}
+          {scenarioMode === "providerless" ? (
+            <p className="text-xs text-gray-400">
+              OpenCode does not support providerless scenario. Switch to remote/file/inline for
+              direct comparison.
+            </p>
+          ) : scenarioComparison ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+              <div className="rounded border border-gray-700 p-2">
+                Tandem avg/p95: {Math.round(scenarioComparison.tandemAvgMs)} /{" "}
+                {Math.round(scenarioComparison.tandemP95Ms)}ms
+              </div>
+              <div className="rounded border border-gray-700 p-2">
+                OpenCode avg/p95: {Math.round(scenarioComparison.opencodeAvgMs)} /{" "}
+                {Math.round(scenarioComparison.opencodeP95Ms)}ms
+              </div>
+              <div className="rounded border border-gray-700 p-2">
+                Avg delta (T - O):{" "}
+                <span
+                  className={
+                    scenarioComparison.tandemAvgMs <= scenarioComparison.opencodeAvgMs
+                      ? "text-emerald-300"
+                      : "text-rose-300"
+                  }
+                >
+                  {Math.round(scenarioComparison.tandemAvgMs - scenarioComparison.opencodeAvgMs)}ms
+                </span>
+              </div>
+              <div className="rounded border border-gray-700 p-2">
+                OpenCode errors/latest: {scenarioComparison.opencodeErrors} (30d avg:{" "}
+                {Math.round(history30dScenarioAvg)}ms)
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">
+              Run a Tandem LLM scenario (`remote` / `file` / `inline`) to compute deltas. Comparison
+              data auto-refreshes after each completed test.
+            </p>
+          )}
+        </section>
+
+        {scenarioMode === "providerless" && providerlessProfile === "diagnostic_sweep" && (
+          <section className="rounded-lg border border-sky-700/60 bg-sky-900/10 p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-sky-200">
+              One-Shot Sweep Averages ({diagnosticStats.count} workers)
+            </h2>
+            {diagnosticStats.count > 0 ? (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                <div className="rounded border border-gray-700 p-2">
+                  command: {Math.round(diagnosticStats.commandMs / diagnosticStats.count)}ms
+                </div>
+                <div className="rounded border border-gray-700 p-2">
+                  getSession: {Math.round(diagnosticStats.getMs / diagnosticStats.count)}ms
+                </div>
+                <div className="rounded border border-gray-700 p-2">
+                  listSessions: {Math.round(diagnosticStats.listMs / diagnosticStats.count)}ms
+                </div>
+                <div className="rounded border border-gray-700 p-2">
+                  mixed: {Math.round(diagnosticStats.mixedMs / diagnosticStats.count)}ms
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-sky-200/70">Run the sweep once to populate averages.</p>
+            )}
+          </section>
+        )}
+
+        {(providerlessRunner === "server" ||
+          (scenarioMode === "providerless" && providerlessProfile === "soak_mixed")) && (
+          <section className="rounded-lg border border-emerald-700/60 bg-emerald-900/10 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-emerald-200">
+                {providerlessRunner === "server"
+                  ? "Server Stream Result (Copy/Paste)"
+                  : "Soak Result (Copy/Paste)"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!soakReport.trim()) return;
+                  void navigator.clipboard.writeText(soakReport);
+                }}
+                disabled={!soakReport.trim()}
+                className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-200 disabled:opacity-40"
+              >
+                Copy Report
+              </button>
+            </div>
+            <textarea
+              value={soakReport}
+              readOnly
+              rows={10}
+              placeholder="Run a timed soak test to generate a report."
+              className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-white text-xs font-mono"
+            />
+          </section>
+        )}
 
         <section className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-gray-800 bg-gray-900/80 p-4 space-y-3">

@@ -300,11 +300,20 @@ const PORTAL_STRESS_PERMISSION_RULES = [
 
 const DEFAULT_REMOTE_PROMPT =
   'Fetch https://tandem.frumu.ai/docs/ via webfetch (markdown mode) and summarize the first 20 tokens of the page in one sentence.';
+const SHARED_EDIT_MARKDOWN_FIXTURE = Array.from(
+  { length: 200 },
+  (_, idx) =>
+    `- Line ${idx + 1}: Tandem benchmark fixture sentence ${idx + 1} about reliability, latency, and observability.`
+).join('\n');
 
 const buildScenarioPrompt = ({ scenario, prompt, filePath, inlineBody }) => {
   let base = DEFAULT_REMOTE_PROMPT;
   if (scenario === 'file') {
     base = `Use the read tool to open ${filePath || '/srv/tandem/docs/overview.md'} and summarize its key sections in one markdown paragraph.`;
+  } else if (scenario === 'shared_edit') {
+    base =
+      'Edit the shared 200-line markdown fixture for clarity. Return improved markdown and a 5-item bullet list of key edits.\n\n' +
+      SHARED_EDIT_MARKDOWN_FIXTURE;
   } else if (scenario === 'inline') {
     base = `Summarize the following markdown blob:\n\n${inlineBody || '# Summary\\n- Highlight'}`;
   }
@@ -541,7 +550,7 @@ app.post('/portal/fs/mkdir', requireAuth, async (req, res) => {
 
 const handleStressStream = async (req, res) => {
   const scenario = String(req.query.scenario || 'providerless').trim();
-  const scenarioAllowed = new Set(['remote', 'file', 'inline', 'providerless']);
+  const scenarioAllowed = new Set(['remote', 'file', 'inline', 'shared_edit', 'providerless']);
   if (!scenarioAllowed.has(scenario)) {
     res.status(400).json({ ok: false, error: 'Unsupported scenario' });
     return;
@@ -778,6 +787,8 @@ const handleStressStream = async (req, res) => {
   }
 
   const durationSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+  const attempts = completed + errors;
+  const providerErrorRate = attempts > 0 ? (errors / attempts) * 100 : 0;
   const latency = summarizeSamples(latencySamples);
   const command = summarizeSamples(commandSamples);
   const getSession = summarizeSamples(getSamples);
@@ -786,8 +797,10 @@ const handleStressStream = async (req, res) => {
     `Soak Results (server-side ${scenario} ${scenario === 'providerless' ? profile : 'prompt'})`,
     `Duration: ${durationSec}s`,
     `Samples: ${latencySamples.length}`,
+    `Attempts: ${attempts}`,
     `Completed: ${completed}`,
     `Errors: ${errors}`,
+    `Provider error rate: ${providerErrorRate.toFixed(1)}%`,
     `Avg: ${Math.round(latency.avg)}ms`,
     `P50: ${Math.round(latency.p50)}ms`,
     `P95: ${Math.round(latency.p95)}ms`,
@@ -810,6 +823,8 @@ const handleStressStream = async (req, res) => {
     durationSeconds: durationSec,
     completed,
     errors,
+    attempts,
+    providerErrorRate,
     samples: latencySamples.length,
     latency,
     mixed: latency,

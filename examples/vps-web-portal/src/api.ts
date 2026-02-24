@@ -1358,7 +1358,7 @@ export interface ServerProviderlessStressParams {
 }
 
 export interface ServerStressStreamParams {
-  scenario: "remote" | "file" | "inline" | "providerless";
+  scenario: "remote" | "file" | "inline" | "shared_edit" | "providerless";
   profile: "command_only" | "get_session_only" | "list_sessions_only" | "mixed" | "soak_mixed";
   concurrency: number;
   durationSeconds: number;
