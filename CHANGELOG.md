@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.20]
+## [0.3.21]
+
+### Changed
+
+- **Global storage path standardization**: Unified global Tandem state fallbacks across engine/runtime/server/channels/skills/core to OS-native app-data roots (`.../tandem`) with consistent `data`/security/config placement and reduced ad-hoc relative-path defaults.
+- **Global storage override support**: Added `TANDEM_HOME` support to shared storage path resolution so operators can pin a canonical global Tandem root explicitly in CI/server environments.
+
+### Fixed
+
+- **Crates publish-order dependency gap**: Added `crates/tandem-agent-teams` to deterministic publish-order manifests/scripts before `crates/tandem-tools`, preventing crates.io publish failures from unresolved intra-release dependency lookup.
+
+## [0.3.20] - 2026-02-25
 
 ### Changed
 

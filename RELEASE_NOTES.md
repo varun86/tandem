@@ -2,7 +2,15 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.3.20 (Unreleased)
+## v0.3.21 (Unreleased)
+
+- Global storage path standardization
+  - Standardized global Tandem storage fallbacks to OS-native app-data roots (`.../tandem`) across engine/runtime/server/channels/skills/core, replacing scattered relative `.tandem` fallbacks for global state.
+  - Added `TANDEM_HOME` override support in shared storage path resolution for deterministic custom install roots (servers/CI).
+- Registry publish reliability
+  - Fixed crates publish ordering so `crates/tandem-agent-teams` is published before `crates/tandem-tools`, preventing crates.io dependency-resolution failures during release runs.
+
+## v0.3.20 - 2026-02-25
 
 - Tandem TUI reliability and workflow upgrade
   - Small pastes (1-2 lines) now insert directly without `[Pasted ...]` markers; CRLF paste payloads are normalized to prevent line-overlap rendering issues.
