@@ -106,6 +106,17 @@ Show masked engine token or full token.
 /engine token show
 ```
 
+### `/workspace [show|use <path>]`
+
+Show or switch the active workspace directory used by the current TUI process.
+
+```text
+/workspace
+/workspace show
+/workspace use /home/evan/game
+/workspace use ~/projects/tandem
+```
+
 ## Sessions and Chat
 
 ### `/sessions`
