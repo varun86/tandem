@@ -23,6 +23,7 @@ $crates = @(
     "crates/tandem-providers",
     "crates/tandem-memory",
     "crates/tandem-skills",
+    "crates/tandem-agent-teams",
     "crates/tandem-tools",
     "crates/tandem-orchestrator",
     "crates/tandem-core",
