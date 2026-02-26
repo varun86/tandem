@@ -383,6 +383,190 @@ struct RoutineHistoryResponse {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ContextRunStatus {
+    Queued,
+    Planning,
+    Running,
+    AwaitingApproval,
+    Paused,
+    Blocked,
+    Failed,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextStepStatus {
+    Pending,
+    Runnable,
+    InProgress,
+    Blocked,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextWorkspaceLease {
+    pub workspace_id: String,
+    pub canonical_path: String,
+    pub lease_epoch: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct ContextRunStep {
+    pub step_id: String,
+    pub title: String,
+    pub status: ContextStepStatus,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct ContextRunState {
+    pub run_id: String,
+    pub run_type: String,
+    pub status: ContextRunStatus,
+    pub objective: String,
+    pub workspace: ContextWorkspaceLease,
+    #[serde(default)]
+    pub steps: Vec<ContextRunStep>,
+    #[serde(default)]
+    pub why_next_step: Option<String>,
+    pub revision: u64,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ContextRunEventRecord {
+    pub event_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub status: ContextRunStatus,
+    #[serde(default)]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextBlackboardItem {
+    pub id: String,
+    pub ts_ms: u64,
+    pub text: String,
+    #[serde(default)]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextBlackboardArtifact {
+    pub id: String,
+    pub ts_ms: u64,
+    pub path: String,
+    pub artifact_type: String,
+    #[serde(default)]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextBlackboardSummaries {
+    pub rolling: String,
+    pub latest_context_pack: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextBlackboardState {
+    #[serde(default)]
+    pub facts: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub decisions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub open_questions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub artifacts: Vec<ContextBlackboardArtifact>,
+    #[serde(default)]
+    pub summaries: ContextBlackboardSummaries,
+    pub revision: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunRecordResponse {
+    run: ContextRunState,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunListResponse {
+    runs: Vec<ContextRunState>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunEventsResponse {
+    events: Vec<ContextRunEventRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunEventRecordResponse {
+    event: ContextRunEventRecord,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextBlackboardResponse {
+    blackboard: ContextBlackboardState,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+pub struct ContextReplayDrift {
+    pub mismatch: bool,
+    pub status_mismatch: bool,
+    pub why_next_step_mismatch: bool,
+    pub step_count_mismatch: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ContextRunReplayResponse {
+    pub ok: bool,
+    pub run_id: String,
+    #[serde(default)]
+    pub from_checkpoint: bool,
+    #[serde(default)]
+    pub checkpoint_seq: Option<u64>,
+    #[serde(default)]
+    pub events_applied: usize,
+    pub replay: ContextRunState,
+    pub persisted: ContextRunState,
+    pub drift: ContextReplayDrift,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ContextDriverNextResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub dry_run: bool,
+    pub run_id: String,
+    #[serde(default)]
+    pub selected_step_id: Option<String>,
+    pub target_status: ContextRunStatus,
+    pub why_next_step: String,
+    pub run: ContextRunState,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct ContextTodoSyncItem {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub content: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum MissionStatus {
     Draft,
     Running,
@@ -1077,6 +1261,143 @@ impl EngineClient {
         Ok(payload.events)
     }
 
+    pub async fn context_runs_list(&self) -> Result<Vec<ContextRunState>> {
+        let url = format!("{}/context/runs", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<ContextRunListResponse>().await?;
+        Ok(payload.runs)
+    }
+
+    pub async fn context_run_create(
+        &self,
+        run_id: Option<String>,
+        objective: String,
+        run_type: Option<String>,
+        workspace: Option<ContextWorkspaceLease>,
+    ) -> Result<ContextRunState> {
+        let url = format!("{}/context/runs", self.base_url);
+        let body = serde_json::json!({
+            "run_id": run_id,
+            "objective": objective,
+            "run_type": run_type,
+            "workspace": workspace,
+        });
+        let resp = self.client.post(&url).json(&body).send().await?;
+        let payload = resp.json::<ContextRunRecordResponse>().await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_get(&self, run_id: &str) -> Result<ContextRunState> {
+        let url = format!("{}/context/runs/{}", self.base_url, run_id);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<ContextRunRecordResponse>().await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_put(&self, run: &ContextRunState) -> Result<ContextRunState> {
+        let url = format!("{}/context/runs/{}", self.base_url, run.run_id);
+        let resp = self.client.put(&url).json(run).send().await?;
+        let payload = resp.json::<ContextRunRecordResponse>().await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_events(
+        &self,
+        run_id: &str,
+        since_seq: Option<u64>,
+        tail: Option<usize>,
+    ) -> Result<Vec<ContextRunEventRecord>> {
+        let url = format!("{}/context/runs/{}/events", self.base_url, run_id);
+        let mut req = self.client.get(&url);
+        if let Some(since_seq) = since_seq {
+            req = req.query(&[("since_seq", since_seq)]);
+        }
+        if let Some(tail) = tail {
+            req = req.query(&[("tail", tail)]);
+        }
+        let resp = req.send().await?;
+        let payload = resp.json::<ContextRunEventsResponse>().await?;
+        Ok(payload.events)
+    }
+
+    pub async fn context_run_append_event(
+        &self,
+        run_id: &str,
+        event_type: &str,
+        status: ContextRunStatus,
+        step_id: Option<String>,
+        payload: serde_json::Value,
+    ) -> Result<ContextRunEventRecord> {
+        let url = format!("{}/context/runs/{}/events", self.base_url, run_id);
+        let body = serde_json::json!({
+            "type": event_type,
+            "status": status,
+            "step_id": step_id,
+            "payload": payload,
+        });
+        let resp = self.client.post(&url).json(&body).send().await?;
+        let parsed = resp.json::<ContextRunEventRecordResponse>().await?;
+        Ok(parsed.event)
+    }
+
+    pub async fn context_run_blackboard(&self, run_id: &str) -> Result<ContextBlackboardState> {
+        let url = format!("{}/context/runs/{}/blackboard", self.base_url, run_id);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<ContextBlackboardResponse>().await?;
+        Ok(payload.blackboard)
+    }
+
+    pub async fn context_run_replay(
+        &self,
+        run_id: &str,
+        upto_seq: Option<u64>,
+        from_checkpoint: Option<bool>,
+    ) -> Result<ContextRunReplayResponse> {
+        let url = format!("{}/context/runs/{}/replay", self.base_url, run_id);
+        let mut req = self.client.get(&url);
+        if let Some(upto_seq) = upto_seq {
+            req = req.query(&[("upto_seq", upto_seq)]);
+        }
+        if let Some(from_checkpoint) = from_checkpoint {
+            req = req.query(&[("from_checkpoint", from_checkpoint)]);
+        }
+        let resp = req.send().await?;
+        let payload = resp.json::<ContextRunReplayResponse>().await?;
+        Ok(payload)
+    }
+
+    pub async fn context_run_driver_next(
+        &self,
+        run_id: &str,
+        dry_run: bool,
+    ) -> Result<ContextDriverNextResponse> {
+        let url = format!("{}/context/runs/{}/driver/next", self.base_url, run_id);
+        let body = serde_json::json!({ "dry_run": dry_run });
+        let resp = self.client.post(&url).json(&body).send().await?;
+        let payload = resp.json::<ContextDriverNextResponse>().await?;
+        Ok(payload)
+    }
+
+    pub async fn context_run_sync_todos(
+        &self,
+        run_id: &str,
+        todos: Vec<ContextTodoSyncItem>,
+        replace: bool,
+        source_session_id: Option<String>,
+        source_run_id: Option<String>,
+    ) -> Result<ContextRunState> {
+        let url = format!("{}/context/runs/{}/todos/sync", self.base_url, run_id);
+        let body = serde_json::json!({
+            "replace": replace,
+            "source_session_id": source_session_id,
+            "source_run_id": source_run_id,
+            "todos": todos,
+        });
+        let resp = self.client.post(&url).json(&body).send().await?;
+        let payload = resp.json::<ContextRunRecordResponse>().await?;
+        Ok(payload.run)
+    }
+
     pub async fn mission_list(&self) -> Result<Vec<MissionState>> {
         let url = format!("{}/mission", self.base_url);
         let resp = self.client.get(&url).send().await?;
@@ -1769,6 +2090,165 @@ mod tests {
             .expect("mission_apply_event");
         assert_eq!(result.mission.revision, 1);
         assert_eq!(result.commands.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn context_runs_list_reads_engine_context_runs_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs",
+            "200 OK",
+            r#"{"runs":[{"run_id":"ctx-1","run_type":"interactive","status":"running","objective":"Ship context-driving","workspace":{"workspace_id":"ws1","canonical_path":"/tmp/ws","lease_epoch":1},"steps":[{"step_id":"s1","title":"Plan","status":"in_progress"}],"why_next_step":"Need plan before execution","revision":3,"created_at_ms":1,"updated_at_ms":2}]}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let runs = client.context_runs_list().await.expect("context_runs_list");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, "ctx-1");
+        assert_eq!(runs[0].status, ContextRunStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn context_run_get_reads_engine_context_run_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-2",
+            "200 OK",
+            r#"{"run":{"run_id":"ctx-2","run_type":"cron","status":"paused","objective":"Nightly pipeline","workspace":{"workspace_id":"ws2","canonical_path":"/tmp/cron","lease_epoch":2},"steps":[],"why_next_step":null,"revision":7,"created_at_ms":3,"updated_at_ms":4}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let run = client
+            .context_run_get("ctx-2")
+            .await
+            .expect("context_run_get");
+        assert_eq!(run.run_id, "ctx-2");
+        assert_eq!(run.run_type, "cron");
+        assert_eq!(run.status, ContextRunStatus::Paused);
+    }
+
+    #[tokio::test]
+    async fn context_run_events_reads_engine_context_run_events_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-3/events",
+            "200 OK",
+            r#"{"events":[{"event_id":"evt-1","run_id":"ctx-3","seq":12,"ts_ms":1000,"type":"step_started","status":"running","step_id":"s-plan","payload":{"why_next_step":"execute plan"}}]}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let events = client
+            .context_run_events("ctx-3", Some(10), Some(5))
+            .await
+            .expect("context_run_events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq, 12);
+        assert_eq!(events[0].event_type, "step_started");
+        assert_eq!(events[0].status, ContextRunStatus::Running);
+        assert_eq!(events[0].step_id.as_deref(), Some("s-plan"));
+    }
+
+    #[tokio::test]
+    async fn context_run_append_event_posts_to_engine_context_run_events_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-4/events",
+            "200 OK",
+            r#"{"event":{"event_id":"evt-2","run_id":"ctx-4","seq":3,"ts_ms":2000,"type":"run_paused","status":"paused","step_id":null,"payload":{"source":"tui"}}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let event = client
+            .context_run_append_event(
+                "ctx-4",
+                "run_paused",
+                ContextRunStatus::Paused,
+                None,
+                serde_json::json!({ "source": "tui" }),
+            )
+            .await
+            .expect("context_run_append_event");
+        assert_eq!(event.run_id, "ctx-4");
+        assert_eq!(event.seq, 3);
+        assert_eq!(event.status, ContextRunStatus::Paused);
+    }
+
+    #[tokio::test]
+    async fn context_run_blackboard_reads_engine_context_run_blackboard_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-5/blackboard",
+            "200 OK",
+            r#"{"blackboard":{"facts":[{"id":"f1","ts_ms":1,"text":"fact","step_id":null,"source_event_id":null}],"decisions":[],"open_questions":[],"artifacts":[],"summaries":{"rolling":"summary","latest_context_pack":"pack"},"revision":9}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let blackboard = client
+            .context_run_blackboard("ctx-5")
+            .await
+            .expect("context_run_blackboard");
+        assert_eq!(blackboard.revision, 9);
+        assert_eq!(blackboard.facts.len(), 1);
+        assert_eq!(blackboard.summaries.rolling, "summary");
+    }
+
+    #[tokio::test]
+    async fn context_run_replay_reads_engine_context_run_replay_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-6/replay",
+            "200 OK",
+            r#"{"ok":true,"run_id":"ctx-6","from_checkpoint":true,"checkpoint_seq":9,"events_applied":2,"replay":{"run_id":"ctx-6","run_type":"interactive","status":"running","objective":"obj","workspace":{"workspace_id":"w","canonical_path":"/tmp","lease_epoch":1},"steps":[],"why_next_step":"next","revision":3,"created_at_ms":1,"updated_at_ms":2},"persisted":{"run_id":"ctx-6","run_type":"interactive","status":"running","objective":"obj","workspace":{"workspace_id":"w","canonical_path":"/tmp","lease_epoch":1},"steps":[],"why_next_step":"next","revision":3,"created_at_ms":1,"updated_at_ms":2},"drift":{"mismatch":false,"status_mismatch":false,"why_next_step_mismatch":false,"step_count_mismatch":false}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let replay = client
+            .context_run_replay("ctx-6", Some(10), Some(true))
+            .await
+            .expect("context_run_replay");
+        assert_eq!(replay.run_id, "ctx-6");
+        assert!(!replay.drift.mismatch);
+        assert_eq!(replay.events_applied, 2);
+    }
+
+    #[tokio::test]
+    async fn context_run_driver_next_posts_engine_context_run_driver_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-7/driver/next",
+            "200 OK",
+            r#"{"ok":true,"dry_run":false,"run_id":"ctx-7","selected_step_id":"s2","target_status":"running","why_next_step":"selected runnable step","run":{"run_id":"ctx-7","run_type":"interactive","status":"running","objective":"obj","workspace":{"workspace_id":"w","canonical_path":"/tmp","lease_epoch":1},"steps":[{"step_id":"s2","title":"Exec","status":"in_progress"}],"why_next_step":"selected runnable step","revision":4,"created_at_ms":1,"updated_at_ms":2}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let next = client
+            .context_run_driver_next("ctx-7", false)
+            .await
+            .expect("context_run_driver_next");
+        assert_eq!(next.run_id, "ctx-7");
+        assert_eq!(next.selected_step_id.as_deref(), Some("s2"));
+        assert_eq!(next.target_status, ContextRunStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn context_run_sync_todos_posts_engine_context_todos_sync_endpoint() {
+        let base = spawn_single_response_server(
+            "/context/runs/ctx-8/todos/sync",
+            "200 OK",
+            r#"{"run":{"run_id":"ctx-8","run_type":"interactive","status":"planning","objective":"obj","workspace":{"workspace_id":"w","canonical_path":"/tmp","lease_epoch":1},"steps":[{"step_id":"task-1","title":"Plan","status":"in_progress"}],"why_next_step":"continue task `task-1` from synced todo list","revision":5,"created_at_ms":1,"updated_at_ms":2}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let run = client
+            .context_run_sync_todos(
+                "ctx-8",
+                vec![ContextTodoSyncItem {
+                    id: Some("task-1".to_string()),
+                    content: "Plan".to_string(),
+                    status: Some("in_progress".to_string()),
+                }],
+                true,
+                Some("s-1".to_string()),
+                Some("r-1".to_string()),
+            )
+            .await
+            .expect("context_run_sync_todos");
+        assert_eq!(run.run_id, "ctx-8");
+        assert_eq!(run.steps.len(), 1);
+        assert_eq!(run.steps[0].step_id, "task-1");
     }
 
     #[test]

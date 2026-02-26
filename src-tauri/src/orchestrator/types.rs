@@ -134,17 +134,20 @@ impl Default for OrchestratorConfig {
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     /// Run created, awaiting planning
-    Idle,
+    #[serde(alias = "idle")]
+    Queued,
     /// Planner agent is generating task DAG
     Planning,
+    /// Executing tasks
+    #[serde(alias = "executing")]
+    Running,
     /// Plan generated, awaiting user approval
     AwaitingApproval,
-    /// User requested revision to the plan
-    RevisionRequested,
-    /// Executing tasks
-    Executing,
     /// Execution paused by user
     Paused,
+    /// Run blocked pending external action
+    #[serde(alias = "revision_requested")]
+    Blocked,
     /// All tasks completed successfully
     Completed,
     /// Run failed (budget exceeded or unrecoverable error)
@@ -172,6 +175,9 @@ pub struct Run {
     /// Workspace root captured when the run was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
+    /// Workspace lease for stale workspace protection.
+    #[serde(default)]
+    pub workspace_lease: WorkspaceLease,
     /// UI origin for this run (orchestrator panel vs command center).
     #[serde(default)]
     pub source: RunSource,
@@ -202,6 +208,12 @@ pub struct Run {
     pub error_message: Option<String>,
     /// Plan revision feedback (if revision requested)
     pub revision_feedback: Option<String>,
+    /// Why the currently selected step was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why_next_step: Option<String>,
+    /// Last persisted checkpoint id for crash-safe resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_checkpoint_id: Option<String>,
 }
 
 impl Run {
@@ -215,21 +227,34 @@ impl Run {
             run_id,
             session_id,
             workspace_root: None,
+            workspace_lease: WorkspaceLease::default(),
             source: RunSource::Orchestrator,
             provider: None,
             model: None,
             agent_model_routing: AgentModelRouting::default(),
             objective,
             config: config.clone(),
-            status: RunStatus::Idle,
+            status: RunStatus::Queued,
             tasks: Vec::new(),
             budget: Budget::from_config(&config),
             started_at: chrono::Utc::now(),
             ended_at: None,
             error_message: None,
             revision_feedback: None,
+            why_next_step: None,
+            current_checkpoint_id: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceLease {
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub canonical_path: String,
+    #[serde(default)]
+    pub lease_epoch: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -383,6 +408,8 @@ impl Run {
 pub enum TaskState {
     /// Waiting for dependencies
     Pending,
+    /// Dependencies satisfied and ready to schedule
+    Runnable,
     /// Currently being executed
     InProgress,
     /// Blocked (dependency failed or manual block)
@@ -677,6 +704,169 @@ pub enum OrchestratorEvent {
         snippet: Option<String>,
         timestamp: chrono::DateTime<chrono::Utc>,
     },
+    WorkspaceMismatch {
+        run_id: String,
+        task_id: Option<String>,
+        expected_path: String,
+        actual_path: String,
+        phase: String,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    ContextPackBuilt {
+        run_id: String,
+        task_id: String,
+        why_next_step: String,
+        event_count: usize,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunEventRecord {
+    pub event_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub status: RunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextPack {
+    pub goal: String,
+    #[serde(default)]
+    pub pinned_constraints: Vec<String>,
+    pub active_step_id: String,
+    #[serde(default)]
+    pub recent_events: Vec<RunEventRecord>,
+    pub rolling_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Blackboard {
+    #[serde(default)]
+    pub facts: Vec<BlackboardItem>,
+    #[serde(default)]
+    pub decisions: Vec<BlackboardItem>,
+    #[serde(default)]
+    pub open_questions: Vec<BlackboardItem>,
+    #[serde(default)]
+    pub artifacts: Vec<BlackboardArtifactRef>,
+    #[serde(default)]
+    pub summaries: BlackboardSummaries,
+    #[serde(default)]
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BlackboardItem {
+    pub id: String,
+    pub ts_ms: u64,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlackboardArtifactRef {
+    pub id: String,
+    pub ts_ms: u64,
+    pub path: String,
+    pub artifact_type: ArtifactType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BlackboardSummaries {
+    #[serde(default)]
+    pub rolling: String,
+    #[serde(default)]
+    pub latest_context_pack: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlackboardPatchOp {
+    AddFact,
+    AddDecision,
+    AddOpenQuestion,
+    AddArtifact,
+    SetRollingSummary,
+    SetLatestContextPack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlackboardPatchRecord {
+    pub patch_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    pub op: BlackboardPatchOp,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSnapshot {
+    pub checkpoint_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    pub reason: String,
+    pub run: Run,
+    pub budget: Budget,
+    #[serde(default)]
+    pub task_sessions: HashMap<String, String>,
+}
+
+impl OrchestratorEvent {
+    pub fn run_id(&self) -> &str {
+        match self {
+            Self::RunCreated { run_id, .. }
+            | Self::PlanningStarted { run_id, .. }
+            | Self::PlanGenerated { run_id, .. }
+            | Self::PlanApproved { run_id, .. }
+            | Self::RevisionRequested { run_id, .. }
+            | Self::TaskStarted { run_id, .. }
+            | Self::TaskCompleted { run_id, .. }
+            | Self::TaskTrace { run_id, .. }
+            | Self::ApprovalRequested { run_id, .. }
+            | Self::ApprovalGranted { run_id, .. }
+            | Self::BudgetUpdated { run_id, .. }
+            | Self::RunPaused { run_id, .. }
+            | Self::RunResumed { run_id, .. }
+            | Self::RunCompleted { run_id, .. }
+            | Self::RunFailed { run_id, .. }
+            | Self::RunCancelled { run_id, .. }
+            | Self::ContractWarning { run_id, .. }
+            | Self::ContractError { run_id, .. }
+            | Self::WorkspaceMismatch { run_id, .. }
+            | Self::ContextPackBuilt { run_id, .. } => run_id,
+        }
+    }
+
+    pub fn step_id(&self) -> Option<String> {
+        match self {
+            Self::TaskStarted { task_id, .. }
+            | Self::TaskCompleted { task_id, .. }
+            | Self::TaskTrace { task_id, .. } => Some(task_id.clone()),
+            Self::ContractWarning { task_id, .. } | Self::ContractError { task_id, .. } => {
+                task_id.clone()
+            }
+            Self::WorkspaceMismatch { task_id, .. } => task_id.clone(),
+            Self::ContextPackBuilt { task_id, .. } => Some(task_id.clone()),
+            _ => None,
+        }
+    }
 }
 
 // ============================================================================

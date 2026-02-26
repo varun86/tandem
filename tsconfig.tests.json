@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "outDir": ".tmp/ts-tests",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2022"],
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": [
+    "src/components/orchestrate/blackboardProjection.ts",
+    "src/components/orchestrate/blackboardProjection.test.ts",
+    "src/components/orchestrate/blackboardRefreshPolicy.ts",
+    "src/components/orchestrate/blackboardRefreshPolicy.test.ts",
+    "src/components/orchestrate/blackboardUiState.ts",
+    "src/components/orchestrate/blackboardUiState.test.ts",
+    "src/components/orchestrate/blackboardPanelState.ts",
+    "src/components/orchestrate/blackboardPanelState.test.ts",
+    "src/components/orchestrate/types.ts"
+  ]
+}

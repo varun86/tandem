@@ -18,6 +18,11 @@ const STATE_CONFIG: Record<TaskState, { label: string; color: string; icon: Reac
     color: "bg-slate-500/20 text-slate-400 border-slate-500/30",
     icon: <Clock className="h-3 w-3" />,
   },
+  runnable: {
+    label: "Runnable",
+    color: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
+    icon: <ChevronRight className="h-3 w-3" />,
+  },
   in_progress: {
     label: "In Progress",
     color: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -197,6 +202,7 @@ export function TaskBoard({
   const groupedTasks = useMemo(() => {
     const groups: Record<TaskState, Task[]> = {
       pending: [],
+      runnable: [],
       in_progress: [],
       blocked: [],
       done: [],
@@ -212,7 +218,7 @@ export function TaskBoard({
 
   const pendingSplit = useMemo(() => {
     const doneIds = new Set(groupedTasks.done.map((task) => task.id));
-    const runnable: Task[] = [];
+    const runnable: Task[] = [...groupedTasks.runnable];
     const waiting: Task[] = [];
 
     for (const task of groupedTasks.pending) {

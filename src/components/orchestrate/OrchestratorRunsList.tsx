@@ -13,7 +13,7 @@ export function OrchestratorRunsList({ onRunSelect, currentRunId }: Orchestrator
 
   const loadRuns = useCallback(async () => {
     try {
-      const runs = await invoke<RunSummary[]>("orchestrator_list_runs");
+      const runs = await invoke<RunSummary[]>("orchestrator_engine_list_runs");
       setRuns(runs);
     } catch (error) {
       console.error("Failed to load orchestrator runs:", error);
@@ -36,7 +36,7 @@ export function OrchestratorRunsList({ onRunSelect, currentRunId }: Orchestrator
 
   // Group runs by status
   const activeRuns = runs.filter((r) =>
-    ["planning", "awaiting_approval", "executing", "paused"].includes(r.status)
+    ["queued", "planning", "awaiting_approval", "running", "paused", "blocked"].includes(r.status)
   );
 
   const completedRuns = runs
@@ -44,7 +44,7 @@ export function OrchestratorRunsList({ onRunSelect, currentRunId }: Orchestrator
       (r) =>
         ["completed", "failed", "cancelled"].includes(r.status) ||
         // Include any other statuses as recently completed if not active
-        !["planning", "awaiting_approval", "executing", "paused"].includes(r.status)
+        !["queued", "planning", "awaiting_approval", "running", "paused", "blocked"].includes(r.status)
     )
     .slice(0, 5); // Limit to 5 most recent
 

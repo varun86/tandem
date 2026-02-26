@@ -2,6 +2,23 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.22 (Unreleased)
+
+- Engine-first context-driving reliability expansion
+  - Extended engine context-run/runtime wiring used by Desktop + TUI: sequenced events, replay/checkpoint access, deterministic next-step selection, and todo->step synchronization for long-running workflows.
+  - Reinforced source-of-truth model so operator surfaces consume engine state/events rather than transcript inference.
+- Premium Blackboard UX for long runs (Desktop Orchestrator + Command Center)
+  - Added shared Blackboard panel with docked/expanded/fullscreen modes.
+  - Added decision spine + lineage rail views with selectable decision history and attached context nodes.
+  - Added predictable follow behavior:
+    - auto-focus only on new `meta_next_step_selected` decisions
+    - manual navigation pauses follow until explicitly re-enabled
+  - Added drift details drawer with mismatch flags, checkpoint/event markers, and copyable debug bundle payload.
+  - Added keyboard-first controls (`E`, `F`, `Space`, `/`, `Esc`) and baseline fullscreen accessibility handling.
+- Performance and test hardening
+  - Switched blackboard refresh to event-family-gated + debounced fetches with `last_blackboard_refresh_seq` watermark to avoid redundant refresh bursts.
+  - Added dedicated blackboard test target (`pnpm test:blackboard`) covering projection/filtering, follow-mode state, refresh policy, and drift UI state contracts.
+
 ## v0.3.21 (Unreleased)
 
 - Global storage path standardization

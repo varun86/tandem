@@ -18,12 +18,14 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 use tokio::fs;
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 fn is_sidecar_session_not_found(err: &TandemError) -> bool {
     matches!(err, TandemError::Sidecar(msg) if msg.contains("404 Not Found"))
@@ -110,6 +112,7 @@ pub struct OrchestratorEngine {
     pause_signal: Arc<RwLock<bool>>,
     /// Event sender for UI updates
     event_tx: mpsc::UnboundedSender<OrchestratorEvent>,
+    event_seq: Arc<AtomicU64>,
     task_semaphore: Arc<Semaphore>,
     llm_semaphore: Arc<Semaphore>,
     task_sessions: Arc<RwLock<HashMap<String, String>>>,
@@ -124,7 +127,197 @@ pub struct OrchestratorEngine {
     >,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetryFailureClass {
+    RateLimit,
+    QuotaExceeded,
+    AuthFailed,
+    Timeout,
+    WorkspaceNotFound,
+    InvalidToolArgs,
+    PathNotFound,
+    Unknown,
+}
+
+#[derive(Clone, Debug)]
+struct FailurePolicy {
+    class: RetryFailureClass,
+    should_pause: bool,
+    task_message: Option<String>,
+    run_message: Option<String>,
+}
+
 impl OrchestratorEngine {
+    const ROLLING_SUMMARY_MAX_CHARS: usize = 900;
+
+    fn classify_failure(error: &str) -> RetryFailureClass {
+        if Self::is_provider_quota_error(error) {
+            return RetryFailureClass::QuotaExceeded;
+        }
+        if Self::is_rate_limit_error(error) {
+            return RetryFailureClass::RateLimit;
+        }
+        if Self::is_auth_error(error) {
+            return RetryFailureClass::AuthFailed;
+        }
+        if Self::is_transient_timeout_error(error) {
+            return RetryFailureClass::Timeout;
+        }
+        if Self::is_workspace_not_found_error(error) {
+            return RetryFailureClass::WorkspaceNotFound;
+        }
+        if Self::is_invalid_tool_args_error(error) {
+            return RetryFailureClass::InvalidToolArgs;
+        }
+        if Self::is_path_not_found_error(error) {
+            return RetryFailureClass::PathNotFound;
+        }
+        RetryFailureClass::Unknown
+    }
+
+    fn failure_policy(error: &str) -> FailurePolicy {
+        let class = Self::classify_failure(error);
+        match class {
+            RetryFailureClass::QuotaExceeded => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Provider quota/credits exceeded. Switch model/provider and retry.".to_string(),
+                ),
+                run_message: Some(
+                    "Paused: provider quota/credits exceeded. Switch model/provider and retry."
+                        .to_string(),
+                ),
+            },
+            RetryFailureClass::RateLimit => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some("Provider rate-limited. Switch model/provider and retry.".to_string()),
+                run_message: Some(
+                    "Paused: provider rate-limited. Switch model/provider and retry.".to_string(),
+                ),
+            },
+            RetryFailureClass::AuthFailed => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Provider authentication failed (401/403). Check API key/provider selection and retry."
+                        .to_string(),
+                ),
+                run_message: Some(
+                    "Paused: provider authentication failed (401/403). Check API key/provider selection and continue."
+                        .to_string(),
+                ),
+            },
+            RetryFailureClass::Timeout => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Tool timeout detected. Run paused so you can resume and continue."
+                        .to_string(),
+                ),
+                run_message: Some(
+                    "Paused: transient tool timeout detected. Resume run to continue.".to_string(),
+                ),
+            },
+            RetryFailureClass::WorkspaceNotFound => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Workspace root not found. Verify workspace path and continue.".to_string(),
+                ),
+                run_message: Some(
+                    "Paused: workspace root not found. Verify workspace path and continue."
+                        .to_string(),
+                ),
+            },
+            RetryFailureClass::InvalidToolArgs => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Invalid tool arguments detected (missing/invalid file path). Run paused so you can resume after guardrails."
+                        .to_string(),
+                ),
+                run_message: Some(
+                    "Paused: invalid tool args (missing file path). Resume to retry with strict path guardrails."
+                        .to_string(),
+                ),
+            },
+            RetryFailureClass::PathNotFound => FailurePolicy {
+                class,
+                should_pause: true,
+                task_message: Some(
+                    "Path not found detected (os error 3). Verify workspace/file paths and continue."
+                        .to_string(),
+                ),
+                run_message: Some(
+                    "Paused: path not found (os error 3). Verify workspace/file paths and continue."
+                        .to_string(),
+                ),
+            },
+            RetryFailureClass::Unknown => FailurePolicy {
+                class,
+                should_pause: false,
+                task_message: None,
+                run_message: None,
+            },
+        }
+    }
+
+    fn failure_class_label(class: RetryFailureClass) -> &'static str {
+        match class {
+            RetryFailureClass::RateLimit => "rate_limit",
+            RetryFailureClass::QuotaExceeded => "quota_exceeded",
+            RetryFailureClass::AuthFailed => "auth_failed",
+            RetryFailureClass::Timeout => "timeout",
+            RetryFailureClass::WorkspaceNotFound => "workspace_not_found",
+            RetryFailureClass::InvalidToolArgs => "invalid_tool_args",
+            RetryFailureClass::PathNotFound => "path_not_found",
+            RetryFailureClass::Unknown => "unknown",
+        }
+    }
+
+    fn pinned_constraints() -> Vec<String> {
+        vec![
+            "Engine state is source-of-truth".to_string(),
+            "Only operate within leased workspace".to_string(),
+            "Respect configured tool/policy constraints".to_string(),
+        ]
+    }
+
+    fn compact_rolling_summary(
+        existing_summary: &str,
+        why_next_step: &str,
+        active_step_id: &str,
+        recent_events: &[RunEventRecord],
+        pinned_constraints: &[String],
+    ) -> String {
+        let pinned_line = format!("Pinned: {}", pinned_constraints.join(" | "));
+        let recent_digest = recent_events
+            .iter()
+            .rev()
+            .take(6)
+            .map(|event| format!("{}:{}:{:?}", event.seq, event.event_type, event.status))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut compact = format!(
+            "{}\nActive step: {}\nWhy next: {}\nRecent: {}\nPrior: {}",
+            pinned_line,
+            active_step_id,
+            why_next_step,
+            if recent_digest.is_empty() {
+                "none".to_string()
+            } else {
+                recent_digest
+            },
+            existing_summary.trim()
+        );
+        if compact.len() > Self::ROLLING_SUMMARY_MAX_CHARS {
+            compact = compact.chars().take(Self::ROLLING_SUMMARY_MAX_CHARS).collect();
+        }
+        compact
+    }
+
     fn existing_dir_string(path: &Path) -> Option<String> {
         if path.is_dir() {
             Some(path.to_string_lossy().to_string())
@@ -389,10 +582,11 @@ impl OrchestratorEngine {
         event_tx: mpsc::UnboundedSender<OrchestratorEvent>,
     ) -> Self {
         let run_id = run.run_id.clone();
+        let latest_seq = store.latest_run_event_seq(&run_id).unwrap_or(0);
         let mut budget_tracker = BudgetTracker::from_budget(run.budget.clone());
         budget_tracker.set_active(matches!(
             run.status,
-            RunStatus::Planning | RunStatus::Executing
+            RunStatus::Planning | RunStatus::Running
         ));
         let max_parallel_tasks = run.config.max_parallel_tasks.max(1) as usize;
         let llm_parallel = run.config.llm_parallel.max(1) as usize;
@@ -410,6 +604,7 @@ impl OrchestratorEngine {
             cancel_token: Arc::new(StdMutex::new(CancellationToken::new())),
             pause_signal,
             event_tx,
+            event_seq: Arc::new(AtomicU64::new(latest_seq)),
             task_semaphore: Arc::new(Semaphore::new(max_parallel_tasks)),
             llm_semaphore: Arc::new(Semaphore::new(llm_parallel)),
             task_sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -470,7 +665,7 @@ impl OrchestratorEngine {
             let run = self.run.read().await;
             if run.status != RunStatus::AwaitingApproval
                 && run.status != RunStatus::Paused
-                && run.status != RunStatus::Executing
+                && run.status != RunStatus::Running
             {
                 return Err(TandemError::InvalidOperation(
                     "Run is not awaiting approval, paused, or executing".to_string(),
@@ -486,8 +681,8 @@ impl OrchestratorEngine {
         // Update status to Executing if not already
         {
             let mut run = self.run.write().await;
-            if run.status != RunStatus::Executing {
-                run.status = RunStatus::Executing;
+            if run.status != RunStatus::Running {
+                run.status = RunStatus::Running;
             }
         }
         self.budget_tracker.write().await.set_active(true);
@@ -804,6 +999,8 @@ impl OrchestratorEngine {
             let mut scheduled_any = false;
 
             for task_id in runnable_task_ids {
+                self.validate_workspace_lease("pre_dispatch", Some(&task_id))
+                    .await?;
                 self.emit_task_trace(
                     &task_id,
                     None,
@@ -821,20 +1018,37 @@ impl OrchestratorEngine {
                     Some("task_semaphore".to_string()),
                 );
 
-                let task = {
+                let (task, why_next_step) = {
                     let mut run = self.run.write().await;
                     if let Some(idx) = run.tasks.iter().position(|t| t.id == task_id) {
-                        if run.tasks[idx].state != TaskState::Pending {
+                        if run.tasks[idx].state != TaskState::Pending
+                            && run.tasks[idx].state != TaskState::Runnable
+                        {
                             continue;
                         }
+                        let why_next_step = format!(
+                            "Dependencies satisfied; task `{}` selected by scheduler.",
+                            task_id
+                        );
+                        run.why_next_step = Some(why_next_step.clone());
+                        run.tasks[idx].state = TaskState::Runnable;
                         run.tasks[idx].state = TaskState::InProgress;
                         // Clear stale per-task error once a fresh execution attempt starts.
                         run.tasks[idx].error_message = None;
-                        run.tasks[idx].clone()
+                        (run.tasks[idx].clone(), why_next_step)
                     } else {
                         continue;
                     }
                 };
+                if let Ok(pack) = self.build_context_pack(&task, &why_next_step).await {
+                    self.emit_event(OrchestratorEvent::ContextPackBuilt {
+                        run_id: self.run_id.clone(),
+                        task_id: task_id.clone(),
+                        why_next_step: why_next_step.clone(),
+                        event_count: pack.recent_events.len(),
+                        timestamp: chrono::Utc::now(),
+                    });
+                }
 
                 let engine = self.clone();
                 join_set.spawn(async move {
@@ -985,6 +1199,8 @@ impl OrchestratorEngine {
         // it forever and budgets will "explode").
         let execution_result: Result<(String, bool, Option<ValidationResult>)> = async {
             let execution_role = self.resolve_task_execution_role(&task).await;
+            self.validate_workspace_lease("pre_tool_call", Some(&task_id))
+                .await?;
             let mut session_id = self
                 .get_or_create_task_session_id(&task, execution_role)
                 .await?;
@@ -1295,21 +1511,9 @@ You MUST perform concrete file edits now.\n\
     }
 
     async fn mark_task_error(&self, task_id: &str, error: &str) -> Result<()> {
-        let rate_limited = Self::is_rate_limit_error(error);
-        let quota_exceeded = Self::is_provider_quota_error(error);
-        let auth_failed = Self::is_auth_error(error);
-        let transient_timeout = Self::is_transient_timeout_error(error);
-        let workspace_not_found = Self::is_workspace_not_found_error(error);
-        let invalid_tool_args = Self::is_invalid_tool_args_error(error);
-        let path_not_found = Self::is_path_not_found_error(error);
+        let policy = Self::failure_policy(error);
         let error_code = Self::extract_error_code(error);
-        let path_or_args_issue = invalid_tool_args || path_not_found;
-        let should_pause = rate_limited
-            || quota_exceeded
-            || auth_failed
-            || transient_timeout
-            || workspace_not_found
-            || path_or_args_issue;
+        let should_pause = policy.should_pause;
 
         let session_id = {
             let mut run = self.run.write().await;
@@ -1325,63 +1529,10 @@ You MUST perform concrete file edits now.\n\
                     // Treat provider capacity/quota failures as a "pause and switch model" event,
                     // not a normal task failure that burns retries.
                     t.state = TaskState::Pending;
-                    if quota_exceeded {
-                        t.error_message = Some(
-                            "Provider quota/credits exceeded. Switch model/provider and retry."
-                                .to_string(),
-                        );
-                    } else if rate_limited {
-                        t.error_message = Some(
-                            "Provider rate-limited. Switch model/provider and retry.".to_string(),
-                        );
-                    } else if auth_failed {
-                        t.error_message = Some(
-                            "Provider authentication failed (401/403). Check API key/provider selection and retry."
-                                .to_string(),
-                        );
-                    } else if workspace_not_found {
-                        t.error_message = Some(
-                            "Workspace root not found. Verify workspace path and continue."
-                                .to_string(),
-                        );
-                    } else if invalid_tool_args {
-                        t.error_message = Some(
-                            "Invalid tool arguments detected (missing/invalid file path). Run paused so you can resume after guardrails."
-                                .to_string(),
-                        );
-                    } else if path_not_found {
-                        t.error_message = Some(
-                            "Path not found detected (os error 3). Verify workspace/file paths and continue."
-                                .to_string(),
-                        );
-                    } else if transient_timeout {
-                        t.error_message = Some(
-                            "Tool timeout detected. Run paused so you can resume and continue."
-                                .to_string(),
-                        );
+                    if let Some(msg) = policy.task_message.clone() {
+                        t.error_message = Some(msg);
                     }
-                    run.error_message = Some(if quota_exceeded {
-                        "Paused: provider quota/credits exceeded. Switch model/provider and retry."
-                            .to_string()
-                    } else if auth_failed {
-                        "Paused: provider authentication failed (401/403). Check API key/provider selection and continue."
-                            .to_string()
-                    } else if workspace_not_found {
-                        "Paused: workspace root not found. Verify workspace path and continue."
-                            .to_string()
-                    } else if invalid_tool_args {
-                        "Paused: invalid tool args (missing file path). Resume to retry with strict path guardrails."
-                            .to_string()
-                    } else if path_not_found {
-                        "Paused: path not found (os error 3). Verify workspace/file paths and continue."
-                            .to_string()
-                    } else if transient_timeout {
-                        "Paused: transient tool timeout detected. Resume run to continue."
-                            .to_string()
-                    } else {
-                        "Paused: provider rate-limited. Switch model/provider and retry."
-                            .to_string()
-                    });
+                    run.error_message = policy.run_message.clone();
                 } else {
                     t.retry_count += 1;
                     if t.retry_count >= max_retries {
@@ -1409,6 +1560,21 @@ You MUST perform concrete file edits now.\n\
             passed: false,
             timestamp: chrono::Utc::now(),
         });
+
+        self.emit_task_trace(
+            task_id,
+            session_id.as_deref(),
+            "RETRY_CLASSIFIED",
+            Some(format!(
+                "class={} action={}{}",
+                Self::failure_class_label(policy.class),
+                if should_pause { "pause" } else { "retry_or_fail" },
+                error_code
+                    .as_deref()
+                    .map(|code| format!(" code={}", code))
+                    .unwrap_or_default()
+            )),
+        );
 
         self.emit_task_trace(
             task_id,
@@ -1717,6 +1883,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         role: AgentRole,
     ) -> Result<String> {
         use crate::sidecar::{ModelSpec, SendMessageRequest, StreamEvent};
+        self.validate_workspace_lease("pre_tool_call", task_id).await?;
 
         let _llm_permit = self
             .llm_semaphore
@@ -2202,6 +2369,71 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         ))
     }
 
+    async fn build_context_pack(&self, task: &Task, why_next_step: &str) -> Result<ContextPack> {
+        let run = self.run.read().await;
+        let recent_events = self
+            .store
+            .load_run_events(&run.run_id, None, Some(20))
+            .unwrap_or_default();
+        let blackboard = self.store.load_blackboard(&run.run_id).unwrap_or_default();
+        let pinned_constraints = Self::pinned_constraints();
+        let rolling_summary = Self::compact_rolling_summary(
+            &blackboard.summaries.rolling,
+            why_next_step,
+            &task.id,
+            &recent_events,
+            &pinned_constraints,
+        );
+        Ok(ContextPack {
+            goal: run.objective.clone(),
+            pinned_constraints,
+            active_step_id: task.id.clone(),
+            recent_events,
+            rolling_summary,
+        })
+    }
+
+    async fn validate_workspace_lease(&self, phase: &str, task_id: Option<&str>) -> Result<()> {
+        let current = std::fs::canonicalize(&self.workspace_path)
+            .unwrap_or_else(|_| self.workspace_path.clone())
+            .to_string_lossy()
+            .to_string();
+        let mut run = self.run.write().await;
+        if run.workspace_lease.canonical_path.is_empty() {
+            run.workspace_lease.canonical_path = current.clone();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            run.workspace_lease.canonical_path.hash(&mut hasher);
+            run.workspace_lease.workspace_id = format!("ws-{:x}", hasher.finish());
+            if run.workspace_lease.lease_epoch == 0 {
+                run.workspace_lease.lease_epoch = 1;
+            }
+            return Ok(());
+        }
+        if run.workspace_lease.canonical_path != current {
+            let run_id = run.run_id.clone();
+            let expected = run.workspace_lease.canonical_path.clone();
+            run.status = RunStatus::Paused;
+            run.error_message = Some(format!(
+                "Workspace lease mismatch detected in {}. Expected {}, got {}.",
+                phase, expected, current
+            ));
+            drop(run);
+            self.emit_event(OrchestratorEvent::WorkspaceMismatch {
+                run_id,
+                task_id: task_id.map(|value| value.to_string()),
+                expected_path: expected,
+                actual_path: current,
+                phase: phase.to_string(),
+                timestamp: chrono::Utc::now(),
+            });
+            *self.pause_signal.write().await = true;
+            return Err(TandemError::Orchestrator(
+                "workspace lease mismatch; run paused".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn should_track_workspace_path(rel_path: &str) -> bool {
         let normalized = rel_path.replace('\\', "/");
         !normalized.is_empty()
@@ -2615,7 +2847,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
                     "Run is not paused".to_string(),
                 ));
             }
-            run.status = RunStatus::Executing;
+            run.status = RunStatus::Running;
             run.ended_at = None;
             if run
                 .error_message
@@ -2737,7 +2969,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
                     "Run is not awaiting approval".to_string(),
                 ));
             }
-            run.status = RunStatus::RevisionRequested;
+            run.status = RunStatus::Blocked;
             run.revision_feedback = Some(feedback.clone());
         }
 
@@ -3089,23 +3321,330 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         let run = self.run.read().await;
         self.store.save_run(&run)?;
         self.store.save_budget(&run.run_id, &budget)?;
+        drop(run);
+        self.persist_checkpoint("heartbeat", None).await?;
 
         Ok(())
+    }
+
+    async fn persist_checkpoint(&self, reason: &str, seq_override: Option<u64>) -> Result<()> {
+        let run = self.run.read().await.clone();
+        let budget = self.budget_tracker.write().await.snapshot();
+        let task_sessions = self.task_sessions.read().await.clone();
+        let seq = match seq_override {
+            Some(value) => value,
+            None => self.store.latest_run_event_seq(&run.run_id).unwrap_or(0),
+        };
+        let checkpoint_id = format!("cp-{}-{}", run.run_id, seq);
+        let checkpoint = CheckpointSnapshot {
+            checkpoint_id: checkpoint_id.clone(),
+            run_id: run.run_id.clone(),
+            seq,
+            ts_ms: crate::logs::now_ms(),
+            reason: reason.to_string(),
+            run: run.clone(),
+            budget,
+            task_sessions,
+        };
+        self.store.save_checkpoint(&run.run_id, &checkpoint)?;
+        {
+            let mut run_write = self.run.write().await;
+            run_write.current_checkpoint_id = Some(checkpoint_id);
+            self.store.save_run(&run_write)?;
+        }
+        Ok(())
+    }
+
+    fn checkpoint_reason_for_event(event: &OrchestratorEvent) -> Option<&'static str> {
+        match event {
+            OrchestratorEvent::TaskStarted { .. } => Some("step_started"),
+            OrchestratorEvent::TaskCompleted { .. } => Some("step_completed"),
+            OrchestratorEvent::ApprovalRequested { .. } => Some("approval_requested"),
+            OrchestratorEvent::ApprovalGranted { .. } => Some("approval_granted"),
+            OrchestratorEvent::RunPaused { .. } => Some("run_paused"),
+            OrchestratorEvent::RunResumed { .. } => Some("run_resumed"),
+            OrchestratorEvent::RunFailed { .. } => Some("run_failed"),
+            OrchestratorEvent::RunCompleted { .. } => Some("run_completed"),
+            OrchestratorEvent::RevisionRequested { .. } => Some("revision_requested"),
+            _ => None,
+        }
     }
 
     fn emit_event(&self, event: OrchestratorEvent) {
         let run_id = self.run_id.clone();
         let store = self.store.clone();
         let event_for_log = event.clone();
+        let status = self
+            .run
+            .try_read()
+            .map(|run| run.status)
+            .unwrap_or(RunStatus::Queued);
+        let seq = self.event_seq.fetch_add(1, Ordering::SeqCst) + 1;
+
+        let payload = serde_json::to_value(&event_for_log).unwrap_or_else(|_| json!({}));
+        let record = RunEventRecord {
+            event_id: format!("evt-{}", Uuid::new_v4()),
+            run_id: run_id.clone(),
+            seq,
+            ts_ms: crate::logs::now_ms(),
+            event_type: Self::event_type_name(&event_for_log).to_string(),
+            status,
+            step_id: event_for_log.step_id(),
+            payload,
+        };
+        let blackboard_patches = self.blackboard_patches_for_event(&record, &event_for_log);
+        let checkpoint_reason = Self::checkpoint_reason_for_event(&event_for_log).map(str::to_string);
+        let engine = self.clone();
 
         tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.append_run_event(&run_id, &record) {
+                tracing::error!("Failed to append sequenced orchestrator event: {}", e);
+            }
             if let Err(e) = store.append_event(&run_id, &event_for_log) {
                 tracing::error!("Failed to append orchestrator event: {}", e);
             }
+            for patch in blackboard_patches {
+                if let Err(e) = store.append_blackboard_patch(&run_id, &patch) {
+                    tracing::error!("Failed to append blackboard patch: {}", e);
+                }
+            }
         });
+        if let Some(reason) = checkpoint_reason {
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = engine.persist_checkpoint(&reason, Some(seq)).await {
+                    tracing::error!("Failed to persist orchestrator checkpoint: {}", e);
+                }
+            });
+        }
 
         if let Err(e) = self.event_tx.send(event) {
             tracing::error!("Failed to emit orchestrator event: {}", e);
+        }
+    }
+
+    fn blackboard_patches_for_event(
+        &self,
+        record: &RunEventRecord,
+        event: &OrchestratorEvent,
+    ) -> Vec<BlackboardPatchRecord> {
+        let mut patches: Vec<BlackboardPatchRecord> = Vec::new();
+        let mut patch_seq = record.seq.saturating_mul(100);
+        let mut next_patch_seq = || {
+            patch_seq = patch_seq.saturating_add(1);
+            patch_seq
+        };
+        let mk_item = |text: String, step_id: Option<String>| BlackboardItem {
+            id: format!("bbi-{}", Uuid::new_v4()),
+            ts_ms: record.ts_ms,
+            text,
+            step_id,
+            source_event_id: Some(record.event_id.clone()),
+        };
+
+        match event {
+            OrchestratorEvent::ContextPackBuilt {
+                why_next_step,
+                task_id,
+                ..
+            } => {
+                let prior_summary = self
+                    .store
+                    .load_blackboard(&record.run_id)
+                    .map(|bb| bb.summaries.rolling)
+                    .unwrap_or_default();
+                let recent_events = self
+                    .store
+                    .load_run_events(&record.run_id, None, Some(20))
+                    .unwrap_or_default();
+                let compact_summary = Self::compact_rolling_summary(
+                    &prior_summary,
+                    why_next_step,
+                    task_id,
+                    &recent_events,
+                    &Self::pinned_constraints(),
+                );
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::AddDecision,
+                    payload: serde_json::to_value(mk_item(
+                        why_next_step.clone(),
+                        Some(task_id.clone()),
+                    ))
+                    .unwrap_or(json!({})),
+                });
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::SetLatestContextPack,
+                    payload: json!(why_next_step),
+                });
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::SetRollingSummary,
+                    payload: json!(compact_summary),
+                });
+            }
+            OrchestratorEvent::TaskCompleted {
+                task_id, passed, ..
+            } => {
+                let op = if *passed {
+                    BlackboardPatchOp::AddFact
+                } else {
+                    BlackboardPatchOp::AddOpenQuestion
+                };
+                let text = if *passed {
+                    format!("Task `{}` completed and passed validation.", task_id)
+                } else {
+                    format!("Task `{}` completed but did not pass validation.", task_id)
+                };
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op,
+                    payload: serde_json::to_value(mk_item(text, Some(task_id.clone())))
+                        .unwrap_or(json!({})),
+                });
+
+                if let Ok(run) = self.run.try_read() {
+                    if let Some(task) = run.tasks.iter().find(|task| task.id == *task_id) {
+                        for artifact in &task.artifacts {
+                            patches.push(BlackboardPatchRecord {
+                                patch_id: format!("bbp-{}", Uuid::new_v4()),
+                                run_id: record.run_id.clone(),
+                                seq: next_patch_seq(),
+                                ts_ms: record.ts_ms,
+                                op: BlackboardPatchOp::AddArtifact,
+                                payload: serde_json::to_value(BlackboardArtifactRef {
+                                    id: format!("bba-{}", Uuid::new_v4()),
+                                    ts_ms: record.ts_ms,
+                                    path: artifact.path.clone(),
+                                    artifact_type: artifact.artifact_type.clone(),
+                                    step_id: Some(task_id.clone()),
+                                    source_event_id: Some(record.event_id.clone()),
+                                })
+                                .unwrap_or(json!({})),
+                            });
+                        }
+                    }
+                }
+            }
+            OrchestratorEvent::RevisionRequested { feedback, .. } => {
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::AddOpenQuestion,
+                    payload: serde_json::to_value(mk_item(
+                        format!("Plan revision requested: {}", feedback),
+                        None,
+                    ))
+                    .unwrap_or(json!({})),
+                });
+            }
+            OrchestratorEvent::WorkspaceMismatch {
+                expected_path,
+                actual_path,
+                phase,
+                task_id,
+                ..
+            } => {
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::AddOpenQuestion,
+                    payload: serde_json::to_value(mk_item(
+                        format!(
+                            "Workspace lease mismatch in {}: expected `{}`, got `{}`.",
+                            phase, expected_path, actual_path
+                        ),
+                        task_id.clone(),
+                    ))
+                    .unwrap_or(json!({})),
+                });
+            }
+            OrchestratorEvent::RunFailed { reason, .. } => {
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::AddOpenQuestion,
+                    payload: serde_json::to_value(mk_item(
+                        format!("Run failed: {}", reason),
+                        None,
+                    ))
+                    .unwrap_or(json!({})),
+                });
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::SetRollingSummary,
+                    payload: json!(format!("Run failed: {}", reason)),
+                });
+            }
+            OrchestratorEvent::RunCompleted { .. } => {
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::SetRollingSummary,
+                    payload: json!("Run completed successfully."),
+                });
+            }
+            OrchestratorEvent::PlanGenerated { task_count, .. } => {
+                patches.push(BlackboardPatchRecord {
+                    patch_id: format!("bbp-{}", Uuid::new_v4()),
+                    run_id: record.run_id.clone(),
+                    seq: next_patch_seq(),
+                    ts_ms: record.ts_ms,
+                    op: BlackboardPatchOp::SetRollingSummary,
+                    payload: json!(format!("Plan generated with {} tasks.", task_count)),
+                });
+            }
+            _ => {}
+        }
+
+        patches
+    }
+
+    fn event_type_name(event: &OrchestratorEvent) -> &'static str {
+        match event {
+            OrchestratorEvent::RunCreated { .. } => "run_created",
+            OrchestratorEvent::PlanningStarted { .. } => "planning_started",
+            OrchestratorEvent::PlanGenerated { .. } => "plan_generated",
+            OrchestratorEvent::PlanApproved { .. } => "plan_approved",
+            OrchestratorEvent::RevisionRequested { .. } => "revision_requested",
+            OrchestratorEvent::TaskStarted { .. } => "task_started",
+            OrchestratorEvent::TaskCompleted { .. } => "task_completed",
+            OrchestratorEvent::TaskTrace { .. } => "task_trace",
+            OrchestratorEvent::ApprovalRequested { .. } => "approval_requested",
+            OrchestratorEvent::ApprovalGranted { .. } => "approval_granted",
+            OrchestratorEvent::BudgetUpdated { .. } => "budget_updated",
+            OrchestratorEvent::RunPaused { .. } => "run_paused",
+            OrchestratorEvent::RunResumed { .. } => "run_resumed",
+            OrchestratorEvent::RunCompleted { .. } => "run_completed",
+            OrchestratorEvent::RunFailed { .. } => "run_failed",
+            OrchestratorEvent::RunCancelled { .. } => "run_cancelled",
+            OrchestratorEvent::ContractWarning { .. } => "contract_warning",
+            OrchestratorEvent::ContractError { .. } => "contract_error",
+            OrchestratorEvent::WorkspaceMismatch { .. } => "workspace_mismatch",
+            OrchestratorEvent::ContextPackBuilt { .. } => "context_pack_built",
         }
     }
 
@@ -3294,7 +3833,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             let mut run = self.run.write().await;
             let upgraded = Self::upgrade_legacy_limits(&mut run);
             let was_completed = run.status == RunStatus::Completed;
-            run.status = RunStatus::Executing;
+            run.status = RunStatus::Running;
             run.error_message = None;
             run.ended_at = None;
 
@@ -3481,5 +4020,36 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         if let Some(t) = run.tasks.iter_mut().find(|t| t.id == task_id) {
             t.state = state;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_rolling_summary_preserves_pinned_constraints() {
+        let pinned = OrchestratorEngine::pinned_constraints();
+        let events = vec![RunEventRecord {
+            event_id: "evt-1".to_string(),
+            run_id: "run-1".to_string(),
+            seq: 1,
+            ts_ms: 1_000,
+            event_type: "task_started".to_string(),
+            status: RunStatus::Running,
+            step_id: Some("task-1".to_string()),
+            payload: serde_json::json!({}),
+        }];
+        let summary = OrchestratorEngine::compact_rolling_summary(
+            &"x".repeat(4_000),
+            "Dependencies satisfied",
+            "task-1",
+            &events,
+            &pinned,
+        );
+        assert!(summary.starts_with("Pinned: "));
+        assert!(summary.contains("Engine state is source-of-truth"));
+        assert!(summary.contains("Only operate within leased workspace"));
+        assert!(summary.len() <= OrchestratorEngine::ROLLING_SUMMARY_MAX_CHARS);
     }
 }

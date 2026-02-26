@@ -205,7 +205,7 @@ async fn resume_requires_paused_status() {
         "resume gate".to_string(),
         OrchestratorConfig::default(),
     );
-    run.status = RunStatus::Executing;
+    run.status = RunStatus::Running;
 
     let engine = build_engine(run, workspace_path);
     let err = engine.resume().await.unwrap_err();
@@ -223,7 +223,7 @@ async fn set_base_session_for_resume_requires_paused() {
         "set session".to_string(),
         OrchestratorConfig::default(),
     );
-    run.status = RunStatus::Executing;
+    run.status = RunStatus::Running;
 
     let engine = build_engine(run, workspace_path);
     let err = engine

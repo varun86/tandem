@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.22] - 2026-02-26
+
+### Added
+
+- **Engine-first context-driving runtime surfaces**: Expanded context-run APIs and client wiring for event replay, checkpoint access, deterministic next-step selection, and todo->step synchronization so Desktop/TUI consume the same engine-owned truth.
+- **Desktop Blackboard panel system**: Added shared Blackboard panel module for Orchestrator + Command Center with docked/expanded/fullscreen modes, decision lineage views, drift details drawer, search/filter controls, and keyboard-first navigation.
+- **Blackboard contract test suite**: Added dedicated `test:blackboard` coverage for projection/filtering, follow-mode state transitions, refresh policy, and drift drawer state behavior.
+
+### Changed
+
+- **Blackboard refresh behavior**: Switched to debounced event-driven blackboard refresh with sequence watermarking (`last_blackboard_refresh_seq`) and relevant-event family gating to reduce redundant fetch pressure during long runs.
+- **Orchestrator/Command Center parity**: Unified both surfaces on shared blackboard UI/state/policy helpers to keep behavior consistent across run-control entrypoints.
+- **Release metadata bump**: Updated app/runtime package versions to `0.3.22` for desktop/TUI release alignment.
+
+### Fixed
+
+- **Follow-mode predictability**: Follow now auto-focuses only on new `meta_next_step_selected` decisions and pauses on manual navigation, preventing jumpy recentering on unrelated event noise.
+- **Drift/debug visibility**: Added actionable drift and checkpoint navigation affordances with copyable debug payloads for incident triage.
+
 ## [0.3.21]
 
 ### Changed

@@ -15,8 +15,8 @@ use crate::orchestrator::{
     policy::{PolicyConfig, PolicyEngine},
     store::OrchestratorStore,
     types::{
-        AgentModelRouting, Budget, ModelSelection, OrchestratorConfig, Run, RunSnapshot, RunSource,
-        RunStatus, RunSummary, Task, TaskState,
+        AgentModelRouting, Blackboard, BlackboardPatchRecord, Budget, ModelSelection,
+        OrchestratorConfig, Run, RunSnapshot, RunSource, RunStatus, RunSummary, Task, TaskState,
     },
 };
 use crate::python_env;
@@ -24,12 +24,15 @@ use crate::sidecar::{
     ActiveRunStatusResponse, AgentTeamApprovals, AgentTeamCancelRequest, AgentTeamDecisionResult,
     AgentTeamInstance, AgentTeamInstancesQuery, AgentTeamMissionSummary, AgentTeamSpawnRequest,
     AgentTeamSpawnResult, AgentTeamTemplate, ChannelsConfigResponse, ChannelsStatusResponse,
-    CreateSessionRequest, FilePartInput, McpActionResponse, McpAddRequest, McpRemoteTool,
-    McpServerRecord, MissionApplyEventResult, MissionCreateRequest, MissionState, ModelInfo,
-    ModelSpec, Project, ProviderInfo, RoutineCreateRequest, RoutineHistoryEvent,
-    RoutinePatchRequest, RoutineRunArtifact, RoutineRunArtifactAddRequest,
-    RoutineRunDecisionRequest, RoutineRunNowRequest, RoutineRunNowResponse, RoutineRunRecord,
-    RoutineSpec, SendMessageRequest, Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
+    ContextBlackboardState, ContextCheckpointRecord, ContextReplayResponse, ContextRunCreateRequest,
+    ContextRunEventAppendRequest, ContextRunEventRecord, ContextRunState, ContextRunStatus,
+    ContextStepStatus, CreateSessionRequest, FilePartInput, McpActionResponse, McpAddRequest,
+    McpRemoteTool, McpServerRecord,
+    MissionApplyEventResult, MissionCreateRequest, MissionState, ModelInfo, ModelSpec, Project,
+    ProviderInfo, RoutineCreateRequest, RoutineHistoryEvent, RoutinePatchRequest,
+    RoutineRunArtifact, RoutineRunArtifactAddRequest, RoutineRunDecisionRequest,
+    RoutineRunNowRequest, RoutineRunNowResponse, RoutineRunRecord, RoutineSpec, SendMessageRequest,
+    Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
 };
 use crate::sidecar_manager::{self, SidecarStatus};
 use crate::state::{AppState, AppStateInfo, ProvidersConfig};
@@ -40,8 +43,10 @@ use crate::tool_proxy::{FileSnapshot, JournalEntry, OperationStatus, UndoAction}
 use crate::vault::{self, EncryptedVaultKey, VaultStatus};
 use crate::VaultState;
 use serde::Serialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -8615,6 +8620,446 @@ fn is_legacy_low_wall_time_for_command_center(source: RunSource, wall_time_secs:
     matches!(source, RunSource::CommandCenter) && wall_time_secs <= 60 * 60
 }
 
+fn context_status_to_run_status(status: ContextRunStatus) -> RunStatus {
+    match status {
+        ContextRunStatus::Queued => RunStatus::Queued,
+        ContextRunStatus::Planning => RunStatus::Planning,
+        ContextRunStatus::Running => RunStatus::Running,
+        ContextRunStatus::AwaitingApproval => RunStatus::AwaitingApproval,
+        ContextRunStatus::Paused => RunStatus::Paused,
+        ContextRunStatus::Blocked => RunStatus::Blocked,
+        ContextRunStatus::Failed => RunStatus::Failed,
+        ContextRunStatus::Completed => RunStatus::Completed,
+        ContextRunStatus::Cancelled => RunStatus::Cancelled,
+    }
+}
+
+fn context_step_status_to_task_state(status: ContextStepStatus) -> TaskState {
+    match status {
+        ContextStepStatus::Pending => TaskState::Pending,
+        ContextStepStatus::Runnable => TaskState::Runnable,
+        ContextStepStatus::InProgress => TaskState::InProgress,
+        ContextStepStatus::Blocked => TaskState::Blocked,
+        ContextStepStatus::Done => TaskState::Done,
+        ContextStepStatus::Failed => TaskState::Failed,
+    }
+}
+
+fn ms_to_datetime(ms: u64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp_millis(ms as i64).unwrap_or_else(chrono::Utc::now)
+}
+
+fn context_run_to_snapshot(run: &ContextRunState) -> RunSnapshot {
+    let tasks_completed = run
+        .steps
+        .iter()
+        .filter(|step| step.status == ContextStepStatus::Done)
+        .count();
+    let tasks_failed = run
+        .steps
+        .iter()
+        .filter(|step| step.status == ContextStepStatus::Failed)
+        .count();
+    let current_task_id = run
+        .steps
+        .iter()
+        .find(|step| step.status == ContextStepStatus::InProgress)
+        .map(|step| step.step_id.clone());
+    RunSnapshot {
+        run_id: run.run_id.clone(),
+        status: context_status_to_run_status(run.status.clone()),
+        objective: run.objective.clone(),
+        task_count: run.steps.len(),
+        tasks_completed,
+        tasks_failed,
+        budget: Budget::from_config(&OrchestratorConfig::default()),
+        current_task_id,
+        error_message: None,
+        created_at: ms_to_datetime(run.created_at_ms),
+        updated_at: ms_to_datetime(run.updated_at_ms),
+    }
+}
+
+fn context_run_to_tasks(run: &ContextRunState) -> Vec<Task> {
+    run.steps
+        .iter()
+        .map(|step| {
+            let mut task = Task::new(
+                step.step_id.clone(),
+                step.title.clone(),
+                format!("Engine context step {}", step.step_id),
+            );
+            task.state = context_step_status_to_task_state(step.status.clone());
+            task
+        })
+        .collect()
+}
+
+fn context_run_to_run(run: &ContextRunState) -> Run {
+    let mut out = Run::new(
+        run.run_id.clone(),
+        format!("context-{}", run.run_id),
+        run.objective.clone(),
+        OrchestratorConfig::default(),
+    );
+    out.status = context_status_to_run_status(run.status.clone());
+    out.tasks = context_run_to_tasks(run);
+    out.started_at = ms_to_datetime(run.created_at_ms);
+    out.ended_at = Some(ms_to_datetime(run.updated_at_ms));
+    out.why_next_step = run.why_next_step.clone();
+    out.workspace_lease.workspace_id = run.workspace.workspace_id.clone();
+    out.workspace_lease.canonical_path = run.workspace.canonical_path.clone();
+    out.workspace_lease.lease_epoch = run.workspace.lease_epoch;
+    out
+}
+
+fn context_run_source(run_type: &str) -> RunSource {
+    if run_type.eq_ignore_ascii_case("scheduled") || run_type.eq_ignore_ascii_case("cron") {
+        RunSource::CommandCenter
+    } else {
+        RunSource::Orchestrator
+    }
+}
+
+fn context_event_to_run_event(event: ContextRunEventRecord) -> crate::orchestrator::types::RunEventRecord {
+    crate::orchestrator::types::RunEventRecord {
+        event_id: event.event_id,
+        run_id: event.run_id,
+        seq: event.seq,
+        ts_ms: event.ts_ms,
+        event_type: event.event_type,
+        status: context_status_to_run_status(event.status),
+        step_id: event.step_id,
+        payload: event.payload,
+    }
+}
+
+fn context_blackboard_to_orch(blackboard: ContextBlackboardState) -> Blackboard {
+    let facts = blackboard
+        .facts
+        .into_iter()
+        .map(|row| crate::orchestrator::types::BlackboardItem {
+            id: row.id,
+            ts_ms: row.ts_ms,
+            text: row.text,
+            step_id: row.step_id,
+            source_event_id: row.source_event_id,
+        })
+        .collect::<Vec<_>>();
+    let decisions = blackboard
+        .decisions
+        .into_iter()
+        .map(|row| crate::orchestrator::types::BlackboardItem {
+            id: row.id,
+            ts_ms: row.ts_ms,
+            text: row.text,
+            step_id: row.step_id,
+            source_event_id: row.source_event_id,
+        })
+        .collect::<Vec<_>>();
+    let open_questions = blackboard
+        .open_questions
+        .into_iter()
+        .map(|row| crate::orchestrator::types::BlackboardItem {
+            id: row.id,
+            ts_ms: row.ts_ms,
+            text: row.text,
+            step_id: row.step_id,
+            source_event_id: row.source_event_id,
+        })
+        .collect::<Vec<_>>();
+    let artifacts = blackboard
+        .artifacts
+        .into_iter()
+        .map(|row| crate::orchestrator::types::BlackboardArtifactRef {
+            id: row.id,
+            ts_ms: row.ts_ms,
+            path: row.path,
+            artifact_type: match row.artifact_type.as_str() {
+                "patch" => crate::orchestrator::types::ArtifactType::Patch,
+                "notes" => crate::orchestrator::types::ArtifactType::Notes,
+                "sources" => crate::orchestrator::types::ArtifactType::Sources,
+                "fact_cards" => crate::orchestrator::types::ArtifactType::FactCards,
+                _ => crate::orchestrator::types::ArtifactType::File,
+            },
+            step_id: row.step_id,
+            source_event_id: row.source_event_id,
+        })
+        .collect::<Vec<_>>();
+    Blackboard {
+        facts,
+        decisions,
+        open_questions,
+        artifacts,
+        summaries: crate::orchestrator::types::BlackboardSummaries {
+            rolling: blackboard.summaries.rolling,
+            latest_context_pack: blackboard.summaries.latest_context_pack,
+        },
+        revision: blackboard.revision,
+    }
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_create_run(
+    state: State<'_, AppState>,
+    objective: String,
+    source: Option<RunSource>,
+) -> Result<String> {
+    let workspace_dir = canonical_workspace_dir_for_session(state.inner())
+        .ok_or_else(|| TandemError::InvalidConfig("No workspace selected".to_string()))?;
+    let canonical_workspace = std::fs::canonicalize(PathBuf::from(&workspace_dir))
+        .unwrap_or_else(|_| PathBuf::from(&workspace_dir))
+        .to_string_lossy()
+        .to_string();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical_workspace.hash(&mut hasher);
+    let run = state
+        .sidecar
+        .context_run_create(ContextRunCreateRequest {
+            run_id: None,
+            objective,
+            run_type: Some(match source.unwrap_or(RunSource::Orchestrator) {
+                RunSource::Orchestrator => "interactive".to_string(),
+                RunSource::CommandCenter => "scheduled".to_string(),
+            }),
+            workspace: Some(crate::sidecar::ContextWorkspaceLease {
+                workspace_id: format!("ws-{:x}", hasher.finish()),
+                canonical_path: canonical_workspace,
+                lease_epoch: 1,
+            }),
+        })
+        .await?;
+    Ok(run.run_id)
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_start(state: State<'_, AppState>, run_id: String) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "planning_started".to_string(),
+                status: ContextRunStatus::Planning,
+                step_id: None,
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_get_run(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<RunSnapshot> {
+    let run = state.sidecar.context_run_get(&run_id).await?;
+    Ok(context_run_to_snapshot(&run))
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_list_tasks(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Vec<Task>> {
+    let run = state.sidecar.context_run_get(&run_id).await?;
+    Ok(context_run_to_tasks(&run))
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_get_events(
+    state: State<'_, AppState>,
+    run_id: String,
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+) -> Result<Vec<crate::orchestrator::types::RunEventRecord>> {
+    let events = state
+        .sidecar
+        .context_run_events(&run_id, since_seq, tail)
+        .await?;
+    Ok(events
+        .into_iter()
+        .map(context_event_to_run_event)
+        .collect::<Vec<_>>())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_get_blackboard(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Blackboard> {
+    let blackboard = state.sidecar.context_run_blackboard(&run_id).await?;
+    Ok(context_blackboard_to_orch(blackboard))
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_get_latest_checkpoint(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Option<ContextCheckpointRecord>> {
+    state.sidecar.context_run_checkpoint_latest(&run_id).await
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_get_replay(
+    state: State<'_, AppState>,
+    run_id: String,
+    upto_seq: Option<u64>,
+    from_checkpoint: Option<bool>,
+) -> Result<ContextReplayResponse> {
+    state
+        .sidecar
+        .context_run_replay(&run_id, upto_seq, from_checkpoint)
+        .await
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_list_runs(state: State<'_, AppState>) -> Result<Vec<RunSummary>> {
+    let rows = state.sidecar.context_run_list().await?;
+    Ok(rows
+        .into_iter()
+        .map(|run| RunSummary {
+            run_id: run.run_id.clone(),
+            session_id: format!("context-{}", run.run_id),
+            workspace_root: Some(run.workspace.canonical_path),
+            source: context_run_source(&run.run_type),
+            objective: run.objective,
+            status: context_status_to_run_status(run.status),
+            created_at: ms_to_datetime(run.created_at_ms),
+            updated_at: ms_to_datetime(run.updated_at_ms),
+            started_at: ms_to_datetime(run.created_at_ms),
+            ended_at: None,
+            last_error: None,
+        })
+        .collect::<Vec<_>>())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_load_run(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Run> {
+    let run = state.sidecar.context_run_get(&run_id).await?;
+    Ok(context_run_to_run(&run))
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_pause(state: State<'_, AppState>, run_id: String) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "run_paused".to_string(),
+                status: ContextRunStatus::Paused,
+                step_id: None,
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_resume(state: State<'_, AppState>, run_id: String) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "run_resumed".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: None,
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_cancel(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "run_cancelled".to_string(),
+                status: ContextRunStatus::Cancelled,
+                step_id: None,
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_approve(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "plan_approved".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: None,
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_request_revision(
+    state: State<'_, AppState>,
+    run_id: String,
+    feedback: String,
+) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "revision_requested".to_string(),
+                status: ContextRunStatus::Blocked,
+                step_id: None,
+                payload: json!({ "feedback": feedback }),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn orchestrator_engine_retry_task(
+    state: State<'_, AppState>,
+    run_id: String,
+    task_id: String,
+) -> Result<()> {
+    let _ = state
+        .sidecar
+        .context_run_append_event(
+            &run_id,
+            ContextRunEventAppendRequest {
+                event_type: "task_retry_requested".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: Some(task_id),
+                payload: json!({}),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
 /// Create a new orchestration run
 #[tauri::command]
 pub async fn orchestrator_create_run(
@@ -8741,6 +9186,15 @@ pub async fn orchestrator_create_run(
     // Create the run object
     let mut run = Run::new(run_id.clone(), session_id, objective, config);
     run.workspace_root = Some(workspace_dir.clone());
+    let canonical_workspace = std::fs::canonicalize(&workspace_path)
+        .unwrap_or_else(|_| workspace_path.clone())
+        .to_string_lossy()
+        .to_string();
+    let mut lease_hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical_workspace.hash(&mut lease_hasher);
+    run.workspace_lease.workspace_id = format!("ws-{:x}", lease_hasher.finish());
+    run.workspace_lease.canonical_path = canonical_workspace;
+    run.workspace_lease.lease_epoch = 1;
     run.source = run_source;
     // Persist model/provider selection into the run so the orchestrator can always send explicit
     // model specs even if the sidecar session object doesn't echo them back.
@@ -8832,6 +9286,49 @@ pub async fn orchestrator_get_run(
     };
 
     Ok(engine.get_snapshot().await)
+}
+
+/// Get sequenced run events (tail + since-seq).
+#[tauri::command]
+pub async fn orchestrator_get_events(
+    state: State<'_, AppState>,
+    run_id: String,
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+) -> Result<Vec<crate::orchestrator::types::RunEventRecord>> {
+    let workspace_path = state
+        .get_workspace_path()
+        .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
+    let store = OrchestratorStore::new(&workspace_path)?;
+    store.load_run_events(&run_id, since_seq, tail)
+}
+
+/// Get materialized blackboard for a run (engine-owned, read-only).
+#[tauri::command]
+pub async fn orchestrator_get_blackboard(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Blackboard> {
+    let workspace_path = state
+        .get_workspace_path()
+        .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
+    let store = OrchestratorStore::new(&workspace_path)?;
+    store.load_blackboard(&run_id)
+}
+
+/// Get append-only blackboard patches for a run.
+#[tauri::command]
+pub async fn orchestrator_get_blackboard_patches(
+    state: State<'_, AppState>,
+    run_id: String,
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+) -> Result<Vec<BlackboardPatchRecord>> {
+    let workspace_path = state
+        .get_workspace_path()
+        .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
+    let store = OrchestratorStore::new(&workspace_path)?;
+    store.load_blackboard_patches(&run_id, since_seq, tail)
 }
 
 /// Get the current budget status
@@ -9257,7 +9754,10 @@ pub async fn orchestrator_load_run(
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
 
     let store = OrchestratorStore::new(&workspace_path)?;
-    let run = store.load_run(&run_id)?;
+    let mut run = store.load_run(&run_id)?;
+    if let Ok(Some(checkpoint)) = store.load_latest_checkpoint(&run_id) {
+        run = checkpoint.run;
+    }
 
     // Check if engine already exists in memory
     {
@@ -9382,7 +9882,7 @@ pub async fn orchestrator_load_run(
     // If so, force it to Paused so the user can explicitly Resume.
     {
         let current_status = engine.get_snapshot().await.status;
-        if current_status == RunStatus::Executing || current_status == RunStatus::Planning {
+        if current_status == RunStatus::Running || current_status == RunStatus::Planning {
             tracing::info!(
                 "Run {} loaded in state {:?}, forcing to Paused",
                 run_id,

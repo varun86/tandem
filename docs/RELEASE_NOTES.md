@@ -1,3 +1,22 @@
+# Tandem v0.3.22 Release Notes (Unreleased)
+
+### Highlights
+
+- **Engine-first context-driving runtime expansion**:
+  - Extended context-run wiring used by Desktop + TUI for sequenced event consumption, replay/checkpoint visibility, deterministic next-step selection, and todo->step synchronization.
+  - Preserves the engine-as-source-of-truth contract for run status/progress/decision context.
+- **Premium Blackboard UX (Orchestrator + Command Center parity)**:
+  - Added shared Blackboard panel behaviors across both operator surfaces with docked/expanded/fullscreen modes.
+  - Added decision spine + lineage rail views for clear decision history and attached context visibility.
+  - Added deterministic follow behavior (decision-driven auto-focus only; manual exploration pauses follow).
+  - Added drift details drawer with mismatch flags, checkpoint/event sequence markers, and copyable debug bundle payload.
+  - Added keyboard controls (`E`, `F`, `Space`, `/`, `Esc`) and fullscreen focus-handling baseline.
+- **Refresh/perf/test hardening**:
+  - Blackboard materialization refresh now uses relevant event-family gating + debounce + refresh-sequence watermarking to reduce redundant fetches.
+  - Added blackboard-focused test target (`pnpm test:blackboard`) covering projection/filtering, follow state invariants, refresh policy, and drift drawer state contracts.
+
+---
+
 # Tandem v0.3.20 Release Notes (Unreleased)
 
 ### Highlights

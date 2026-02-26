@@ -178,12 +178,15 @@ fn draw_chat(f: &mut Frame, app: &App) {
         request_cursor,
         permission_choice,
         plan_wizard,
+        plan_awaiting_approval,
+        plan_waiting_for_clarification_question,
         request_panel_expanded,
         ..
     } = &app.state
     {
         let request_panel_active =
             matches!(modal, Some(ModalState::RequestCenter)) && !pending_requests.is_empty();
+        let ui_tick = if app.test_mode { 0 } else { app.tick_count };
         let request_height = if request_panel_active {
             let estimated = pending_requests
                 .get(*request_cursor)
@@ -340,7 +343,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
                 let is_active = start + pane_idx == *active_agent_index;
                 let status_label = match agent.status {
                     AgentStatus::Running | AgentStatus::Streaming => {
-                        format!("{} Working", spinner_frame(app.tick_count))
+                        format!("{} Working", spinner_frame(ui_tick))
                     }
                     AgentStatus::Cancelling => "Cancelling".to_string(),
                     AgentStatus::Done => "Done".to_string(),
@@ -391,7 +394,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
         if let Some(area) = tasks_area {
             let task_list = TaskList::new(tasks)
                 .block(Block::default().borders(Borders::ALL).title(" Tasks "))
-                .spinner_frame(app.tick_count);
+                .spinner_frame(ui_tick);
 
             let mut task_state = crate::ui::components::task_list::TaskListState::default();
             f.render_stateful_widget(task_list, area, &mut task_state);
@@ -426,7 +429,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
                 .map(|t| Instant::now() <= t)
                 .unwrap_or(false)
             {
-                format!(" Input {} Pasting ", spinner_frame(app.tick_count))
+                format!(" Input {} Pasting ", spinner_frame(ui_tick))
             } else {
                 " Input ".to_string()
             };
@@ -648,7 +651,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
             .get(*active_agent_index)
             .map(|a| match a.status {
                 AgentStatus::Running | AgentStatus::Streaming => {
-                    format!("{} Working", spinner_frame(app.tick_count))
+                    format!("{} Working", spinner_frame(ui_tick))
                 }
                 AgentStatus::Cancelling => "Cancelling".to_string(),
                 AgentStatus::Done => "Done".to_string(),
@@ -693,7 +696,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
         ) {
             if let Some(limit) = context_limit {
                 if limit > 0 && context_chars.saturating_mul(100) >= (limit as usize * 90) {
-                    Some(format!("{} Compacting", spinner_frame(app.tick_count)))
+                    Some(format!("{} Compacting", spinner_frame(ui_tick)))
                 } else {
                     None
                 }
@@ -712,7 +715,23 @@ fn draw_chat(f: &mut Frame, app: &App) {
             .map(|t| Instant::now() <= t)
             .unwrap_or(false)
         {
-            format!(" | {} Pasting", spinner_frame(app.tick_count))
+            format!(" | {} Pasting", spinner_frame(ui_tick))
+        } else {
+            String::new()
+        };
+        let test_debug_suffix = if app.test_mode {
+            let modal_name = modal
+                .as_ref()
+                .map(|m| format!("{:?}", m))
+                .unwrap_or_else(|| "None".to_string());
+            format!(
+                " | TEST modal={} req={}/{} plan_await={} plan_clarify={}",
+                modal_name,
+                pending_requests.len(),
+                request_cursor,
+                plan_awaiting_approval,
+                plan_waiting_for_clarification_question
+            )
         } else {
             String::new()
         };
@@ -731,7 +750,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
             ),
             Span::styled(
                 format!(
-                    " | {} | {} | {} | Active: {} ({}){} | {}{} | Req A:{} B:{}{} ",
+                    " | {} | {} | {} | Active: {} ({}){} | {}{} | Req A:{} B:{}{}{} ",
                     provider_str,
                     model_str,
                     &session_id[..8.min(session_id.len())],
@@ -742,7 +761,8 @@ fn draw_chat(f: &mut Frame, app: &App) {
                     compacting_suffix,
                     active_req_count,
                     background_req_count,
-                    paste_suffix
+                    paste_suffix,
+                    test_debug_suffix
                 ),
                 Style::default()
                     .fg(Color::DarkGray)
@@ -1277,12 +1297,13 @@ fn draw_connecting(f: &mut Frame, app: &App) {
         ],
     ];
 
-    let speed_mod = if app.tick_count % 50 > 25 { 2 } else { 4 };
-    let frame_idx = (app.tick_count / speed_mod) % engine_frames.len();
+    let tick = if app.test_mode { 0 } else { app.tick_count };
+    let speed_mod = if tick % 50 > 25 { 2 } else { 4 };
+    let frame_idx = (tick / speed_mod) % engine_frames.len();
     let current_frame = &engine_frames[frame_idx];
 
     let bar_width = 24usize;
-    let animated_fill = (app.tick_count % (bar_width + 1)).min(bar_width);
+    let animated_fill = (tick % (bar_width + 1)).min(bar_width);
     let (filled, status_text) = match app.engine_download_total_bytes {
         Some(total) if total > 0 => {
             let ratio = (app.engine_downloaded_bytes as f64 / total as f64).clamp(0.0, 1.0);
@@ -1326,8 +1347,8 @@ fn draw_connecting(f: &mut Frame, app: &App) {
     }
     lines.push(Line::from(""));
     let connect_frames = ["Starting", "Starting.", "Starting..", "Starting..."];
-    let connect_label = connect_frames[(app.tick_count / 10) % connect_frames.len()];
-    let spinner = spinner::frame_for_tick(app.tick_count / 2);
+    let connect_label = connect_frames[(tick / 10) % connect_frames.len()];
+    let spinner = spinner::frame_for_tick(tick / 2);
     lines.push(Line::from(vec![
         Span::styled(connect_label, Style::default().fg(Color::Cyan)),
         Span::raw(" "),

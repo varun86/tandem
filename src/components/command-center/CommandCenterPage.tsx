@@ -6,6 +6,12 @@ import { BudgetMeter } from "@/components/orchestrate/BudgetMeter";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { AgentModelRoutingPanel } from "@/components/orchestrate/AgentModelRoutingPanel";
 import { TaskBoard } from "@/components/orchestrate/TaskBoard";
+import { BlackboardPanel } from "@/components/orchestrate/BlackboardPanel";
+import {
+  computeDebounceDelayMs,
+  relevantRefreshTriggerSeq,
+  shouldRefreshForRunStatusTransition,
+} from "@/components/orchestrate/blackboardRefreshPolicy";
 import { LogsDrawer } from "@/components/logs";
 import { ConsoleTab } from "@/components/logs/ConsoleTab";
 import { ProjectSwitcher } from "@/components/sidebar";
@@ -23,8 +29,10 @@ import {
   type UserProject,
 } from "@/lib/tauri";
 import {
-  DEFAULT_ORCHESTRATOR_CONFIG,
-  type OrchestratorConfig,
+  type Blackboard,
+  type RunCheckpointSummary,
+  type RunEventRecord,
+  type RunReplaySummary,
   type OrchestratorModelRouting,
   type RunSummary,
   type RunSnapshot,
@@ -132,7 +140,7 @@ function stageFromSnapshot(snapshot: RunSnapshot | null): SwarmStage {
   if (!snapshot) return "idle";
   if (snapshot.status === "planning") return "planning";
   if (snapshot.status === "awaiting_approval") return "awaiting_review";
-  if (snapshot.status === "executing") return "executing";
+  if (snapshot.status === "running") return "executing";
   if (snapshot.status === "paused") return "paused";
   if (snapshot.status === "completed") return "completed";
   if (snapshot.status === "failed" || snapshot.status === "cancelled") return "failed";
@@ -175,6 +183,10 @@ export function CommandCenterPage({
   const [runsLoading, setRunsLoading] = useState(false);
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [runEvents, setRunEvents] = useState<RunEventRecord[]>([]);
+  const [blackboard, setBlackboard] = useState<Blackboard | null>(null);
+  const [latestCheckpoint, setLatestCheckpoint] = useState<RunCheckpointSummary | null>(null);
+  const [replaySummary, setReplaySummary] = useState<RunReplaySummary | null>(null);
   const [eventFeed, setEventFeed] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRunActionLoading, setIsRunActionLoading] = useState(false);
@@ -211,6 +223,10 @@ export function CommandCenterPage({
   const lastSessionErrorRef = useRef<{ signature: string; atMs: number } | null>(null);
   const selectedModelRef = useRef<string | undefined>(undefined);
   const selectedProviderRef = useRef<string | undefined>(undefined);
+  const lastStructuredEventSeqRef = useRef<number>(0);
+  const lastBlackboardRefreshSeqRef = useRef<number>(0);
+  const blackboardRefreshTimerRef = useRef<number | null>(null);
+  const lastBlackboardScheduleMsRef = useRef<number | null>(null);
 
   const stage = stageFromSnapshot(snapshot);
   const workspacePath = activeProject?.path ?? null;
@@ -242,7 +258,7 @@ export function CommandCenterPage({
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
-      const listed = await invoke<RunSummary[]>("orchestrator_list_runs");
+      const listed = await invoke<RunSummary[]>("orchestrator_engine_list_runs");
       const commandCenterRuns = listed.filter((run) => run.source === "command_center");
       commandCenterRuns.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
       setRuns(commandCenterRuns);
@@ -266,15 +282,57 @@ export function CommandCenterPage({
     if (!runId) {
       setSnapshot(null);
       setTasks([]);
+      setRunEvents([]);
+      setBlackboard(null);
+      setLatestCheckpoint(null);
+      setReplaySummary(null);
+      lastStructuredEventSeqRef.current = 0;
+      lastBlackboardRefreshSeqRef.current = 0;
+      lastBlackboardScheduleMsRef.current = null;
+      if (blackboardRefreshTimerRef.current !== null) {
+        window.clearTimeout(blackboardRefreshTimerRef.current);
+        blackboardRefreshTimerRef.current = null;
+      }
       lastSnapshotRef.current = null;
       return;
     }
 
+    const scheduleBlackboardRefresh = (triggerSeq: number, immediate = false) => {
+      if (!runId || disposed) return;
+      if (!immediate && triggerSeq <= lastBlackboardRefreshSeqRef.current) return;
+      const now = Date.now();
+      const delay = immediate
+        ? 0
+        : computeDebounceDelayMs(now, lastBlackboardScheduleMsRef.current, 350);
+      lastBlackboardScheduleMsRef.current = now;
+      if (blackboardRefreshTimerRef.current !== null) {
+        window.clearTimeout(blackboardRefreshTimerRef.current);
+      }
+      blackboardRefreshTimerRef.current = window.setTimeout(async () => {
+        try {
+          const nextBlackboard = await invoke<Blackboard>("orchestrator_engine_get_blackboard", { runId });
+          if (disposed) return;
+          setBlackboard(nextBlackboard);
+          lastBlackboardRefreshSeqRef.current = Math.max(
+            lastBlackboardRefreshSeqRef.current,
+            triggerSeq
+          );
+        } catch {
+          // best-effort refresh only
+        }
+      }, delay);
+    };
+
     const poll = async () => {
       try {
-        const [nextSnapshot, nextTasks] = await Promise.all([
-          invoke<RunSnapshot>("orchestrator_get_run", { runId }),
-          invoke<Task[]>("orchestrator_list_tasks", { runId }),
+        const [nextSnapshot, nextTasks, freshEvents] = await Promise.all([
+          invoke<RunSnapshot>("orchestrator_engine_get_run", { runId }),
+          invoke<Task[]>("orchestrator_engine_list_tasks", { runId }),
+          invoke<RunEventRecord[]>("orchestrator_engine_get_events", {
+            runId,
+            sinceSeq: lastStructuredEventSeqRef.current || undefined,
+            tail: lastStructuredEventSeqRef.current ? undefined : 60,
+          }),
         ]);
         if (disposed) return;
         const prevSnapshot = lastSnapshotRef.current;
@@ -300,6 +358,27 @@ export function CommandCenterPage({
         if (nextEvents.length > 0) {
           setEventFeed((prev) => [...nextEvents, ...prev].slice(0, 20));
         }
+        if (freshEvents.length > 0) {
+          setRunEvents((prev) => {
+            const merged = lastStructuredEventSeqRef.current ? [...prev, ...freshEvents] : freshEvents;
+            return merged.slice(-250);
+          });
+          lastStructuredEventSeqRef.current = freshEvents[freshEvents.length - 1].seq;
+          const refreshSeq = relevantRefreshTriggerSeq(
+            freshEvents,
+            lastBlackboardRefreshSeqRef.current
+          );
+          if (refreshSeq !== null) {
+            scheduleBlackboardRefresh(refreshSeq);
+          }
+        }
+        const statusChanged = shouldRefreshForRunStatusTransition(
+          prevSnapshot?.status ?? null,
+          nextSnapshot.status
+        );
+        if (statusChanged) {
+          scheduleBlackboardRefresh(lastStructuredEventSeqRef.current || 0);
+        }
         lastSnapshotRef.current = nextSnapshot;
         setSnapshot(nextSnapshot);
         setTasks(nextTasks);
@@ -309,7 +388,49 @@ export function CommandCenterPage({
     };
 
     void poll();
+    scheduleBlackboardRefresh(lastStructuredEventSeqRef.current || 0, true);
     const timer = setInterval(() => void poll(), 1250);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      if (blackboardRefreshTimerRef.current !== null) {
+        window.clearTimeout(blackboardRefreshTimerRef.current);
+        blackboardRefreshTimerRef.current = null;
+      }
+    };
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId) {
+      setLatestCheckpoint(null);
+      setReplaySummary(null);
+      return;
+    }
+
+    let disposed = false;
+    const refreshRuntimeHealth = async () => {
+      try {
+        const [checkpoint, replay] = await Promise.all([
+          invoke<RunCheckpointSummary | null>("orchestrator_engine_get_latest_checkpoint", {
+            runId,
+          }),
+          invoke<RunReplaySummary>("orchestrator_engine_get_replay", {
+            runId,
+            fromCheckpoint: true,
+          }),
+        ]);
+        if (disposed) return;
+        setLatestCheckpoint(checkpoint ?? null);
+        setReplaySummary(replay ?? null);
+      } catch {
+        if (disposed) return;
+        setLatestCheckpoint(null);
+        setReplaySummary(null);
+      }
+    };
+
+    void refreshRuntimeHealth();
+    const timer = setInterval(() => void refreshRuntimeHealth(), 5000);
     return () => {
       disposed = true;
       clearInterval(timer);
@@ -321,6 +442,17 @@ export function CommandCenterPage({
     setHasExplicitRunSelection(false);
     setSnapshot(null);
     setTasks([]);
+    setRunEvents([]);
+    setBlackboard(null);
+    setLatestCheckpoint(null);
+    setReplaySummary(null);
+    lastStructuredEventSeqRef.current = 0;
+    lastBlackboardRefreshSeqRef.current = 0;
+    lastBlackboardScheduleMsRef.current = null;
+    if (blackboardRefreshTimerRef.current !== null) {
+      window.clearTimeout(blackboardRefreshTimerRef.current);
+      blackboardRefreshTimerRef.current = null;
+    }
     setEventFeed([]);
     setActiveRunSessionId(null);
     void loadRuns();
@@ -363,7 +495,7 @@ export function CommandCenterPage({
       autoApproveInFlightRef.current = true;
       void (async () => {
         try {
-          await invoke("orchestrator_approve", { runId: autoApproveTargetRunId });
+          await invoke("orchestrator_engine_approve", { runId: autoApproveTargetRunId });
           const at = new Date().toLocaleTimeString();
           setEventFeed((prev) =>
             [`${at} auto-approved plan for ${autoApproveTargetRunId}`, ...prev].slice(0, 20)
@@ -380,7 +512,7 @@ export function CommandCenterPage({
     }
 
     if (
-      snapshot.status === "executing" ||
+      snapshot.status === "running" ||
       snapshot.status === "completed" ||
       snapshot.status === "failed" ||
       snapshot.status === "cancelled"
@@ -550,31 +682,8 @@ export function CommandCenterPage({
     setIsLoading(true);
     setError(null);
     try {
-      const configByPreset = {
-        speed: { max_parallel_tasks: 8, llm_parallel: 6 },
-        balanced: { max_parallel_tasks: 6, llm_parallel: 4 },
-        quality: { max_parallel_tasks: 3, llm_parallel: 2 },
-      } as const;
-      const config: OrchestratorConfig = {
-        ...DEFAULT_ORCHESTRATOR_CONFIG,
-        max_iterations: Math.max(1, missionLimits.maxIterations),
-        max_total_tokens: Math.max(1_000, missionLimits.maxTotalTokens),
-        max_tokens_per_step: Math.max(500, missionLimits.maxTokensPerStep),
-        max_wall_time_secs: Math.max(300, Math.floor(missionLimits.wallTimeHours * 60 * 60)),
-        max_subagent_runs: Math.max(1, missionLimits.maxSubagentRuns),
-        max_task_retries: Math.max(0, missionLimits.maxTaskRetries),
-        max_parallel_tasks: configByPreset[preset].max_parallel_tasks,
-        llm_parallel: configByPreset[preset].llm_parallel,
-        fs_write_parallel: 1,
-        shell_parallel: 1,
-        network_parallel: preset === "speed" ? 4 : preset === "balanced" ? 3 : 2,
-      };
-      const createdRunId = await invoke<string>("orchestrator_create_run", {
+      const createdRunId = await invoke<string>("orchestrator_engine_create_run", {
         objective: objective.trim(),
-        config,
-        model: dispatchModel,
-        provider: dispatchProvider,
-        agentModelRouting: modelRouting,
         source: "command_center",
       });
       const nowIso = new Date().toISOString();
@@ -595,7 +704,7 @@ export function CommandCenterPage({
       setHasExplicitRunSelection(true);
       setTab("task-to-swarm");
       await loadRuns();
-      await invoke("orchestrator_start", { runId: createdRunId });
+      await invoke("orchestrator_engine_start", { runId: createdRunId });
       setAutoApproveTargetRunId(createdRunId);
       await loadRuns();
     } catch (e) {
@@ -611,7 +720,7 @@ export function CommandCenterPage({
     setIsLoading(true);
     setError(null);
     try {
-      await invoke("orchestrator_approve", { runId });
+      await invoke("orchestrator_engine_approve", { runId });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -646,7 +755,7 @@ export function CommandCenterPage({
   }, [snapshot]);
 
   const loadRunIntoEngine = useCallback(async (targetRunId: string) => {
-    await invoke("orchestrator_load_run", { runId: targetRunId });
+    await invoke("orchestrator_engine_load_run", { runId: targetRunId });
   }, []);
 
   const handleSelectRun = async (targetRunId: string) => {
@@ -706,15 +815,15 @@ export function CommandCenterPage({
         });
       }
       if (snapshot.status === "awaiting_approval") {
-        await invoke("orchestrator_approve", { runId });
+        await invoke("orchestrator_engine_approve", { runId });
       } else if (snapshot.status === "paused") {
-        await invoke("orchestrator_resume", { runId });
+        await invoke("orchestrator_engine_resume", { runId });
       } else if (snapshot.status === "failed" || snapshot.status === "cancelled") {
         await invoke("orchestrator_restart_run", { runId });
       } else if (snapshot.status === "completed") {
         await invoke("orchestrator_restart_run", { runId });
-      } else if (snapshot.status === "revision_requested") {
-        await invoke("orchestrator_start", { runId });
+      } else if (snapshot.status === "blocked") {
+        await invoke("orchestrator_engine_start", { runId });
       }
       const at = new Date().toLocaleTimeString();
       setEventFeed((prev) => [`${at} continue requested for ${runId}`, ...prev].slice(0, 40));
@@ -732,7 +841,7 @@ export function CommandCenterPage({
     setError(null);
     try {
       await loadRunIntoEngine(runId);
-      await invoke("orchestrator_pause", { runId });
+      await invoke("orchestrator_engine_pause", { runId });
       const at = new Date().toLocaleTimeString();
       setEventFeed((prev) => [`${at} pause requested for ${runId}`, ...prev].slice(0, 40));
       await loadRuns();
@@ -749,7 +858,7 @@ export function CommandCenterPage({
     setError(null);
     try {
       await loadRunIntoEngine(runId);
-      await invoke("orchestrator_cancel", { runId });
+      await invoke("orchestrator_engine_cancel", { runId });
       const at = new Date().toLocaleTimeString();
       setEventFeed((prev) => [`${at} cancel requested for ${runId}`, ...prev].slice(0, 40));
       await loadRuns();
@@ -765,18 +874,18 @@ export function CommandCenterPage({
     setIsRunActionLoading(true);
     setError(null);
     try {
-      await invoke("orchestrator_retry_task", { runId, taskId: task.id });
+      await invoke("orchestrator_engine_retry_task", { runId, taskId: task.id });
 
       const [nextSnapshot, nextTasks] = await Promise.all([
-        invoke<RunSnapshot>("orchestrator_get_run", { runId }),
-        invoke<Task[]>("orchestrator_list_tasks", { runId }),
+        invoke<RunSnapshot>("orchestrator_engine_get_run", { runId }),
+        invoke<Task[]>("orchestrator_engine_list_tasks", { runId }),
       ]);
       lastSnapshotRef.current = nextSnapshot;
       setSnapshot(nextSnapshot);
       setTasks(nextTasks);
 
       if (nextSnapshot.status === "paused") {
-        await invoke("orchestrator_resume", { runId });
+        await invoke("orchestrator_engine_resume", { runId });
       }
 
       const at = new Date().toLocaleTimeString();
@@ -1401,6 +1510,17 @@ export function CommandCenterPage({
                   ))}
                 </div>
               )}
+            </div>
+            <div className="xl:col-span-3 rounded-lg border border-border bg-surface p-4">
+              <BlackboardPanel
+                runId={runId}
+                runStatus={snapshot?.status}
+                tasks={tasks}
+                events={runEvents}
+                blackboard={blackboard}
+                replay={replaySummary}
+                checkpoint={latestCheckpoint}
+              />
             </div>
             <div className="xl:col-span-4 rounded-lg border border-border bg-surface p-0 overflow-hidden min-h-[320px]">
               <div className="border-b border-border px-4 py-3 text-xs uppercase tracking-wide text-text-subtle">

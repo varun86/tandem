@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::SocketAddr;
+use std::path::Path as FsPath;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,7 +34,7 @@ use tandem_orchestrator::{
 };
 use tandem_skills::{SkillLocation, SkillService, SkillsConflictPolicy};
 use tokio::process::Command;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
@@ -84,6 +87,227 @@ struct EventFilterQuery {
     session_id: Option<String>,
     #[serde(rename = "runID")]
     run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
+struct RunEventsQuery {
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
+struct ContextRunReplayQuery {
+    upto_seq: Option<u64>,
+    from_checkpoint: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ContextRunStatus {
+    Queued,
+    Planning,
+    Running,
+    AwaitingApproval,
+    Paused,
+    Blocked,
+    Failed,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ContextStepStatus {
+    Pending,
+    Runnable,
+    InProgress,
+    Blocked,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ContextWorkspaceLease {
+    workspace_id: String,
+    canonical_path: String,
+    lease_epoch: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextRunStep {
+    step_id: String,
+    title: String,
+    status: ContextStepStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextRunState {
+    run_id: String,
+    run_type: String,
+    status: ContextRunStatus,
+    objective: String,
+    workspace: ContextWorkspaceLease,
+    #[serde(default)]
+    steps: Vec<ContextRunStep>,
+    #[serde(default)]
+    why_next_step: Option<String>,
+    revision: u64,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextRunCreateInput {
+    run_id: Option<String>,
+    objective: String,
+    run_type: Option<String>,
+    workspace: Option<ContextWorkspaceLease>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextRunEventRecord {
+    event_id: String,
+    run_id: String,
+    seq: u64,
+    ts_ms: u64,
+    #[serde(rename = "type")]
+    event_type: String,
+    status: ContextRunStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_id: Option<String>,
+    payload: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextRunEventAppendInput {
+    #[serde(rename = "type")]
+    event_type: String,
+    status: ContextRunStatus,
+    step_id: Option<String>,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ContextBlackboardItem {
+    id: String,
+    ts_ms: u64,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ContextBlackboardArtifact {
+    id: String,
+    ts_ms: u64,
+    path: String,
+    artifact_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ContextBlackboardSummaries {
+    rolling: String,
+    latest_context_pack: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ContextBlackboardState {
+    #[serde(default)]
+    facts: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    decisions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    open_questions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    artifacts: Vec<ContextBlackboardArtifact>,
+    #[serde(default)]
+    summaries: ContextBlackboardSummaries,
+    revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ContextBlackboardPatchOp {
+    AddFact,
+    AddDecision,
+    AddOpenQuestion,
+    AddArtifact,
+    SetRollingSummary,
+    SetLatestContextPack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextBlackboardPatchRecord {
+    patch_id: String,
+    run_id: String,
+    seq: u64,
+    ts_ms: u64,
+    op: ContextBlackboardPatchOp,
+    payload: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextBlackboardPatchInput {
+    op: ContextBlackboardPatchOp,
+    payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextCheckpointRecord {
+    checkpoint_id: String,
+    run_id: String,
+    seq: u64,
+    ts_ms: u64,
+    reason: String,
+    run_state: ContextRunState,
+    blackboard: ContextBlackboardState,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextCheckpointCreateInput {
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextReplayDrift {
+    mismatch: bool,
+    status_mismatch: bool,
+    why_next_step_mismatch: bool,
+    step_count_mismatch: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ContextDriverNextInput {
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextTodoSyncItemInput {
+    id: Option<String>,
+    content: String,
+    status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextTodoSyncInput {
+    todos: Vec<ContextTodoSyncItemInput>,
+    source_session_id: Option<String>,
+    source_run_id: Option<String>,
+    replace: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContextLeaseValidateInput {
+    phase: String,
+    current_path: String,
+    step_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -726,6 +950,47 @@ fn app_router(state: AppState) -> Router {
         )
         .route("/global/dispose", post(global_dispose))
         .route("/event", get(events))
+        .route("/run/{id}/events", get(run_events))
+        .route("/api/run/{id}/events", get(run_events))
+        .route("/context/runs", post(context_run_create).get(context_run_list))
+        .route(
+            "/context/runs/{run_id}",
+            get(context_run_get).put(context_run_put),
+        )
+        .route(
+            "/context/runs/{run_id}/events",
+            get(context_run_events).post(context_run_event_append),
+        )
+        .route(
+            "/context/runs/{run_id}/todos/sync",
+            post(context_run_todos_sync),
+        )
+        .route(
+            "/context/runs/{run_id}/events/stream",
+            get(context_run_events_stream),
+        )
+        .route(
+            "/context/runs/{run_id}/lease/validate",
+            post(context_run_lease_validate),
+        )
+        .route(
+            "/context/runs/{run_id}/blackboard",
+            get(context_run_blackboard_get),
+        )
+        .route(
+            "/context/runs/{run_id}/blackboard/patches",
+            post(context_run_blackboard_patch),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints",
+            post(context_run_checkpoint_create),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints/latest",
+            get(context_run_checkpoint_latest),
+        )
+        .route("/context/runs/{run_id}/replay", get(context_run_replay))
+        .route("/context/runs/{run_id}/driver/next", post(context_run_driver_next))
         .route("/project", get(list_projects))
         .route("/session", post(create_session).get(list_sessions))
         .route("/api/session", post(create_session).get(list_sessions))
@@ -5795,6 +6060,1103 @@ async fn routines_events(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
 }
 
+fn load_run_events_jsonl(
+    path: &FsPath,
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+) -> Vec<Value> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let mut rows: Vec<Value> = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| {
+            if let Some(since) = since_seq {
+                return row.get("seq").and_then(|value| value.as_u64()).unwrap_or(0) > since;
+            }
+            true
+        })
+        .collect();
+    rows.sort_by_key(|row| row.get("seq").and_then(|value| value.as_u64()).unwrap_or(0));
+    if let Some(tail_count) = tail {
+        if rows.len() > tail_count {
+            rows = rows.split_off(rows.len().saturating_sub(tail_count));
+        }
+    }
+    rows
+}
+
+fn run_events_sse_stream(
+    state: AppState,
+    run_id: String,
+    query: RunEventsQuery,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(256);
+    tokio::spawn(async move {
+        let snapshot = state.workspace_index.snapshot().await;
+        let workspace_root = PathBuf::from(snapshot.root);
+        let events_path = workspace_root
+            .join(".tandem")
+            .join("orchestrator")
+            .join(&run_id)
+            .join("events.jsonl");
+
+        let ready = serde_json::to_string(&json!({
+            "status":"ready",
+            "stream":"run_events",
+            "runID": run_id,
+            "timestamp_ms": crate::now_ms(),
+            "path": events_path.to_string_lossy().to_string(),
+        }))
+        .unwrap_or_default();
+        if tx.send(ready).await.is_err() {
+            return;
+        }
+
+        let initial = load_run_events_jsonl(&events_path, query.since_seq, query.tail);
+        let mut last_seq = query.since_seq.unwrap_or(0);
+        for row in initial {
+            let seq = row.get("seq").and_then(|value| value.as_u64()).unwrap_or(last_seq);
+            last_seq = last_seq.max(seq);
+            let payload = serde_json::to_string(&json!({
+                "type":"run.event",
+                "properties": row
+            }))
+            .unwrap_or_default();
+            if tx.send(payload).await.is_err() {
+                return;
+            }
+        }
+
+        let mut interval = tokio::time::interval(Duration::from_millis(1000));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let updates = load_run_events_jsonl(&events_path, Some(last_seq), None);
+            for row in updates {
+                let seq = row.get("seq").and_then(|value| value.as_u64()).unwrap_or(last_seq);
+                last_seq = last_seq.max(seq);
+                let payload = serde_json::to_string(&json!({
+                    "type":"run.event",
+                    "properties": row
+                }))
+                .unwrap_or_default();
+                if tx.send(payload).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    ReceiverStream::new(rx).map(|payload| Ok(Event::default().data(payload)))
+}
+
+async fn run_events(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<RunEventsQuery>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Sse::new(run_events_sse_stream(state, run_id, query))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
+fn context_runs_root(state: &AppState) -> PathBuf {
+    state
+        .shared_resources_path
+        .parent()
+        .map(|parent| parent.join("context_runs"))
+        .unwrap_or_else(|| PathBuf::from(".tandem").join("context_runs"))
+}
+
+fn context_run_dir(state: &AppState, run_id: &str) -> PathBuf {
+    context_runs_root(state).join(run_id)
+}
+
+fn context_run_state_path(state: &AppState, run_id: &str) -> PathBuf {
+    context_run_dir(state, run_id).join("run_state.json")
+}
+
+fn context_run_events_path(state: &AppState, run_id: &str) -> PathBuf {
+    context_run_dir(state, run_id).join("events.jsonl")
+}
+
+fn context_run_blackboard_path(state: &AppState, run_id: &str) -> PathBuf {
+    context_run_dir(state, run_id).join("blackboard.json")
+}
+
+fn context_run_blackboard_patches_path(state: &AppState, run_id: &str) -> PathBuf {
+    context_run_dir(state, run_id).join("blackboard_patches.jsonl")
+}
+
+fn context_run_checkpoints_dir(state: &AppState, run_id: &str) -> PathBuf {
+    context_run_dir(state, run_id).join("checkpoints")
+}
+
+async fn ensure_context_run_dir(state: &AppState, run_id: &str) -> Result<(), StatusCode> {
+    let run_dir = context_run_dir(state, run_id);
+    tokio::fs::create_dir_all(&run_dir)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(())
+}
+
+async fn load_context_run_state(
+    state: &AppState,
+    run_id: &str,
+) -> Result<ContextRunState, StatusCode> {
+    let path = context_run_state_path(state, run_id);
+    let raw = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    serde_json::from_str::<ContextRunState>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn save_context_run_state(
+    state: &AppState,
+    run: &ContextRunState,
+) -> Result<(), StatusCode> {
+    ensure_context_run_dir(state, &run.run_id).await?;
+    let path = context_run_state_path(state, &run.run_id);
+    let payload =
+        serde_json::to_string_pretty(run).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(path, payload)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn load_context_run_events_jsonl(
+    path: &FsPath,
+    since_seq: Option<u64>,
+    tail: Option<usize>,
+) -> Vec<ContextRunEventRecord> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let mut rows: Vec<ContextRunEventRecord> = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<ContextRunEventRecord>(line).ok())
+        .filter(|row| {
+            if let Some(since) = since_seq {
+                return row.seq > since;
+            }
+            true
+        })
+        .collect();
+    rows.sort_by_key(|row| row.seq);
+    if let Some(tail_count) = tail {
+        if rows.len() > tail_count {
+            rows = rows.split_off(rows.len().saturating_sub(tail_count));
+        }
+    }
+    rows
+}
+
+fn latest_context_run_event_seq(path: &FsPath) -> u64 {
+    load_context_run_events_jsonl(path, None, None)
+        .last()
+        .map(|row| row.seq)
+        .unwrap_or(0)
+}
+
+fn append_jsonl_line(path: &FsPath, value: &Value) -> Result<(), StatusCode> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let line = serde_json::to_string(value).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    writeln!(file, "{}", line).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn load_context_blackboard(state: &AppState, run_id: &str) -> ContextBlackboardState {
+    let path = context_run_blackboard_path(state, run_id);
+    match std::fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str::<ContextBlackboardState>(&raw).unwrap_or_default(),
+        Err(_) => ContextBlackboardState::default(),
+    }
+}
+
+fn save_context_blackboard(
+    state: &AppState,
+    run_id: &str,
+    blackboard: &ContextBlackboardState,
+) -> Result<(), StatusCode> {
+    let path = context_run_blackboard_path(state, run_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let payload = serde_json::to_string_pretty(blackboard)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    std::fs::write(path, payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn apply_context_blackboard_patch(
+    blackboard: &mut ContextBlackboardState,
+    patch: &ContextBlackboardPatchRecord,
+) -> Result<(), StatusCode> {
+    match patch.op {
+        ContextBlackboardPatchOp::AddFact => {
+            let row = serde_json::from_value::<ContextBlackboardItem>(patch.payload.clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            blackboard.facts.push(row);
+        }
+        ContextBlackboardPatchOp::AddDecision => {
+            let row = serde_json::from_value::<ContextBlackboardItem>(patch.payload.clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            blackboard.decisions.push(row);
+        }
+        ContextBlackboardPatchOp::AddOpenQuestion => {
+            let row = serde_json::from_value::<ContextBlackboardItem>(patch.payload.clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            blackboard.open_questions.push(row);
+        }
+        ContextBlackboardPatchOp::AddArtifact => {
+            let row = serde_json::from_value::<ContextBlackboardArtifact>(patch.payload.clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            blackboard.artifacts.push(row);
+        }
+        ContextBlackboardPatchOp::SetRollingSummary => {
+            let value = patch
+                .payload
+                .as_str()
+                .ok_or(StatusCode::BAD_REQUEST)?
+                .to_string();
+            blackboard.summaries.rolling = value;
+        }
+        ContextBlackboardPatchOp::SetLatestContextPack => {
+            let value = patch
+                .payload
+                .as_str()
+                .ok_or(StatusCode::BAD_REQUEST)?
+                .to_string();
+            blackboard.summaries.latest_context_pack = value;
+        }
+    }
+    blackboard.revision = patch.seq;
+    Ok(())
+}
+
+async fn context_run_create(
+    State(state): State<AppState>,
+    Json(input): Json<ContextRunCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let run_id = input.run_id.unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
+    ensure_context_run_dir(&state, &run_id).await?;
+    let run_path = context_run_state_path(&state, &run_id);
+    if run_path.exists() {
+        return Ok(Json(json!({
+            "error": "run already exists",
+            "code": "CONTEXT_RUN_EXISTS",
+            "run_id": run_id
+        })));
+    }
+    let now = crate::now_ms();
+    let run = ContextRunState {
+        run_id: run_id.clone(),
+        run_type: input.run_type.unwrap_or_else(|| "interactive".to_string()),
+        status: ContextRunStatus::Queued,
+        objective: input.objective,
+        workspace: input.workspace.unwrap_or_default(),
+        steps: Vec::new(),
+        why_next_step: None,
+        revision: 1,
+        created_at_ms: now,
+        updated_at_ms: now,
+    };
+    save_context_run_state(&state, &run).await?;
+    Ok(Json(json!({ "ok": true, "run": run })))
+}
+
+async fn context_run_list(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    let root = context_runs_root(&state);
+    if !root.exists() {
+        return Ok(Json(json!({ "runs": [] })));
+    }
+    let mut rows = Vec::<ContextRunState>::new();
+    let mut dir = tokio::fs::read_dir(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let run_id = entry.file_name().to_string_lossy().to_string();
+        if let Ok(run) = load_context_run_state(&state, &run_id).await {
+            rows.push(run);
+        }
+    }
+    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    Ok(Json(json!({ "runs": rows })))
+}
+
+async fn context_run_get(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let run = load_context_run_state(&state, &run_id).await?;
+    Ok(Json(json!({ "run": run })))
+}
+
+async fn context_run_put(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(mut run): Json<ContextRunState>,
+) -> Result<Json<Value>, StatusCode> {
+    if run.run_id != run_id {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let now = crate::now_ms();
+    run.revision = run.revision.saturating_add(1);
+    run.updated_at_ms = now;
+    save_context_run_state(&state, &run).await?;
+    Ok(Json(json!({ "ok": true, "run": run })))
+}
+
+fn context_run_is_terminal(status: &ContextRunStatus) -> bool {
+    matches!(
+        status,
+        ContextRunStatus::Failed | ContextRunStatus::Completed | ContextRunStatus::Cancelled
+    )
+}
+
+fn context_step_status_from_todo(status: Option<&str>) -> ContextStepStatus {
+    let normalized = status
+        .map(|v| v.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| "pending".to_string());
+    match normalized.as_str() {
+        "in_progress" | "in-progress" | "working" | "doing" | "active" => {
+            ContextStepStatus::InProgress
+        }
+        "runnable" | "ready" => ContextStepStatus::Runnable,
+        "done" | "completed" | "complete" => ContextStepStatus::Done,
+        "blocked" => ContextStepStatus::Blocked,
+        "failed" | "error" => ContextStepStatus::Failed,
+        _ => ContextStepStatus::Pending,
+    }
+}
+
+fn normalize_context_todo_step_id(raw: Option<&str>, idx: usize) -> String {
+    raw.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("todo-{}", idx.saturating_add(1)))
+}
+
+async fn context_run_todos_sync(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextTodoSyncInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut run = load_context_run_state(&state, &run_id).await?;
+    let replace = input.replace.unwrap_or(true);
+
+    let mapped_steps = input
+        .todos
+        .iter()
+        .enumerate()
+        .map(|(idx, todo)| ContextRunStep {
+            step_id: normalize_context_todo_step_id(todo.id.as_deref(), idx),
+            title: todo.content.trim().to_string(),
+            status: context_step_status_from_todo(todo.status.as_deref()),
+        })
+        .filter(|step| !step.title.is_empty())
+        .collect::<Vec<_>>();
+
+    if replace {
+        run.steps = mapped_steps;
+    } else {
+        for step in mapped_steps {
+            if let Some(existing) = run.steps.iter_mut().find(|row| row.step_id == step.step_id) {
+                existing.title = step.title;
+                existing.status = step.status;
+            } else {
+                run.steps.push(step);
+            }
+        }
+    }
+
+    if context_run_is_terminal(&run.status) {
+        // keep terminal status unchanged
+    } else if run
+        .steps
+        .iter()
+        .any(|step| matches!(step.status, ContextStepStatus::InProgress))
+    {
+        run.status = ContextRunStatus::Running;
+    } else if run
+        .steps
+        .iter()
+        .any(|step| matches!(step.status, ContextStepStatus::Runnable))
+    {
+        run.status = ContextRunStatus::Planning;
+    } else if run
+        .steps
+        .iter()
+        .all(|step| matches!(step.status, ContextStepStatus::Done))
+        && !run.steps.is_empty()
+    {
+        run.status = ContextRunStatus::Completed;
+    } else if !run.steps.is_empty() {
+        run.status = ContextRunStatus::Planning;
+    }
+
+    run.why_next_step = run
+        .steps
+        .iter()
+        .find(|step| {
+            matches!(
+                step.status,
+                ContextStepStatus::InProgress | ContextStepStatus::Runnable | ContextStepStatus::Pending
+            )
+        })
+        .map(|step| format!("continue task `{}` from synced todo list", step.step_id));
+
+    run.revision = run.revision.saturating_add(1);
+    run.updated_at_ms = crate::now_ms();
+    save_context_run_state(&state, &run).await?;
+
+    let _ = context_run_event_append(
+        State(state.clone()),
+        Path(run_id.clone()),
+        Json(ContextRunEventAppendInput {
+            event_type: "todo_synced".to_string(),
+            status: run.status.clone(),
+            step_id: None,
+            payload: json!({
+                "count": run.steps.len(),
+                "replace": replace,
+                "source_session_id": input.source_session_id,
+                "source_run_id": input.source_run_id,
+                "todos": input.todos,
+                "why_next_step": run.why_next_step.clone(),
+            }),
+        }),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "ok": true,
+        "run": run
+    })))
+}
+
+fn context_driver_select_next_step(run: &ContextRunState) -> (Option<usize>, String, ContextRunStatus) {
+    if context_run_is_terminal(&run.status) {
+        return (
+            None,
+            format!(
+                "run is terminal (`{}`); no next step can be selected",
+                serde_json::to_string(&run.status).unwrap_or_else(|_| "\"terminal\"".to_string())
+            ),
+            run.status.clone(),
+        );
+    }
+    if let Some(step) = run
+        .steps
+        .iter()
+        .find(|step| matches!(step.status, ContextStepStatus::InProgress))
+    {
+        return (
+            None,
+            format!(
+                "step `{}` is already in_progress; keep current execution focus",
+                step.step_id
+            ),
+            ContextRunStatus::Running,
+        );
+    }
+    if let Some((idx, step)) = run
+        .steps
+        .iter()
+        .enumerate()
+        .find(|(_, step)| matches!(step.status, ContextStepStatus::Runnable))
+    {
+        return (
+            Some(idx),
+            format!(
+                "selected runnable step `{}` as next execution target",
+                step.step_id
+            ),
+            ContextRunStatus::Running,
+        );
+    }
+    if let Some((idx, step)) = run
+        .steps
+        .iter()
+        .enumerate()
+        .find(|(_, step)| matches!(step.status, ContextStepStatus::Pending))
+    {
+        return (
+            Some(idx),
+            format!(
+                "no runnable step available; promoted pending step `{}` for execution",
+                step.step_id
+            ),
+            ContextRunStatus::Running,
+        );
+    }
+    if !run.steps.is_empty()
+        && run
+            .steps
+            .iter()
+            .all(|step| matches!(step.status, ContextStepStatus::Done))
+    {
+        return (
+            None,
+            "all steps are done; marking run completed".to_string(),
+            ContextRunStatus::Completed,
+        );
+    }
+    if run
+        .steps
+        .iter()
+        .any(|step| matches!(step.status, ContextStepStatus::Failed))
+    {
+        return (
+            None,
+            "one or more steps failed and no runnable work remains; run is blocked".to_string(),
+            ContextRunStatus::Blocked,
+        );
+    }
+    (
+        None,
+        "no actionable steps found; run remains blocked".to_string(),
+        ContextRunStatus::Blocked,
+    )
+}
+
+async fn context_run_driver_next(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextDriverNextInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut run = load_context_run_state(&state, &run_id).await?;
+    let dry_run = input.dry_run.unwrap_or(false);
+    let (selected_idx, why_next_step, target_status) = context_driver_select_next_step(&run);
+
+    let selected_step_id = selected_idx.map(|idx| run.steps[idx].step_id.clone());
+    let selected_step_status = selected_idx.map(|idx| {
+        if matches!(run.steps[idx].status, ContextStepStatus::Pending) {
+            "pending"
+        } else {
+            "runnable"
+        }
+    });
+
+    if !dry_run {
+        if let Some(idx) = selected_idx {
+            if matches!(run.steps[idx].status, ContextStepStatus::Pending) {
+                run.steps[idx].status = ContextStepStatus::Runnable;
+            }
+            run.steps[idx].status = ContextStepStatus::InProgress;
+        }
+        run.status = target_status.clone();
+        run.why_next_step = Some(why_next_step.clone());
+        run.revision = run.revision.saturating_add(1);
+        run.updated_at_ms = crate::now_ms();
+        save_context_run_state(&state, &run).await?;
+
+        let _ = context_run_event_append(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(ContextRunEventAppendInput {
+                event_type: "meta_next_step_selected".to_string(),
+                status: target_status.clone(),
+                step_id: selected_step_id.clone(),
+                payload: json!({
+                    "why_next_step": why_next_step,
+                    "selected_step_id": selected_step_id,
+                    "selected_step_previous_status": selected_step_status,
+                    "driver": "context_driver_v1"
+                }),
+            }),
+        )
+        .await;
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "dry_run": dry_run,
+        "run_id": run_id,
+        "selected_step_id": selected_step_id,
+        "target_status": target_status,
+        "why_next_step": why_next_step,
+        "run": if dry_run { serde_json::to_value(&run).unwrap_or_else(|_| json!(null)) } else { serde_json::to_value(&run).unwrap_or_else(|_| json!(null)) }
+    })))
+}
+
+async fn context_run_event_append(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextRunEventAppendInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let events_path = context_run_events_path(&state, &run_id);
+    let seq = latest_context_run_event_seq(&events_path).saturating_add(1);
+    let record = ContextRunEventRecord {
+        event_id: format!("evt-{}", Uuid::new_v4()),
+        run_id: run_id.clone(),
+        seq,
+        ts_ms: crate::now_ms(),
+        event_type: input.event_type,
+        status: input.status.clone(),
+        step_id: input.step_id.clone(),
+        payload: input.payload,
+    };
+    append_jsonl_line(
+        &events_path,
+        &serde_json::to_value(&record).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    )?;
+
+    if let Ok(mut run) = load_context_run_state(&state, &run_id).await {
+        run.status = input.status;
+        run.revision = run.revision.saturating_add(1);
+        run.updated_at_ms = crate::now_ms();
+        save_context_run_state(&state, &run).await?;
+    }
+
+    Ok(Json(json!({ "ok": true, "event": record })))
+}
+
+async fn context_run_events(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<RunEventsQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let rows = load_context_run_events_jsonl(
+        &context_run_events_path(&state, &run_id),
+        query.since_seq,
+        query.tail,
+    );
+    Ok(Json(json!({ "events": rows })))
+}
+
+fn context_run_events_sse_stream(
+    state: AppState,
+    run_id: String,
+    query: RunEventsQuery,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(256);
+    tokio::spawn(async move {
+        let events_path = context_run_events_path(&state, &run_id);
+        let ready = serde_json::to_string(&json!({
+            "status":"ready",
+            "stream":"context_run_events",
+            "runID": run_id,
+            "timestamp_ms": crate::now_ms(),
+            "path": events_path.to_string_lossy().to_string(),
+        }))
+        .unwrap_or_default();
+        if tx.send(ready).await.is_err() {
+            return;
+        }
+
+        let initial = load_context_run_events_jsonl(&events_path, query.since_seq, query.tail);
+        let mut last_seq = query.since_seq.unwrap_or(0);
+        for row in initial {
+            last_seq = last_seq.max(row.seq);
+            let payload = serde_json::to_string(&json!({
+                "type":"run.event",
+                "properties": row
+            }))
+            .unwrap_or_default();
+            if tx.send(payload).await.is_err() {
+                return;
+            }
+        }
+
+        let mut interval = tokio::time::interval(Duration::from_millis(1000));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let updates = load_context_run_events_jsonl(&events_path, Some(last_seq), None);
+            for row in updates {
+                last_seq = last_seq.max(row.seq);
+                let payload = serde_json::to_string(&json!({
+                    "type":"run.event",
+                    "properties": row
+                }))
+                .unwrap_or_default();
+                if tx.send(payload).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    ReceiverStream::new(rx).map(|payload| Ok(Event::default().data(payload)))
+}
+
+async fn context_run_events_stream(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<RunEventsQuery>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Sse::new(context_run_events_sse_stream(state, run_id, query))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
+async fn context_run_lease_validate(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextLeaseValidateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut run = load_context_run_state(&state, &run_id).await?;
+    if run.workspace.canonical_path.trim().is_empty() {
+        run.workspace.canonical_path = input.current_path.clone();
+        if run.workspace.lease_epoch == 0 {
+            run.workspace.lease_epoch = 1;
+        }
+        run.revision = run.revision.saturating_add(1);
+        run.updated_at_ms = crate::now_ms();
+        save_context_run_state(&state, &run).await?;
+        return Ok(Json(json!({ "ok": true, "mismatch": false })));
+    }
+
+    if run.workspace.canonical_path != input.current_path {
+        run.status = ContextRunStatus::Paused;
+        run.revision = run.revision.saturating_add(1);
+        run.updated_at_ms = crate::now_ms();
+        save_context_run_state(&state, &run).await?;
+        let _ = context_run_event_append(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(ContextRunEventAppendInput {
+                event_type: "workspace_mismatch".to_string(),
+                status: ContextRunStatus::Paused,
+                step_id: input.step_id.clone(),
+                payload: json!({
+                    "phase": input.phase,
+                    "expected_path": run.workspace.canonical_path,
+                    "actual_path": input.current_path,
+                }),
+            }),
+        )
+        .await;
+        return Ok(Json(json!({
+            "ok": false,
+            "mismatch": true,
+            "status": "paused"
+        })));
+    }
+
+    Ok(Json(json!({ "ok": true, "mismatch": false })))
+}
+
+async fn context_run_blackboard_get(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let blackboard = load_context_blackboard(&state, &run_id);
+    Ok(Json(json!({ "blackboard": blackboard })))
+}
+
+async fn context_run_blackboard_patch(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextBlackboardPatchInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let patch_path = context_run_blackboard_patches_path(&state, &run_id);
+    let seq = {
+        let rows = std::fs::read_to_string(&patch_path).unwrap_or_default();
+        rows.lines()
+            .filter_map(|line| serde_json::from_str::<ContextBlackboardPatchRecord>(line).ok())
+            .map(|row| row.seq)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+    };
+    let patch = ContextBlackboardPatchRecord {
+        patch_id: format!("bbp-{}", Uuid::new_v4()),
+        run_id: run_id.clone(),
+        seq,
+        ts_ms: crate::now_ms(),
+        op: input.op,
+        payload: input.payload,
+    };
+    append_jsonl_line(
+        &patch_path,
+        &serde_json::to_value(&patch).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    )?;
+    let mut blackboard = load_context_blackboard(&state, &run_id);
+    apply_context_blackboard_patch(&mut blackboard, &patch)?;
+    save_context_blackboard(&state, &run_id, &blackboard)?;
+    Ok(Json(json!({ "ok": true, "patch": patch, "blackboard": blackboard })))
+}
+
+async fn context_run_checkpoint_create(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(input): Json<ContextCheckpointCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let run_state = load_context_run_state(&state, &run_id).await?;
+    let blackboard = load_context_blackboard(&state, &run_id);
+    let events_path = context_run_events_path(&state, &run_id);
+    let seq = latest_context_run_event_seq(&events_path);
+    let checkpoint = ContextCheckpointRecord {
+        checkpoint_id: format!("cp-{}", Uuid::new_v4()),
+        run_id: run_id.clone(),
+        seq,
+        ts_ms: crate::now_ms(),
+        reason: input.reason,
+        run_state,
+        blackboard,
+    };
+    let dir = context_run_checkpoints_dir(&state, &run_id);
+    std::fs::create_dir_all(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let path = dir.join(format!("{:020}.json", seq));
+    let payload =
+        serde_json::to_string_pretty(&checkpoint).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    std::fs::write(path, payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "ok": true, "checkpoint": checkpoint })))
+}
+
+async fn context_run_checkpoint_latest(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let dir = context_run_checkpoints_dir(&state, &run_id);
+    if !dir.exists() {
+        return Ok(Json(json!({ "checkpoint": null })));
+    }
+    let mut latest_name: Option<String> = None;
+    let mut entries = std::fs::read_dir(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Some(Ok(entry)) = entries.next() {
+        if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let should_replace = match latest_name.as_ref() {
+            Some(current) => name > *current,
+            None => true,
+        };
+        if should_replace {
+            latest_name = Some(name);
+        }
+    }
+    let Some(file_name) = latest_name else {
+        return Ok(Json(json!({ "checkpoint": null })));
+    };
+    let raw = std::fs::read_to_string(dir.join(file_name))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let checkpoint = serde_json::from_str::<ContextCheckpointRecord>(&raw)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "checkpoint": checkpoint })))
+}
+
+fn parse_context_step_status_text(value: &str) -> Option<ContextStepStatus> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "pending" => Some(ContextStepStatus::Pending),
+        "runnable" => Some(ContextStepStatus::Runnable),
+        "in_progress" | "in-progress" | "working" | "active" => Some(ContextStepStatus::InProgress),
+        "blocked" => Some(ContextStepStatus::Blocked),
+        "done" | "completed" | "complete" => Some(ContextStepStatus::Done),
+        "failed" | "error" => Some(ContextStepStatus::Failed),
+        _ => None,
+    }
+}
+
+fn replay_step_status_from_event(event: &ContextRunEventRecord) -> Option<ContextStepStatus> {
+    if let Some(status_text) = event.payload.get("step_status").and_then(Value::as_str) {
+        if let Some(status) = parse_context_step_status_text(status_text) {
+            return Some(status);
+        }
+    }
+    let ty = event.event_type.to_ascii_lowercase();
+    if ty.contains("step_started") || ty.contains("step_running") {
+        return Some(ContextStepStatus::InProgress);
+    }
+    if ty.contains("step_blocked") {
+        return Some(ContextStepStatus::Blocked);
+    }
+    if ty.contains("step_failed") {
+        return Some(ContextStepStatus::Failed);
+    }
+    if ty.contains("step_done") || ty.contains("step_completed") {
+        return Some(ContextStepStatus::Done);
+    }
+    None
+}
+
+fn latest_context_checkpoint_record(state: &AppState, run_id: &str) -> Option<ContextCheckpointRecord> {
+    let dir = context_run_checkpoints_dir(state, run_id);
+    if !dir.exists() {
+        return None;
+    }
+    let mut latest_name: Option<String> = None;
+    let mut entries = std::fs::read_dir(&dir).ok()?;
+    while let Some(Ok(entry)) = entries.next() {
+        if !entry.file_type().ok().map(|kind| kind.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let should_replace = match latest_name.as_ref() {
+            Some(current) => name > *current,
+            None => true,
+        };
+        if should_replace {
+            latest_name = Some(name);
+        }
+    }
+    let file_name = latest_name?;
+    let raw = std::fs::read_to_string(dir.join(file_name)).ok()?;
+    serde_json::from_str::<ContextCheckpointRecord>(&raw).ok()
+}
+
+fn context_run_replay_materialize(
+    run_id: &str,
+    persisted: &ContextRunState,
+    checkpoint: Option<&ContextCheckpointRecord>,
+    events: &[ContextRunEventRecord],
+) -> ContextRunState {
+    let mut replay = if let Some(cp) = checkpoint {
+        cp.run_state.clone()
+    } else {
+        let mut base = persisted.clone();
+        base.status = ContextRunStatus::Queued;
+        base.why_next_step = None;
+        base.revision = 1;
+        base.updated_at_ms = base.created_at_ms;
+        for step in &mut base.steps {
+            step.status = ContextStepStatus::Pending;
+        }
+        base
+    };
+    replay.run_id = run_id.to_string();
+    let mut step_index: HashMap<String, usize> = replay
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(idx, step)| (step.step_id.clone(), idx))
+        .collect();
+
+    for event in events {
+        replay.status = event.status.clone();
+        replay.updated_at_ms = replay.updated_at_ms.max(event.ts_ms);
+        if let Some(why) = event.payload.get("why_next_step").and_then(Value::as_str) {
+            if !why.trim().is_empty() {
+                replay.why_next_step = Some(why.to_string());
+            }
+        }
+        if let Some(items) = event.payload.get("steps").and_then(Value::as_array) {
+            for item in items {
+                let Some(step_id) = item.get("step_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let step_title = item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or(step_id)
+                    .to_string();
+                let step_status = item
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .and_then(parse_context_step_status_text)
+                    .unwrap_or(ContextStepStatus::Pending);
+                let index = if let Some(existing) = step_index.get(step_id).copied() {
+                    existing
+                } else {
+                    replay.steps.push(ContextRunStep {
+                        step_id: step_id.to_string(),
+                        title: step_title.clone(),
+                        status: ContextStepStatus::Pending,
+                    });
+                    let idx = replay.steps.len().saturating_sub(1);
+                    step_index.insert(step_id.to_string(), idx);
+                    idx
+                };
+                replay.steps[index].title = step_title;
+                replay.steps[index].status = step_status;
+            }
+        }
+        if let Some(step_id) = &event.step_id {
+            let index = if let Some(existing) = step_index.get(step_id).copied() {
+                existing
+            } else {
+                replay.steps.push(ContextRunStep {
+                    step_id: step_id.clone(),
+                    title: event
+                        .payload
+                        .get("step_title")
+                        .and_then(Value::as_str)
+                        .unwrap_or(step_id.as_str())
+                        .to_string(),
+                    status: ContextStepStatus::Pending,
+                });
+                let idx = replay.steps.len().saturating_sub(1);
+                step_index.insert(step_id.clone(), idx);
+                idx
+            };
+            if let Some(step_status) = replay_step_status_from_event(event) {
+                replay.steps[index].status = step_status;
+            }
+        }
+    }
+
+    let checkpoint_revision = checkpoint.map(|cp| cp.run_state.revision).unwrap_or(1);
+    replay.revision = checkpoint_revision.saturating_add(events.len() as u64);
+    replay
+}
+
+async fn context_run_replay(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<ContextRunReplayQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let persisted = load_context_run_state(&state, &run_id).await?;
+    let from_checkpoint = query.from_checkpoint.unwrap_or(true);
+    let checkpoint = if from_checkpoint {
+        latest_context_checkpoint_record(&state, &run_id)
+    } else {
+        None
+    };
+    let start_seq = checkpoint.as_ref().map(|cp| cp.seq).unwrap_or(0);
+    let mut events = load_context_run_events_jsonl(
+        &context_run_events_path(&state, &run_id),
+        Some(start_seq),
+        None,
+    );
+    if let Some(upto_seq) = query.upto_seq {
+        events.retain(|row| row.seq <= upto_seq);
+    }
+    let replay = context_run_replay_materialize(&run_id, &persisted, checkpoint.as_ref(), &events);
+    let status_mismatch = replay.status != persisted.status;
+    let why_next_step_mismatch = persisted.why_next_step.is_some()
+        && replay.why_next_step != persisted.why_next_step;
+    let step_count_mismatch = !persisted.steps.is_empty() && replay.steps.len() != persisted.steps.len();
+    let drift = ContextReplayDrift {
+        mismatch: status_mismatch || why_next_step_mismatch || step_count_mismatch,
+        status_mismatch,
+        why_next_step_mismatch,
+        step_count_mismatch,
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "run_id": run_id,
+        "from_checkpoint": checkpoint.is_some(),
+        "checkpoint_seq": checkpoint.as_ref().map(|cp| cp.seq),
+        "events_applied": events.len(),
+        "replay": replay,
+        "persisted": persisted,
+        "drift": drift
+    })))
+}
+
 fn objective_from_args(args: &Value, routine_id: &str, entrypoint: &str) -> String {
     args.get("prompt")
         .and_then(|v| v.as_str())
@@ -6806,6 +8168,19 @@ async fn openapi_doc() -> Json<Value> {
             "/session/{id}/cancel":{"post":{"summary":"Cancel active run"}},
             "/session/{id}/run/{run_id}/cancel":{"post":{"summary":"Cancel run by id"}},
             "/event":{"get":{"summary":"SSE event stream"}},
+            "/run/{id}/events":{"get":{"summary":"SSE stream for sequenced run events"}},
+            "/context/runs":{"get":{"summary":"List context runs"},"post":{"summary":"Create context run"}},
+            "/context/runs/{run_id}":{"get":{"summary":"Get context run state"},"put":{"summary":"Update context run state"}},
+            "/context/runs/{run_id}/events":{"get":{"summary":"List context run events"},"post":{"summary":"Append context run event"}},
+            "/context/runs/{run_id}/todos/sync":{"post":{"summary":"Sync todo list into context run steps"}},
+            "/context/runs/{run_id}/events/stream":{"get":{"summary":"SSE stream for context run events"}},
+            "/context/runs/{run_id}/lease/validate":{"post":{"summary":"Validate workspace lease and auto-pause on mismatch"}},
+            "/context/runs/{run_id}/blackboard":{"get":{"summary":"Get materialized context blackboard"}},
+            "/context/runs/{run_id}/blackboard/patches":{"post":{"summary":"Append context blackboard patch"}},
+            "/context/runs/{run_id}/checkpoints":{"post":{"summary":"Create context run checkpoint"}},
+            "/context/runs/{run_id}/checkpoints/latest":{"get":{"summary":"Get latest context run checkpoint"}},
+            "/context/runs/{run_id}/replay":{"get":{"summary":"Replay context run from events/checkpoint and report drift"}},
+            "/context/runs/{run_id}/driver/next":{"post":{"summary":"Select next context step using engine meta-manager state rules"}},
             "/provider":{"get":{"summary":"List providers"}},
             "/session/{id}/fork":{"post":{"summary":"Fork a session"}},
             "/worktree":{"get":{"summary":"List worktrees"},"post":{"summary":"Create worktree"},"delete":{"summary":"Delete worktree"}},
@@ -7012,6 +8387,35 @@ mod tests {
             payload.get("code").and_then(|v| v.as_str()),
             Some("invalid_permission_reply")
         );
+    }
+
+    #[test]
+    fn load_run_events_jsonl_filters_since_and_tail() {
+        let test_root = std::env::temp_dir().join(format!("run-events-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&test_root).expect("mkdir");
+        let path = test_root.join("events.jsonl");
+        std::fs::write(
+            &path,
+            [
+                serde_json::json!({"seq":1,"type":"run_created"}).to_string(),
+                serde_json::json!({"seq":2,"type":"planning_started"}).to_string(),
+                serde_json::json!({"seq":3,"type":"task_started"}).to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write");
+
+        let since = load_run_events_jsonl(&path, Some(1), None);
+        assert_eq!(since.len(), 2);
+        assert_eq!(since[0].get("seq").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(since[1].get("seq").and_then(|v| v.as_u64()), Some(3));
+
+        let tail = load_run_events_jsonl(&path, None, Some(1));
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].get("seq").and_then(|v| v.as_u64()), Some(3));
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&test_root);
     }
 
     #[tokio::test]
@@ -11209,5 +12613,967 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("not allowed for routine"));
+    }
+
+    #[tokio::test]
+    async fn context_run_create_append_event_and_get() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-1",
+                    "objective": "test context run"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let event_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-1/events")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "type": "planning_started",
+                    "status": "planning",
+                    "payload": {"k":"v"}
+                })
+                .to_string(),
+            ))
+            .expect("event request");
+        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        assert_eq!(event_resp.status(), StatusCode::OK);
+
+        let list_events_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-1/events?since_seq=0")
+            .body(Body::empty())
+            .expect("list events request");
+        let list_events_resp = app
+            .clone()
+            .oneshot(list_events_req)
+            .await
+            .expect("list events response");
+        assert_eq!(list_events_resp.status(), StatusCode::OK);
+        let list_events_body = to_bytes(list_events_resp.into_body(), usize::MAX)
+            .await
+            .expect("list events body");
+        let list_events_payload: Value =
+            serde_json::from_slice(&list_events_body).expect("list events json");
+        assert_eq!(
+            list_events_payload
+                .get("events")
+                .and_then(|v| v.as_array())
+                .map(|rows| rows.len()),
+            Some(1)
+        );
+
+        let get_run_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-1")
+            .body(Body::empty())
+            .expect("get run request");
+        let get_run_resp = app.clone().oneshot(get_run_req).await.expect("get run response");
+        assert_eq!(get_run_resp.status(), StatusCode::OK);
+        let get_run_body = to_bytes(get_run_resp.into_body(), usize::MAX)
+            .await
+            .expect("get run body");
+        let get_run_payload: Value = serde_json::from_slice(&get_run_body).expect("get run json");
+        assert_eq!(
+            get_run_payload
+                .get("run")
+                .and_then(|run| run.get("status"))
+                .and_then(Value::as_str),
+            Some("planning")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_lease_mismatch_pauses_run() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-lease",
+                    "objective": "lease mismatch",
+                    "workspace": {
+                        "workspace_id": "ws-1",
+                        "canonical_path": "/expected/path",
+                        "lease_epoch": 1
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let validate_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-lease/lease/validate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "phase": "pre_dispatch",
+                    "current_path": "/other/path",
+                    "step_id": "step-1"
+                })
+                .to_string(),
+            ))
+            .expect("validate request");
+        let validate_resp = app
+            .clone()
+            .oneshot(validate_req)
+            .await
+            .expect("validate response");
+        assert_eq!(validate_resp.status(), StatusCode::OK);
+        let validate_body = to_bytes(validate_resp.into_body(), usize::MAX)
+            .await
+            .expect("validate body");
+        let validate_payload: Value = serde_json::from_slice(&validate_body).expect("validate json");
+        assert_eq!(
+            validate_payload.get("mismatch").and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let get_run_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-lease")
+            .body(Body::empty())
+            .expect("get run request");
+        let get_run_resp = app.clone().oneshot(get_run_req).await.expect("get run response");
+        let get_run_body = to_bytes(get_run_resp.into_body(), usize::MAX)
+            .await
+            .expect("get run body");
+        let get_run_payload: Value = serde_json::from_slice(&get_run_body).expect("get run json");
+        assert_eq!(
+            get_run_payload
+                .get("run")
+                .and_then(|run| run.get("status"))
+                .and_then(Value::as_str),
+            Some("paused")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_replay_matches_persisted_state_without_drift() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-replay-ok",
+                    "objective": "replay no drift"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let event_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-replay-ok/events")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "type": "step_started",
+                    "status": "running",
+                    "step_id": "s1",
+                    "payload": {
+                        "step_title": "Plan",
+                        "step_status": "in_progress",
+                        "why_next_step": "Need active planning"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("event request");
+        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        assert_eq!(event_resp.status(), StatusCode::OK);
+
+        let replay_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-replay-ok/replay")
+            .body(Body::empty())
+            .expect("replay request");
+        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        assert_eq!(replay_resp.status(), StatusCode::OK);
+        let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
+            .await
+            .expect("replay body");
+        let replay_payload: Value = serde_json::from_slice(&replay_body).expect("replay json");
+        assert_eq!(
+            replay_payload
+                .get("drift")
+                .and_then(|d| d.get("mismatch"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            replay_payload
+                .get("replay")
+                .and_then(|r| r.get("status"))
+                .and_then(Value::as_str),
+            Some("running")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_replay_detects_status_drift() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-replay-drift",
+                    "objective": "replay drift"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let event_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-replay-drift/events")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "type": "planning_started",
+                    "status": "planning",
+                    "payload": {}
+                })
+                .to_string(),
+            ))
+            .expect("event request");
+        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        assert_eq!(event_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-replay-drift")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["status"] = Value::String("failed".to_string());
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-replay-drift")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let replay_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-replay-drift/replay")
+            .body(Body::empty())
+            .expect("replay request");
+        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        assert_eq!(replay_resp.status(), StatusCode::OK);
+        let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
+            .await
+            .expect("replay body");
+        let replay_payload: Value = serde_json::from_slice(&replay_body).expect("replay json");
+        assert_eq!(
+            replay_payload
+                .get("drift")
+                .and_then(|d| d.get("mismatch"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            replay_payload
+                .get("drift")
+                .and_then(|d| d.get("status_mismatch"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_driver_next_selects_runnable_step_and_sets_why() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-driver-1",
+                    "objective": "meta manager select"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-1")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["steps"] = json!([
+            {"step_id":"s1","title":"Plan","status":"pending"},
+            {"step_id":"s2","title":"Execute","status":"runnable"}
+        ]);
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-driver-1")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let next_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-driver-1/driver/next")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("next request");
+        let next_resp = app.clone().oneshot(next_req).await.expect("next response");
+        assert_eq!(next_resp.status(), StatusCode::OK);
+        let next_body = to_bytes(next_resp.into_body(), usize::MAX)
+            .await
+            .expect("next body");
+        let next_payload: Value = serde_json::from_slice(&next_body).expect("next json");
+        assert_eq!(
+            next_payload
+                .get("selected_step_id")
+                .and_then(Value::as_str),
+            Some("s2")
+        );
+        assert!(next_payload
+            .get("why_next_step")
+            .and_then(Value::as_str)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false));
+
+        let run_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-1")
+            .body(Body::empty())
+            .expect("run request");
+        let run_resp = app.clone().oneshot(run_req).await.expect("run response");
+        let run_body = to_bytes(run_resp.into_body(), usize::MAX)
+            .await
+            .expect("run body");
+        let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("status"))
+                .and_then(Value::as_str),
+            Some("running")
+        );
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("steps"))
+                .and_then(Value::as_array)
+                .and_then(|steps| steps.get(1))
+                .and_then(|step| step.get("status"))
+                .and_then(Value::as_str),
+            Some("in_progress")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_driver_next_respects_terminal_state() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-driver-2",
+                    "objective": "terminal check"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-2")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["status"] = Value::String("completed".to_string());
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-driver-2")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let next_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-driver-2/driver/next")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("next request");
+        let next_resp = app.clone().oneshot(next_req).await.expect("next response");
+        assert_eq!(next_resp.status(), StatusCode::OK);
+        let next_body = to_bytes(next_resp.into_body(), usize::MAX)
+            .await
+            .expect("next body");
+        let next_payload: Value = serde_json::from_slice(&next_body).expect("next json");
+        assert_eq!(next_payload.get("selected_step_id"), Some(&Value::Null));
+        assert_eq!(
+            next_payload
+                .get("target_status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_driver_next_dry_run_does_not_mutate_state_or_events() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-driver-dry",
+                    "objective": "dry run guardrail"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-dry")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["steps"] = json!([
+            {"step_id":"s1","title":"Plan","status":"runnable"}
+        ]);
+        let before_revision = get_payload["run"]["revision"]
+            .as_u64()
+            .expect("before revision");
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-driver-dry")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let dry_next_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-driver-dry/driver/next")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"dry_run": true}).to_string()))
+            .expect("dry next request");
+        let dry_next_resp = app
+            .clone()
+            .oneshot(dry_next_req)
+            .await
+            .expect("dry next response");
+        assert_eq!(dry_next_resp.status(), StatusCode::OK);
+
+        let run_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-dry")
+            .body(Body::empty())
+            .expect("run request");
+        let run_resp = app.clone().oneshot(run_req).await.expect("run response");
+        let run_body = to_bytes(run_resp.into_body(), usize::MAX)
+            .await
+            .expect("run body");
+        let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("revision"))
+                .and_then(Value::as_u64),
+            Some(before_revision.saturating_add(1))
+        );
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("steps"))
+                .and_then(Value::as_array)
+                .and_then(|steps| steps.first())
+                .and_then(|step| step.get("status"))
+                .and_then(Value::as_str),
+            Some("runnable")
+        );
+
+        let events_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-dry/events")
+            .body(Body::empty())
+            .expect("events request");
+        let events_resp = app
+            .clone()
+            .oneshot(events_req)
+            .await
+            .expect("events response");
+        let events_body = to_bytes(events_resp.into_body(), usize::MAX)
+            .await
+            .expect("events body");
+        let events_payload: Value = serde_json::from_slice(&events_body).expect("events json");
+        let has_decision_event = events_payload
+            .get("events")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter().any(|row| {
+                    row.get("type")
+                        .and_then(Value::as_str)
+                        .map(|ty| ty == "meta_next_step_selected")
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        assert!(!has_decision_event);
+    }
+
+    #[tokio::test]
+    async fn context_run_driver_next_emits_decision_event_with_why() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-driver-event",
+                    "objective": "emit decision event"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-event")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["steps"] = json!([
+            {"step_id":"s1","title":"Plan","status":"runnable"}
+        ]);
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-driver-event")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let next_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-driver-event/driver/next")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"dry_run": false}).to_string()))
+            .expect("next request");
+        let next_resp = app.clone().oneshot(next_req).await.expect("next response");
+        assert_eq!(next_resp.status(), StatusCode::OK);
+
+        let events_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-driver-event/events")
+            .body(Body::empty())
+            .expect("events request");
+        let events_resp = app
+            .clone()
+            .oneshot(events_req)
+            .await
+            .expect("events response");
+        let events_body = to_bytes(events_resp.into_body(), usize::MAX)
+            .await
+            .expect("events body");
+        let events_payload: Value = serde_json::from_slice(&events_body).expect("events json");
+        let decision_event = events_payload
+            .get("events")
+            .and_then(Value::as_array)
+            .and_then(|rows| {
+                rows.iter().find(|row| {
+                    row.get("type")
+                        .and_then(Value::as_str)
+                        .map(|ty| ty == "meta_next_step_selected")
+                        .unwrap_or(false)
+                })
+            })
+            .cloned()
+            .expect("decision event");
+        assert!(decision_event
+            .get("payload")
+            .and_then(|p| p.get("why_next_step"))
+            .and_then(Value::as_str)
+            .map(|why| !why.trim().is_empty())
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn context_run_fault_injection_workspace_mismatch_checkpoint_replay() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-fault-1",
+                    "objective": "fault injection path",
+                    "workspace": {
+                        "workspace_id": "ws-fault",
+                        "canonical_path": "/expected/path",
+                        "lease_epoch": 1
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let get_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-fault-1")
+            .body(Body::empty())
+            .expect("get request");
+        let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let mut get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        get_payload["run"]["steps"] = json!([
+            {"step_id":"s1","title":"Plan","status":"runnable"}
+        ]);
+
+        let put_req = Request::builder()
+            .method("PUT")
+            .uri("/context/runs/ctx-run-fault-1")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                get_payload
+                    .get("run")
+                    .cloned()
+                    .expect("run payload")
+                    .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+
+        let next_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-fault-1/driver/next")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"dry_run": false}).to_string()))
+            .expect("next request");
+        let next_resp = app.clone().oneshot(next_req).await.expect("next response");
+        assert_eq!(next_resp.status(), StatusCode::OK);
+
+        let mismatch_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-fault-1/lease/validate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "phase": "pre_tool_call",
+                    "current_path": "/other/path",
+                    "step_id": "s1"
+                })
+                .to_string(),
+            ))
+            .expect("mismatch request");
+        let mismatch_resp = app
+            .clone()
+            .oneshot(mismatch_req)
+            .await
+            .expect("mismatch response");
+        assert_eq!(mismatch_resp.status(), StatusCode::OK);
+        let mismatch_body = to_bytes(mismatch_resp.into_body(), usize::MAX)
+            .await
+            .expect("mismatch body");
+        let mismatch_payload: Value =
+            serde_json::from_slice(&mismatch_body).expect("mismatch json");
+        assert_eq!(
+            mismatch_payload.get("mismatch").and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let checkpoint_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-fault-1/checkpoints")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"reason":"fault_injection"}).to_string()))
+            .expect("checkpoint request");
+        let checkpoint_resp = app
+            .clone()
+            .oneshot(checkpoint_req)
+            .await
+            .expect("checkpoint response");
+        assert_eq!(checkpoint_resp.status(), StatusCode::OK);
+
+        let events_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-fault-1/events")
+            .body(Body::empty())
+            .expect("events request");
+        let events_resp = app
+            .clone()
+            .oneshot(events_req)
+            .await
+            .expect("events response");
+        let events_body = to_bytes(events_resp.into_body(), usize::MAX)
+            .await
+            .expect("events body");
+        let events_payload: Value = serde_json::from_slice(&events_body).expect("events json");
+        let event_rows = events_payload
+            .get("events")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(event_rows.iter().any(|row| {
+            row.get("type")
+                .and_then(Value::as_str)
+                .map(|ty| ty == "meta_next_step_selected")
+                .unwrap_or(false)
+        }));
+        assert!(event_rows.iter().any(|row| {
+            row.get("type")
+                .and_then(Value::as_str)
+                .map(|ty| ty == "workspace_mismatch")
+                .unwrap_or(false)
+        }));
+        assert!(event_rows.iter().any(|row| {
+            row.get("status")
+                .and_then(Value::as_str)
+                .map(|status| status == "paused")
+                .unwrap_or(false)
+        }));
+
+        let replay_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-fault-1/replay")
+            .body(Body::empty())
+            .expect("replay request");
+        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        assert_eq!(replay_resp.status(), StatusCode::OK);
+        let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
+            .await
+            .expect("replay body");
+        let replay_payload: Value = serde_json::from_slice(&replay_body).expect("replay json");
+        assert_eq!(
+            replay_payload
+                .get("replay")
+                .and_then(|r| r.get("status"))
+                .and_then(Value::as_str),
+            Some("paused")
+        );
+        assert_eq!(
+            replay_payload
+                .get("drift")
+                .and_then(|d| d.get("mismatch"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn context_run_todos_sync_maps_to_steps_and_emits_event() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "ctx-run-todos-sync",
+                    "objective": "sync todos"
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let sync_req = Request::builder()
+            .method("POST")
+            .uri("/context/runs/ctx-run-todos-sync/todos/sync")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "replace": true,
+                    "source_session_id": "s-1",
+                    "source_run_id": "r-1",
+                    "todos": [
+                        {"id":"task-1","content":"Plan architecture","status":"in_progress"},
+                        {"id":"task-2","content":"Implement endpoint","status":"pending"},
+                        {"id":"task-3","content":"Write tests","status":"completed"}
+                    ]
+                })
+                .to_string(),
+            ))
+            .expect("sync request");
+        let sync_resp = app.clone().oneshot(sync_req).await.expect("sync response");
+        assert_eq!(sync_resp.status(), StatusCode::OK);
+
+        let run_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-todos-sync")
+            .body(Body::empty())
+            .expect("run request");
+        let run_resp = app.clone().oneshot(run_req).await.expect("run response");
+        let run_body = to_bytes(run_resp.into_body(), usize::MAX)
+            .await
+            .expect("run body");
+        let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("status"))
+                .and_then(Value::as_str),
+            Some("running")
+        );
+        assert_eq!(
+            run_payload
+                .get("run")
+                .and_then(|r| r.get("steps"))
+                .and_then(Value::as_array)
+                .map(|rows| rows.len()),
+            Some(3)
+        );
+
+        let events_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-todos-sync/events")
+            .body(Body::empty())
+            .expect("events request");
+        let events_resp = app
+            .clone()
+            .oneshot(events_req)
+            .await
+            .expect("events response");
+        let events_body = to_bytes(events_resp.into_body(), usize::MAX)
+            .await
+            .expect("events body");
+        let events_payload: Value = serde_json::from_slice(&events_body).expect("events json");
+        let has_todo_synced = events_payload
+            .get("events")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter().any(|row| {
+                    row.get("type")
+                        .and_then(Value::as_str)
+                        .map(|v| v == "todo_synced")
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        assert!(has_todo_synced);
     }
 }

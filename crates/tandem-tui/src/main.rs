@@ -72,6 +72,19 @@ impl SyncRenderMode {
     }
 }
 
+fn tui_test_mode_enabled() -> bool {
+    std::env::var("TANDEM_TUI_TEST_MODE")
+        .ok()
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            !(normalized.is_empty()
+                || normalized == "0"
+                || normalized == "false"
+                || normalized == "off")
+        })
+        .unwrap_or(false)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let shared = resolve_shared_paths()?;
@@ -131,10 +144,14 @@ async fn run_app(
     let tick_rate = Duration::from_millis(80);
     const MAX_EVENTS_PER_FRAME: usize = 64;
     let mut last_tick = Instant::now();
-    let mut sync_render_enabled = match SyncRenderMode::from_env() {
-        SyncRenderMode::On => true,
-        SyncRenderMode::Off => false,
-        SyncRenderMode::Auto => SyncRenderMode::enabled_by_default(),
+    let mut sync_render_enabled = if app.test_mode || tui_test_mode_enabled() {
+        false
+    } else {
+        match SyncRenderMode::from_env() {
+            SyncRenderMode::On => true,
+            SyncRenderMode::Off => false,
+            SyncRenderMode::Auto => SyncRenderMode::enabled_by_default(),
+        }
     };
     let mut sync_render_failed = false;
 

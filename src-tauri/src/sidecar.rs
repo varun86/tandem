@@ -1469,6 +1469,209 @@ struct AutomationRunResponse {
     run: AutomationRunRecord,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextRunStatus {
+    Queued,
+    Planning,
+    Running,
+    AwaitingApproval,
+    Paused,
+    Blocked,
+    Failed,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextStepStatus {
+    #[default]
+    Pending,
+    Runnable,
+    InProgress,
+    Blocked,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextWorkspaceLease {
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub canonical_path: String,
+    #[serde(default)]
+    pub lease_epoch: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextRunStep {
+    pub step_id: String,
+    pub title: String,
+    pub status: ContextStepStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextRunState {
+    pub run_id: String,
+    pub run_type: String,
+    pub status: ContextRunStatus,
+    pub objective: String,
+    pub workspace: ContextWorkspaceLease,
+    #[serde(default)]
+    pub steps: Vec<ContextRunStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why_next_step: Option<String>,
+    pub revision: u64,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextRunCreateRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub objective: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ContextWorkspaceLease>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextRunEventRecord {
+    pub event_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub status: ContextRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextRunEventAppendRequest {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub status: ContextRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardItem {
+    pub id: String,
+    pub ts_ms: u64,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardArtifact {
+    pub id: String,
+    pub ts_ms: u64,
+    pub path: String,
+    pub artifact_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardSummaries {
+    #[serde(default)]
+    pub rolling: String,
+    #[serde(default)]
+    pub latest_context_pack: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardState {
+    #[serde(default)]
+    pub facts: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub decisions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub open_questions: Vec<ContextBlackboardItem>,
+    #[serde(default)]
+    pub artifacts: Vec<ContextBlackboardArtifact>,
+    #[serde(default)]
+    pub summaries: ContextBlackboardSummaries,
+    #[serde(default)]
+    pub revision: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunRecordResponse {
+    run: ContextRunState,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunListResponse {
+    runs: Vec<ContextRunState>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRunEventsResponse {
+    events: Vec<ContextRunEventRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextBlackboardResponse {
+    blackboard: ContextBlackboardState,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextCheckpointResponse {
+    #[serde(default)]
+    checkpoint: Option<ContextCheckpointRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextCheckpointRecord {
+    pub checkpoint_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextReplayDrift {
+    #[serde(default)]
+    pub mismatch: bool,
+    #[serde(default)]
+    pub status_mismatch: bool,
+    #[serde(default)]
+    pub why_next_step_mismatch: bool,
+    #[serde(default)]
+    pub step_count_mismatch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextReplayResponse {
+    pub ok: bool,
+    pub run_id: String,
+    #[serde(default)]
+    pub from_checkpoint: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_seq: Option<u64>,
+    #[serde(default)]
+    pub events_applied: usize,
+    pub drift: ContextReplayDrift,
+}
+
 #[derive(Debug, Deserialize)]
 struct AutomationRunNowResponse {
     ok: bool,
@@ -4384,6 +4587,175 @@ impl SidecarManager {
             })?;
         let payload: RoutineRunResponse = self.handle_response(response).await?;
         Ok(payload.run)
+    }
+
+    // ========================================================================
+    // Context Runs (engine source-of-truth)
+    // ========================================================================
+
+    pub async fn context_run_create(
+        &self,
+        request: ContextRunCreateRequest,
+    ) -> Result<ContextRunState> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to create context run: {}", e)))?;
+        let payload: ContextRunRecordResponse = self.handle_response(response).await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_list(&self) -> Result<Vec<ContextRunState>> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs", self.base_url().await?);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to list context runs: {}", e)))?;
+        let payload: ContextRunListResponse = self.handle_response(response).await?;
+        Ok(payload.runs)
+    }
+
+    pub async fn context_run_get(&self, run_id: &str) -> Result<ContextRunState> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}", self.base_url().await?, run_id);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to get context run: {}", e)))?;
+        let payload: ContextRunRecordResponse = self.handle_response(response).await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_put(
+        &self,
+        run_id: &str,
+        run: &ContextRunState,
+    ) -> Result<ContextRunState> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}", self.base_url().await?, run_id);
+        let response = self
+            .http_client
+            .put(&url)
+            .json(run)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to update context run: {}", e)))?;
+        let payload: ContextRunRecordResponse = self.handle_response(response).await?;
+        Ok(payload.run)
+    }
+
+    pub async fn context_run_events(
+        &self,
+        run_id: &str,
+        since_seq: Option<u64>,
+        tail: Option<usize>,
+    ) -> Result<Vec<ContextRunEventRecord>> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}/events", self.base_url().await?, run_id);
+        let mut request = self.http_client.get(&url);
+        if let Some(since) = since_seq {
+            request = request.query(&[("since_seq", since)]);
+        }
+        if let Some(tail_count) = tail {
+            request = request.query(&[("tail", tail_count)]);
+        }
+        let response = request.send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to load context run events: {}", e))
+        })?;
+        let payload: ContextRunEventsResponse = self.handle_response(response).await?;
+        Ok(payload.events)
+    }
+
+    pub async fn context_run_append_event(
+        &self,
+        run_id: &str,
+        request: ContextRunEventAppendRequest,
+    ) -> Result<ContextRunEventRecord> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}/events", self.base_url().await?, run_id);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to append context run event: {}", e))
+            })?;
+        let payload: serde_json::Value = self.handle_response(response).await?;
+        let event_value = payload
+            .get("event")
+            .cloned()
+            .ok_or_else(|| TandemError::ParseError("Missing context event payload".to_string()))?;
+        serde_json::from_value(event_value)
+            .map_err(|e| TandemError::ParseError(format!("Invalid context event payload: {}", e)))
+    }
+
+    pub async fn context_run_blackboard(
+        &self,
+        run_id: &str,
+    ) -> Result<ContextBlackboardState> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}/blackboard", self.base_url().await?, run_id);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to load context run blackboard: {}", e))
+            })?;
+        let payload: ContextBlackboardResponse = self.handle_response(response).await?;
+        Ok(payload.blackboard)
+    }
+
+    pub async fn context_run_checkpoint_latest(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<ContextCheckpointRecord>> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/context/runs/{}/checkpoints/latest",
+            self.base_url().await?,
+            run_id
+        );
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to load context run checkpoint: {}", e))
+        })?;
+        let payload: ContextCheckpointResponse = self.handle_response(response).await?;
+        Ok(payload.checkpoint)
+    }
+
+    pub async fn context_run_replay(
+        &self,
+        run_id: &str,
+        upto_seq: Option<u64>,
+        from_checkpoint: Option<bool>,
+    ) -> Result<ContextReplayResponse> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/context/runs/{}/replay", self.base_url().await?, run_id);
+        let mut request = self.http_client.get(&url);
+        if let Some(seq) = upto_seq {
+            request = request.query(&[("upto_seq", seq)]);
+        }
+        if let Some(flag) = from_checkpoint {
+            request = request.query(&[("from_checkpoint", flag)]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to replay context run: {}", e)))?;
+        self.handle_response(response).await
     }
 
     // ========================================================================

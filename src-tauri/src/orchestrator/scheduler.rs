@@ -24,7 +24,7 @@ impl TaskScheduler {
 
         // Find first pending task with all deps satisfied
         tasks.iter().find(|task| {
-            task.state == TaskState::Pending
+            (task.state == TaskState::Pending || task.state == TaskState::Runnable)
                 && task
                     .dependencies
                     .iter()
@@ -43,10 +43,10 @@ impl TaskScheduler {
         tasks
             .iter()
             .filter(|task| {
-                task.state == TaskState::Pending
+                (task.state == TaskState::Pending || task.state == TaskState::Runnable)
                     && task
-                        .dependencies
-                        .iter()
+                    .dependencies
+                    .iter()
                         .all(|dep| completed.contains(dep.as_str()))
             })
             .collect()
@@ -72,7 +72,7 @@ impl TaskScheduler {
 
         // A task is deadlocked if it depends on a failed task
         tasks.iter().any(|task| {
-            task.state == TaskState::Pending
+            (task.state == TaskState::Pending || task.state == TaskState::Runnable)
                 && task
                     .dependencies
                     .iter()
@@ -171,7 +171,9 @@ impl TaskScheduler {
 
         for task in tasks.iter_mut() {
             let has_failed_dep = task.dependencies.iter().any(|dep| failed.contains(dep));
-            if task.state == TaskState::Pending && has_failed_dep {
+            if (task.state == TaskState::Pending || task.state == TaskState::Runnable)
+                && has_failed_dep
+            {
                 task.state = TaskState::Blocked;
                 task.error_message = Some("Blocked by failed dependency".to_string());
                 continue;
@@ -197,6 +199,7 @@ impl TaskScheduler {
         for task in tasks {
             match task.state {
                 TaskState::Pending => progress.pending += 1,
+                TaskState::Runnable => progress.pending += 1,
                 TaskState::InProgress => progress.in_progress += 1,
                 TaskState::Blocked => progress.blocked += 1,
                 TaskState::Done => progress.done += 1,

@@ -152,6 +152,7 @@ pub enum Action {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn chat_app() -> App {
         let mut app = App::new();
@@ -194,6 +195,24 @@ mod tests {
             *active_agent_index = 0;
         }
         app
+    }
+
+    fn render_to_text(app: &App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| crate::ui::draw(f, app))
+            .expect("draw frame");
+        let buffer = terminal.backend().buffer();
+        let mut lines: Vec<String> = Vec::new();
+        for y in 0..buffer.area.height {
+            let mut line = String::new();
+            for x in 0..buffer.area.width {
+                line.push_str(buffer.get(x, y).symbol());
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines.join("\n")
     }
 
     #[test]
@@ -669,6 +688,236 @@ mod tests {
         assert!(App::member_name_matches_recipient("agent-3", "A3"));
         assert!(!App::member_name_matches_recipient("A2", "A4"));
     }
+
+    #[test]
+    fn render_plan_feedback_wizard_includes_guidance_text() {
+        let mut app = chat_app();
+        app.test_mode = true;
+        if let AppState::Chat {
+            modal, plan_wizard, ..
+        } = &mut app.state
+        {
+            *modal = Some(ModalState::PlanFeedbackWizard);
+            plan_wizard.task_preview = vec![
+                "Draft milestones".to_string(),
+                "Define acceptance checks".to_string(),
+            ];
+        }
+        let rendered = render_to_text(&app);
+        assert!(rendered.contains("Guided feedback for newly proposed plan tasks"));
+        assert!(rendered.contains("Task preview:"));
+        assert!(rendered.contains("TEST modal=PlanFeedbackWizard"));
+    }
+
+    #[test]
+    fn render_request_center_question_shows_prompt_and_keys() {
+        let mut app = chat_app();
+        app.test_mode = true;
+        if let AppState::Chat {
+            modal,
+            pending_requests,
+            ..
+        } = &mut app.state
+        {
+            *modal = Some(ModalState::RequestCenter);
+            pending_requests.push(PendingRequest {
+                session_id: "s-test".to_string(),
+                agent_id: "A1".to_string(),
+                kind: PendingRequestKind::Question(PendingQuestionRequest {
+                    id: "q-1".to_string(),
+                    questions: vec![QuestionDraft {
+                        header: "Approval".to_string(),
+                        question: "Proceed with plan execution?".to_string(),
+                        options: vec![
+                            crate::net::client::QuestionChoice {
+                                label: "Yes".to_string(),
+                                description: "Continue".to_string(),
+                            },
+                            crate::net::client::QuestionChoice {
+                                label: "No".to_string(),
+                                description: "Revise first".to_string(),
+                            },
+                        ],
+                        multiple: false,
+                        custom: true,
+                        selected_options: vec![],
+                        custom_input: String::new(),
+                        option_cursor: 0,
+                    }],
+                    question_index: 0,
+                    permission_request_id: None,
+                }),
+            });
+        }
+        let rendered = render_to_text(&app);
+        assert!(rendered.contains("AI asks: Proceed with plan execution?"));
+        assert!(rendered.contains("Keys: Up/Down option"));
+        assert!(rendered.contains("TEST modal=RequestCenter"));
+    }
+
+    #[tokio::test]
+    async fn plan_mode_prompt_todo_updated_opens_wizard_and_sets_approval_guard() {
+        let mut app = chat_app();
+        app.current_mode = TandemMode::Plan;
+
+        app.update(Action::PromptTodoUpdated {
+            session_id: "s-test".to_string(),
+            todos: vec![serde_json::json!({
+                "content": "Create architecture draft",
+                "status": "pending"
+            })],
+        })
+        .await
+        .expect("todo update");
+
+        if let AppState::Chat {
+            modal,
+            plan_wizard,
+            plan_awaiting_approval,
+            tasks,
+            ..
+        } = &app.state
+        {
+            assert!(matches!(modal, Some(ModalState::PlanFeedbackWizard)));
+            assert!(*plan_awaiting_approval);
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(
+                plan_wizard.task_preview,
+                vec!["Create architecture draft".to_string()]
+            );
+        } else {
+            panic!("expected chat state");
+        }
+    }
+
+    #[tokio::test]
+    async fn plan_mode_duplicate_all_pending_todo_update_is_ignored_while_awaiting_approval() {
+        let mut app = chat_app();
+        app.current_mode = TandemMode::Plan;
+
+        let todos = vec![serde_json::json!({
+            "content": "Draft implementation checklist",
+            "status": "pending"
+        })];
+
+        app.update(Action::PromptTodoUpdated {
+            session_id: "s-test".to_string(),
+            todos: todos.clone(),
+        })
+        .await
+        .expect("first todo update");
+
+        let (messages_before, preview_before) = if let AppState::Chat {
+            messages,
+            plan_wizard,
+            ..
+        } = &app.state
+        {
+            (messages.len(), plan_wizard.task_preview.clone())
+        } else {
+            panic!("expected chat state");
+        };
+
+        app.update(Action::PromptTodoUpdated {
+            session_id: "s-test".to_string(),
+            todos,
+        })
+        .await
+        .expect("second todo update");
+
+        if let AppState::Chat {
+            messages,
+            plan_wizard,
+            ..
+        } = &app.state
+        {
+            assert_eq!(
+                messages.len(),
+                messages_before,
+                "guarded duplicate update should not append new system notes"
+            );
+            assert_eq!(
+                plan_wizard.task_preview, preview_before,
+                "guarded duplicate update should not mutate plan preview"
+            );
+        } else {
+            panic!("expected chat state");
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_question_retry_prompt_is_dispatched_once_per_request_id() {
+        let mut app = chat_app();
+
+        if let AppState::Chat {
+            pending_requests, ..
+        } = &mut app.state
+        {
+            pending_requests.push(PendingRequest {
+                session_id: "s-test".to_string(),
+                agent_id: "A1".to_string(),
+                kind: PendingRequestKind::Question(PendingQuestionRequest {
+                    id: "req-1".to_string(),
+                    questions: vec![QuestionDraft {
+                        header: "Question".to_string(),
+                        question: "Choose one".to_string(),
+                        options: vec![],
+                        multiple: false,
+                        custom: true,
+                        selected_options: vec![],
+                        custom_input: String::new(),
+                        option_cursor: 0,
+                    }],
+                    question_index: 0,
+                    permission_request_id: None,
+                }),
+            });
+        } else {
+            panic!("expected chat state");
+        }
+
+        for _ in 0..2 {
+            app.update(Action::PromptMalformedQuestion {
+                session_id: "s-test".to_string(),
+                agent_id: "A1".to_string(),
+                request_id: "req-1".to_string(),
+            })
+            .await
+            .expect("malformed question handling");
+        }
+
+        if let AppState::Chat {
+            pending_requests,
+            messages,
+            ..
+        } = &app.state
+        {
+            assert!(
+                pending_requests.is_empty(),
+                "malformed request should be removed from queue"
+            );
+            let retry_prompt_count = messages
+                .iter()
+                .filter(|m| matches!(m.role, MessageRole::User))
+                .flat_map(|m| m.content.iter())
+                .filter(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Text(t)
+                            if t.contains(
+                                "Your last `question` tool call had invalid or empty arguments."
+                            )
+                    )
+                })
+                .count();
+            assert_eq!(
+                retry_prompt_count, 1,
+                "retry guidance prompt should be dispatched only once per malformed request id"
+            );
+        } else {
+            panic!("expected chat state");
+        }
+    }
 }
 
 use crate::net::client::Session;
@@ -782,6 +1031,7 @@ pub struct AgentPane {
     pub active_task_id: Option<String>,
     pub status: AgentStatus,
     pub active_run_id: Option<String>,
+    pub bound_context_run_id: Option<String>,
     pub follow_up_queue: VecDeque<String>,
     pub steering_message: Option<String>,
     pub paste_registry: HashMap<u32, String>,
@@ -932,6 +1182,7 @@ pub struct App {
     pub state: AppState,
     pub matrix: crate::ui::matrix::MatrixEffect,
     pub should_quit: bool,
+    pub test_mode: bool,
     pub tick_count: usize,
     pub config_dir: Option<PathBuf>,
     pub vault_key: Option<EncryptedVaultKey>,
@@ -1108,6 +1359,32 @@ impl TandemMode {
 }
 
 impl App {
+    fn test_mode_enabled() -> bool {
+        std::env::var("TANDEM_TUI_TEST_MODE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                !(normalized.is_empty()
+                    || normalized == "0"
+                    || normalized == "false"
+                    || normalized == "off")
+            })
+            .unwrap_or(false)
+    }
+
+    fn test_skip_engine_enabled() -> bool {
+        std::env::var("TANDEM_TUI_TEST_SKIP_ENGINE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                !(normalized.is_empty()
+                    || normalized == "0"
+                    || normalized == "false"
+                    || normalized == "off")
+            })
+            .unwrap_or(false)
+    }
+
     fn is_paste_shortcut(key: &KeyEvent) -> bool {
         let is_ctrl_v = matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
             && key.modifiers.contains(KeyModifiers::CONTROL);
@@ -1307,6 +1584,37 @@ impl App {
         ("routine_run_now", "Trigger a routine now"),
         ("routine_delete", "Delete a routine"),
         ("routine_history", "Show routine execution history"),
+        ("context_runs", "List engine context runs"),
+        ("context_run_create", "Create an engine context run"),
+        ("context_run_get", "Get engine context run state"),
+        ("context_run_events", "Show context run events"),
+        ("context_run_pause", "Pause context run"),
+        ("context_run_resume", "Resume context run"),
+        ("context_run_cancel", "Cancel context run"),
+        (
+            "context_run_blackboard",
+            "Show context run blackboard summary",
+        ),
+        (
+            "context_run_next",
+            "Ask engine ContextDriver to choose next step",
+        ),
+        (
+            "context_run_replay",
+            "Replay context run from events/checkpoints",
+        ),
+        (
+            "context_run_lineage",
+            "Show decision lineage from context run events",
+        ),
+        (
+            "context_run_bind",
+            "Bind active agent todowrite updates to a context run",
+        ),
+        (
+            "context_run_sync_tasks",
+            "Sync current TUI task list into context run steps",
+        ),
         ("missions", "List engine missions"),
         ("mission_create", "Create an engine mission"),
         ("mission_get", "Get mission details"),
@@ -1319,6 +1627,8 @@ impl App {
     ];
 
     pub fn new() -> Self {
+        let test_mode = Self::test_mode_enabled();
+        let test_skip_engine = test_mode && Self::test_skip_engine_enabled();
         let config_dir = Self::find_or_create_config_dir();
         let (engine_api_token, engine_api_token_backend) = Self::resolve_engine_api_token()
             .map(|(token, backend)| (Some(token), Some(backend)))
@@ -1335,11 +1645,47 @@ impl App {
             None
         };
 
+        let test_session_id = "test-session".to_string();
+        let test_agent = Self::make_agent_pane("A1".to_string(), test_session_id.clone());
+
         Self {
-            state: AppState::StartupAnimation { frame: 0 },
+            state: if test_skip_engine {
+                AppState::Chat {
+                    session_id: test_session_id,
+                    command_input: ComposerInputState::new(),
+                    messages: vec![ChatMessage {
+                        role: MessageRole::System,
+                        content: vec![ContentBlock::Text(
+                            "Test mode active: engine bootstrap skipped.".to_string(),
+                        )],
+                    }],
+                    scroll_from_bottom: 0,
+                    tasks: Vec::new(),
+                    active_task_id: None,
+                    agents: vec![test_agent],
+                    active_agent_index: 0,
+                    ui_mode: UiMode::Focus,
+                    grid_page: 0,
+                    modal: None,
+                    pending_requests: Vec::new(),
+                    request_cursor: 0,
+                    permission_choice: 0,
+                    plan_wizard: PlanFeedbackWizardState::default(),
+                    last_plan_task_fingerprint: Vec::new(),
+                    plan_awaiting_approval: false,
+                    plan_multi_agent_prompt: None,
+                    plan_waiting_for_clarification_question: false,
+                    request_panel_expanded: false,
+                }
+            } else if test_mode {
+                AppState::Connecting
+            } else {
+                AppState::StartupAnimation { frame: 0 }
+            },
             matrix: crate::ui::matrix::MatrixEffect::new(0, 0),
 
             should_quit: false,
+            test_mode,
             tick_count: 0,
             config_dir,
             vault_key,
@@ -1352,7 +1698,7 @@ impl App {
             engine_downloaded_bytes: 0,
             engine_download_active: false,
             engine_download_phase: None,
-            startup_engine_bootstrap_done: false,
+            startup_engine_bootstrap_done: test_mode,
             client: None,
             sessions: Vec::new(),
             selected_session_index: 0,
@@ -1360,7 +1706,13 @@ impl App {
             current_provider: None,
             current_model: None,
             provider_catalog: None,
-            connection_status: "Initializing...".to_string(),
+            connection_status: if test_skip_engine {
+                "Test mode: engine skipped.".to_string()
+            } else if test_mode {
+                "Test mode: deterministic UI enabled.".to_string()
+            } else {
+                "Initializing...".to_string()
+            },
             engine_health: EngineConnectionStatus::Disconnected,
             engine_lease_id: None,
             engine_lease_last_renewed: None,
@@ -1394,6 +1746,7 @@ impl App {
             active_task_id: None,
             status: AgentStatus::Idle,
             active_run_id: None,
+            bound_context_run_id: None,
             follow_up_queue: VecDeque::new(),
             steering_message: None,
             paste_registry: HashMap::new(),
@@ -5256,6 +5609,12 @@ impl App {
                 todos,
             } => {
                 let payload = serde_json::json!({ "todos": todos });
+                let mut todo_sync_jobs: Vec<(
+                    String,
+                    Vec<crate::net::client::ContextTodoSyncItem>,
+                    Option<String>,
+                    Option<String>,
+                )> = Vec::new();
                 let should_guard_pending = matches!(self.current_mode, TandemMode::Plan)
                     && Self::task_payload_all_pending(Some(&payload));
                 if let AppState::Chat {
@@ -5297,6 +5656,14 @@ impl App {
                                 "todo_write",
                                 Some(&payload),
                             );
+                            if let Some(bound_run_id) = agent.bound_context_run_id.clone() {
+                                todo_sync_jobs.push((
+                                    bound_run_id,
+                                    Self::context_todo_items_from_tasks(&agent.tasks),
+                                    Some(agent.session_id.clone()),
+                                    agent.active_run_id.clone(),
+                                ));
+                            }
                         }
                     }
                     if !fingerprint.is_empty() {
@@ -5324,6 +5691,23 @@ impl App {
                                     .to_string(),
                             )],
                         });
+                    }
+                }
+                if let Some(client) = &self.client {
+                    for (run_id, todo_items, source_session_id, source_run_id) in todo_sync_jobs {
+                        if let Err(err) = client
+                            .context_run_sync_todos(
+                                &run_id,
+                                todo_items,
+                                true,
+                                source_session_id,
+                                source_run_id,
+                            )
+                            .await
+                        {
+                            self.connection_status =
+                                format!("Context todo sync failed for {}: {}", run_id, err);
+                        }
                     }
                 }
                 self.sync_chat_from_active_agent();
@@ -6237,6 +6621,21 @@ ROUTINES:
   /routine_run_now <id> [count]           Trigger routine immediately
   /routine_delete <id>                    Delete routine
   /routine_history <id> [limit]           Show routine history
+
+CONTEXT RUNS:
+  /context_runs [limit]                   List context runs from engine
+  /context_run_create <objective...>      Create context run (interactive type)
+  /context_run_get <run_id>               Show context run details
+  /context_run_events <run_id> [tail]     Show recent context run events
+  /context_run_pause <run_id>             Append pause event + set paused status
+  /context_run_resume <run_id>            Append resume event + set running status
+  /context_run_cancel <run_id>            Append cancel event + set cancelled status
+  /context_run_blackboard <run_id>        Show blackboard counts + summary snippets
+  /context_run_next <run_id> [dry_run]    Run engine ContextDriver next-step selection
+  /context_run_replay <run_id> [upto_seq] Replay run and show drift vs persisted state
+  /context_run_lineage <run_id> [tail]    Show why-next-step decision history
+  /context_run_bind <run_id|off>          Bind or clear active-agent todo -> context sync
+  /context_run_sync_tasks <run_id>         Sync current task list into context run steps
 
 MISSIONS:
   /missions                                List missions
@@ -7429,6 +7828,394 @@ MULTI-AGENT KEYS:
                     }
                     Err(err) => format!("Failed to load routine history: {}", err),
                 }
+            }
+
+            "context_runs" => {
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let limit = args
+                    .first()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(20);
+                match client.context_runs_list().await {
+                    Ok(mut runs) => {
+                        if runs.is_empty() {
+                            return "No context runs found.".to_string();
+                        }
+                        runs.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+                        let lines = runs
+                            .into_iter()
+                            .take(limit)
+                            .map(|run| {
+                                format!(
+                                    "- {} [{}] type={} steps={} updated_at={}\n  objective: {}",
+                                    run.run_id,
+                                    format!("{:?}", run.status).to_lowercase(),
+                                    run.run_type,
+                                    run.steps.len(),
+                                    run.updated_at_ms,
+                                    run.objective
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Context runs:\n{}", lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to list context runs: {}", err),
+                }
+            }
+
+            "context_run_create" => {
+                if args.is_empty() {
+                    return "Usage: /context_run_create <objective...>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let objective = args.join(" ");
+                match client
+                    .context_run_create(None, objective, Some("interactive".to_string()), None)
+                    .await
+                {
+                    Ok(run) => format!("Created context run {} [{}].", run.run_id, run.run_type),
+                    Err(err) => format!("Failed to create context run: {}", err),
+                }
+            }
+
+            "context_run_get" => {
+                if args.len() != 1 {
+                    return "Usage: /context_run_get <run_id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                match client.context_run_get(run_id).await {
+                    Ok(run) => format!(
+                        "Context run {}\n  status: {}\n  type: {}\n  revision: {}\n  workspace: {}\n  steps: {}\n  why_next_step: {}\n  objective: {}",
+                        run.run_id,
+                        format!("{:?}", run.status).to_lowercase(),
+                        run.run_type,
+                        run.revision,
+                        run.workspace.canonical_path,
+                        run.steps.len(),
+                        run.why_next_step.unwrap_or_else(|| "<none>".to_string()),
+                        run.objective
+                    ),
+                    Err(err) => format!("Failed to load context run: {}", err),
+                }
+            }
+
+            "context_run_events" => {
+                if args.is_empty() {
+                    return "Usage: /context_run_events <run_id> [tail]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let tail = if args.len() > 1 {
+                    match args[1].parse::<usize>() {
+                        Ok(value) if value > 0 => Some(value),
+                        _ => return "tail must be a positive integer.".to_string(),
+                    }
+                } else {
+                    Some(20)
+                };
+                match client.context_run_events(run_id, None, tail).await {
+                    Ok(events) => {
+                        if events.is_empty() {
+                            return format!("No events for context run {}.", run_id);
+                        }
+                        let lines = events
+                            .iter()
+                            .map(|event| {
+                                format!(
+                                    "- #{} {} status={} step={} ts={}",
+                                    event.seq,
+                                    event.event_type,
+                                    format!("{:?}", event.status).to_lowercase(),
+                                    event.step_id.as_deref().unwrap_or("-"),
+                                    event.ts_ms
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Context run events ({}):\n{}", run_id, lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to load context run events: {}", err),
+                }
+            }
+
+            "context_run_pause" | "context_run_resume" | "context_run_cancel" => {
+                if args.len() != 1 {
+                    return format!("Usage: /{} <run_id>", cmd_name);
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let (event_type, status, label) = match cmd_name {
+                    "context_run_pause" => (
+                        "run_paused",
+                        crate::net::client::ContextRunStatus::Paused,
+                        "paused",
+                    ),
+                    "context_run_resume" => (
+                        "run_resumed",
+                        crate::net::client::ContextRunStatus::Running,
+                        "running",
+                    ),
+                    _ => (
+                        "run_cancelled",
+                        crate::net::client::ContextRunStatus::Cancelled,
+                        "cancelled",
+                    ),
+                };
+                match client
+                    .context_run_append_event(
+                        run_id,
+                        event_type,
+                        status,
+                        None,
+                        json!({ "source": "tui" }),
+                    )
+                    .await
+                {
+                    Ok(event) => format!(
+                        "Context run {} {} (seq={} event={}).",
+                        run_id, label, event.seq, event.event_id
+                    ),
+                    Err(err) => format!("Failed to update context run status: {}", err),
+                }
+            }
+
+            "context_run_blackboard" => {
+                if args.len() != 1 {
+                    return "Usage: /context_run_blackboard <run_id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                match client.context_run_blackboard(run_id).await {
+                    Ok(blackboard) => format!(
+                        "Context blackboard {}\n  revision: {}\n  facts: {}\n  decisions: {}\n  open_questions: {}\n  artifacts: {}\n  rolling_summary: {}\n  latest_context_pack: {}",
+                        run_id,
+                        blackboard.revision,
+                        blackboard.facts.len(),
+                        blackboard.decisions.len(),
+                        blackboard.open_questions.len(),
+                        blackboard.artifacts.len(),
+                        if blackboard.summaries.rolling.is_empty() { "<empty>" } else { "<present>" },
+                        if blackboard.summaries.latest_context_pack.is_empty() { "<empty>" } else { "<present>" }
+                    ),
+                    Err(err) => format!("Failed to load context run blackboard: {}", err),
+                }
+            }
+
+            "context_run_next" => {
+                if args.is_empty() {
+                    return "Usage: /context_run_next <run_id> [dry_run]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let dry_run = args
+                    .get(1)
+                    .map(|v| {
+                        matches!(
+                            v.to_ascii_lowercase().as_str(),
+                            "1" | "true" | "yes" | "dry"
+                        )
+                    })
+                    .unwrap_or(false);
+                match client.context_run_driver_next(run_id, dry_run).await {
+                    Ok(next) => format!(
+                        "ContextDriver next ({})\n  run: {}\n  dry_run: {}\n  target_status: {}\n  selected_step: {}\n  why_next_step: {}",
+                        if dry_run { "preview" } else { "applied" },
+                        next.run_id,
+                        next.dry_run,
+                        format!("{:?}", next.target_status).to_lowercase(),
+                        next.selected_step_id.unwrap_or_else(|| "<none>".to_string()),
+                        next.why_next_step
+                    ),
+                    Err(err) => format!("Failed to run ContextDriver next-step selection: {}", err),
+                }
+            }
+
+            "context_run_replay" => {
+                if args.is_empty() {
+                    return "Usage: /context_run_replay <run_id> [upto_seq]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let upto_seq = if args.len() > 1 {
+                    match args[1].parse::<u64>() {
+                        Ok(value) if value > 0 => Some(value),
+                        _ => return "upto_seq must be a positive integer.".to_string(),
+                    }
+                } else {
+                    None
+                };
+                match client.context_run_replay(run_id, upto_seq, Some(true)).await {
+                    Ok(replay) => format!(
+                        "Context replay {}\n  from_checkpoint: {} (seq={})\n  events_applied: {}\n  replay_status: {}\n  persisted_status: {}\n  drift: {} (status={}, why={}, steps={})",
+                        replay.run_id,
+                        replay.from_checkpoint,
+                        replay
+                            .checkpoint_seq
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        replay.events_applied,
+                        format!("{:?}", replay.replay.status).to_lowercase(),
+                        format!("{:?}", replay.persisted.status).to_lowercase(),
+                        replay.drift.mismatch,
+                        replay.drift.status_mismatch,
+                        replay.drift.why_next_step_mismatch,
+                        replay.drift.step_count_mismatch
+                    ),
+                    Err(err) => format!("Failed to replay context run: {}", err),
+                }
+            }
+
+            "context_run_lineage" => {
+                if args.is_empty() {
+                    return "Usage: /context_run_lineage <run_id> [tail]".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let tail = if args.len() > 1 {
+                    match args[1].parse::<usize>() {
+                        Ok(value) if value > 0 => Some(value),
+                        _ => return "tail must be a positive integer.".to_string(),
+                    }
+                } else {
+                    Some(100)
+                };
+                match client.context_run_events(run_id, None, tail).await {
+                    Ok(events) => {
+                        let decisions = events
+                            .iter()
+                            .filter(|event| event.event_type == "meta_next_step_selected")
+                            .collect::<Vec<_>>();
+                        if decisions.is_empty() {
+                            return format!(
+                                "No decision lineage events for context run {}.",
+                                run_id
+                            );
+                        }
+                        let lines = decisions
+                            .iter()
+                            .map(|event| {
+                                let why = event
+                                    .payload
+                                    .get("why_next_step")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("<missing>");
+                                let selected = event
+                                    .payload
+                                    .get("selected_step_id")
+                                    .and_then(Value::as_str)
+                                    .or_else(|| event.step_id.as_deref())
+                                    .unwrap_or("-");
+                                format!(
+                                    "- #{} ts={} status={} step={} why={}",
+                                    event.seq,
+                                    event.ts_ms,
+                                    format!("{:?}", event.status).to_lowercase(),
+                                    selected,
+                                    why
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!(
+                            "Context decision lineage ({}):\n{}",
+                            run_id,
+                            lines.join("\n")
+                        )
+                    }
+                    Err(err) => format!("Failed to load context run lineage: {}", err),
+                }
+            }
+
+            "context_run_sync_tasks" => {
+                if args.len() != 1 {
+                    return "Usage: /context_run_sync_tasks <run_id>".to_string();
+                }
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let run_id = args[0];
+                let (source_session_id, source_run_id, todos) = match &self.state {
+                    AppState::Chat {
+                        session_id,
+                        agents,
+                        active_agent_index,
+                        tasks,
+                        ..
+                    } => {
+                        let mapped = Self::context_todo_items_from_tasks(tasks);
+                        let run_ref = agents
+                            .get(*active_agent_index)
+                            .and_then(|agent| agent.active_run_id.clone());
+                        (Some(session_id.clone()), run_ref, mapped)
+                    }
+                    _ => (None, None, Vec::new()),
+                };
+                if todos.is_empty() {
+                    return "No tasks available to sync.".to_string();
+                }
+                match client
+                    .context_run_sync_todos(
+                        run_id,
+                        todos,
+                        true,
+                        source_session_id,
+                        source_run_id,
+                    )
+                    .await
+                {
+                    Ok(run) => format!(
+                        "Synced tasks into context run {}.\n  steps: {}\n  status: {}\n  why_next_step: {}",
+                        run.run_id,
+                        run.steps.len(),
+                        format!("{:?}", run.status).to_lowercase(),
+                        run.why_next_step.unwrap_or_else(|| "<none>".to_string())
+                    ),
+                    Err(err) => format!("Failed to sync tasks into context run: {}", err),
+                }
+            }
+
+            "context_run_bind" => {
+                if args.len() != 1 {
+                    return "Usage: /context_run_bind <run_id|off>".to_string();
+                }
+                let target = args[0];
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    let Some(agent) = agents.get_mut(*active_agent_index) else {
+                        return "No active agent.".to_string();
+                    };
+                    if target.eq_ignore_ascii_case("off") || target == "-" {
+                        agent.bound_context_run_id = None;
+                        return format!("Cleared context-run binding for {}.", agent.agent_id);
+                    }
+                    agent.bound_context_run_id = Some(target.to_string());
+                    return format!(
+                        "Bound {} todowrite updates to context run {}.",
+                        agent.agent_id, target
+                    );
+                }
+                "Context-run binding is available in chat mode only.".to_string()
             }
 
             "missions" => {
@@ -8681,6 +9468,28 @@ MULTI-AGENT KEYS:
             TaskStatus::Done => "done",
             TaskStatus::Failed => "failed",
         }
+    }
+
+    fn context_todo_status_label(status: &TaskStatus) -> &'static str {
+        match status {
+            TaskStatus::Pending => "pending",
+            TaskStatus::Working => "in_progress",
+            TaskStatus::Done => "completed",
+            TaskStatus::Failed => "failed",
+        }
+    }
+
+    fn context_todo_items_from_tasks(
+        tasks: &[Task],
+    ) -> Vec<crate::net::client::ContextTodoSyncItem> {
+        tasks
+            .iter()
+            .map(|task| crate::net::client::ContextTodoSyncItem {
+                id: Some(task.id.clone()),
+                content: task.description.clone(),
+                status: Some(Self::context_todo_status_label(&task.status).to_string()),
+            })
+            .collect::<Vec<_>>()
     }
 
     fn format_local_agent_team_bindings(team_filter: Option<&str>) -> String {

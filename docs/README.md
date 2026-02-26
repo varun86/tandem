@@ -16,6 +16,7 @@ For end-user onboarding journeys (install, first run, desktop/CLI paths), use:
 
 - [Design System](./DESIGN_SYSTEM.md) - Detailed style/system notes.
 - [Engine Protocol Matrix](./ENGINE_PROTOCOL_MATRIX.md) - Wire contracts and status.
+- [Engine Context-Driving Runtime](./ENGINE_CONTEXT_DRIVING_RUNTIME.md) - Engine source-of-truth runtime for long-running context, replay, and guardrails.
 - [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - Delivery and architecture snapshots.
 
 ## SDK & Development

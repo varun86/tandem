@@ -1,0 +1,10 @@
+{"goal":"open help modal","step":1,"actions":[{"type":"key","value":"F1"},{"type":"wait_ms","value":120}],"assertions":[{"type":"contains","value":"Modal"}],"notes":"help should open"}
+{"goal":"close help modal","step":2,"actions":[{"type":"key","value":"ESC"},{"type":"wait_ms","value":80}],"assertions":[{"type":"contains","value":"Tandem TUI"}],"notes":"return to chat"}
+{"goal":"switch to grid mode","step":3,"actions":[{"type":"key","value":"ALT:g"},{"type":"wait_ms","value":120}],"assertions":[{"type":"contains","value":"Active:"}],"notes":"toggle grid/focus"}
+{"goal":"open request center","step":4,"actions":[{"type":"key","value":"ALT:r"},{"type":"wait_ms","value":120}],"assertions":[],"notes":"may show empty request panel"}
+{"goal":"close request center","step":5,"actions":[{"type":"key","value":"ESC"},{"type":"wait_ms","value":80}],"assertions":[{"type":"contains","value":"Tandem TUI"}],"notes":"close modal"}
+{"goal":"tab through agents","step":6,"actions":[{"type":"key","value":"TAB"},{"type":"wait_ms","value":80},{"type":"key","value":"BACKTAB"},{"type":"wait_ms","value":80}],"assertions":[{"type":"contains","value":"Active:"}],"notes":"agent switching stable"}
+{"goal":"open mode cycle","step":7,"actions":[{"type":"key","value":"ALT:m"},{"type":"wait_ms","value":100}],"assertions":[{"type":"contains","value":"Tandem TUI"}],"notes":"mode changes visible in status"}
+{"goal":"type a command","step":8,"actions":[{"type":"text","value":"/mode plan"},{"type":"key","value":"ENTER"},{"type":"wait_ms","value":200}],"assertions":[{"type":"contains","value":"Mode set to: Plan"}],"notes":"enter plan mode"}
+{"goal":"open help again","step":9,"actions":[{"type":"key","value":"F1"},{"type":"wait_ms","value":100}],"assertions":[{"type":"contains","value":"Modal"}],"notes":"repeatability"}
+{"goal":"close help","step":10,"actions":[{"type":"key","value":"ESC"},{"type":"wait_ms","value":80}],"assertions":[{"type":"contains","value":"Tandem TUI"}],"notes":"final state"}
