@@ -17,12 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Blackboard refresh behavior**: Switched to debounced event-driven blackboard refresh with sequence watermarking (`last_blackboard_refresh_seq`) and relevant-event family gating to reduce redundant fetch pressure during long runs.
 - **Orchestrator/Command Center parity**: Unified both surfaces on shared blackboard UI/state/policy helpers to keep behavior consistent across run-control entrypoints.
+- **Two-pass orchestrator planning**: Planning now performs an analysis pass before DAG generation to improve task quality and reduce low-context first plans.
+- **Context-aware execution prompts**: Builder prompts now include continuation context from context-pack summaries so retries/resumes stay on-track instead of restarting from scratch.
 - **Release metadata bump**: Updated app/runtime package versions to `0.3.22` for desktop/TUI release alignment.
 
 ### Fixed
 
 - **Follow-mode predictability**: Follow now auto-focuses only on new `meta_next_step_selected` decisions and pauses on manual navigation, preventing jumpy recentering on unrelated event noise.
 - **Drift/debug visibility**: Added actionable drift and checkpoint navigation affordances with copyable debug payloads for incident triage.
+- **Task/session continuity on restart and retry**: Orchestrator now restores task session bindings from checkpoints and preserves failed-task session context by default during retry.
+- **Planning/execution token accounting visibility**: Budget token usage now records prompt+response estimates for planner analysis/planner/builder/validator calls, preventing misleading near-zero token displays.
+- **Blackboard event coverage for engine runs**: Blackboard projection and refresh logic now recognize orchestrator event families (for example `context_pack_built`, planning/task/run events), improving live context visibility in both Orchestrator and Command Center.
 
 ## [0.3.21]
 

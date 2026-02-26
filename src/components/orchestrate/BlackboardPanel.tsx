@@ -14,6 +14,7 @@ import {
   deriveIndicators,
   extractWhyNextFromEvents,
   filterProjectedNodes,
+  isDecisionEventType,
   projectNodes,
   type ProjectionNode,
   type ProjectionNodeKind,
@@ -69,12 +70,16 @@ function nodeKindClass(kind: ProjectionNodeKind): string {
 }
 
 function isRecentRelevantEvent(event: RunEventRecord): boolean {
+  const normalized = event.type.trim().toLowerCase();
   return (
-    event.type === "meta_next_step_selected" ||
-    event.type === "todo_synced" ||
-    event.type === "workspace_mismatch" ||
-    event.type.includes("loop") ||
-    event.type.includes("escalated")
+    isDecisionEventType(normalized) ||
+    normalized === "todo_synced" ||
+    normalized === "workspace_mismatch" ||
+    normalized === "task_started" ||
+    normalized === "task_completed" ||
+    normalized === "run_failed" ||
+    normalized.includes("loop") ||
+    normalized.includes("escalated")
   );
 }
 
@@ -137,7 +142,7 @@ export function BlackboardPanel({
   const lineage = useMemo(
     () =>
       events
-        .filter((event) => event.type === "meta_next_step_selected")
+        .filter((event) => isDecisionEventType(event.type))
         .slice(-20)
         .reverse(),
     [events]
@@ -153,14 +158,11 @@ export function BlackboardPanel({
     [projectedNodes, kindFilter, query]
   );
 
-  const selectedNode = useMemo(
-    () => {
-      const resolvedId = reconcileSelection(selectedNodeId, filteredNodes);
-      if (!resolvedId) return null;
-      return filteredNodes.find((node) => node.id === resolvedId) ?? null;
-    },
-    [filteredNodes, selectedNodeId]
-  );
+  const selectedNode = useMemo(() => {
+    const resolvedId = reconcileSelection(selectedNodeId, filteredNodes);
+    if (!resolvedId) return null;
+    return filteredNodes.find((node) => node.id === resolvedId) ?? null;
+  }, [filteredNodes, selectedNodeId]);
 
   const newestDecision = useMemo(
     () => projectedNodes.find((node) => node.kind === "decision") ?? null,
@@ -203,21 +205,26 @@ export function BlackboardPanel({
     };
   }, [filteredNodes, nodeListScrollTop]);
 
-  const setNodeSelection = useCallback((nodeId: string, source: "auto" | "manual") => {
-    setSelectedNodeId(nodeId);
-    if (source === "manual") {
-      const nextFollow = pauseFollowOnManualNavigation(followLatest);
-      if (nextFollow !== followLatest) {
-        setFollowLatest(nextFollow);
-        setShowFollowPausedBadge(true);
-        window.setTimeout(() => setShowFollowPausedBadge(false), 1800);
+  const setNodeSelection = useCallback(
+    (nodeId: string, source: "auto" | "manual") => {
+      setSelectedNodeId(nodeId);
+      if (source === "manual") {
+        const nextFollow = pauseFollowOnManualNavigation(followLatest);
+        if (nextFollow !== followLatest) {
+          setFollowLatest(nextFollow);
+          setShowFollowPausedBadge(true);
+          window.setTimeout(() => setShowFollowPausedBadge(false), 1800);
+        }
       }
-    }
-  }, [followLatest]);
+    },
+    [followLatest]
+  );
 
   const jumpToWorkspaceMismatch = () => {
     const reliabilityNode =
-      projectedNodes.find((node) => node.kind === "reliability" && node.eventType === "workspace_mismatch") ??
+      projectedNodes.find(
+        (node) => node.kind === "reliability" && node.eventType === "workspace_mismatch"
+      ) ??
       projectedNodes.find((node) => node.kind === "reliability") ??
       null;
     if (!reliabilityNode) return;
@@ -258,7 +265,10 @@ export function BlackboardPanel({
       return;
     }
     if (newestSeq !== null) {
-      lastAutoFocusedDecisionSeqRef.current = Math.max(lastAutoFocusedDecisionSeqRef.current, newestSeq);
+      lastAutoFocusedDecisionSeqRef.current = Math.max(
+        lastAutoFocusedDecisionSeqRef.current,
+        newestSeq
+      );
     }
   }, [newestDecision, followLatest, setNodeSelection]);
 
@@ -340,7 +350,9 @@ export function BlackboardPanel({
     <div className="rounded border border-border/60 bg-surface p-2">
       <div className="mb-1 text-[10px] uppercase tracking-wide text-text-subtle">Now</div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded border border-border px-2 py-0.5 text-text">{runStatus ?? "unknown"}</span>
+        <span className="rounded border border-border px-2 py-0.5 text-text">
+          {runStatus ?? "unknown"}
+        </span>
         <span className="rounded border border-border px-2 py-0.5 text-text">
           {currentTask ? `step ${currentTask.id}` : "no active step"}
         </span>
@@ -368,7 +380,9 @@ export function BlackboardPanel({
   );
 
   const alertsBlock =
-    indicators.showAwaitingApproval || indicators.hasWorkspaceMismatch || indicators.showReplayDrift ? (
+    indicators.showAwaitingApproval ||
+    indicators.hasWorkspaceMismatch ||
+    indicators.showReplayDrift ? (
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {indicators.showAwaitingApproval ? (
           <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-200">
@@ -430,7 +444,10 @@ export function BlackboardPanel({
         ) : (
           <div className="space-y-1">
             {recentEvents.map((event) => (
-              <div key={event.event_id} className="rounded border border-border bg-surface-elevated px-2 py-1 text-xs text-text">
+              <div
+                key={event.event_id}
+                className="rounded border border-border bg-surface-elevated px-2 py-1 text-xs text-text"
+              >
                 #{event.seq} {event.type}
               </div>
             ))}
@@ -453,7 +470,9 @@ export function BlackboardPanel({
               onClick={() => setFollowLatest((prev) => !prev)}
               className={cn(
                 "rounded border px-2 py-1 text-[11px]",
-                followLatest ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-text-muted"
+                followLatest
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border text-text-muted"
               )}
             >
               {followLatest ? "Follow on" : "Follow off"}
@@ -545,7 +564,9 @@ export function BlackboardPanel({
               <p className="text-xs text-text-muted">No decisions yet.</p>
             ) : (
               lineage.map((event) => {
-                const linkedNode = projectedNodes.find((node) => node.sourceEventId === event.event_id);
+                const linkedNode = projectedNodes.find(
+                  (node) => node.sourceEventId === event.event_id
+                );
                 const why = event.payload?.why_next_step;
                 const whyText = typeof why === "string" && why.trim().length > 0 ? why : "<none>";
                 return (
@@ -576,12 +597,17 @@ export function BlackboardPanel({
         ) : (
           <div className="space-y-2">
             {decisionSpine.length === 0 ? (
-              <p className="text-xs text-text-muted">No decision spine nodes match current filter.</p>
+              <p className="text-xs text-text-muted">
+                No decision spine nodes match current filter.
+              </p>
             ) : (
               decisionSpine.map((decision, index) => {
                 const attachments = attachmentsByParent.get(decision.id) ?? [];
                 return (
-                  <div key={decision.id} className="rounded border border-border/70 bg-surface-elevated p-2">
+                  <div
+                    key={decision.id}
+                    className="rounded border border-border/70 bg-surface-elevated p-2"
+                  >
                     <button
                       type="button"
                       aria-label={`Select spine decision ${decision.seq}`}
@@ -622,12 +648,19 @@ export function BlackboardPanel({
                             <ArrowRight className="mt-0.5 h-3 w-3 text-text-muted" />
                             <div className="min-w-0">
                               <div className="text-[11px] text-text">
-                                <span className={cn("rounded border px-1 py-0.5", nodeKindClass(node.kind))}>
+                                <span
+                                  className={cn(
+                                    "rounded border px-1 py-0.5",
+                                    nodeKindClass(node.kind)
+                                  )}
+                                >
                                   {node.kind}
                                 </span>{" "}
                                 <span className="text-text-muted">#{node.seq || "-"}</span>
                               </div>
-                              <div className="mt-1 truncate text-xs text-text-muted">{node.label}</div>
+                              <div className="mt-1 truncate text-xs text-text-muted">
+                                {node.label}
+                              </div>
                             </div>
                           </button>
                         ))}
@@ -647,7 +680,12 @@ export function BlackboardPanel({
           onScroll={(event) => setNodeListScrollTop((event.target as HTMLDivElement).scrollTop)}
         >
           <div className="mb-1 text-[10px] uppercase tracking-wide text-text-subtle">Node List</div>
-          <div style={{ paddingTop: listVirtualization.topSpacer, paddingBottom: listVirtualization.bottomSpacer }}>
+          <div
+            style={{
+              paddingTop: listVirtualization.topSpacer,
+              paddingBottom: listVirtualization.bottomSpacer,
+            }}
+          >
             {listVirtualization.visible.map((node) => (
               <button
                 key={node.id}
@@ -656,12 +694,16 @@ export function BlackboardPanel({
                 onClick={() => setNodeSelection(node.id, "manual")}
                 className={cn(
                   "mb-1 w-full rounded border p-2 text-left",
-                  selectedNodeId === node.id ? "border-primary/40 bg-primary/10" : "border-border bg-surface-elevated"
+                  selectedNodeId === node.id
+                    ? "border-primary/40 bg-primary/10"
+                    : "border-border bg-surface-elevated"
                 )}
                 style={{ minHeight: `${listVirtualization.rowHeight - 8}px` }}
               >
                 <div className="flex items-center justify-between gap-2 text-[11px]">
-                  <span className={cn("rounded border px-1.5 py-0.5", nodeKindClass(node.kind))}>{node.kind}</span>
+                  <span className={cn("rounded border px-1.5 py-0.5", nodeKindClass(node.kind))}>
+                    {node.kind}
+                  </span>
                   <span className="text-text-muted">#{node.seq || "-"}</span>
                 </div>
                 <div className="mt-1 truncate text-xs text-text">{node.label}</div>
@@ -720,18 +762,30 @@ export function BlackboardPanel({
             onClick={() => setFollowLatest((prev) => !prev)}
             className={cn(
               "rounded border px-2 py-1 text-[10px]",
-              followLatest ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-text-muted"
+              followLatest
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border text-text-muted"
             )}
           >
             {followLatest ? "Follow on" : "Follow off"}
           </button>
           {mode === "docked" ? (
-            <Button size="sm" variant="secondary" aria-label="Expand blackboard" onClick={() => setMode((prev) => toggleExpand(prev))}>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="Expand blackboard"
+              onClick={() => setMode((prev) => toggleExpand(prev))}
+            >
               <MoveUpRight className="mr-1 h-3.5 w-3.5" />
               Expand
             </Button>
           ) : (
-            <Button size="sm" variant="secondary" aria-label="Dock blackboard" onClick={() => setMode((prev) => toggleExpand(prev))}>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="Dock blackboard"
+              onClick={() => setMode((prev) => toggleExpand(prev))}
+            >
               <Minimize2 className="mr-1 h-3.5 w-3.5" />
               Dock
             </Button>
@@ -760,7 +814,12 @@ export function BlackboardPanel({
         <div className="fixed inset-y-0 right-0 z-[80] w-full max-w-md border-l border-border bg-surface p-3 shadow-2xl">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-sm font-semibold text-text">Drift Details</div>
-            <Button size="sm" variant="secondary" aria-label="Close drift details" onClick={() => setShowDriftDrawer(false)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="Close drift details"
+              onClick={() => setShowDriftDrawer(false)}
+            >
               Close
             </Button>
           </div>
@@ -772,7 +831,9 @@ export function BlackboardPanel({
             </div>
             <div className="rounded border border-border p-2">
               <div className="font-medium text-text">Flags</div>
-              <div className="mt-1 text-text-muted">status_mismatch: {String(replay.drift.status_mismatch)}</div>
+              <div className="mt-1 text-text-muted">
+                status_mismatch: {String(replay.drift.status_mismatch)}
+              </div>
               <div className="text-text-muted">
                 why_next_step_mismatch: {String(replay.drift.why_next_step_mismatch)}
               </div>
@@ -780,7 +841,11 @@ export function BlackboardPanel({
                 step_count_mismatch: {String(replay.drift.step_count_mismatch)}
               </div>
             </div>
-            <Button size="sm" onClick={() => void copyDebugBundle()} aria-label="Copy drift debug bundle">
+            <Button
+              size="sm"
+              onClick={() => void copyDebugBundle()}
+              aria-label="Copy drift debug bundle"
+            >
               Copy debug bundle
             </Button>
           </div>
@@ -805,7 +870,12 @@ export function BlackboardPanel({
           <Route className="h-3.5 w-3.5" />
           Blackboard fullscreen
         </div>
-        <Button size="sm" variant="secondary" aria-label="Exit fullscreen" onClick={() => setMode("expanded")}>
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Exit fullscreen"
+          onClick={() => setMode("expanded")}
+        >
           <Minimize2 className="mr-1 h-3.5 w-3.5" />
           Exit fullscreen
         </Button>

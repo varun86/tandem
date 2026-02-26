@@ -25,6 +25,9 @@ test("relevant event-family detection only matches blackboard-impacting families
   assert.equal(isRelevantBlackboardEventType("meta_next_step_selected"), true);
   assert.equal(isRelevantBlackboardEventType("todo_synced"), true);
   assert.equal(isRelevantBlackboardEventType("workspace_mismatch"), true);
+  assert.equal(isRelevantBlackboardEventType("context_pack_built"), true);
+  assert.equal(isRelevantBlackboardEventType("plan_generated"), true);
+  assert.equal(isRelevantBlackboardEventType("task_completed"), true);
   assert.equal(isRelevantBlackboardEventType("checkpoint_created"), true);
   assert.equal(isRelevantBlackboardEventType("run_paused"), true);
   assert.equal(isRelevantBlackboardEventType("task_trace"), false);

@@ -106,7 +106,6 @@ export function BudgetMeter({ budget, className }: BudgetMeterProps) {
             used={budget.tokens_used}
             max={budget.max_tokens}
             icon={<span className="text-[10px]">TOK</span>}
-            unit="k"
           />
           <MeterItem
             label="Wall Time"

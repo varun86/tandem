@@ -504,6 +504,23 @@ fn is_malformed_tool_path_token(path: &str) -> bool {
     false
 }
 
+fn is_malformed_tool_pattern_token(pattern: &str) -> bool {
+    let lower = pattern.to_ascii_lowercase();
+    if lower.contains("<tool_call")
+        || lower.contains("</tool_call")
+        || lower.contains("<function=")
+        || lower.contains("<parameter=")
+        || lower.contains("</function>")
+        || lower.contains("</parameter>")
+    {
+        return true;
+    }
+    if pattern.contains('\n') || pattern.contains('\r') {
+        return true;
+    }
+    false
+}
+
 fn is_document_file(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         matches!(
@@ -1102,7 +1119,7 @@ impl Tool for GlobTool {
                 metadata: json!({"pattern": pattern}),
             });
         }
-        if is_malformed_tool_path_token(pattern) {
+        if is_malformed_tool_pattern_token(pattern) {
             return Ok(ToolResult {
                 output: "pattern denied by sandbox policy".to_string(),
                 metadata: json!({"pattern": pattern}),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   deriveIndicators,
   filterProjectedNodes,
+  extractWhyNextFromEvents,
   projectNodes,
   type ProjectionNode,
 } from "./blackboardProjection.js";
@@ -35,7 +36,9 @@ function event(
 function blackboard(): Blackboard {
   return {
     facts: [{ id: "f1", ts_ms: 1200, text: "fact one", step_id: "s1", source_event_id: "evt-2" }],
-    decisions: [{ id: "d1", ts_ms: 1300, text: "decision one", step_id: "s2", source_event_id: "evt-3" }],
+    decisions: [
+      { id: "d1", ts_ms: 1300, text: "decision one", step_id: "s2", source_event_id: "evt-3" },
+    ],
     open_questions: [],
     artifacts: [],
     summaries: { rolling: "", latest_context_pack: "" },
@@ -86,6 +89,14 @@ test("projectNodes sorts lineage by descending seq", () => {
   const decisions = nodes.filter((node) => node.kind === "decision");
   assert.equal(decisions[0].seq, 7);
   assert.equal(decisions[1].seq, 5);
+});
+
+test("extractWhyNextFromEvents supports orchestrator context-pack events", () => {
+  const why = extractWhyNextFromEvents([
+    event(1, "planning_started"),
+    event(2, "context_pack_built", { why_next_step: "deps satisfied" }, "task_2"),
+  ]);
+  assert.equal(why, "deps satisfied");
 });
 
 test("deriveIndicators exposes drift/checkpoint/alert flags", () => {

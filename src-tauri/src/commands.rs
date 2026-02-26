@@ -24,15 +24,14 @@ use crate::sidecar::{
     ActiveRunStatusResponse, AgentTeamApprovals, AgentTeamCancelRequest, AgentTeamDecisionResult,
     AgentTeamInstance, AgentTeamInstancesQuery, AgentTeamMissionSummary, AgentTeamSpawnRequest,
     AgentTeamSpawnResult, AgentTeamTemplate, ChannelsConfigResponse, ChannelsStatusResponse,
-    ContextBlackboardState, ContextCheckpointRecord, ContextReplayResponse, ContextRunCreateRequest,
-    ContextRunEventAppendRequest, ContextRunEventRecord, ContextRunState, ContextRunStatus,
-    ContextStepStatus, CreateSessionRequest, FilePartInput, McpActionResponse, McpAddRequest,
-    McpRemoteTool, McpServerRecord,
-    MissionApplyEventResult, MissionCreateRequest, MissionState, ModelInfo, ModelSpec, Project,
-    ProviderInfo, RoutineCreateRequest, RoutineHistoryEvent, RoutinePatchRequest,
-    RoutineRunArtifact, RoutineRunArtifactAddRequest, RoutineRunDecisionRequest,
-    RoutineRunNowRequest, RoutineRunNowResponse, RoutineRunRecord, RoutineSpec, SendMessageRequest,
-    Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
+    ContextBlackboardState, ContextCheckpointRecord, ContextReplayResponse,
+    ContextRunCreateRequest, ContextRunEventAppendRequest, ContextRunEventRecord, ContextRunState,
+    ContextRunStatus, ContextStepStatus, CreateSessionRequest, FilePartInput, McpActionResponse,
+    McpAddRequest, McpRemoteTool, McpServerRecord, MissionApplyEventResult, MissionCreateRequest,
+    MissionState, ModelInfo, ModelSpec, Project, ProviderInfo, RoutineCreateRequest,
+    RoutineHistoryEvent, RoutinePatchRequest, RoutineRunArtifact, RoutineRunArtifactAddRequest,
+    RoutineRunDecisionRequest, RoutineRunNowRequest, RoutineRunNowResponse, RoutineRunRecord,
+    RoutineSpec, SendMessageRequest, Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
 };
 use crate::sidecar_manager::{self, SidecarStatus};
 use crate::state::{AppState, AppStateInfo, ProvidersConfig};
@@ -8721,7 +8720,9 @@ fn context_run_source(run_type: &str) -> RunSource {
     }
 }
 
-fn context_event_to_run_event(event: ContextRunEventRecord) -> crate::orchestrator::types::RunEventRecord {
+fn context_event_to_run_event(
+    event: ContextRunEventRecord,
+) -> crate::orchestrator::types::RunEventRecord {
     crate::orchestrator::types::RunEventRecord {
         event_id: event.event_id,
         run_id: event.run_id,
@@ -8979,10 +8980,7 @@ pub async fn orchestrator_engine_resume(state: State<'_, AppState>, run_id: Stri
 }
 
 #[tauri::command]
-pub async fn orchestrator_engine_cancel(
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<()> {
+pub async fn orchestrator_engine_cancel(state: State<'_, AppState>, run_id: String) -> Result<()> {
     let _ = state
         .sidecar
         .context_run_append_event(
@@ -8999,10 +8997,7 @@ pub async fn orchestrator_engine_cancel(
 }
 
 #[tauri::command]
-pub async fn orchestrator_engine_approve(
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<()> {
+pub async fn orchestrator_engine_approve(state: State<'_, AppState>, run_id: String) -> Result<()> {
     let _ = state
         .sidecar
         .context_run_append_event(
@@ -9755,7 +9750,10 @@ pub async fn orchestrator_load_run(
 
     let store = OrchestratorStore::new(&workspace_path)?;
     let mut run = store.load_run(&run_id)?;
+    let mut checkpoint_task_sessions: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     if let Ok(Some(checkpoint)) = store.load_latest_checkpoint(&run_id) {
+        checkpoint_task_sessions = checkpoint.task_sessions;
         run = checkpoint.run;
     }
 
@@ -9796,6 +9794,16 @@ pub async fn orchestrator_load_run(
             task.assigned_role = crate::orchestrator::types::ROLE_WORKER.to_string();
         } else {
             task.assigned_role = normalized;
+        }
+        let missing_task_session = task
+            .session_id
+            .as_deref()
+            .map(|sid| sid.trim().is_empty())
+            .unwrap_or(true);
+        if missing_task_session {
+            if let Some(restored) = checkpoint_task_sessions.get(&task.id) {
+                task.session_id = Some(restored.clone());
+            }
         }
     }
 

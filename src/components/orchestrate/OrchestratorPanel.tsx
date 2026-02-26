@@ -68,6 +68,11 @@ function extractSessionMessageText(message: SessionMessage): string {
     .join("");
 }
 
+function isSyntheticContextSessionId(sessionId: string | null | undefined): boolean {
+  const value = sessionId?.trim();
+  return !!value && value.startsWith("context-");
+}
+
 export function OrchestratorPanel({
   onClose,
   runId: initialRunId,
@@ -147,7 +152,7 @@ export function OrchestratorPanel({
 
   useEffect(() => {
     if (runSessionIdHint) {
-      setRunSessionId(runSessionIdHint);
+      setRunSessionId(isSyntheticContextSessionId(runSessionIdHint) ? null : runSessionIdHint);
     }
   }, [runSessionIdHint]);
 
@@ -162,16 +167,22 @@ export function OrchestratorPanel({
     let isMounted = true;
     (async () => {
       try {
-        const run = await invoke<Run>("orchestrator_engine_load_run", { runId });
+        const run = await invoke<Run>("orchestrator_load_run", { runId });
         if (!isMounted) return;
-        setRunSessionId(run.session_id ?? null);
+        setRunSessionId(
+          run.session_id && !isSyntheticContextSessionId(run.session_id) ? run.session_id : null
+        );
       } catch {
         // Fallback to list summaries if full run load is temporarily unavailable.
         try {
-          const runs = await invoke<RunSummary[]>("orchestrator_engine_list_runs");
+          const runs = await invoke<RunSummary[]>("orchestrator_list_runs");
           if (!isMounted) return;
           const summary = runs.find((r) => r.run_id === runId);
-          setRunSessionId(summary?.session_id ?? null);
+          setRunSessionId(
+            summary?.session_id && !isSyntheticContextSessionId(summary.session_id)
+              ? summary.session_id
+              : null
+          );
         } catch (e) {
           if (!isMounted) return;
           console.warn("[OrchestratorPanel] Failed to resolve run session id:", e);
@@ -191,35 +202,10 @@ export function OrchestratorPanel({
       setReplaySummary(null);
       return;
     }
-
-    let isMounted = true;
-    const refreshRuntimeHealth = async () => {
-      try {
-        const [checkpoint, replay] = await Promise.all([
-          invoke<RunCheckpointSummary | null>("orchestrator_engine_get_latest_checkpoint", {
-            runId,
-          }),
-          invoke<RunReplaySummary>("orchestrator_engine_get_replay", {
-            runId,
-            fromCheckpoint: true,
-          }),
-        ]);
-        if (!isMounted) return;
-        setLatestCheckpoint(checkpoint ?? null);
-        setReplaySummary(replay ?? null);
-      } catch {
-        if (!isMounted) return;
-        setLatestCheckpoint(null);
-        setReplaySummary(null);
-      }
-    };
-
-    void refreshRuntimeHealth();
-    const interval = setInterval(refreshRuntimeHealth, 5000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
+    // Real orchestrator runs do not expose context-run checkpoint/replay endpoints.
+    // Keep these UI fields empty unless we add dedicated orchestrator endpoints.
+    setLatestCheckpoint(null);
+    setReplaySummary(null);
   }, [runId]);
 
   // Show a lightweight live transcript preview from the run base session.
@@ -382,6 +368,17 @@ export function OrchestratorPanel({
     };
   }, [runId, snapshot?.status]);
 
+  // If we loaded an existing run (e.g. after app restart), seed the selector from run model.
+  // Do not clobber if the user has already made an explicit selection in this UI session.
+  useEffect(() => {
+    if (!runId) return;
+    if (selectedModel || selectedProvider) return;
+    if (!runModel || !runProvider) return;
+
+    setSelectedModel(runModel);
+    setSelectedProvider(runProvider);
+  }, [runId, runModel, runProvider, selectedModel, selectedProvider]);
+
   useEffect(() => {
     if (!runId) {
       setModelRouting({});
@@ -426,7 +423,7 @@ export function OrchestratorPanel({
       }
       blackboardRefreshTimerRef.current = window.setTimeout(async () => {
         try {
-          const freshBlackboard = await invoke<Blackboard>("orchestrator_engine_get_blackboard", {
+          const freshBlackboard = await invoke<Blackboard>("orchestrator_get_blackboard", {
             runId,
           });
           if (!isMounted) return;
@@ -446,7 +443,7 @@ export function OrchestratorPanel({
 
       try {
         // Try to get from active engine first
-        const snap = await invoke<RunSnapshot>("orchestrator_engine_get_run", { runId });
+        const snap = await invoke<RunSnapshot>("orchestrator_get_run", { runId });
         if (!isMounted) return;
         const statusChanged = shouldRefreshForRunStatusTransition(
           (lastRunStatusRef.current as RunSnapshot["status"] | null) ?? null,
@@ -457,11 +454,11 @@ export function OrchestratorPanel({
         setSnapshot(snap);
         setIsReadOnly(false);
 
-        const taskList = await invoke<Task[]>("orchestrator_engine_list_tasks", { runId });
+        const taskList = await invoke<Task[]>("orchestrator_list_tasks", { runId });
         if (!isMounted) return;
         setTasks(taskList);
 
-        const freshEvents = await invoke<RunEventRecord[]>("orchestrator_engine_get_events", {
+        const freshEvents = await invoke<RunEventRecord[]>("orchestrator_get_events", {
           runId,
           sinceSeq: lastEventSeqRef.current || undefined,
           tail: lastEventSeqRef.current ? undefined : 100,
@@ -496,7 +493,7 @@ export function OrchestratorPanel({
         if (!isMounted) return;
 
         try {
-          const run = await invoke<Run>("orchestrator_engine_load_run", { runId });
+          const run = await invoke<Run>("orchestrator_load_run", { runId });
           if (!isMounted) return;
 
           // Convert Run to Snapshot for display
@@ -658,8 +655,11 @@ export function OrchestratorPanel({
         network_parallel: 2,
       };
 
-      const newRunId = await invoke<string>("orchestrator_engine_create_run", {
+      const newRunId = await invoke<string>("orchestrator_create_run", {
         objective,
+        config,
+        model: selectedModel ?? null,
+        provider: selectedProvider ?? null,
         source: "orchestrator",
       });
 
@@ -667,7 +667,7 @@ export function OrchestratorPanel({
       setRunConfig(config);
 
       // Start the orchestrator to begin planning
-      await invoke("orchestrator_engine_start", { runId: newRunId });
+      await invoke("orchestrator_start", { runId: newRunId });
     } catch (e) {
       console.error("Failed to create orchestrator run:", e);
       setError(`Failed to create run: ${e}`);
@@ -680,7 +680,7 @@ export function OrchestratorPanel({
     if (!runId) return;
     setIsLoading(true);
     try {
-      await invoke("orchestrator_engine_approve", { runId });
+      await invoke("orchestrator_approve", { runId });
     } catch (e) {
       setError(`Failed to approve: ${e}`);
     } finally {
@@ -692,7 +692,7 @@ export function OrchestratorPanel({
     if (!runId || !revisionFeedback.trim()) return;
     setIsLoading(true);
     try {
-      await invoke("orchestrator_engine_request_revision", { runId, feedback: revisionFeedback });
+      await invoke("orchestrator_request_revision", { runId, feedback: revisionFeedback });
       setShowRevisionInput(false);
       setRevisionFeedback("");
     } catch (e) {
@@ -705,7 +705,7 @@ export function OrchestratorPanel({
   const handlePause = async () => {
     if (!runId) return;
     try {
-      await invoke("orchestrator_engine_pause", { runId });
+      await invoke("orchestrator_pause", { runId });
     } catch (e) {
       setError(`Failed to pause: ${e}`);
     }
@@ -736,7 +736,7 @@ export function OrchestratorPanel({
           setSelectedProvider(runProvider);
         }
       }
-      await invoke("orchestrator_engine_resume", { runId });
+      await invoke("orchestrator_resume", { runId });
     } catch (e) {
       setError(`Failed to resume: ${e}`);
     }
@@ -745,7 +745,7 @@ export function OrchestratorPanel({
   const handleCancel = async () => {
     if (!runId) return;
     try {
-      await invoke("orchestrator_engine_cancel", { runId });
+      await invoke("orchestrator_cancel", { runId });
     } catch (e) {
       setError(`Failed to cancel: ${e}`);
     }
@@ -839,10 +839,10 @@ export function OrchestratorPanel({
     setRunModel(undefined);
     setRunProvider(undefined);
     setError(null);
-      setRunEvents([]);
-      setBlackboard(null);
-      setLastEventSeq(0);
-      lastEventSeqRef.current = 0;
+    setRunEvents([]);
+    setBlackboard(null);
+    setLastEventSeq(0);
+    lastEventSeqRef.current = 0;
   };
 
   const runStatus = snapshot?.status;
@@ -1296,11 +1296,6 @@ export function OrchestratorPanel({
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <TaskBoard
-                      tasks={tasksForDisplay}
-                      currentTaskId={snapshot.current_task_id}
-                      onTaskClick={(task) => setSelectedTask(task)}
-                    />
                     <BlackboardPanel
                       runId={runId}
                       runStatus={snapshot.status}
@@ -1309,6 +1304,11 @@ export function OrchestratorPanel({
                       blackboard={blackboard}
                       replay={replaySummary}
                       checkpoint={latestCheckpoint}
+                    />
+                    <TaskBoard
+                      tasks={tasksForDisplay}
+                      currentTaskId={snapshot.current_task_id}
+                      onTaskClick={(task) => setSelectedTask(task)}
                     />
                   </div>
                 )}

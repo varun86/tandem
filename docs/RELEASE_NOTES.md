@@ -14,6 +14,14 @@
 - **Refresh/perf/test hardening**:
   - Blackboard materialization refresh now uses relevant event-family gating + debounce + refresh-sequence watermarking to reduce redundant fetches.
   - Added blackboard-focused test target (`pnpm test:blackboard`) covering projection/filtering, follow state invariants, refresh policy, and drift drawer state contracts.
+- **Orchestrator execution reliability + continuity**:
+  - Planning now uses a two-pass flow (analysis -> planner) to improve task decomposition quality for complex objectives.
+  - Builder prompts now include continuation context from context-pack summaries, helping retries/resumes continue from prior rationale.
+  - Failed-task retry now preserves task session context by default; run load/restart restores task session bindings from checkpoint snapshots.
+  - Budget token usage now records prompt + response estimates across planner analysis, planner, builder, and validator calls.
+- **Blackboard parity improvements (Orchestrator + Command Center)**:
+  - Blackboard projection/refresh now recognizes orchestrator runtime event families (for example `context_pack_built`, planning/task lifecycle, and run failure events), not only context-run `meta_next_step_selected`.
+  - Improves live blackboard context visibility during active engine-owned orchestrator runs.
 
 ---
 

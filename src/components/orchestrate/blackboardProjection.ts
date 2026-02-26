@@ -33,12 +33,51 @@ export interface BlackboardIndicators {
   checkpointSeq: number | null;
 }
 
+const DECISION_EVENT_TYPES = new Set([
+  "meta_next_step_selected",
+  "context_pack_built",
+  "planning_started",
+  "plan_generated",
+  "plan_approved",
+  "revision_requested",
+]);
+
+const TASK_SYNC_EVENT_TYPES = new Set([
+  "todo_synced",
+  "task_started",
+  "task_completed",
+  "plan_generated",
+]);
+
+const RELIABILITY_EVENT_TYPES = new Set([
+  "workspace_mismatch",
+  "run_failed",
+  "contract_error",
+  "contract_warning",
+  "session_error",
+]);
+
+export function isDecisionEventType(eventType: string): boolean {
+  return DECISION_EVENT_TYPES.has(eventType.trim().toLowerCase());
+}
+
+function eventWhyNextStep(event: RunEventRecord): string | null {
+  const directWhy = event.payload?.why_next_step;
+  if (typeof directWhy === "string" && directWhy.trim().length > 0) {
+    return directWhy;
+  }
+  if (event.type === "plan_generated") {
+    return "Plan generated and awaiting review/approval.";
+  }
+  if (event.type === "planning_started") {
+    return "Planning has started.";
+  }
+  return null;
+}
+
 export function extractWhyNextFromEvents(events: RunEventRecord[]): string | null {
-  const lastDecision = [...events]
-    .reverse()
-    .find((event) => event.type === "meta_next_step_selected");
-  const why = lastDecision?.payload?.why_next_step;
-  return typeof why === "string" && why.trim().length > 0 ? why : null;
+  const lastDecision = [...events].reverse().find((event) => isDecisionEventType(event.type));
+  return lastDecision ? eventWhyNextStep(lastDecision) : null;
 }
 
 export function deriveIndicators(
@@ -90,46 +129,54 @@ export function projectNodes(
   const decisionBySeq: Array<{ seq: number; nodeId: string }> = [];
 
   for (const event of events) {
-    if (event.type === "meta_next_step_selected") {
-      const why = event.payload?.why_next_step;
-      const whyText = typeof why === "string" ? why : undefined;
+    const normalizedType = event.type.trim().toLowerCase();
+    if (isDecisionEventType(normalizedType)) {
+      const whyText = eventWhyNextStep(event) ?? undefined;
+      const label =
+        event.step_id && event.step_id.trim().length > 0
+          ? `select ${event.step_id}`
+          : normalizedType === "plan_generated"
+            ? "plan generated"
+            : normalizedType === "planning_started"
+              ? "planning started"
+              : normalizedType.replaceAll("_", " ");
       const id = `decision:${event.event_id}`;
       nodes.push({
         id,
         kind: "decision",
-        label: event.step_id ? `select ${event.step_id}` : "select next step",
+        label,
         seq: event.seq,
         tsMs: event.ts_ms,
-        eventType: event.type,
+        eventType: normalizedType,
         stepId: event.step_id ?? undefined,
         whyNextStep: whyText,
         payload: event.payload,
         sourceEventId: event.event_id,
       });
       decisionBySeq.push({ seq: event.seq, nodeId: id });
-    } else if (event.type === "todo_synced") {
+    } else if (TASK_SYNC_EVENT_TYPES.has(normalizedType)) {
       nodes.push({
         id: `task_sync:${event.event_id}`,
         kind: "task_sync",
-        label: "todo synced",
+        label: normalizedType.replaceAll("_", " "),
         seq: event.seq,
         tsMs: event.ts_ms,
-        eventType: event.type,
+        eventType: normalizedType,
         payload: event.payload,
         sourceEventId: event.event_id,
       });
     } else if (
-      event.type === "workspace_mismatch" ||
-      event.type.includes("loop") ||
-      event.type.includes("escalated")
+      RELIABILITY_EVENT_TYPES.has(normalizedType) ||
+      normalizedType.includes("loop") ||
+      normalizedType.includes("escalated")
     ) {
       nodes.push({
         id: `reliability:${event.event_id}`,
         kind: "reliability",
-        label: event.type,
+        label: normalizedType.replaceAll("_", " "),
         seq: event.seq,
         tsMs: event.ts_ms,
-        eventType: event.type,
+        eventType: normalizedType,
         stepId: event.step_id ?? undefined,
         payload: event.payload,
         sourceEventId: event.event_id,

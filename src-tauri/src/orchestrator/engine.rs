@@ -313,7 +313,10 @@ impl OrchestratorEngine {
             existing_summary.trim()
         );
         if compact.len() > Self::ROLLING_SUMMARY_MAX_CHARS {
-            compact = compact.chars().take(Self::ROLLING_SUMMARY_MAX_CHARS).collect();
+            compact = compact
+                .chars()
+                .take(Self::ROLLING_SUMMARY_MAX_CHARS)
+                .collect();
         }
         compact
     }
@@ -592,6 +595,17 @@ impl OrchestratorEngine {
         let llm_parallel = run.config.llm_parallel.max(1) as usize;
         let pause_signal = Arc::new(RwLock::new(matches!(run.status, RunStatus::Paused)));
 
+        let restored_task_sessions = run
+            .tasks
+            .iter()
+            .filter_map(|task| {
+                task.session_id
+                    .as_ref()
+                    .filter(|sid| !sid.trim().is_empty())
+                    .map(|sid| (task.id.clone(), sid.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+
         Self {
             run_id,
             run: Arc::new(RwLock::new(run)),
@@ -607,7 +621,7 @@ impl OrchestratorEngine {
             event_seq: Arc::new(AtomicU64::new(latest_seq)),
             task_semaphore: Arc::new(Semaphore::new(max_parallel_tasks)),
             llm_semaphore: Arc::new(Semaphore::new(llm_parallel)),
-            task_sessions: Arc::new(RwLock::new(HashMap::new())),
+            task_sessions: Arc::new(RwLock::new(restored_task_sessions)),
             contract_metrics: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(test)]
             test_task_executor: None,
@@ -737,24 +751,46 @@ impl OrchestratorEngine {
             run.objective.clone()
         };
 
-        let prompt =
-            AgentPrompts::build_planner_prompt(&objective, &workspace_summary, &constraints);
-
-        // Call planner via sidecar
         let session_id = {
             let run = self.run.read().await;
             run.session_id.clone()
         };
+
+        let analysis_prompt =
+            AgentPrompts::build_planner_analysis_prompt(&objective, &workspace_summary);
+        let analysis_response = self
+            .call_agent(None, &session_id, &analysis_prompt, AgentRole::Orchestrator)
+            .await?;
+        {
+            let mut tracker = self.budget_tracker.write().await;
+            tracker.record_tokens(
+                None,
+                Some(
+                    analysis_prompt
+                        .len()
+                        .saturating_add(analysis_response.len()),
+                ),
+            );
+        }
+
+        let prompt = AgentPrompts::build_planner_prompt(
+            &objective,
+            &workspace_summary,
+            &constraints,
+            Some(analysis_response.as_str()),
+        );
 
         // Send message and wait for response
         let response = self
             .call_agent(None, &session_id, &prompt, AgentRole::Orchestrator)
             .await?;
 
-        // Record tokens (estimate from response length)
+        // Record tokens (estimate from prompt + response length).
+        // This avoids showing 0 tokens in planning when providers emit sparse/empty content
+        // but still consumed input tokens for the planner prompt.
         {
             let mut tracker = self.budget_tracker.write().await;
-            tracker.record_tokens(None, Some(response.len()));
+            tracker.record_tokens(None, Some(prompt.len().saturating_add(response.len())));
         }
 
         if self.cancel_if_requested().await? {
@@ -1229,7 +1265,37 @@ impl OrchestratorEngine {
                     )),
                 );
             }
-            let prompt = AgentPrompts::build_builder_prompt(&task, &file_context, None);
+            let why_next_step = {
+                let run = self.run.read().await;
+                run.why_next_step
+                    .clone()
+                    .unwrap_or_else(|| format!("Executing task `{}`.", task.id))
+            };
+            let context_pack_summary = self
+                .build_context_pack(&task, &why_next_step)
+                .await
+                .ok()
+                .map(|pack| {
+                    let constraints = if pack.pinned_constraints.is_empty() {
+                        "none".to_string()
+                    } else {
+                        pack.pinned_constraints.join("; ")
+                    };
+                    format!(
+                        "Goal: {}\nActive step: {}\nWhy now: {}\nPinned constraints: {}\nRecent summary: {}",
+                        pack.goal,
+                        pack.active_step_id,
+                        why_next_step,
+                        constraints,
+                        pack.rolling_summary
+                    )
+                });
+            let prompt = AgentPrompts::build_builder_prompt(
+                &task,
+                &file_context,
+                context_pack_summary.as_deref(),
+                None,
+            );
 
             // Record budget
             {
@@ -1244,7 +1310,10 @@ impl OrchestratorEngine {
             // Record tokens
             {
                 let mut tracker = self.budget_tracker.write().await;
-                tracker.record_tokens(None, Some(builder_response.len()));
+                tracker.record_tokens(
+                    None,
+                    Some(prompt.len().saturating_add(builder_response.len())),
+                );
             }
 
             // Get per-task workspace changes for validation.
@@ -1289,6 +1358,7 @@ You MUST perform concrete file edits now.\n\
                     AgentPrompts::build_builder_prompt(
                         &task,
                         &file_context,
+                        context_pack_summary.as_deref(),
                         Some(builder_response.as_str())
                     ),
                     target_hint
@@ -1303,7 +1373,10 @@ You MUST perform concrete file edits now.\n\
                     .await?;
                 {
                     let mut tracker = self.budget_tracker.write().await;
-                    tracker.record_tokens(None, Some(builder_response.len()));
+                    tracker.record_tokens(
+                        None,
+                        Some(recovery_prompt.len().saturating_add(builder_response.len())),
+                    );
                 }
 
                 workspace_changes = self
@@ -1353,7 +1426,10 @@ You MUST perform concrete file edits now.\n\
             // Record tokens
             {
                 let mut tracker = self.budget_tracker.write().await;
-                tracker.record_tokens(None, Some(validator_response.len()));
+                tracker.record_tokens(
+                    None,
+                    Some(validator_prompt.len().saturating_add(validator_response.len())),
+                );
             }
 
             let contract_config = {
@@ -1568,7 +1644,11 @@ You MUST perform concrete file edits now.\n\
             Some(format!(
                 "class={} action={}{}",
                 Self::failure_class_label(policy.class),
-                if should_pause { "pause" } else { "retry_or_fail" },
+                if should_pause {
+                    "pause"
+                } else {
+                    "retry_or_fail"
+                },
                 error_code
                     .as_deref()
                     .map(|code| format!(" code={}", code))
@@ -1604,6 +1684,19 @@ You MUST perform concrete file edits now.\n\
         }
 
         if let Some(existing) = self.task_sessions.read().await.get(&task.id).cloned() {
+            return Ok(existing);
+        }
+
+        if let Some(existing) = task
+            .session_id
+            .as_ref()
+            .map(|sid| sid.trim().to_string())
+            .filter(|sid| !sid.is_empty())
+        {
+            self.task_sessions
+                .write()
+                .await
+                .insert(task.id.clone(), existing.clone());
             return Ok(existing);
         }
 
@@ -1883,7 +1976,8 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         role: AgentRole,
     ) -> Result<String> {
         use crate::sidecar::{ModelSpec, SendMessageRequest, StreamEvent};
-        self.validate_workspace_lease("pre_tool_call", task_id).await?;
+        self.validate_workspace_lease("pre_tool_call", task_id)
+            .await?;
 
         let _llm_permit = self
             .llm_semaphore
@@ -2904,8 +2998,6 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             task.retry_count = 0;
             task.error_message = None;
             task.validation_result = None;
-            // Force a fresh child session for the retried task.
-            task.session_id = None;
 
             TaskScheduler::update_blocked_tasks(&mut run.tasks);
 
@@ -2930,8 +3022,19 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         }
 
         {
-            let mut sessions = self.task_sessions.write().await;
-            sessions.remove(task_id);
+            let task_session_id = {
+                let run = self.run.read().await;
+                run.tasks
+                    .iter()
+                    .find(|task| task.id == task_id)
+                    .and_then(|task| task.session_id.clone())
+            };
+            if let Some(session_id) = task_session_id {
+                self.task_sessions
+                    .write()
+                    .await
+                    .insert(task_id.to_string(), session_id);
+            }
         }
 
         self.save_state().await?;
@@ -3393,7 +3496,8 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             payload,
         };
         let blackboard_patches = self.blackboard_patches_for_event(&record, &event_for_log);
-        let checkpoint_reason = Self::checkpoint_reason_for_event(&event_for_log).map(str::to_string);
+        let checkpoint_reason =
+            Self::checkpoint_reason_for_event(&event_for_log).map(str::to_string);
         let engine = self.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -3582,11 +3686,8 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
                     seq: next_patch_seq(),
                     ts_ms: record.ts_ms,
                     op: BlackboardPatchOp::AddOpenQuestion,
-                    payload: serde_json::to_value(mk_item(
-                        format!("Run failed: {}", reason),
-                        None,
-                    ))
-                    .unwrap_or(json!({})),
+                    payload: serde_json::to_value(mk_item(format!("Run failed: {}", reason), None))
+                        .unwrap_or(json!({})),
                 });
                 patches.push(BlackboardPatchRecord {
                     patch_id: format!("bbp-{}", Uuid::new_v4()),

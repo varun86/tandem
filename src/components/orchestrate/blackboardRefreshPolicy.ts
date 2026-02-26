@@ -4,6 +4,16 @@ const EXPLICIT_REFRESH_TYPES = new Set([
   "meta_next_step_selected",
   "todo_synced",
   "workspace_mismatch",
+  "context_pack_built",
+  "planning_started",
+  "plan_generated",
+  "plan_approved",
+  "revision_requested",
+  "task_started",
+  "task_completed",
+  "run_failed",
+  "contract_warning",
+  "contract_error",
 ]);
 
 export function isRelevantBlackboardEventType(eventType: string): boolean {
