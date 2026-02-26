@@ -476,6 +476,65 @@ fn resolve_walk_root(path: &str, args: &Value) -> Option<PathBuf> {
     resolve_tool_path(path, args)
 }
 
+fn resolve_read_path_fallback(path: &str, args: &Value) -> Option<PathBuf> {
+    let token = path.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let raw = Path::new(token);
+    if raw.is_absolute() || token.contains('\\') || token.contains('/') || raw.extension().is_none() {
+        return None;
+    }
+
+    let workspace_root = workspace_root_from_args(args);
+    let effective_cwd = effective_cwd_from_args(args);
+    let mut search_roots = vec![effective_cwd.clone()];
+    if let Some(root) = workspace_root.as_ref() {
+        if *root != effective_cwd {
+            search_roots.push(root.clone());
+        }
+    }
+
+    let token_lower = token.to_lowercase();
+    for root in search_roots {
+        if let Some(workspace_root) = workspace_root.as_ref() {
+            if !is_within_workspace_root(&root, workspace_root) {
+                continue;
+            }
+        }
+
+        let mut matches = Vec::new();
+        for entry in WalkBuilder::new(&root).build().flatten() {
+            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let candidate = entry.path();
+            if let Some(workspace_root) = workspace_root.as_ref() {
+                if !is_within_workspace_root(candidate, workspace_root) {
+                    continue;
+                }
+            }
+            let file_name = candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_lowercase();
+            if file_name == token_lower || file_name.ends_with(&token_lower) {
+                matches.push(candidate.to_path_buf());
+                if matches.len() > 8 {
+                    break;
+                }
+            }
+        }
+
+        if matches.len() == 1 {
+            return matches.into_iter().next();
+        }
+    }
+
+    None
+}
+
 fn sandbox_path_denied_result(path: &str, args: &Value) -> ToolResult {
     let requested = path.trim();
     let workspace_root = workspace_root_from_args(args);
@@ -1018,22 +1077,41 @@ impl Tool for ReadTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let path = args["path"].as_str().unwrap_or("").trim();
-        let Some(path_buf) = resolve_tool_path(path, &args) else {
+        let Some(mut path_buf) = resolve_tool_path(path, &args) else {
             return Ok(sandbox_path_denied_result(path, &args));
         };
 
         let metadata = match fs::metadata(&path_buf).await {
             Ok(meta) => meta,
-            Err(e) => {
-                return Ok(ToolResult {
-                    output: format!("read failed: {}", e),
-                    metadata: json!({
-                        "ok": false,
-                        "reason": "path_not_found",
-                        "path": path,
-                        "error": e.to_string()
-                    }),
-                });
+            Err(first_err) => {
+                if let Some(recovered) = resolve_read_path_fallback(path, &args) {
+                    path_buf = recovered;
+                    match fs::metadata(&path_buf).await {
+                        Ok(meta) => meta,
+                        Err(e) => {
+                            return Ok(ToolResult {
+                                output: format!("read failed: {}", e),
+                                metadata: json!({
+                                    "ok": false,
+                                    "reason": "path_not_found",
+                                    "path": path,
+                                    "resolved_path": path_buf.to_string_lossy(),
+                                    "error": e.to_string()
+                                }),
+                            });
+                        }
+                    }
+                } else {
+                    return Ok(ToolResult {
+                        output: format!("read failed: {}", first_err),
+                        metadata: json!({
+                            "ok": false,
+                            "reason": "path_not_found",
+                            "path": path,
+                            "error": first_err.to_string()
+                        }),
+                    });
+                }
             }
         };
         if metadata.is_dir() {
@@ -4332,6 +4410,27 @@ mod tests {
         });
         assert!(resolve_tool_path("/tmp/tandem-examples/docs/index.html", &args).is_some());
         assert!(resolve_tool_path("/etc/passwd", &args).is_none());
+    }
+
+    #[test]
+    fn read_fallback_resolves_unique_suffix_filename() {
+        let root = std::env::temp_dir().join(format!(
+            "tandem-read-fallback-{}",
+            uuid_like(now_ms_u64())
+        ));
+        std::fs::create_dir_all(&root).expect("create root");
+        let target = root.join("T1011U kitöltési útmutató.pdf");
+        std::fs::write(&target, b"stub").expect("write test file");
+
+        let args = json!({
+            "__workspace_root": root.to_string_lossy().to_string(),
+            "__effective_cwd": root.to_string_lossy().to_string()
+        });
+        let resolved = resolve_read_path_fallback("útmutató.pdf", &args)
+            .expect("expected unique suffix match");
+        assert_eq!(resolved, target);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
