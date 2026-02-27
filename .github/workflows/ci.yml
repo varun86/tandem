@@ -101,8 +101,9 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Install JS dependencies
-        run: pnpm install
+      - name: Install TS SDK dependencies
+        working-directory: packages/tandem-client-ts
+        run: pnpm install --frozen-lockfile
 
       - name: Test TS SDK
         working-directory: packages/tandem-client-ts
@@ -111,7 +112,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Poetry
         run: pip install poetry
