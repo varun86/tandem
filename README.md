@@ -10,7 +10,35 @@
   </p>
 </div>
 
-A local-first, privacy-focused AI workspace. Your AI coworker that runs entirely on your machine.
+**Tandem is a local-first autonomous agent runtime.**  
+Run it as a desktop app, a headless server on a VPS, or connect from any language via its HTTP + SSE API.
+
+```typescript
+// npm install @frumu/tandem-client
+import { TandemClient } from "@frumu/tandem-client";
+
+const client = new TandemClient({ baseUrl: "http://localhost:39731", token: "..." });
+const sessionId = await client.sessions.create({ title: "My agent" });
+const { runId } = await client.sessions.promptAsync(sessionId, "Summarize README.md");
+
+for await (const event of client.stream(sessionId, runId)) {
+  if (event.type === "session.response") process.stdout.write(event.properties.delta ?? "");
+}
+```
+
+```python
+# pip install tandem-client
+from tandem_client import TandemClient
+
+async with TandemClient(base_url="http://localhost:39731", token="...") as client:
+    session_id = await client.sessions.create(title="My agent")
+    run = await client.sessions.prompt_async(session_id, "Summarize README.md")
+    async for event in client.stream(session_id, run.run_id):
+        if event.type == "session.response":
+            print(event.properties.get("delta", ""), end="", flush=True)
+```
+
+**→ [Download desktop app](https://tandem.frumu.ai/) · [Deploy on a VPS (5 min)](examples/agent-quickstart/) · [Read the docs](https://tandem.frumu.ai/)**
 
 ## Language Options
 
@@ -22,41 +50,30 @@ A local-first, privacy-focused AI workspace. Your AI coworker that runs entirely
   <img src=".github/assets/app.png" alt="Tandem AI Workspace" width="90%">
 </div>
 
-Inspired by early AI coworking research previews, but open source and provider-agnostic.
-
 ## Why Tandem?
 
-**🔒 Privacy First**: Unlike cloud-based AI tools, Tandem runs on your machine. Your code, documents, and API keys never touch our servers because we don't have any.
+**🔒 Privacy First**: Your code, documents, and API keys never touch our servers — because we don't have any.
 
-**💰 Provider Agnostic**: Use any LLM provider - don't get locked into one vendor. Switch between OpenRouter, Anthropic, OpenAI, or run models locally with Ollama.
+**💰 Provider Agnostic**: Use OpenRouter, Anthropic, OpenAI, or run models locally with Ollama. Switch freely.
 
-**🛡️ Zero Trust**: Every file operation requires explicit approval. AI agents are powerful but Tandem treats them as "untrusted contractors" with supervised access.
+**🛡️ Zero Trust**: Every file operation requires explicit approval. Agents are powerful; Tandem keeps them supervised.
 
-**🌐 True Cross-Platform**: Native apps for Windows, macOS (Intel & Apple Silicon), and Linux. No Electron bloat - built on Tauri for fast, lightweight performance.
+**🌐 Cross-Platform**: Native desktop app for Windows, macOS, and Linux. Headless mode for servers and CI.
 
-**📖 Open Source**: Open source with permissive licensing. Rust crates are dual-licensed under MIT OR Apache-2.0.
+**📖 Open Source**: MIT licensed. Rust crates dual-licensed MIT OR Apache-2.0.
 
-**🛠️ Modern Stack**: Built with **Rust**, **Tauri**, **React**, and **sqlite-vec** — designed for high performance and low memory footprint on consumer hardware.
+## Who is it for?
 
-## Developer Superpowers for Everyone
+Tandem brings autonomous AI tools to anyone working with files — not just developers:
 
-In 2024, AI coding tools like Cursor transformed how developers work - letting them interact with entire codebases, automate complex tasks, and review changes before they happen.
+| Persona | What Tandem does |
+|---------|-----------------|
+| **Developer** | Analyze codebases, automate refactors, run scheduled CI summaries |
+| **Researcher** | Synthesize papers, cross-reference notes, extract structured data |
+| **Writer** | Enforce consistency across manuscripts, generate structured outlines |
+| **Ops / Admin** | Schedule document processing, connect Slack/Telegram bots, monitor logs |
 
-**But why should only programmers have these capabilities?**
 
-- Researchers need to synthesize hundreds of papers
-- Writers need consistency across sprawling manuscripts
-- Analysts need to cross-reference quarterly reports
-- Administrators need to organize mountains of documents
-
-Tandem brings the same transformative capabilities to everyone. Point it at any folder of files, and you get:
-
-- **Folder-wide intelligence** - AI that understands your entire collection, not just one file
-- **Multi-step automation** - Complex tasks broken into reviewable steps
-- **Visual change review** - See exactly what will change before it happens
-- **Complete undo** - Roll back any operation with one click
-
-What Cursor did for developers, Tandem does for everyone.
 
 ## Features
 

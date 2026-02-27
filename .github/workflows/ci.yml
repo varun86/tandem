@@ -84,6 +84,46 @@ jobs:
       - name: Run clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings || true
 
+  test-sdks:
+    name: Test SDKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install
+
+      - name: Test TS SDK
+        working-directory: packages/tandem-client-ts
+        run: pnpm test
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install Python dependencies
+        working-directory: packages/tandem-client-py
+        run: poetry install
+
+      - name: Test Python SDK
+        working-directory: packages/tandem-client-py
+        run: poetry run pytest tests/
+
   test-rust:
     name: Test Rust
     runs-on: ubuntu-22.04

@@ -32,6 +32,7 @@ done
 PACKAGES=(
   "packages/tandem-engine"
   "packages/tandem-tui"
+  "packages/tandem-client-ts"
 )
 
 mkdir -p "$(dirname "$LOG_FILE")"

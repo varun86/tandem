@@ -9,7 +9,7 @@ Launch the Tandem application and ensure you're logged into your workspace.
 ### Step 2: Select Workspace Pack
 
 1. Click "Select Workspace" or "Open Folder"
-2. Navigate to `workspace-packs/packs/web-starter-audit-pack/`
+2. Navigate to `agent-templates/packs/web-starter-audit-pack/`
 3. Confirm selection
 
 ### Step 3: Begin Prompt 1 - Project Audit
@@ -87,7 +87,7 @@ Some prompts require multiple approvals. Review each request individually.
 
 | Issue                  | Solution                                                 |
 | ---------------------- | -------------------------------------------------------- |
-| Can't find pack folder | Ensure you're in `workspace-packs/packs/` directory      |
+| Can't find pack folder | Ensure you're in `agent-templates/packs/` directory      |
 | Files not showing      | Click refresh in Tandem or restart                       |
 | Prompt not working     | Ensure you're using exact prompt text from PROMPTS.md    |
 | HTML not rendering     | Open in a modern browser (Chrome, Firefox, Safari, Edge) |
@@ -110,7 +110,7 @@ Some prompts require multiple approvals. Review each request individually.
 All generated content will appear in:
 
 ```
-workspace-packs/packs/web-starter-audit-pack/
+agent-templates/packs/web-starter-audit-pack/
 ├── outputs/        # Generated audit outputs
 │   ├── audit_findings.md
 │   ├── remediation_plan.md

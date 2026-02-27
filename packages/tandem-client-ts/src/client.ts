@@ -1,0 +1,1265 @@
+import { streamSse } from "./stream.js";
+import type {
+    TandemClientOptions,
+    JsonObject,
+    SystemHealth,
+    SessionRecord,
+    SessionListResponse,
+    ListSessionsOptions,
+    CreateSessionOptions,
+    UpdateSessionOptions,
+    SessionRunStateResponse,
+    PromptAsyncResult,
+    SessionDiff,
+    SessionTodo,
+    EngineMessage,
+    PermissionSnapshotResponse,
+    PermissionReply,
+    QuestionsListResponse,
+    QuestionRecord,
+    ProviderCatalog,
+    ProvidersConfigResponse,
+    ChannelName,
+    ChannelsConfigResponse,
+    ChannelsStatusResponse,
+    AddMcpServerOptions,
+    MemoryPutOptions,
+    MemoryPutResponse,
+    MemorySearchOptions,
+    MemorySearchResponse,
+    MemoryListResponse,
+    MemoryPromoteOptions,
+    MemoryPromoteResponse,
+    MemoryAuditResponse,
+    SkillLocation,
+    SkillRecord,
+    SkillsListResponse,
+    SkillImportOptions,
+    SkillImportResponse,
+    SkillTemplatesResponse,
+    ResourceRecord,
+    ResourceListResponse,
+    ResourceWriteOptions,
+    ResourceWriteResponse,
+    RoutineRecord,
+    DefinitionListResponse,
+    DefinitionCreateResponse,
+    CreateRoutineOptions,
+    PatchRoutineOptions,
+    CreateAutomationOptions,
+    PatchAutomationOptions,
+    RunNowResponse,
+    RunsListResponse,
+    RunRecord,
+    RunArtifactsResponse,
+    RoutineHistoryResponse,
+    AgentTeamSpawnInput,
+    AgentTeamSpawnResponse,
+    AgentTeamTemplatesResponse,
+    AgentTeamInstancesResponse,
+    AgentTeamMissionsResponse,
+    AgentTeamApprovalsResponse,
+    MissionCreateInput,
+    MissionCreateResponse,
+    MissionListResponse,
+    MissionGetResponse,
+    MissionEventResponse,
+    ToolSchema,
+    ToolExecuteResult,
+    EngineEvent,
+    RoutineFamily,
+    MemoryItem,
+    SkillTemplate,
+    JsonValue,
+} from "./public/index.js";
+import {
+    SystemHealthSchema,
+    SessionRecordSchema,
+    SessionListResponseSchema,
+    SessionRunStateResponseSchema,
+    RunNowResponseSchema,
+    RunRecordSchema,
+    ResourceWriteResponseSchema,
+    ResourceRecordSchema,
+    ResourceListResponseSchema,
+    MemoryItemSchema,
+    MemoryListResponseSchema,
+    MemorySearchResponseSchema,
+    EngineEventSchema,
+    parseResponse,
+    idNormalizer,
+} from "./normalize/index.js";
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+const asString = (v: unknown): string | null =>
+    typeof v === "string" && v.trim().length > 0 ? v : null;
+
+const parseRunId = (payload: JsonObject): string => {
+    try {
+        const id = idNormalizer.parse(payload);
+        if (id) return id;
+    } catch {
+        const nested = (payload.run || null) as JsonObject | null;
+        if (nested) {
+            try {
+                const id2 = idNormalizer.parse(nested);
+                if (id2) return id2;
+            } catch { }
+        }
+    }
+    throw new Error("Run ID missing in engine response");
+};
+
+// ─── TandemClient ─────────────────────────────────────────────────────────────
+
+/**
+ * HTTP client for the Tandem autonomous agent engine.
+ *
+ * Provides full coverage of the Tandem engine HTTP + SSE API.
+ *
+ * @example
+ * ```typescript
+ * import { TandemClient } from "@frumu/tandem-client";
+ *
+ * const client = new TandemClient({
+ *   baseUrl: "http://localhost:39731",
+ *   token: "your-token",
+ * });
+ *
+ * const sessionId = await client.sessions.create({ title: "My agent" });
+ * const { runId } = await client.sessions.promptAsync(sessionId, "Summarize README.md");
+ *
+ * for await (const event of client.stream(sessionId, runId)) {
+ *   if (event.type === "session.response") {
+ *     process.stdout.write(String(event.properties.delta ?? ""));
+ *   }
+ *   if (event.type === "run.complete" || event.type === "run.failed") break;
+ * }
+ * ```
+ */
+export class TandemClient {
+    private baseUrl: string;
+    private token: string;
+    private timeoutMs: number;
+
+    /** Session management */
+    readonly sessions: Sessions;
+    /** Permission approval flow */
+    readonly permissions: Permissions;
+    /** AI-generated question approval */
+    readonly questions: Questions;
+    /** Provider catalog and configuration */
+    readonly providers: Providers;
+    /** Messaging platform channel integrations */
+    readonly channels: Channels;
+    /** MCP (Model Context Protocol) server management */
+    readonly mcp: Mcp;
+    /** Scheduled routines */
+    readonly routines: Routines;
+    /** Mission-scoped automations */
+    readonly automations: Automations;
+    /** Semantic memory / vector store */
+    readonly memory: Memory;
+    /** Agent skill packs */
+    readonly skills: Skills;
+    /** Key-value resource store */
+    readonly resources: Resources;
+    /** Agent team orchestration */
+    readonly agentTeams: AgentTeams;
+    /** Multi-agent mission management */
+    readonly missions: Missions;
+
+    constructor(options: TandemClientOptions) {
+        this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+        this.token = options.token;
+        this.timeoutMs = options.timeoutMs ?? 20_000;
+
+        const req = this._request.bind(this);
+        this.sessions = new Sessions(this.baseUrl, this.token, this.timeoutMs, req);
+        this.permissions = new Permissions(req);
+        this.questions = new Questions(req);
+        this.providers = new Providers(req);
+        this.channels = new Channels(req);
+        this.mcp = new Mcp(req);
+        this.routines = new Routines(req);
+        this.automations = new Automations(req);
+        this.memory = new Memory(req);
+        this.skills = new Skills(req);
+        this.resources = new Resources(req);
+        this.agentTeams = new AgentTeams(req);
+        this.missions = new Missions(req);
+    }
+
+    // ─── Health ───────────────────────────────────────────────────────────────
+
+    /** Check engine health. Returns `{ ready: true }` when the engine is ready. */
+    async health(): Promise<SystemHealth> {
+        const raw = await this._request<unknown>("/global/health");
+        return parseResponse(SystemHealthSchema, raw, "/global/health", 200);
+    }
+
+    // ─── Tools ────────────────────────────────────────────────────────────────
+
+    /** List all tool IDs registered in the engine. */
+    async listToolIds(): Promise<string[]> {
+        return this._request<string[]>("/tool/ids");
+    }
+
+    /** List all tools with their schemas. */
+    async listTools(): Promise<ToolSchema[]> {
+        const raw = await this._request<unknown>("/tool");
+        return Array.isArray(raw) ? (raw as ToolSchema[]) : [];
+    }
+
+    /**
+     * Execute a built-in tool directly (without a session).
+     *
+     * @example
+     * ```typescript
+     * const result = await client.executeTool("workspace_list_files", { path: "." });
+     * console.log(result.output);
+     * ```
+     */
+    async executeTool(tool: string, args?: JsonObject): Promise<ToolExecuteResult> {
+        return this._request<ToolExecuteResult>("/tool/execute", {
+            method: "POST",
+            body: JSON.stringify({ tool, args: args ?? {} }),
+        });
+    }
+
+    // ─── SSE streaming ────────────────────────────────────────────────────────
+
+    /**
+     * Stream events from an active run as an async generator.
+     *
+     * @example
+     * ```typescript
+     * for await (const event of client.stream(sessionId, runId)) {
+     *   if (event.type === "session.response") {
+     *     process.stdout.write(String(event.properties.delta ?? ""));
+     *   }
+     *   if (event.type === "run.complete" || event.type === "run.failed") break;
+     * }
+     * ```
+     */
+    stream(
+        sessionId: string,
+        runId?: string,
+        options?: { signal?: AbortSignal }
+    ): AsyncGenerator<EngineEvent> {
+        const params = new URLSearchParams({ sessionID: sessionId });
+        if (runId) params.set("runID", runId);
+        const url = `${this.baseUrl}/event?${params.toString()}`;
+        return streamSse(url, this.token, options);
+    }
+
+    /**
+     * Stream the global event feed (all sessions).
+     */
+    globalStream(options?: { signal?: AbortSignal }): AsyncGenerator<EngineEvent> {
+        const url = `${this.baseUrl}/global/event`;
+        return streamSse(url, this.token, options);
+    }
+
+    /**
+     * Pull stored events for a specific run (paginated, not SSE).
+     */
+    async runEvents(runId: string, options?: { sinceSeq?: number; tail?: number }): Promise<EngineEvent[]> {
+        const params = new URLSearchParams();
+        if (options?.sinceSeq !== undefined) params.set("since_seq", String(options.sinceSeq));
+        if (options?.tail !== undefined) params.set("tail", String(options.tail));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const raw = await this._request<unknown>(`/run/${encodeURIComponent(runId)}/events${qs}`);
+        return Array.isArray(raw) ? (raw as EngineEvent[]) : [];
+    }
+
+    // ─── Internal HTTP ────────────────────────────────────────────────────────
+
+    async _request<T>(path: string, init: RequestInit = {}): Promise<T> {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+        let res: Response;
+        try {
+            res = await fetch(`${this.baseUrl}${path}`, {
+                ...init,
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${this.token}`,
+                    ...(init.headers ?? {}),
+                },
+                signal: controller.signal,
+            });
+        } catch (err) {
+            if (err instanceof Error && err.name === "AbortError") {
+                throw new Error(`Request timed out after ${this.timeoutMs}ms: ${path}`);
+            }
+            throw err;
+        } finally {
+            clearTimeout(timer);
+        }
+
+        if (res.status === 204) return undefined as T;
+        if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            throw new Error(`Request failed (${res.status} ${res.statusText}): ${body}`);
+        }
+        return res.json() as Promise<T>;
+    }
+}
+
+// ─── Sessions namespace ───────────────────────────────────────────────────────
+
+class Sessions {
+    constructor(
+        private baseUrl: string,
+        private token: string,
+        private timeoutMs: number,
+        private req: TandemClient["_request"]
+    ) { }
+
+    /** Create a new session. Returns the session ID. */
+    async create(options: CreateSessionOptions = {}): Promise<string> {
+        const payload: JsonObject = {
+            title: options.title ?? "Tandem SDK Session",
+            directory: options.directory ?? ".",
+        };
+        if (options.permissions) payload.permission = options.permissions as unknown as JsonValue;
+        if (options.model && options.provider) {
+            payload.model = { providerID: options.provider, modelID: options.model };
+            payload.provider = options.provider;
+        }
+        const data = await this.req<{ id: string }>("/session", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        });
+        return data.id;
+    }
+
+    /** List sessions with optional filtering. */
+    async list(options: ListSessionsOptions = {}): Promise<SessionListResponse> {
+        const params = new URLSearchParams();
+        if (options.q) params.set("q", options.q);
+        if (options.page !== undefined) params.set("page", String(options.page));
+        if (options.pageSize !== undefined) params.set("page_size", String(options.pageSize));
+        if (options.archived !== undefined) params.set("archived", String(options.archived));
+        if (options.scope) params.set("scope", options.scope);
+        if (options.workspace) params.set("workspace", options.workspace);
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const raw = await this.req<unknown>(`/session${qs}`);
+        return parseResponse(SessionListResponseSchema, raw, "/session", 200);
+    }
+
+    /** Get a session by ID. */
+    async get(sessionId: string): Promise<SessionRecord> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}`);
+        return parseResponse(SessionRecordSchema, raw, `/session/${sessionId}`, 200);
+    }
+
+    /** Update session metadata (title, archive status). */
+    async update(sessionId: string, options: UpdateSessionOptions): Promise<SessionRecord> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(options),
+        });
+        return parseResponse(SessionRecordSchema, raw, `/session/${sessionId}`, 200);
+    }
+
+    /** Archive a session (shorthand for `update(id, { archived: true })`). */
+    async archive(sessionId: string): Promise<SessionRecord> {
+        return this.update(sessionId, { archived: true });
+    }
+
+    /** Delete a session permanently. */
+    async delete(sessionId: string): Promise<void> {
+        await this.req<void>(`/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    }
+
+    /** Get all messages in a session. */
+    async messages(sessionId: string): Promise<EngineMessage[]> {
+        return this.req<EngineMessage[]>(`/session/${encodeURIComponent(sessionId)}/message`);
+    }
+
+    /** Get pending TODOs associated with a session. */
+    async todos(sessionId: string): Promise<SessionTodo[]> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}/todo`);
+        if (Array.isArray(raw)) return raw as SessionTodo[];
+        const wrapped = raw as { todos?: SessionTodo[] };
+        return wrapped.todos ?? [];
+    }
+
+    /** Get the currently active run for a session (if any). */
+    async activeRun(sessionId: string): Promise<SessionRunStateResponse> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}/run`);
+        return parseResponse(SessionRunStateResponseSchema, raw, `/session/${sessionId}/run`, 200);
+    }
+
+    /**
+     * Start an async run and return the run ID.
+     * Use `client.stream(sessionId, runId)` to receive events.
+     *
+     * Handles 409 SESSION_RUN_CONFLICT by returning the existing run ID.
+     */
+    async promptAsync(sessionId: string, prompt: string): Promise<PromptAsyncResult> {
+        const payload: JsonObject = { parts: [{ type: "text", text: prompt }] };
+        const path = `/session/${encodeURIComponent(sessionId)}/prompt_async?return=run`;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(`${this.baseUrl}${path}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${this.token}`,
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+
+        if (res.status === 409) {
+            const conflict = (await res.json().catch(() => ({}))) as JsonObject;
+            const active = conflict.activeRun as JsonObject | undefined;
+            const conflictId =
+                asString(active?.runID) || asString(active?.runId) || asString(active?.run_id);
+            if (conflictId) return { runId: conflictId };
+        }
+        if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            throw new Error(`promptAsync failed (${res.status}): ${body}`);
+        }
+        const data = (await res.json()) as JsonObject;
+        return { runId: parseRunId(data) };
+    }
+
+    /**
+     * Run a prompt synchronously and return the text reply (blocking).
+     * For long tasks prefer `promptAsync` + `stream()`.
+     */
+    async promptSync(sessionId: string, prompt: string): Promise<string> {
+        const payload: JsonObject = { parts: [{ type: "text", text: prompt }] };
+        const data = await this.req<{ reply?: string; text?: string; output?: string } & JsonObject>(
+            `/session/${encodeURIComponent(sessionId)}/prompt_sync`,
+            { method: "POST", body: JSON.stringify(payload) }
+        );
+        return asString(data.reply) || asString(data.text) || asString(data.output) || "";
+    }
+
+    /**
+     * Abort the active run for a session.
+     */
+    async abort(sessionId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/session/${encodeURIComponent(sessionId)}/abort`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+    }
+
+    /**
+     * Cancel the session's active run (alias of abort on some engine versions).
+     */
+    async cancel(sessionId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/session/${encodeURIComponent(sessionId)}/cancel`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+    }
+
+    /**
+     * Cancel a specific run within a session.
+     */
+    async cancelRun(sessionId: string, runId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(
+            `/session/${encodeURIComponent(sessionId)}/run/${encodeURIComponent(runId)}/cancel`,
+            { method: "POST", body: JSON.stringify({}) }
+        );
+    }
+
+    /**
+     * Fork a session into a child session (divergent conversation branch).
+     */
+    async fork(sessionId: string): Promise<SessionRecord> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}/fork`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        return parseResponse(SessionRecordSchema, raw, `/session/${sessionId}/fork`, 200);
+    }
+
+    /**
+     * Get the workspace diff produced by the session's last run.
+     */
+    async diff(sessionId: string): Promise<SessionDiff> {
+        return this.req<SessionDiff>(`/session/${encodeURIComponent(sessionId)}/diff`);
+    }
+
+    /**
+     * Revert uncommitted workspace changes made by the session.
+     */
+    async revert(sessionId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/session/${encodeURIComponent(sessionId)}/revert`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+    }
+
+    /**
+     * Undo a previous revert (restore session changes).
+     */
+    async unrevert(sessionId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/session/${encodeURIComponent(sessionId)}/unrevert`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+    }
+
+    /**
+     * Get child sessions forked from this session.
+     */
+    async children(sessionId: string): Promise<SessionRecord[]> {
+        const raw = await this.req<unknown>(`/session/${encodeURIComponent(sessionId)}/children`);
+        const parsed = parseResponse<SessionListResponse>(SessionListResponseSchema, raw, `/session/${sessionId}/children`, 200);
+        return parsed.sessions;
+    }
+
+    /**
+     * Trigger an engine-side summarization of the session's conversation history.
+     */
+    async summarize(sessionId: string): Promise<{ ok: boolean; summary?: string }> {
+        return this.req<{ ok: boolean; summary?: string }>(
+            `/session/${encodeURIComponent(sessionId)}/summarize`,
+            { method: "POST", body: JSON.stringify({}) }
+        );
+    }
+
+    /**
+     * Attach a session to a different workspace directory.
+     */
+    async attach(sessionId: string, targetWorkspace: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/session/${encodeURIComponent(sessionId)}/attach`, {
+            method: "POST",
+            body: JSON.stringify({ target_workspace: targetWorkspace }),
+        });
+    }
+}
+
+// ─── Permissions namespace ────────────────────────────────────────────────────
+
+class Permissions {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List all pending permission requests and existing rules. */
+    async list(): Promise<PermissionSnapshotResponse> {
+        return this.req<PermissionSnapshotResponse>("/permission");
+    }
+
+    /** Reply to a permission request. Use "always" to auto-approve future requests. */
+    async reply(requestId: string, reply: PermissionReply): Promise<{ ok: boolean }> {
+        const res = await this.req<{ ok?: boolean; error?: string }>(
+            `/permission/${encodeURIComponent(requestId)}/reply`,
+            { method: "POST", body: JSON.stringify({ reply }) }
+        );
+        if (!res.ok) throw new Error(`Permission reply rejected: ${res.error ?? requestId}`);
+        return { ok: true };
+    }
+}
+
+// ─── Questions namespace ──────────────────────────────────────────────────────
+
+class Questions {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List pending AI-generated questions awaiting user confirmation. */
+    async list(): Promise<QuestionsListResponse> {
+        const raw = await this.req<unknown>("/question");
+        if (Array.isArray(raw)) return { questions: raw as QuestionRecord[] };
+        return raw as QuestionsListResponse;
+    }
+
+    /** Answer a pending question. */
+    async reply(questionId: string, answer: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/question/${encodeURIComponent(questionId)}/reply`, {
+            method: "POST",
+            body: JSON.stringify({ answer }),
+        });
+    }
+
+    /** Reject/dismiss a pending question. */
+    async reject(questionId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/question/${encodeURIComponent(questionId)}/reject`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+    }
+}
+
+// ─── Providers namespace ──────────────────────────────────────────────────────
+
+class Providers {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List all available providers and their models. */
+    async catalog(): Promise<ProviderCatalog> {
+        return this.req<ProviderCatalog>("/provider");
+    }
+
+    /** Get the current provider/model configuration. */
+    async config(): Promise<ProvidersConfigResponse> {
+        return this.req<ProvidersConfigResponse>("/config/providers");
+    }
+
+    /** Set the default provider and model. */
+    async setDefaults(providerId: string, modelId: string): Promise<void> {
+        await this.req<void>("/config", {
+            method: "PATCH",
+            body: JSON.stringify({
+                default_provider: providerId,
+                providers: { [providerId]: { default_model: modelId } },
+            }),
+        });
+    }
+
+    /** Store an API key for a provider. */
+    async setApiKey(providerId: string, apiKey: string): Promise<void> {
+        await this.req<void>(`/auth/${encodeURIComponent(providerId)}`, {
+            method: "PUT",
+            body: JSON.stringify({ apiKey }),
+        });
+    }
+
+    /** Get authentication status for a provider. */
+    async authStatus(): Promise<JsonObject> {
+        return this.req<JsonObject>("/provider/auth");
+    }
+}
+
+// ─── Channels namespace ───────────────────────────────────────────────────────
+
+class Channels {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** Get channel configuration (Telegram / Discord / Slack). */
+    async config(): Promise<ChannelsConfigResponse> {
+        return this.req<ChannelsConfigResponse>("/channels/config");
+    }
+
+    /** Get live channel connection status. */
+    async status(): Promise<ChannelsStatusResponse> {
+        return this.req<ChannelsStatusResponse>("/channels/status");
+    }
+
+    /** Configure a channel (bot token, allowed users, etc.). */
+    async put(channel: ChannelName, payload: JsonObject): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/channels/${channel}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+        });
+    }
+
+    /** Remove a channel configuration. */
+    async delete(channel: ChannelName): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/channels/${channel}`, { method: "DELETE" });
+    }
+}
+
+// ─── MCP namespace ────────────────────────────────────────────────────────────
+
+class Mcp {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List registered MCP servers. */
+    async list(): Promise<Record<string, unknown>> {
+        return this.req<Record<string, unknown>>("/mcp");
+    }
+
+    /** List all discovered MCP tools. */
+    async listTools(): Promise<unknown[]> {
+        return this.req<unknown[]>("/mcp/tools");
+    }
+
+    /** List all discovered MCP resources. */
+    async listResources(): Promise<unknown[]> {
+        const raw = await this.req<unknown>("/mcp/resources");
+        return Array.isArray(raw) ? raw : [];
+    }
+
+    /**
+     * Register a new MCP server.
+     *
+     * @example
+     * ```typescript
+     * await client.mcp.add({ name: "arcade", transport: "https://mcp.arcade.ai/mcp" });
+     * await client.mcp.connect("arcade");
+     * ```
+     */
+    async add(options: AddMcpServerOptions): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>("/mcp", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** Connect to an MCP server and discover its tools. */
+    async connect(name: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}/connect`, {
+            method: "POST",
+        });
+    }
+
+    /** Disconnect from an MCP server. */
+    async disconnect(name: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}/disconnect`, {
+            method: "POST",
+        });
+    }
+
+    /** Re-discover tools from a connected MCP server. */
+    async refresh(name: string): Promise<{ ok: boolean; count?: number }> {
+        return this.req<{ ok: boolean; count?: number }>(
+            `/mcp/${encodeURIComponent(name)}/refresh`,
+            { method: "POST" }
+        );
+    }
+
+    /** Enable or disable an MCP server. */
+    async setEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled }),
+        });
+    }
+}
+
+// ─── Memory namespace ─────────────────────────────────────────────────────────
+
+class Memory {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /**
+     * Store a memory item.
+     *
+     * @example
+     * ```typescript
+     * await client.memory.put({
+     *   text: "The team uses Rust for backend services.",
+     *   tags: ["team", "architecture"],
+     * });
+     * ```
+     */
+    async put(options: MemoryPutOptions): Promise<MemoryPutResponse> {
+        return this.req<MemoryPutResponse>("/memory/put", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /**
+     * Semantic search over stored memories.
+     *
+     * @example
+     * ```typescript
+     * const { results } = await client.memory.search({
+     *   query: "backend technology choices",
+     *   limit: 5,
+     * });
+     * ```
+     */
+    async search(options: MemorySearchOptions): Promise<MemorySearchResponse> {
+        const raw = await this.req<unknown>("/memory/search", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+        return parseResponse(MemorySearchResponseSchema, raw, "/memory/search", 200);
+    }
+
+    /** List stored memory items with optional text filter. */
+    async list(options?: { q?: string; limit?: number; offset?: number }): Promise<MemoryListResponse> {
+        const params = new URLSearchParams();
+        if (options?.q) params.set("q", options.q);
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        if (options?.offset !== undefined) params.set("offset", String(options.offset));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const raw = await this.req<unknown>(`/memory${qs}`);
+        return parseResponse(MemoryListResponseSchema, raw, "/memory", 200);
+    }
+
+    /** Delete a memory item by ID. */
+    async delete(memoryId: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/memory/${encodeURIComponent(memoryId)}`, {
+            method: "DELETE",
+        });
+    }
+
+    /** Promote a transient memory item to persistent storage. */
+    async promote(options: MemoryPromoteOptions): Promise<MemoryPromoteResponse> {
+        return this.req<MemoryPromoteResponse>("/memory/promote", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** Retrieve the memory audit log for a run. */
+    async audit(options?: { run_id?: string; limit?: number }): Promise<MemoryAuditResponse> {
+        const params = new URLSearchParams();
+        if (options?.run_id) params.set("run_id", options.run_id);
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const raw = await this.req<unknown>(`/memory/audit${qs}`);
+        if (Array.isArray(raw)) return { entries: raw as JsonObject[], count: raw.length };
+        return raw as MemoryAuditResponse;
+    }
+}
+
+// ─── Skills namespace ─────────────────────────────────────────────────────────
+
+class Skills {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List installed agent skills. */
+    async list(location?: SkillLocation): Promise<SkillsListResponse> {
+        const qs = location ? `?location=${encodeURIComponent(location)}` : "";
+        const raw = await this.req<unknown>(`/skills${qs}`);
+        if (Array.isArray(raw)) return { skills: raw as SkillRecord[], count: raw.length };
+        return raw as SkillsListResponse;
+    }
+
+    /** Get details of a specific skill by name. */
+    async get(name: string): Promise<SkillRecord> {
+        return this.req<SkillRecord>(`/skills/${encodeURIComponent(name)}`);
+    }
+
+    /** Import a skill from YAML content or a file path. */
+    async import(options: SkillImportOptions): Promise<SkillImportResponse> {
+        return this.req<SkillImportResponse>("/skills/import", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** Preview a skill import (dry run). */
+    async preview(options: SkillImportOptions): Promise<SkillImportResponse> {
+        return this.req<SkillImportResponse>("/skills/import/preview", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** List available skill templates shipped with the engine. */
+    async templates(): Promise<SkillTemplatesResponse> {
+        const raw = await this.req<unknown>("/skills/templates");
+        if (Array.isArray(raw)) return { templates: raw as SkillTemplate[], count: raw.length };
+        return raw as SkillTemplatesResponse;
+    }
+}
+
+// ─── Resources namespace ──────────────────────────────────────────────────────
+
+class Resources {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List stored resource records. */
+    async list(options?: { prefix?: string; limit?: number }): Promise<ResourceListResponse> {
+        const params = new URLSearchParams();
+        if (options?.prefix) params.set("prefix", options.prefix);
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const raw = await this.req<unknown>(`/resource${qs}`);
+        return parseResponse(ResourceListResponseSchema, raw, "/resource", 200);
+    }
+
+    /**
+     * Write a resource key-value entry.
+     *
+     * @example
+     * ```typescript
+     * await client.resources.write({
+     *   key: "agent-config/alert-threshold",
+     *   value: { threshold: 0.95 },
+     * });
+     * ```
+     */
+    async write(options: ResourceWriteOptions): Promise<ResourceWriteResponse> {
+        return this.req<ResourceWriteResponse>("/resource", {
+            method: "PUT",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** Delete a resource entry. */
+    async delete(key: string, options?: { if_match_rev?: number }): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>("/resource", {
+            method: "DELETE",
+            body: JSON.stringify({ key, ...options }),
+        });
+    }
+}
+
+// ─── Routines namespace ───────────────────────────────────────────────────────
+
+class Routines {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List all scheduled routines. */
+    async list(): Promise<DefinitionListResponse> {
+        return this.req<DefinitionListResponse>("/routines");
+    }
+
+    /**
+     * Create a scheduled routine.
+     *
+     * @example
+     * ```typescript
+     * await client.routines.create({
+     *   name: "Daily digest",
+     *   schedule: "0 8 * * *",
+     *   entrypoint: "Summarize activity from the last 24 hours",
+     * });
+     * ```
+     */
+    async create(options: CreateRoutineOptions): Promise<DefinitionCreateResponse> {
+        // Map `prompt` shorthand → `entrypoint` for engine compat
+        const payload = { ...options };
+        if ("prompt" in payload && !("entrypoint" in payload)) {
+            (payload as Record<string, unknown>).entrypoint = payload.prompt;
+        }
+        return this.req<DefinitionCreateResponse>("/routines", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        });
+    }
+
+    /** Update a routine (partial patch). */
+    async update(id: string, patch: PatchRoutineOptions): Promise<RoutineRecord> {
+        return this.req<RoutineRecord>(`/routines/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(patch),
+        });
+    }
+
+    /** Delete a routine by ID. */
+    async delete(id: string): Promise<void> {
+        await this.req<void>(`/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+
+    /** Trigger a routine immediately (run now). */
+    async runNow(id: string): Promise<RunNowResponse> {
+        const raw = await this.req<unknown>(`/routines/${encodeURIComponent(id)}/run_now`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        return parseResponse(RunNowResponseSchema, raw, `/routines/${id}/run_now`, 200);
+    }
+
+    /** List recent runs across all routines. */
+    async listRuns(options?: { routine_id?: string; limit?: number }): Promise<RunsListResponse> {
+        const params = new URLSearchParams();
+        if (options?.routine_id) params.set("routine_id", options.routine_id);
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        return this.req<RunsListResponse>(`/routines/runs${qs}`);
+    }
+
+    /** List runs for a specific routine. */
+    async getRunsForRoutine(id: string, limit = 25): Promise<RunsListResponse> {
+        return this.req<RunsListResponse>(`/routines/${encodeURIComponent(id)}/runs?limit=${limit}`);
+    }
+
+    /** Get a specific run record. */
+    async getRun(runId: string): Promise<RunRecord> {
+        const raw = await this.req<unknown>(`/routines/runs/${encodeURIComponent(runId)}`);
+        return parseResponse(RunRecordSchema, raw, `/routines/runs/${runId}`, 200);
+    }
+
+    /** List artifacts produced by a run. */
+    async listArtifacts(runId: string): Promise<RunArtifactsResponse> {
+        return this.req<RunArtifactsResponse>(`/routines/runs/${encodeURIComponent(runId)}/artifacts`);
+    }
+
+    /** Approve a run that requires human approval. */
+    async approveRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/routines/runs/${encodeURIComponent(runId)}/approve`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Deny a run that requires human approval. */
+    async denyRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/routines/runs/${encodeURIComponent(runId)}/deny`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Pause an active run. */
+    async pauseRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/routines/runs/${encodeURIComponent(runId)}/pause`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Resume a paused run. */
+    async resumeRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/routines/runs/${encodeURIComponent(runId)}/resume`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Get execution history for a routine. */
+    async history(id: string, limit?: number): Promise<RoutineHistoryResponse> {
+        const qs = limit !== undefined ? `?limit=${limit}` : "";
+        const raw = await this.req<unknown>(`/routines/${encodeURIComponent(id)}/history${qs}`);
+        if (Array.isArray(raw)) return { history: raw as JsonObject[], count: raw.length };
+        return raw as RoutineHistoryResponse;
+    }
+}
+
+// ─── Automations namespace ────────────────────────────────────────────────────
+
+class Automations {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List all automations. */
+    async list(): Promise<DefinitionListResponse> {
+        return this.req<DefinitionListResponse>("/automations");
+    }
+
+    /**
+     * Create a mission-scoped automation.
+     *
+     * @example
+     * ```typescript
+     * await client.automations.create({
+     *   name: "Weekly security scan",
+     *   schedule: "0 9 * * 1",  // every Monday 9am
+     *   mission: {
+     *     objective: "Run a security audit of the API surface",
+     *     success_criteria: ["No critical vulnerabilities", "Report written to reports/security.md"],
+     *   },
+     *   policy: {
+     *     tool: { external_integrations_allowed: false },
+     *     approval: { requires_approval: true },
+     *   },
+     * });
+     * ```
+     */
+    async create(options: CreateAutomationOptions): Promise<DefinitionCreateResponse> {
+        return this.req<DefinitionCreateResponse>("/automations", {
+            method: "POST",
+            body: JSON.stringify(options),
+        });
+    }
+
+    /** Update an automation (partial patch). */
+    async update(id: string, patch: PatchAutomationOptions): Promise<JsonObject> {
+        return this.req<JsonObject>(`/automations/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(patch),
+        });
+    }
+
+    /** Delete an automation. */
+    async delete(id: string): Promise<void> {
+        await this.req<void>(`/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+
+    /** Trigger an automation immediately. */
+    async runNow(id: string): Promise<RunNowResponse> {
+        const raw = await this.req<unknown>(`/automations/${encodeURIComponent(id)}/run_now`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        return parseResponse(RunNowResponseSchema, raw, `/automations/${id}/run_now`, 200);
+    }
+
+    /** List recent runs across all automations. */
+    async listRuns(options?: { automation_id?: string; limit?: number }): Promise<RunsListResponse> {
+        const params = new URLSearchParams();
+        if (options?.automation_id) params.set("automation_id", options.automation_id);
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        return this.req<RunsListResponse>(`/automations/runs${qs}`);
+    }
+
+    /** List runs for a specific automation. */
+    async getRunsForAutomation(id: string, limit = 25): Promise<RunsListResponse> {
+        return this.req<RunsListResponse>(`/automations/${encodeURIComponent(id)}/runs?limit=${limit}`);
+    }
+
+    /** Get a specific automation run record. */
+    async getRun(runId: string): Promise<RunRecord> {
+        const raw = await this.req<unknown>(`/automations/runs/${encodeURIComponent(runId)}`);
+        return parseResponse(RunRecordSchema, raw, `/automations/runs/${runId}`, 200);
+    }
+
+    /** List artifacts from an automation run. */
+    async listArtifacts(runId: string): Promise<RunArtifactsResponse> {
+        return this.req<RunArtifactsResponse>(`/automations/runs/${encodeURIComponent(runId)}/artifacts`);
+    }
+
+    /** Approve an automation run pending human review. */
+    async approveRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/automations/runs/${encodeURIComponent(runId)}/approve`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Deny an automation run pending human review. */
+    async denyRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/automations/runs/${encodeURIComponent(runId)}/deny`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Pause an active automation run. */
+    async pauseRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/automations/runs/${encodeURIComponent(runId)}/pause`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Resume a paused automation run. */
+    async resumeRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(`/automations/runs/${encodeURIComponent(runId)}/resume`, {
+            method: "POST",
+            body: JSON.stringify({ reason: reason ?? "" }),
+        });
+    }
+
+    /** Get execution history for an automation. */
+    async history(id: string, limit?: number): Promise<RoutineHistoryResponse> {
+        const qs = limit !== undefined ? `?limit=${limit}` : "";
+        const raw = await this.req<unknown>(`/automations/${encodeURIComponent(id)}/history${qs}`);
+        if (Array.isArray(raw)) return { history: raw as JsonObject[], count: raw.length };
+        return raw as RoutineHistoryResponse;
+    }
+}
+
+// ─── AgentTeams namespace ─────────────────────────────────────────────────────
+
+class AgentTeams {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List available agent team templates. */
+    async listTemplates(): Promise<AgentTeamTemplatesResponse> {
+        return this.req<AgentTeamTemplatesResponse>("/agent-team/templates");
+    }
+
+    /** List agent team instances. */
+    async listInstances(options?: {
+        missionID?: string;
+        parentInstanceID?: string;
+        status?: string;
+    }): Promise<AgentTeamInstancesResponse> {
+        const params = new URLSearchParams();
+        if (options?.missionID) params.set("missionID", options.missionID);
+        if (options?.parentInstanceID) params.set("parentInstanceID", options.parentInstanceID);
+        if (options?.status) params.set("status", options.status);
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        return this.req<AgentTeamInstancesResponse>(`/agent-team/instances${qs}`);
+    }
+
+    /** List missions managed by the agent team orchestrator. */
+    async listMissions(): Promise<AgentTeamMissionsResponse> {
+        return this.req<AgentTeamMissionsResponse>("/agent-team/missions");
+    }
+
+    /** List pending spawn and tool approvals. */
+    async listApprovals(): Promise<AgentTeamApprovalsResponse> {
+        return this.req<AgentTeamApprovalsResponse>("/agent-team/approvals");
+    }
+
+    /**
+     * Spawn a new agent team instance.
+     *
+     * @example
+     * ```typescript
+     * const result = await client.agentTeams.spawn({
+     *   missionID: "mission-123",
+     *   role: "builder",
+     *   justification: "Implementing feature X as planned",
+     * });
+     * ```
+     */
+    async spawn(input: AgentTeamSpawnInput): Promise<AgentTeamSpawnResponse> {
+        return this.req<AgentTeamSpawnResponse>("/agent-team/spawn", {
+            method: "POST",
+            body: JSON.stringify(input),
+        });
+    }
+
+    /** Approve a pending agent team spawn request. */
+    async approveSpawn(approvalId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(
+            `/agent-team/approvals/spawn/${encodeURIComponent(approvalId)}/approve`,
+            { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+        );
+    }
+
+    /** Deny a pending agent team spawn request. */
+    async denySpawn(approvalId: string, reason?: string): Promise<{ ok: boolean }> {
+        return this.req<{ ok: boolean }>(
+            `/agent-team/approvals/spawn/${encodeURIComponent(approvalId)}/deny`,
+            { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+        );
+    }
+}
+
+// ─── Missions namespace ───────────────────────────────────────────────────────
+
+class Missions {
+    constructor(private req: TandemClient["_request"]) { }
+
+    /** List all missions. */
+    async list(): Promise<MissionListResponse> {
+        return this.req<MissionListResponse>("/mission");
+    }
+
+    /**
+     * Create a new mission with work items.
+     *
+     * @example
+     * ```typescript
+     * const { mission } = await client.missions.create({
+     *   title: "Q1 Security Hardening",
+     *   goal: "Audit and fix security issues in the API surface",
+     *   work_items: [
+     *     { title: "Audit auth middleware", assigned_agent: "security-auditor" },
+     *     { title: "Review input validation", assigned_agent: "security-auditor" },
+     *   ],
+     * });
+     * ```
+     */
+    async create(input: MissionCreateInput): Promise<MissionCreateResponse> {
+        return this.req<MissionCreateResponse>("/mission", {
+            method: "POST",
+            body: JSON.stringify(input),
+        });
+    }
+
+    /** Get a mission by ID. */
+    async get(missionId: string): Promise<MissionGetResponse> {
+        return this.req<MissionGetResponse>(`/mission/${encodeURIComponent(missionId)}`);
+    }
+
+    /** Apply a state event to a mission. */
+    async applyEvent(missionId: string, event: JsonObject): Promise<MissionEventResponse> {
+        return this.req<MissionEventResponse>(`/mission/${encodeURIComponent(missionId)}/event`, {
+            method: "POST",
+            body: JSON.stringify({ event }),
+        });
+    }
+}
+
+// Re-export namespace types for instanceof checks / documentation
+export type { RoutineFamily, RoutineRecord };

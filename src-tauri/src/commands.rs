@@ -96,8 +96,17 @@ pub fn packs_install_default(
     pack_id: String,
 ) -> Result<crate::packs::PackInstallResult> {
     if let Some(workspace_path) = state.get_workspace_path() {
-        let workspace_packs_root = PathBuf::from(workspace_path).join("workspace-packs");
-        return crate::packs::install_pack(&app, &pack_id, &workspace_packs_root.to_string_lossy())
+        // Prefer agent-templates (renamed from workspace-packs); fall back for
+        // existing workspaces that still have the old directory name.
+        let base = PathBuf::from(workspace_path);
+        let preferred = base.join("agent-templates");
+        let legacy = base.join("workspace-packs");
+        let install_root = if preferred.exists() || !legacy.exists() {
+            preferred
+        } else {
+            legacy
+        };
+        return crate::packs::install_pack(&app, &pack_id, &install_root.to_string_lossy())
             .map_err(TandemError::InvalidConfig);
     }
     crate::packs::install_pack_default(&app, &pack_id).map_err(TandemError::InvalidConfig)

@@ -119,6 +119,13 @@ jobs:
               if not m:
                   raise SystemExit(f"Could not find package.version in {path}")
               return m.group(1)
+              
+          def read_pyproject_version(path: str) -> str:
+              data = Path(path).read_text()
+              m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', data)
+              if not m:
+                  raise SystemExit(f"Could not find version in {path}")
+              return m.group(1)
 
           checks = [
               ("package.json", read_json_version("package.json")),
@@ -126,6 +133,8 @@ jobs:
               ("src-tauri/tauri.conf.json", read_json_version("src-tauri/tauri.conf.json")),
               ("packages/tandem-engine/package.json", read_json_version("packages/tandem-engine/package.json")),
               ("packages/tandem-tui/package.json", read_json_version("packages/tandem-tui/package.json")),
+              ("packages/tandem-client-ts/package.json", read_json_version("packages/tandem-client-ts/package.json")),
+              ("packages/tandem-client-py/pyproject.toml", read_pyproject_version("packages/tandem-client-py/pyproject.toml")),
           ]
 
           bad = [(path, got) for path, got in checks if got != version]
@@ -327,10 +336,50 @@ jobs:
           path: publish-npm.log
           if-no-files-found: warn
 
+  publish_pypi:
+    name: Publish PyPI Wrappers
+    needs: [preflight, publish_crates]
+    if: |
+      always() &&
+      needs.preflight.outputs.npm_enabled == 'true' &&
+      (needs.preflight.outputs.crates_enabled != 'true' || needs.publish_crates.result == 'success')
+    runs-on: ubuntu-latest
+    environment: registry-publish
+    # Important: this permission is mandatory for trusted publishing
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Build Tools
+        run: pip install build twine
+
+      - name: Build PyPI Package
+        working-directory: packages/tandem-client-py
+        run: python -m build
+
+      - name: Publish to PyPI
+        if: needs.preflight.outputs.dry_run != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/tandem-client-py/dist/
+          # Remove this line if you decide to not use an environment in PyPI settings
+          # But your screenshot shows "Environment name: pypi", so Actions requires it matching
+          
+      - name: Dry Run Info
+        if: needs.preflight.outputs.dry_run == 'true'
+        run: echo "Dry Run: Skipping PyPI upload for tandem-client-py"
+
   summary:
     name: Publish Summary
     runs-on: ubuntu-latest
-    needs: [preflight, publish_crates, publish_npm]
+    needs: [preflight, publish_crates, publish_npm, publish_pypi]
     if: always()
     steps:
       - name: Summarize run
@@ -348,6 +397,7 @@ jobs:
             echo "- preflight: \`${{ needs.preflight.result }}\`"
             echo "- publish_crates: \`${{ needs.publish_crates.result }}\`"
             echo "- publish_npm: \`${{ needs.publish_npm.result }}\`"
+            echo "- publish_pypi: \`${{ needs.publish_pypi.result }}\`"
             echo ""
             echo "If a job failed, inspect uploaded artifacts (\`crates-publish-log\`, \`npm-publish-log\`) and rerun with the same version; already-published packages are skipped."
           } >> "$GITHUB_STEP_SUMMARY"

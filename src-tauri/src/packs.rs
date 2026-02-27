@@ -154,6 +154,12 @@ fn resolve_pack_sources(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
         resource_dir.join("packs"),
         resource_dir
             .join("resources")
+            .join("agent-templates")
+            .join("packs"),
+        resource_dir.join("agent-templates").join("packs"),
+        // Legacy fallbacks (workspace-packs was renamed to agent-templates)
+        resource_dir
+            .join("resources")
             .join("workspace-packs")
             .join("packs"),
         resource_dir.join("workspace-packs").join("packs"),
@@ -162,6 +168,12 @@ fn resolve_pack_sources(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let docs_candidates = vec![
         resource_dir.join("resources").join("pack-docs"),
         resource_dir.join("pack-docs"),
+        resource_dir
+            .join("resources")
+            .join("agent-templates")
+            .join("pack-docs"),
+        resource_dir.join("agent-templates").join("pack-docs"),
+        // Legacy fallbacks
         resource_dir
             .join("resources")
             .join("workspace-packs")
@@ -178,10 +190,18 @@ fn resolve_pack_sources(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
             {
                 let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("..")
-                    .join("workspace-packs")
+                    .join("agent-templates")
                     .join("packs");
                 if dev.exists() {
                     return Some(dev);
+                }
+                // Legacy fallback
+                let legacy = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("workspace-packs")
+                    .join("packs");
+                if legacy.exists() {
+                    return Some(legacy);
                 }
             }
             None
@@ -202,10 +222,18 @@ fn resolve_pack_sources(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
             {
                 let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("..")
-                    .join("workspace-packs")
+                    .join("agent-templates")
                     .join("pack-docs");
                 if dev.exists() {
                     return Some(dev);
+                }
+                // Legacy fallback
+                let legacy = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("workspace-packs")
+                    .join("pack-docs");
+                if legacy.exists() {
+                    return Some(legacy);
                 }
             }
             None
