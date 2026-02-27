@@ -119,7 +119,7 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: packages/tandem-client-py
-        run: poetry install
+        run: poetry install -E dev
 
       - name: Test Python SDK
         working-directory: packages/tandem-client-py

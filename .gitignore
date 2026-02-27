@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 target/
 
@@ -53,6 +53,10 @@ docs/internal/
 
 # Test coverage
 coverage/
+
+# Python bytecode
+__pycache__/
+*.pyc
 
 # Tauri
 src-tauri/gen/
