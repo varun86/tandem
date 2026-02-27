@@ -38,7 +38,7 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
             print(event.properties.get("delta", ""), end="", flush=True)
 ```
 
-**→ [Download desktop app](https://tandem.frumu.ai/) · [Deploy on a VPS (5 min)](examples/agent-quickstart/) · [Read the docs](https://tandem.frumu.ai/)**
+**→ [Download desktop app](https://tandem.frumu.ai/) · [Deploy on a VPS (5 min)](examples/agent-quickstart/) · [Read the docs](https://tandem.docs.frumu.ai/)**
 
 ## Language Options
 
@@ -66,14 +66,12 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
 
 Tandem brings autonomous AI tools to anyone working with files — not just developers:
 
-| Persona | What Tandem does |
-|---------|-----------------|
-| **Developer** | Analyze codebases, automate refactors, run scheduled CI summaries |
-| **Researcher** | Synthesize papers, cross-reference notes, extract structured data |
-| **Writer** | Enforce consistency across manuscripts, generate structured outlines |
+| Persona         | What Tandem does                                                        |
+| --------------- | ----------------------------------------------------------------------- |
+| **Developer**   | Analyze codebases, automate refactors, run scheduled CI summaries       |
+| **Researcher**  | Synthesize papers, cross-reference notes, extract structured data       |
+| **Writer**      | Enforce consistency across manuscripts, generate structured outlines    |
 | **Ops / Admin** | Schedule document processing, connect Slack/Telegram bots, monitor logs |
-
-
 
 ## Features
 

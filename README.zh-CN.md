@@ -10,7 +10,35 @@
   </p>
 </div>
 
-一个本地优先（local-first）、注重隐私的 AI 工作空间。你的 AI 协作者完全运行在你的机器上。
+**Tandem 是一个本地优先（local-first）的自治 Agent 运行时。**  
+可作为桌面应用运行、在 VPS 上以无头服务运行，或通过 HTTP + SSE API 从任意语言接入。
+
+```typescript
+// npm install @frumu/tandem-client
+import { TandemClient } from "@frumu/tandem-client";
+
+const client = new TandemClient({ baseUrl: "http://localhost:39731", token: "..." });
+const sessionId = await client.sessions.create({ title: "My agent" });
+const { runId } = await client.sessions.promptAsync(sessionId, "Summarize README.md");
+
+for await (const event of client.stream(sessionId, runId)) {
+  if (event.type === "session.response") process.stdout.write(event.properties.delta ?? "");
+}
+```
+
+```python
+# pip install tandem-client
+from tandem_client import TandemClient
+
+async with TandemClient(base_url="http://localhost:39731", token="...") as client:
+    session_id = await client.sessions.create(title="My agent")
+    run = await client.sessions.prompt_async(session_id, "Summarize README.md")
+    async for event in client.stream(session_id, run.run_id):
+        if event.type == "session.response":
+            print(event.properties.get("delta", ""), end="", flush=True)
+```
+
+**→ [下载桌面版](https://tandem.frumu.ai/) · [5 分钟部署到 VPS](examples/agent-quickstart/) · [阅读文档](https://tandem.docs.frumu.ai/)**
 
 ## Language Options
 
@@ -38,25 +66,16 @@
 
 **🛠️ 现代技术栈**：基于 **Rust**、**Tauri**、**React** 和 **sqlite-vec** 构建，面向消费级硬件优化高性能与低内存占用。
 
-## 把开发者级 AI 能力带给每个人
+## 适合谁使用？
 
-在 2024 年，Cursor 等 AI 编码工具改变了开发者的工作方式：可以与整个代码库交互、自动化复杂任务、并在修改生效前完成审查。
+Tandem 将自治 AI 工具带给所有需要处理文件的人，而不只是开发者：
 
-**但为什么这些能力只属于程序员？**
-
-- 研究人员需要综合数百篇论文
-- 写作者需要在大型稿件中保持一致性
-- 分析师需要交叉核对季度报告
-- 管理人员需要整理海量文档
-
-Tandem 将同样的变革能力带给每个人。把它指向任意文件夹，你就能获得：
-
-- **全文件夹智能**：AI 理解你的整套资料，而不只是一份文件
-- **多步骤自动化**：把复杂任务拆解为可审查步骤
-- **可视化变更审查**：在执行前明确看到将发生的修改
-- **完整撤销**：一键回滚任意操作
-
-Cursor 为开发者做的事，Tandem 为所有人来做。
+| 角色            | Tandem 能做什么                                    |
+| --------------- | -------------------------------------------------- |
+| **开发者**      | 分析代码库、自动化重构、定时产出 CI 摘要           |
+| **研究者**      | 综合论文、交叉引用笔记、提取结构化数据             |
+| **写作者**      | 保持长文一致性、生成结构化大纲                     |
+| **运维 / 管理** | 定时处理文档、连接 Slack/Telegram 机器人、监控日志 |
 
 ## 功能特性
 
@@ -403,7 +422,7 @@ tandem/
 
 非技术用户专用 AI 助手思路见 [docs/todo_specialists.md](docs/todo_specialists.md)。
 
-## 为什么还是 Tandem？
+## 为什么选择 Tandem？
 
 面向想要以下能力的开发者与团队：
 
@@ -424,6 +443,10 @@ tandem/
 - 文档与示例完善
 
 [❤️ 成为赞助者](https://github.com/sponsors/frumu-ai)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=frumu-ai/tandem&type=date&logscale&legend=top-left)](https://www.star-history.com/#frumu-ai/tandem&type=date&logscale&legend=top-left)
 
 ## 许可证
 
