@@ -33,7 +33,8 @@ New-Item -ItemType File -Path $logFile -Force | Out-Null
 
 $packages = @(
     "packages/tandem-engine",
-    "packages/tandem-tui"
+    "packages/tandem-tui",
+    "packages/tandem-client-ts"
 )
 
 Write-Host "Publishing npm wrappers..."
@@ -80,13 +81,26 @@ Then retry:
 "@
     }
 
-    if ($DryRun) {
-        $publish = Invoke-NpmText -WorkingDirectory $dir -Command "npm publish --access public --dry-run"
-    } else {
-        $publishCommand = "npm publish --access public"
-        if ($Provenance) {
-            $publishCommand += " --provenance"
+    $publishCommand = "npm publish --access public"
+    if ($Provenance) {
+        $publishCommand += " --provenance"
+    }
+
+    # TS SDK publish path: build explicitly, then publish without lifecycle scripts.
+    # This avoids npm workspace dependency resolution failures in CI.
+    if ($dir -eq "packages/tandem-client-ts") {
+        "Building $name@$version with npx tsup" | Tee-Object -FilePath $logFile -Append
+        $build = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes tsup src/index.ts --format esm,cjs --dts --clean"
+        $build.Output | Tee-Object -FilePath $logFile -Append | Out-Null
+        if ($build.ExitCode -ne 0) {
+            throw "Failed building $name@$version"
         }
+        $publishCommand += " --ignore-scripts"
+    }
+
+    if ($DryRun) {
+        $publish = Invoke-NpmText -WorkingDirectory $dir -Command "$publishCommand --dry-run"
+    } else {
         if ($Otp) {
             $publishCommand += " --otp $Otp"
         }

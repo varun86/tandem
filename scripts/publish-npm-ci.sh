@@ -58,14 +58,23 @@ for dir in "${PACKAGES[@]}"; do
     continue
   fi
 
+  publish_cmd=(npm publish --access public)
+  if [[ "$PROVENANCE" == "true" ]]; then
+    publish_cmd+=(--provenance)
+  fi
+
+  # TS SDK publish path: build explicitly, then publish without lifecycle scripts.
+  # This avoids npm workspace dependency resolution failures in CI.
+  if [[ "$dir" == "packages/tandem-client-ts" ]]; then
+    echo "Building $name@$version with npx tsup" | tee -a "$LOG_FILE"
+    (cd "$dir" && npx --yes tsup src/index.ts --format esm,cjs --dts --clean) 2>&1 | tee -a "$LOG_FILE"
+    publish_cmd+=(--ignore-scripts)
+  fi
+
   if [[ "$DRY_RUN" == "true" ]]; then
-    (cd "$dir" && npm publish --access public --dry-run) 2>&1 | tee -a "$LOG_FILE"
+    (cd "$dir" && "${publish_cmd[@]}" --dry-run) 2>&1 | tee -a "$LOG_FILE"
   else
-    publish_args=(--access public)
-    if [[ "$PROVENANCE" == "true" ]]; then
-      publish_args+=(--provenance)
-    fi
-    (cd "$dir" && npm publish "${publish_args[@]}") 2>&1 | tee -a "$LOG_FILE"
+    (cd "$dir" && "${publish_cmd[@]}") 2>&1 | tee -a "$LOG_FILE"
   fi
 
   echo "OK $name@$version" | tee -a "$LOG_FILE"
