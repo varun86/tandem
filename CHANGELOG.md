@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.23] - 2026-02-27
+
+### Added
+
+- **TypeScript SDK token lifecycle mutator**: Added `TandemClient.setToken(token)` in `@frumu/tandem-client` for explicit auth-token updates across future HTTP/SSE calls.
+
+### Changed
+
+- **Agent quickstart SDK migration**: Updated `examples/agent-quickstart` to current TS SDK namespaces and models (providers/channels/permissions/messages/tools/routines), replacing legacy API usage and aligning event/run-state handling.
+- **Quickstart client auth wiring**: Refactored quickstart API/auth context to explicit token management helpers (`setClientToken`, `clearClientToken`, `verifyToken`) and removed direct internal-client mutation patterns.
+- **Release bump parity (shell + PowerShell)**: Updated `scripts/bump-version.sh` and `scripts/bump-version.ps1` so version bumps include:
+  - `packages/tandem-client-ts/package.json`
+  - `packages/tandem-client-py/pyproject.toml`
+
+### Fixed
+
+- **Agent quickstart TypeScript build failures**: Resolved compile errors caused by SDK API-shape drift (including invalid imports, outdated method paths, strict type mismatches, and stale event/tool/run field assumptions).
+
 ## [0.3.22] - 2026-02-26
 
 ### Added

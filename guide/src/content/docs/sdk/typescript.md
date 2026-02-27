@@ -11,6 +11,17 @@ npm install @frumu/tandem-client
 
 Requires **Node.js 18+** (uses native `fetch` and `ReadableStream`).
 
+## Engine prerequisite
+
+The SDK talks to a running `tandem-engine` over HTTP/SSE. Install and start the engine first:
+
+```bash
+npm install -g @frumu/tandem
+tandem-engine serve --api-token "$(tandem-engine token generate)"
+```
+
+Then pass the same token into `new TandemClient({ baseUrl, token })`.
+
 ## Quick start
 
 ```typescript
@@ -50,43 +61,43 @@ new TandemClient({ baseUrl, token, timeoutMs? })
 
 ### Top-level methods
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `health()` | `SystemHealth` | Check engine readiness |
-| `stream(sessionId, runId?)` | `AsyncGenerator<EngineEvent>` | Stream events from an active run |
-| `globalStream()` | `AsyncGenerator<EngineEvent>` | Stream all engine events |
-| `runEvents(runId, { sinceSeq?, tail? })` | `EngineEvent[]` | Pull stored run events |
-| `listToolIds()` | `string[]` | List all tool IDs |
-| `listTools()` | `ToolSchema[]` | List tools with full schemas |
-| `executeTool(tool, args?)` | `ToolExecuteResult` | Execute a tool directly |
+| Method                                   | Returns                       | Description                      |
+| ---------------------------------------- | ----------------------------- | -------------------------------- |
+| `health()`                               | `SystemHealth`                | Check engine readiness           |
+| `stream(sessionId, runId?)`              | `AsyncGenerator<EngineEvent>` | Stream events from an active run |
+| `globalStream()`                         | `AsyncGenerator<EngineEvent>` | Stream all engine events         |
+| `runEvents(runId, { sinceSeq?, tail? })` | `EngineEvent[]`               | Pull stored run events           |
+| `listToolIds()`                          | `string[]`                    | List all tool IDs                |
+| `listTools()`                            | `ToolSchema[]`                | List tools with full schemas     |
+| `executeTool(tool, args?)`               | `ToolExecuteResult`           | Execute a tool directly          |
 
 ---
 
 ### `client.sessions`
 
-| Method | Description |
-|--------|-------------|
-| `create({ title?, directory?, provider?, model? })` | Create a session, returns `sessionId` |
-| `list({ q?, page?, pageSize?, archived?, scope?, workspace? })` | List sessions |
-| `get(sessionId)` | Get session details |
-| `update(sessionId, { title?, archived? })` | Update title or archive status |
-| `archive(sessionId)` | Archive a session |
-| `delete(sessionId)` | Permanently delete a session |
-| `messages(sessionId)` | Get full message history |
-| `todos(sessionId)` | Get pending TODOs |
-| `activeRun(sessionId)` | Get the currently active run |
-| `promptAsync(sessionId, prompt)` | Start async run → `{ runId }` |
-| `promptSync(sessionId, prompt)` | Blocking prompt → reply text |
-| `abort(sessionId)` | Abort the active run |
-| `cancel(sessionId)` | Cancel the active run |
-| `cancelRun(sessionId, runId)` | Cancel a specific run |
-| `fork(sessionId)` | Fork into a child session |
-| `diff(sessionId)` | Get workspace diff from last run |
-| `revert(sessionId)` | Revert uncommitted changes |
-| `unrevert(sessionId)` | Undo a revert |
-| `children(sessionId)` | List forked child sessions |
-| `summarize(sessionId)` | Trigger conversation summarization |
-| `attach(sessionId, targetWorkspace)` | Re-attach to a different workspace |
+| Method                                                          | Description                           |
+| --------------------------------------------------------------- | ------------------------------------- |
+| `create({ title?, directory?, provider?, model? })`             | Create a session, returns `sessionId` |
+| `list({ q?, page?, pageSize?, archived?, scope?, workspace? })` | List sessions                         |
+| `get(sessionId)`                                                | Get session details                   |
+| `update(sessionId, { title?, archived? })`                      | Update title or archive status        |
+| `archive(sessionId)`                                            | Archive a session                     |
+| `delete(sessionId)`                                             | Permanently delete a session          |
+| `messages(sessionId)`                                           | Get full message history              |
+| `todos(sessionId)`                                              | Get pending TODOs                     |
+| `activeRun(sessionId)`                                          | Get the currently active run          |
+| `promptAsync(sessionId, prompt)`                                | Start async run → `{ runId }`         |
+| `promptSync(sessionId, prompt)`                                 | Blocking prompt → reply text          |
+| `abort(sessionId)`                                              | Abort the active run                  |
+| `cancel(sessionId)`                                             | Cancel the active run                 |
+| `cancelRun(sessionId, runId)`                                   | Cancel a specific run                 |
+| `fork(sessionId)`                                               | Fork into a child session             |
+| `diff(sessionId)`                                               | Get workspace diff from last run      |
+| `revert(sessionId)`                                             | Revert uncommitted changes            |
+| `unrevert(sessionId)`                                           | Undo a revert                         |
+| `children(sessionId)`                                           | List forked child sessions            |
+| `summarize(sessionId)`                                          | Trigger conversation summarization    |
+| `attach(sessionId, targetWorkspace)`                            | Re-attach to a different workspace    |
 
 ### `client.permissions`
 
@@ -246,11 +257,12 @@ await client.agentTeams.approveSpawn(spawnApprovals[0].approvalID!);
 const { mission } = await client.missions.create({
   title: "Q1 Security Hardening",
   goal: "Audit and fix all critical security issues",
-  work_items: [
-    { title: "Audit auth middleware", assigned_agent: "security-auditor" },
-  ],
+  work_items: [{ title: "Audit auth middleware", assigned_agent: "security-auditor" }],
 });
 
 const full = await client.missions.get(mission!.id!);
-await client.missions.applyEvent(mission!.id!, { type: "work_item.completed", work_item_id: "..." });
+await client.missions.applyEvent(mission!.id!, {
+  type: "work_item.completed",
+  work_item_id: "...",
+});
 ```

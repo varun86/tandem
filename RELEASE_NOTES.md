@@ -2,6 +2,21 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.23 (Unreleased)
+
+- SDK and example alignment (TypeScript + Python)
+  - Added explicit TS SDK token lifecycle support via `TandemClient.setToken(token)` to support auth updates without rebuilding calling code.
+  - Migrated `examples/agent-quickstart` to the current `@frumu/tandem-client` API surface:
+    - replaced legacy `client.config.*` and `client.tools.*` usage
+    - updated session/message/permissions flows to current namespaces
+    - aligned run-state and event-stream handling with current SDK event/model contracts
+  - Resolved strict TypeScript compile issues across quickstart pages so `agent-quickstart` builds cleanly.
+- Release tooling parity
+  - Updated `scripts/bump-version.sh` and `scripts/bump-version.ps1` to include both SDK packages:
+    - `packages/tandem-client-ts/package.json`
+    - `packages/tandem-client-py/pyproject.toml`
+  - Ensures version bumps stay synchronized across engine/runtime crates, npm packages, and Python SDK releases.
+
 ## v0.3.22 (Unreleased)
 
 - Engine-first context-driving reliability expansion

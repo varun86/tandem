@@ -66,10 +66,10 @@ impl EmbeddingService {
         #[cfg(not(feature = "local-embeddings"))]
         {
             let _ = model_name;
-            return (
+            (
                 None,
                 Some("local embeddings are disabled at build time".to_string()),
-            );
+            )
         }
 
         #[cfg(feature = "local-embeddings")]
@@ -163,7 +163,7 @@ impl EmbeddingService {
         #[cfg(not(feature = "local-embeddings"))]
         {
             let _ = text;
-            return Err(self.unavailable_error());
+            Err(self.unavailable_error())
         }
 
         #[cfg(feature = "local-embeddings")]
@@ -188,7 +188,7 @@ impl EmbeddingService {
         #[cfg(not(feature = "local-embeddings"))]
         {
             let _ = texts;
-            return Err(self.unavailable_error());
+            Err(self.unavailable_error())
         }
 
         #[cfg(feature = "local-embeddings")]

@@ -11,6 +11,17 @@ pip install tandem-client
 
 Requires **Python 3.10+**.
 
+## Engine prerequisite
+
+The SDK talks to a running `tandem-engine` over HTTP/SSE. Install and start the engine first:
+
+```bash
+npm install -g @frumu/tandem
+tandem-engine serve --api-token "$(tandem-engine token generate)"
+```
+
+Then pass the same token into `TandemClient(base_url=..., token=...)`.
+
 ## Quick start
 
 ```python
@@ -67,43 +78,43 @@ TandemClient(base_url, token, *, timeout=20.0)
 
 ### Top-level methods
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `await health()` | `SystemHealth` | Check engine readiness |
-| `stream(session_id, run_id?)` | `AsyncGenerator[EngineEvent]` | Stream events from a run |
-| `global_stream()` | `AsyncGenerator[EngineEvent]` | Stream all engine events |
-| `await run_events(run_id, *, since_seq?, tail?)` | `list[EngineEvent]` | Pull stored run events |
-| `await list_tool_ids()` | `list[str]` | List all tool IDs |
-| `await list_tools()` | `list[ToolSchema]` | List tools with schemas |
-| `await execute_tool(tool, args?)` | `ToolExecuteResult` | Execute a tool directly |
+| Method                                           | Returns                       | Description              |
+| ------------------------------------------------ | ----------------------------- | ------------------------ |
+| `await health()`                                 | `SystemHealth`                | Check engine readiness   |
+| `stream(session_id, run_id?)`                    | `AsyncGenerator[EngineEvent]` | Stream events from a run |
+| `global_stream()`                                | `AsyncGenerator[EngineEvent]` | Stream all engine events |
+| `await run_events(run_id, *, since_seq?, tail?)` | `list[EngineEvent]`           | Pull stored run events   |
+| `await list_tool_ids()`                          | `list[str]`                   | List all tool IDs        |
+| `await list_tools()`                             | `list[ToolSchema]`            | List tools with schemas  |
+| `await execute_tool(tool, args?)`                | `ToolExecuteResult`           | Execute a tool directly  |
 
 ---
 
 ### `client.sessions`
 
-| Method | Description |
-|--------|-------------|
-| `create(*, title?, directory?, provider?, model?)` | Create a session, returns `session_id` |
-| `list(*, q?, page?, page_size?, archived?, scope?, workspace?)` | List sessions |
-| `get(session_id)` | Get session details |
-| `update(session_id, *, title?, archived?)` | Update title or archive status |
-| `archive(session_id)` | Archive a session |
-| `delete(session_id)` | Permanently delete |
-| `messages(session_id)` | Full message history |
-| `todos(session_id)` | Pending TODOs |
-| `active_run(session_id)` | Currently active run |
-| `prompt_async(session_id, prompt)` | Start async run → `PromptAsyncResult(run_id)` |
-| `prompt_sync(session_id, prompt)` | Blocking prompt → reply `str` |
-| `abort(session_id)` | Abort the active run |
-| `cancel(session_id)` | Cancel the active run |
-| `cancel_run(session_id, run_id)` | Cancel a specific run |
-| `fork(session_id)` | Fork into a child session |
-| `diff(session_id)` | Workspace diff from last run |
-| `revert(session_id)` | Revert uncommitted changes |
-| `unrevert(session_id)` | Undo a revert |
-| `children(session_id)` | List forked child sessions |
-| `summarize(session_id)` | Trigger conversation summarization |
-| `attach(session_id, target_workspace)` | Re-attach to a different workspace |
+| Method                                                          | Description                                   |
+| --------------------------------------------------------------- | --------------------------------------------- |
+| `create(*, title?, directory?, provider?, model?)`              | Create a session, returns `session_id`        |
+| `list(*, q?, page?, page_size?, archived?, scope?, workspace?)` | List sessions                                 |
+| `get(session_id)`                                               | Get session details                           |
+| `update(session_id, *, title?, archived?)`                      | Update title or archive status                |
+| `archive(session_id)`                                           | Archive a session                             |
+| `delete(session_id)`                                            | Permanently delete                            |
+| `messages(session_id)`                                          | Full message history                          |
+| `todos(session_id)`                                             | Pending TODOs                                 |
+| `active_run(session_id)`                                        | Currently active run                          |
+| `prompt_async(session_id, prompt)`                              | Start async run → `PromptAsyncResult(run_id)` |
+| `prompt_sync(session_id, prompt)`                               | Blocking prompt → reply `str`                 |
+| `abort(session_id)`                                             | Abort the active run                          |
+| `cancel(session_id)`                                            | Cancel the active run                         |
+| `cancel_run(session_id, run_id)`                                | Cancel a specific run                         |
+| `fork(session_id)`                                              | Fork into a child session                     |
+| `diff(session_id)`                                              | Workspace diff from last run                  |
+| `revert(session_id)`                                            | Revert uncommitted changes                    |
+| `unrevert(session_id)`                                          | Undo a revert                                 |
+| `children(session_id)`                                          | List forked child sessions                    |
+| `summarize(session_id)`                                         | Trigger conversation summarization            |
+| `attach(session_id, target_workspace)`                          | Re-attach to a different workspace            |
 
 ### `client.permissions`
 

@@ -544,15 +544,15 @@ fn sandbox_path_denied_result(path: &str, args: &Value) -> ToolResult {
         .file_name()
         .filter(|name| !name.is_empty())
         .map(PathBuf::from)
-        .and_then(|name| {
+        .map(|name| {
             if let Some(root) = workspace_root.as_ref() {
                 if is_within_workspace_root(&effective_cwd, root) {
-                    Some(effective_cwd.join(name))
+                    effective_cwd.join(name)
                 } else {
-                    Some(root.join(name))
+                    root.join(name)
                 }
             } else {
-                Some(effective_cwd.join(name))
+                effective_cwd.join(name)
             }
         });
 
