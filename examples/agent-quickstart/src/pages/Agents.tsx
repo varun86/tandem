@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { client } from "../api";
-import { RoutineRecord, JsonObject } from "@frumu/tandem-client/models";
+import { RoutineRecord, RoutineSchedule } from "@frumu/tandem-client";
 import {
   Clock,
   Plus,
@@ -31,16 +31,16 @@ function parseCron(s?: string): string {
 }
 
 function getScheduleLabel(r: RoutineRecord): string {
-  const sch = r.schedule as Record<string, unknown> | undefined;
-  if (!sch) return "Manual";
-  const cron = typeof sch.cron === "string" ? sch.cron : null;
-  const interval = typeof sch.interval_seconds === "number" ? sch.interval_seconds : null;
-  if (cron) return parseCron(cron);
-  if (interval) {
+  if (!r.schedule) return "Manual";
+  if (typeof r.schedule === "string") return r.schedule;
+  if (r.schedule.type === "cron") return parseCron(r.schedule.cron);
+  if (r.schedule.type === "interval") {
+    const interval = r.schedule.intervalMs / 1000;
     if (interval < 120) return `Every ${interval}s`;
     if (interval < 3600) return `Every ${Math.round(interval / 60)}m`;
     return `Every ${Math.round(interval / 3600)}h`;
   }
+  if (r.schedule.type === "manual") return "Manual";
   return "Scheduled";
 }
 
@@ -65,12 +65,12 @@ function CreateForm({ onCreate }: CreateFormProps) {
     setSaving(true);
     setErr(null);
     try {
-      const schedule: JsonObject =
+      const schedule: RoutineSchedule | undefined =
         scheduleType === "interval"
-          ? { interval_seconds: parseInt(intervalMin) * 60 }
+          ? { type: "interval", intervalMs: parseInt(intervalMin) * 60 * 1000 }
           : scheduleType === "cron"
-            ? { cron }
-            : {};
+            ? { type: "cron", cron }
+            : { type: "manual" };
       await client.routines.create({ name: name.trim(), prompt: prompt.trim(), schedule });
       setName("");
       setPrompt("");
@@ -200,7 +200,9 @@ function RoutineCard({
           <ChevronRight size={14} className="text-gray-500 shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-100 truncate">{r.name || r.title || r.id}</p>
+          <p className="text-sm font-medium text-gray-100 truncate">
+            {r.name || (r.title as string) || r.id}
+          </p>
           <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
             <Calendar size={10} />
             {getScheduleLabel(r)}
@@ -221,9 +223,12 @@ function RoutineCard({
               {r.prompt}
             </p>
           )}
-          {(r.last_run || r.last_run_at) && (
+          {(r.lastRun || r.lastRunAt || r.last_run || r.last_run_at) && (
             <p className="text-xs text-gray-500">
-              Last run: <span className="text-gray-400">{String(r.last_run || r.last_run_at)}</span>
+              Last run:{" "}
+              <span className="text-gray-400">
+                {String(r.lastRun || r.lastRunAt || r.last_run || r.last_run_at)}
+              </span>
             </p>
           )}
           <div className="flex items-center gap-2 pt-1">
