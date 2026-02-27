@@ -355,7 +355,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Build Tools
         run: pip install build twine
@@ -372,7 +372,8 @@ jobs:
 
       - name: Dry Run Info
         if: needs.preflight.outputs.dry_run == 'true'
-        run: echo "Dry Run: Skipping PyPI upload for tandem-client-py"
+        run: |
+          echo "Dry Run: Skipping PyPI upload for tandem-client-py"
 
   summary:
     name: Publish Summary
