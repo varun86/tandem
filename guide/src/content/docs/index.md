@@ -15,6 +15,7 @@ To help you find what you need quickly, please select the path that best describ
 _You want to run the native Tandem desktop app or terminal UI to assist you with local file tasks, writing, coding, or managing agents._
 
 - **[TUI Guide](./tui-guide/)** — Learn how to navigate the Terminal UI.
+- **[Control Panel (Web Admin)](./control-panel/)** — Run Tandem from a browser UI.
 - **[Agents & Sessions](./agents-and-sessions/)** — Understand how sessions and context work.
 - **[Agent Teams](./agent-teams/)** — Learn how Tandem orchestrates specialized sub-agents.
 - **[Configuration](./configuration/)** — Setup providers, API keys, and system instructions.
@@ -25,6 +26,7 @@ _You want to run the native Tandem desktop app or terminal UI to assist you with
 
 _You want to deploy Tandem to a VPS or headless server so that you, or your external applications, can access autonomous agents remotely._
 
+- **[Control Panel (Web Admin)](./control-panel/)** — Install and run the npm web admin package.
 - **[Headless Service](./headless-service/)** — Run the Tandem Engine in headless API mode.
 - **[Channel Integrations](./channel-integrations/)** — Connect Telegram, Discord, and Slack with media-aware prompt flow.
 - **[Deployment Guide](./desktop/headless-deployment/)** — Learn best practices for securely exposing Tandem.

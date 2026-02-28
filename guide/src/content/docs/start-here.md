@@ -14,7 +14,15 @@ Use this if you want `tandem-engine` and `tandem-tui` from the terminal.
 - Install: [Install CLI Binaries](./install-cli-binaries/)
 - Then: [First Run Checklist](./first-run/)
 
-## Path 2: Build from Source
+## Path 2: Web Control Panel
+
+Use this if you want a browser-first workflow for chat, routines, channels, and memory.
+
+- npm package:
+  - `@frumu/tandem-panel`
+- Install + run: [Control Panel (Web Admin)](./control-panel/)
+
+## Path 3: Build from Source
 
 Use this if you are contributing, debugging internals, or need custom builds.
 

@@ -46,7 +46,7 @@ export default defineConfig({
       sidebar: [
         {
           label: "Introduction",
-          items: ["start-here", "install-cli-binaries"],
+          items: ["start-here", "install-cli-binaries", "control-panel"],
         },
         {
           label: "Desktop & TUI Guide",
@@ -54,7 +54,7 @@ export default defineConfig({
         },
         {
           label: "Server & Deployment",
-          items: ["headless-service", "channel-integrations", "desktop/headless-deployment", "installation"],
+          items: ["control-panel", "headless-service", "channel-integrations", "desktop/headless-deployment", "installation"],
         },
         {
           label: "Developer Guide & SDKs",
