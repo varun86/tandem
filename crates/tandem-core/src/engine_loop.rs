@@ -612,17 +612,6 @@ impl EngineLoop {
                             );
                             continue;
                         }
-                        let entry = tool_call_counts.entry(tool_key.clone()).or_insert(0);
-                        *entry += 1;
-                        let budget = tool_budget_for(&tool_key);
-                        if *entry > budget {
-                            outputs.push(format!(
-                                "Tool `{}` call skipped: per-run guard budget exceeded ({}).",
-                                tool_key, budget
-                            ));
-                            guard_budget_hit_in_cycle = true;
-                            continue;
-                        }
                         let mut effective_args = args.clone();
                         if tool_key == "todo_write" {
                             effective_args = normalize_todo_write_args(effective_args, &completion);
@@ -688,6 +677,17 @@ impl EngineLoop {
                                 continue;
                             }
                         }
+                        let budget = tool_budget_for(&tool_key);
+                        let entry = tool_call_counts.entry(tool_key.clone()).or_insert(0);
+                        if *entry >= budget {
+                            outputs.push(format!(
+                                "Tool `{}` call skipped: per-run guard budget exceeded ({}).",
+                                tool_key, budget
+                            ));
+                            guard_budget_hit_in_cycle = true;
+                            continue;
+                        }
+                        *entry += 1;
                         if let Some(output) = self
                             .execute_tool_with_permission(
                                 &session_id,
@@ -1988,14 +1988,20 @@ fn find_first_url(text: &str) -> Option<String> {
 }
 
 fn tool_budget_for(tool_name: &str) -> usize {
-    match normalize_tool_name(tool_name).as_str() {
-        "glob" => 4,
-        "read" => 8,
-        "websearch" => 3,
-        "batch" => 4,
-        "grep" | "search" | "codesearch" => 6,
-        _ => 10,
-    }
+    let normalized = normalize_tool_name(tool_name);
+    let (default_budget, env_key) = match normalized.as_str() {
+        "glob" => (4usize, "TANDEM_TOOL_BUDGET_GLOB"),
+        "read" => (8usize, "TANDEM_TOOL_BUDGET_READ"),
+        "websearch" => (8usize, "TANDEM_TOOL_BUDGET_WEBSEARCH"),
+        "batch" => (10usize, "TANDEM_TOOL_BUDGET_BATCH"),
+        "grep" | "search" | "codesearch" => (6usize, "TANDEM_TOOL_BUDGET_SEARCH"),
+        _ => (10usize, "TANDEM_TOOL_BUDGET_DEFAULT"),
+    };
+    std::env::var(env_key)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default_budget)
 }
 
 fn is_guard_budget_tool_output(output: &str) -> bool {

@@ -56,6 +56,12 @@ interface ModelSpec {
   provider: string;
   model: string;
 }
+interface ToolActivity {
+  id: string;
+  tool: string;
+  status: "started" | "completed" | "failed";
+  at: number;
+}
 interface MemoryActivity {
   id: string;
   action: "store" | "search" | "list";
@@ -282,6 +288,9 @@ export default function ChatBrain() {
     return localStorage.getItem(AUTO_ALLOW_KEY) === "1";
   });
   const [memoryActivity, setMemoryActivity] = useState<MemoryActivity[]>([]);
+  const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const [showAllTools, setShowAllTools] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [logOpen, setLogOpen] = useState(false);
@@ -290,6 +299,8 @@ export default function ChatBrain() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastPromptRef = useRef<string | null>(null);
+  const memoryEventSeenRef = useRef<Set<string>>(new Set());
+  const toolEventSeenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -315,7 +326,14 @@ export default function ChatBrain() {
   }, []);
 
   const recordMemoryActivity = useCallback(
-    (toolName: string, status: MemoryActivity["status"]) => {
+    (toolName: string, status: MemoryActivity["status"], eventKey?: string) => {
+      if (eventKey) {
+        if (memoryEventSeenRef.current.has(eventKey)) return;
+        memoryEventSeenRef.current.add(eventKey);
+        if (memoryEventSeenRef.current.size > 500) {
+          memoryEventSeenRef.current.clear();
+        }
+      }
       const action = parseMemoryAction(toolName);
       if (!action) return;
       const item: MemoryActivity = {
@@ -335,6 +353,30 @@ export default function ChatBrain() {
       }
     },
     [addLog]
+  );
+
+  const recordToolActivity = useCallback(
+    (toolName: string, status: ToolActivity["status"], eventKey?: string) => {
+      const normalizedTool = toolName.trim();
+      if (!normalizedTool) return;
+      if (eventKey) {
+        if (toolEventSeenRef.current.has(eventKey)) return;
+        toolEventSeenRef.current.add(eventKey);
+        if (toolEventSeenRef.current.size > 1000) toolEventSeenRef.current.clear();
+      }
+      setToolActivity((prev) =>
+        [
+          {
+            id: `${normalizedTool}:${status}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+            tool: normalizedTool,
+            status,
+            at: Date.now(),
+          },
+          ...prev,
+        ].slice(0, 40)
+      );
+    },
+    []
   );
 
   const refreshToolIds = useCallback(async () => {
@@ -620,7 +662,8 @@ export default function ChatBrain() {
         } else if (type === "tool.called" || type === "tool_call.started") {
           const tool = (data.properties?.tool as string) || "tool";
           addLog(`▶ ${tool}`);
-          recordMemoryActivity(tool, "started");
+          recordMemoryActivity(tool, "started", `${type}:${runId || "run"}:${tool}:start`);
+          recordToolActivity(tool, "started", `${type}:${runId || "run"}:${tool}:start`);
           setMessages((p) => [
             ...p,
             {
@@ -640,7 +683,16 @@ export default function ChatBrain() {
           const result = String(data.properties?.result || data.properties?.error || "");
           const failed = type === "tool_call.failed";
           addLog(`✓ ${tool}`);
-          recordMemoryActivity(tool, failed ? "failed" : "completed");
+          recordMemoryActivity(
+            tool,
+            failed ? "failed" : "completed",
+            `${type}:${runId || "run"}:${tool}:${failed ? "failed" : "completed"}`
+          );
+          recordToolActivity(
+            tool,
+            failed ? "failed" : "completed",
+            `${type}:${runId || "run"}:${tool}:${failed ? "failed" : "completed"}`
+          );
           setMessages((p) => {
             const u = [...p];
             for (let i = u.length - 1; i >= 0; i--) {
@@ -653,6 +705,46 @@ export default function ChatBrain() {
           });
         } else if (type === "approval.requested") {
           void refreshApprovals(sid);
+        } else if (type === "message.part.updated") {
+          const part = data.properties?.part as Record<string, unknown> | undefined;
+          const partType = String(part?.type || "").trim();
+          const tool = String(part?.tool || part?.toolName || "").trim();
+          if (tool) {
+            const partId = String(part?.id || "").trim();
+            if (partType === "tool_invocation") {
+              recordToolActivity(
+                tool,
+                "started",
+                `${type}:${partId || runId || "run"}:${tool}:start`
+              );
+            } else if (partType === "tool_result") {
+              const state = String(part?.state || "").toLowerCase();
+              const failed = state === "failed" || state === "error";
+              recordToolActivity(
+                tool,
+                failed ? "failed" : "completed",
+                `${type}:${partId || runId || "run"}:${tool}:${failed ? "failed" : "completed"}`
+              );
+            }
+          }
+          if (tool && parseMemoryAction(tool)) {
+            const partId = String(part?.id || "").trim();
+            if (partType === "tool_invocation") {
+              recordMemoryActivity(
+                tool,
+                "started",
+                `${type}:${partId || runId || "run"}:${tool}:start`
+              );
+            } else if (partType === "tool_result") {
+              const state = String(part?.state || "").toLowerCase();
+              const failed = state === "failed" || state === "error";
+              recordMemoryActivity(
+                tool,
+                failed ? "failed" : "completed",
+                `${type}:${partId || runId || "run"}:${tool}:${failed ? "failed" : "completed"}`
+              );
+            }
+          }
         } else if (type === "mcp.auth.required" || type === "mcp.auth.pending") {
           const challengeId = String(data.properties?.challengeId || "").trim();
           const authorizationUrl = String(data.properties?.authorizationUrl || "").trim();
@@ -791,6 +883,8 @@ export default function ChatBrain() {
     localStorage.setItem(ACTIVE_KEY, sid);
     addLog(`Loading session ${sid.slice(0, 8)}`);
     setMcpAuthChallenges([]);
+    memoryEventSeenRef.current.clear();
+    toolEventSeenRef.current.clear();
     void refreshToolIds();
     void refreshApprovals(sid);
     await ensurePrimed(sid);
@@ -880,6 +974,9 @@ export default function ChatBrain() {
     setPendingApprovals([]);
     setMcpAuthChallenges([]);
     setMemoryActivity([]);
+    setToolActivity([]);
+    memoryEventSeenRef.current.clear();
+    toolEventSeenRef.current.clear();
     setIsThinking(false);
     await ensurePrimed(sid);
     void refreshToolIds();
@@ -996,6 +1093,9 @@ export default function ChatBrain() {
     setMessages([]);
     setLog([]);
     setMemoryActivity([]);
+    setToolActivity([]);
+    memoryEventSeenRef.current.clear();
+    toolEventSeenRef.current.clear();
     const stored = loadStoredSessions().find((s) => s.id === sid);
     if (stored) setSessionTitle(stored.title);
     await loadSession(sid);
@@ -1306,21 +1406,63 @@ export default function ChatBrain() {
 
       {/* Right panel: session info on desktop */}
       <div className="hidden 2xl:flex w-52 bg-gray-900/50 border-l border-gray-800 flex-col py-4 px-3 gap-4 shrink-0">
+        <div className="space-y-2">
+          <button
+            onClick={() => setToolsExpanded((v) => !v)}
+            className="w-full flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-600 hover:text-gray-300"
+          >
+            <span>Tools Available</span>
+            <span>{toolsExpanded ? "▾" : "▸"}</span>
+          </button>
+          {toolsExpanded && (
+            <>
+              <div className="flex flex-wrap gap-1">
+                {(showAllTools ? availableTools : availableTools.slice(0, 12)).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setInput((prev) => (prev ? `${prev} ${t}` : t))}
+                    className="text-[10px] font-mono bg-gray-800 text-gray-300 hover:text-white rounded px-1.5 py-0.5 border border-gray-700"
+                    title={`Click to insert ${t} into prompt`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              {availableTools.length > 12 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllTools((v) => !v)}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300"
+                >
+                  {showAllTools ? "Show fewer" : `Show all tools (+${availableTools.length - 12})`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
         <div>
-          <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
-            Tools Available
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {availableTools.slice(0, 12).map((t) => (
-              <span
-                key={t}
-                className="text-[10px] font-mono bg-gray-800 text-gray-400 rounded px-1.5 py-0.5"
-              >
-                {t}
-              </span>
-            ))}
-            {availableTools.length > 12 && (
-              <span className="text-[10px] text-gray-600">+{availableTools.length - 12} more</span>
+          <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">Tool Activity</p>
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {toolActivity.slice(0, 10).map((entry) => {
+              const cls =
+                entry.status === "completed"
+                  ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
+                  : entry.status === "failed"
+                    ? "text-rose-300 border-rose-500/30 bg-rose-500/10"
+                    : "text-sky-300 border-sky-500/30 bg-sky-500/10";
+              return (
+                <div
+                  key={entry.id}
+                  className={`text-[10px] font-mono rounded border px-1.5 py-1 ${cls}`}
+                  title={new Date(entry.at).toLocaleTimeString()}
+                >
+                  {entry.tool}: {entry.status}
+                </div>
+              );
+            })}
+            {toolActivity.length === 0 && (
+              <p className="text-[10px] text-gray-600">No tool events yet.</p>
             )}
           </div>
         </div>

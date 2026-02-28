@@ -1,0 +1,21 @@
+{
+  "routine_id": "swarm-health-check",
+  "name": "Swarm Health Check",
+  "schedule": {
+    "cron": {
+      "expression": "*/10 * * * *"
+    }
+  },
+  "timezone": "UTC",
+  "misfire_policy": "run_once",
+  "entrypoint": "mission.default",
+  "args": {
+    "mode": "standalone",
+    "uses_external_integrations": true,
+    "prompt": "Run: bash examples/agent-swarm/scripts/check_swarm_health.sh. Summarize stuck tasks and GitHub check results from swarm registry key (auto-resolve swarm.active_tasks then project/swarm.active_tasks)."
+  },
+  "allowed_tools": ["bash", "read", "mcp.arcade.*"],
+  "requires_approval": true,
+  "external_integrations_allowed": true,
+  "output_targets": ["file://reports/swarm-health/latest.txt"]
+}

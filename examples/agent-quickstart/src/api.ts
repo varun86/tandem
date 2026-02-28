@@ -158,3 +158,101 @@ export const asEpochMs = (v: unknown): number => {
   if (typeof v !== "number" || !Number.isFinite(v)) return Date.now();
   return v < 1_000_000_000_000 ? Math.trunc(v * 1000) : Math.trunc(v);
 };
+
+export interface SharedResourceRecord<T = unknown> {
+  key: string;
+  value: T;
+  rev?: string;
+  updated_at_ms?: number;
+  updated_by?: string;
+}
+
+export interface SwarmTaskRecord {
+  taskId: string;
+  title: string;
+  ownerRole: string;
+  status: string;
+  statusReason?: string;
+  sessionId: string;
+  runId: string;
+  worktreePath: string;
+  branch: string;
+  prUrl?: string;
+  prNumber?: number;
+  checksStatus?: string;
+  lastUpdateMs: number;
+  blockedBy?: "approval" | "auth" | "error";
+  notifyOnComplete: true;
+}
+
+export interface SwarmRegistry {
+  version: number;
+  updatedAtMs: number;
+  tasks: Record<string, SwarmTaskRecord>;
+}
+
+export const getSharedResource = async <T = unknown>(
+  key: string
+): Promise<SharedResourceRecord<T> | null> => {
+  try {
+    return await engineRequest<SharedResourceRecord<T>>(`/resource/${encodeURIComponent(key)}`);
+  } catch {
+    return null;
+  }
+};
+
+export const putSharedResource = async <T = unknown>(
+  key: string,
+  value: T,
+  updatedBy = "agent-quickstart.swarm-ui"
+): Promise<SharedResourceRecord<T>> =>
+  engineRequest<SharedResourceRecord<T>>(`/resource/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      value,
+      updated_by: updatedBy,
+    }),
+  });
+
+export const listRoutinesRaw = async (): Promise<unknown[]> =>
+  engineRequest<unknown[]>("/routines");
+
+export const upsertRoutineRaw = async (payload: Record<string, unknown>) =>
+  engineRequest<Record<string, unknown>>("/routines", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const runRoutineNowRaw = async (routineId: string) =>
+  engineRequest<Record<string, unknown>>(`/routines/${encodeURIComponent(routineId)}/run_now`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const launchSwarmManager = async (
+  objective: string,
+  workspaceRoot: string
+): Promise<{ ok: boolean; stdout?: string; stderr?: string; sessionId: string }> => {
+  const session = await engineRequest<{ id: string }>("/session", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Swarm UI Launcher",
+      directory: workspaceRoot,
+      workspace_root: workspaceRoot,
+    }),
+  });
+
+  const command = await engineRequest<{ ok: boolean; stdout?: string; stderr?: string }>(
+    `/session/${encodeURIComponent(session.id)}/command`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        command: "node",
+        args: ["examples/agent-swarm/src/manager.mjs", objective],
+        cwd: workspaceRoot,
+      }),
+    }
+  );
+
+  return { ...command, sessionId: session.id };
+};

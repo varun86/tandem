@@ -1590,6 +1590,9 @@ fn is_valid_resource_key(key: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
+    if trimmed == "swarm.active_tasks" {
+        return true;
+    }
     let allowed_prefix = ["run/", "mission/", "project/", "team/"];
     if !allowed_prefix
         .iter()
@@ -2886,5 +2889,13 @@ mod tests {
         assert!(prompt.contains("Execution Pattern: Standalone mission run"));
         assert!(prompt.contains("Allowed Tools: all available by current policy"));
         assert!(prompt.contains("Output Targets: none configured"));
+    }
+
+    #[test]
+    fn shared_resource_key_validator_accepts_swarm_active_tasks() {
+        assert!(is_valid_resource_key("swarm.active_tasks"));
+        assert!(is_valid_resource_key("project/demo"));
+        assert!(!is_valid_resource_key("swarm//active_tasks"));
+        assert!(!is_valid_resource_key("misc/demo"));
     }
 }

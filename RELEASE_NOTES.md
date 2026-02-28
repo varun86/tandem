@@ -4,6 +4,14 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.3.25 (Unreleased)
 
+- Agent Swarm headless example (`examples/agent-swarm`)
+  - Added manager/worker/reviewer/tester prompts and a full manager orchestration script using Tandem sessions, runs, event bus updates, shared resources, approvals, and routines.
+  - Added managed worktree helper scripts (`create_worktree.sh`, `cleanup_worktrees.sh`) and a routine health-check script for Telegram notifications and GitHub MCP check polling via Arcade.
+  - Added routine definition `routines/check_swarm_health.json` (cron every 10 minutes, approval-gated).
+  - Added example test coverage for deterministic task transitions, manager registry updates, worktree idempotency, and MCP auth-loop prevention.
+- Shared resource key policy update
+  - `swarm.active_tasks` is now accepted as a valid shared resource key for swarm task registry storage.
+
 - Global Memory first-class runtime path (engine/server)
   - Added durable global memory storage in `memory.sqlite` with FTS5-backed retrieval (`memory_records` + `memory_records_fts`), replacing transient in-process memory API state.
   - Added automatic ingestion capture from run outputs and event streams:

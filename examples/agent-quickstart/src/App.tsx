@@ -8,6 +8,7 @@ import Channels from "./pages/Channels";
 import LiveFeed from "./pages/LiveFeed";
 import ProviderSetup from "./pages/ProviderSetup";
 import McpSetup from "./pages/McpSetup";
+import Swarm from "./pages/Swarm";
 import {
   BrainCircuit,
   Clock,
@@ -17,6 +18,7 @@ import {
   LogOut,
   AlertTriangle,
   PlugZap,
+  Network,
 } from "lucide-react";
 
 /* ─── Protected Route ─── */
@@ -105,6 +107,7 @@ function Sidebar() {
           color="text-purple-400"
         />
         <NavLink to="/mcp" icon={<PlugZap size={16} />} label="MCP" color="text-cyan-400" />
+        <NavLink to="/swarm" icon={<Network size={16} />} label="Swarm" color="text-teal-300" />
         <NavLink to="/feed" icon={<Radio size={16} />} label="Live Feed" color="text-sky-400" />
       </nav>
 
@@ -191,6 +194,16 @@ function AppRoutes() {
           <Protected>
             <Shell>
               <McpSetup />
+            </Shell>
+          </Protected>
+        }
+      />
+      <Route
+        path="/swarm"
+        element={
+          <Protected>
+            <Shell>
+              <Swarm />
             </Shell>
           </Protected>
         }

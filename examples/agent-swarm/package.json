@@ -1,0 +1,11 @@
+{
+  "name": "agent-swarm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node --check ./src/*.mjs && node --check ./tests/*.test.mjs",
+    "start": "node ./src/manager.mjs",
+    "test": "node --test ./tests/*.test.mjs"
+  }
+}
