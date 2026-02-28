@@ -158,6 +158,11 @@ export async function renderAgents(ctx) {
       .map((r) => [routineKey(r), String(r.name || routineKey(r) || "Routine").trim()])
       .filter(([id]) => !!id)
   );
+  const routineById = new Map(
+    routines
+      .map((r) => [routineKey(r), r])
+      .filter(([id]) => !!id)
+  );
   const automationNameById = new Map(
     automations
       .map((a) => [automationKey(a), String(a.name || automationKey(a) || "Automation").trim()])
@@ -166,8 +171,24 @@ export async function renderAgents(ctx) {
   const latestRoutineRunById = latestRunsBy(routineRuns, runRoutineIdOf);
   const latestAutomationRunById = latestRunsBy(automationRuns, runAutomationIdOf);
   const recentRuns = [...routineRuns.map((run) => ({ family: "routine", run })), ...automationRuns.map((run) => ({ family: "automation", run }))]
-    .sort((a, b) => firstTimestamp(b.run) - firstTimestamp(a.run))
-    .slice(0, 30);
+    .sort((a, b) => firstTimestamp(b.run) - firstTimestamp(a.run));
+  const dedupedRecentRuns = [];
+  const seenRunKeys = new Set();
+  for (const entry of recentRuns) {
+    const runId = runIdOf(entry.run);
+    const ownerId = entry.family === "routine" ? runRoutineIdOf(entry.run) : runAutomationIdOf(entry.run);
+    const key = runId || `${entry.family}:${ownerId}:${firstTimestamp(entry.run)}:${runStatusOf(entry.run)}`;
+    if (seenRunKeys.has(key)) continue;
+    seenRunKeys.add(key);
+    dedupedRecentRuns.push(entry);
+    if (dedupedRecentRuns.length >= 30) break;
+  }
+  const automationIds = new Set(automations.map((a) => automationKey(a)).filter(Boolean));
+  const routineIds = new Set(routines.map((r) => routineKey(r)).filter(Boolean));
+  const automationsMirrorRoutines =
+    automationIds.size > 0 &&
+    automationIds.size === routineIds.size &&
+    [...automationIds].every((id) => routineIds.has(id));
   const providerDefaults = Object.fromEntries(
     Object.entries(providerConfigMap).map(([providerId, cfg]) => [
       providerId,
@@ -237,10 +258,11 @@ export async function renderAgents(ctx) {
       })
       .join("") || '<p class="tcp-subtle">No automations.</p>';
   const recentRunsMarkup =
-    recentRuns
+    dedupedRecentRuns
       .map(({ family, run }) => {
         const isRoutine = family === "routine";
         const ownerId = isRoutine ? runRoutineIdOf(run) : runAutomationIdOf(run);
+        const rid = runIdOf(run);
         const ownerName = isRoutine
           ? routineNameById.get(ownerId) || ownerId || "Routine"
           : automationNameById.get(ownerId) || ownerId || "Automation";
@@ -249,12 +271,19 @@ export async function renderAgents(ctx) {
         return `<div class="tcp-list-item">
           <div class="flex items-center justify-between gap-2">
             <span class="font-medium">${escapeHtml(ownerName)}</span>
-            <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
+            <div class="flex items-center gap-2">
+              ${
+                rid
+                  ? `<button data-inspect-run="${escapeHtml(rid)}" data-run-family="${escapeHtml(family)}" class="tcp-btn h-7 px-2 text-xs">Details</button>`
+                  : ""
+              }
+              <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
+            </div>
           </div>
           <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
             <span class="tcp-subtle">${isRoutine ? "Routine" : "Automation"}</span>
             <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(run)))}</span>
-            <span class="tcp-subtle font-mono">${escapeHtml(runIdOf(run) || "run n/a")}</span>
+            <span class="tcp-subtle font-mono">${escapeHtml(rid || "run n/a")}</span>
           </div>
           ${detail ? `<div class="mt-1 text-xs text-slate-400">${escapeHtml(detail)}</div>` : ""}
         </div>`;
@@ -264,6 +293,7 @@ export async function renderAgents(ctx) {
   byId("view").innerHTML = `
     <div class="tcp-card">
       <h3 class="tcp-title mb-3">Create Routine</h3>
+      <p id="routine-form-mode" class="mb-2 text-xs text-slate-400">Creating new routine</p>
       <div class="grid gap-3 md:grid-cols-2">
         <input id="routine-name" class="tcp-input" placeholder="Routine name" />
         <select id="routine-schedule-mode" class="tcp-select">
@@ -336,7 +366,10 @@ export async function renderAgents(ctx) {
       </div>
       <div class="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
         <div class="text-xs text-slate-400">Create will use the selected schedule and entry prompt.</div>
-        <button id="create-routine" class="tcp-btn-primary"><i data-lucide="plus"></i> Create</button>
+        <div class="flex items-center justify-end gap-2">
+          <button id="cancel-edit-routine" class="tcp-btn hidden">Cancel Edit</button>
+          <button id="create-routine" class="tcp-btn-primary"><i data-lucide="plus"></i> Create</button>
+        </div>
       </div>
     </div>
     <div class="tcp-card">
@@ -345,14 +378,25 @@ export async function renderAgents(ctx) {
     </div>
     <div class="tcp-card">
       <h3 class="tcp-title mb-3">Automations (${automations.length})</h3>
+      ${
+        automationsMirrorRoutines
+          ? `<p class="tcp-subtle mb-2">Automation endpoints currently mirror routine records in this workspace.</p>`
+          : ""
+      }
       <div class="tcp-list">${automationsMarkup}</div>
     </div>
     <div class="tcp-card">
       <div class="mb-3 flex items-center justify-between gap-2">
-        <h3 class="tcp-title">Recent Runs (${recentRuns.length})</h3>
+        <h3 class="tcp-title">Recent Runs (${dedupedRecentRuns.length})</h3>
         <button id="refresh-runs" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
       </div>
       <div class="tcp-list">${recentRunsMarkup}</div>
+    </div>
+    <div class="tcp-card">
+      <h3 class="tcp-title mb-2">Run Inspector</h3>
+      <div id="run-inspector" class="tcp-list">
+        <p class="tcp-subtle">Pick any recent run and click Details to inspect status, full detail, and artifacts.</p>
+      </div>
     </div>
   `;
 
@@ -366,11 +410,16 @@ export async function renderAgents(ctx) {
         const latestRunId = runIdOf(latest);
         const latestDetail = truncate(runDetailOf(latest));
         const routineModel = detectRoutineModel(r);
+        const routineStatus = String(r.status || "active").toLowerCase();
+        const isPaused = routineStatus === "paused";
         return `
       <div class="tcp-list-item flex items-center justify-between gap-3">
         <div>
           <div class="font-medium">${escapeHtml(r.name || rid || "Unnamed routine")}</div>
-          <div class="tcp-subtle font-mono">${escapeHtml(formatSchedule(r.schedule))}</div>
+          <div class="mt-1 flex items-center gap-2">
+            <span class="${isPaused ? "tcp-badge-warn" : "tcp-badge-info"}">${escapeHtml(routineStatus)}</span>
+            <span class="tcp-subtle font-mono">${escapeHtml(formatSchedule(r.schedule))}</span>
+          </div>
           <div class="mt-1 text-xs text-slate-400 font-mono">${escapeHtml(routineModel || "default engine route")}</div>
           ${
             latest
@@ -390,6 +439,10 @@ export async function renderAgents(ctx) {
         </div>
         <div class="flex gap-2">
           <button data-run="${escapeHtml(rid)}" class="tcp-btn"><i data-lucide="play"></i> Run</button>
+          <button data-toggle-status="${escapeHtml(rid)}" data-next-status="${isPaused ? "active" : "paused"}" class="tcp-btn">
+            <i data-lucide="${isPaused ? "play-circle" : "pause-circle"}"></i> ${isPaused ? "Resume" : "Pause"}
+          </button>
+          <button data-edit-routine="${escapeHtml(rid)}" class="tcp-btn"><i data-lucide="pencil"></i> Edit</button>
           ${
             detectPromptFile(r)
               ? `<button data-edit-file="${escapeHtml(detectPromptFile(r))}" class="tcp-btn"><i data-lucide="folder-open"></i> Prompt File</button>`
@@ -404,6 +457,66 @@ export async function renderAgents(ctx) {
   byId("refresh-runs").addEventListener("click", () => {
     renderAgents(ctx);
   });
+  const runInspectorEl = byId("run-inspector");
+  byId("view").querySelectorAll("[data-inspect-run]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const runId = String(b.dataset.inspectRun || "").trim();
+      const family = String(b.dataset.runFamily || "routine").trim();
+      if (!runId) {
+        toast("err", "Run ID is missing.");
+        return;
+      }
+      const prev = b.innerHTML;
+      b.disabled = true;
+      b.innerHTML = '<i data-lucide="refresh-cw" class="animate-spin"></i> Loading';
+      renderIcons(b);
+      try {
+        let run = await state.client.routines.getRun(runId).catch(() => null);
+        let artifactsPayload = await state.client.routines.listArtifacts(runId).catch(() => null);
+        if (!run && family === "automation") {
+          run = await state.client.automations.getRun(runId).catch(() => null);
+          artifactsPayload = await state.client.automations.listArtifacts(runId).catch(() => null);
+        }
+        if (!run) throw new Error("Run details not found.");
+        const artifacts = Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [];
+        runInspectorEl.innerHTML = `
+          <div class="tcp-list-item">
+            <div class="mb-2 flex flex-wrap items-center gap-2">
+              <span class="${runStatusClass(runStatusOf(run))}">${escapeHtml(runStatusOf(run))}</span>
+              <span class="tcp-subtle font-mono">${escapeHtml(runId)}</span>
+              <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(run)))}</span>
+            </div>
+            <div class="mb-2 text-xs text-slate-300">${escapeHtml(runDetailOf(run) || "No detail text available.")}</div>
+            <div class="mb-2 text-xs text-slate-400">Artifacts: ${artifacts.length}</div>
+            ${
+              artifacts.length
+                ? `<div class="mb-2 grid gap-1">${artifacts
+                    .map((a) => {
+                      const uri = String(a?.uri || "").trim();
+                      const kind = String(a?.kind || "artifact");
+                      const label = String(a?.label || kind).trim();
+                      return `<div class="text-xs text-slate-300"><span class="tcp-subtle">${escapeHtml(kind)}</span> <span class="font-mono">${escapeHtml(label)}</span> ${uri ? `<span class="tcp-subtle">${escapeHtml(uri)}</span>` : ""}</div>`;
+                    })
+                    .join("")}</div>`
+                : ""
+            }
+            <details class="mt-2">
+              <summary class="cursor-pointer text-xs text-slate-400">Raw run payload</summary>
+              <pre class="tcp-code mt-2">${escapeHtml(JSON.stringify(run, null, 2))}</pre>
+            </details>
+          </div>
+        `;
+      } catch (e) {
+        toast("err", e instanceof Error ? e.message : String(e));
+      } finally {
+        if (b.isConnected) {
+          b.disabled = false;
+          b.innerHTML = prev;
+          renderIcons(b);
+        }
+      }
+    })
+  );
   byId("view").querySelectorAll("[data-run-automation]").forEach((b) =>
     b.addEventListener("click", async () => {
       const automationId = String(b.dataset.runAutomation || "").trim();
@@ -434,6 +547,33 @@ export async function renderAgents(ctx) {
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
       } finally {
+        if (b.isConnected) {
+          b.disabled = false;
+          b.innerHTML = prev;
+          renderIcons(b);
+        }
+      }
+    })
+  );
+
+  routineList.querySelectorAll("[data-toggle-status]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const routineId = String(b.dataset.toggleStatus || "").trim();
+      const nextStatus = String(b.dataset.nextStatus || "").trim();
+      if (!routineId || !nextStatus) {
+        toast("err", "Routine status action is missing details. Refresh and try again.");
+        return;
+      }
+      const prev = b.innerHTML;
+      b.disabled = true;
+      b.innerHTML = '<i data-lucide="refresh-cw" class="animate-spin"></i> Saving...';
+      renderIcons(b);
+      try {
+        await state.client.routines.update(routineId, { status: nextStatus });
+        toast("ok", `Routine ${nextStatus === "paused" ? "paused" : "resumed"}.`);
+        renderAgents(ctx);
+      } catch (e) {
+        toast("err", e instanceof Error ? e.message : String(e));
         if (b.isConnected) {
           b.disabled = false;
           b.innerHTML = prev;
@@ -514,6 +654,41 @@ export async function renderAgents(ctx) {
       }
     })
   );
+  routineList.querySelectorAll("[data-edit-routine]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const routineId = String(b.dataset.editRoutine || "").trim();
+      if (!routineId) {
+        toast("err", "Routine ID is missing.");
+        return;
+      }
+      const routine = routineById.get(routineId);
+      if (!routine) {
+        toast("err", "Routine details not found. Refresh and try again.");
+        return;
+      }
+      nameEl.value = String(routine.name || "").trim();
+      applyScheduleToForm(routine.schedule);
+      const promptFilePath = detectPromptFile(routine);
+      if (promptFilePath) {
+        useFileEl.checked = true;
+        pathEl.value = promptFilePath;
+        try {
+          const payload = await api(`/api/files/read?path=${encodeURIComponent(promptFilePath)}`);
+          promptEl.value = String(payload?.text || "");
+        } catch {
+          promptEl.value = String(routine.entrypoint || "");
+          toast("err", `Could not read ${promptFilePath}; loaded entrypoint text instead.`);
+        }
+      } else {
+        useFileEl.checked = false;
+        promptEl.value = String(routine.entrypoint || routine.prompt || "");
+        normalizeFilePath();
+      }
+      setRoutineModelFromSpec(routine);
+      setEditMode(routineId, String(routine.name || ""));
+      nameEl.focus();
+    })
+  );
   renderIcons(byId("view"));
 
   const scheduleModeEl = byId("routine-schedule-mode");
@@ -535,6 +710,10 @@ export async function renderAgents(ctx) {
   const modelProviderEl = byId("routine-model-provider");
   const modelIdEl = byId("routine-model-id");
   const modelPreviewEl = byId("routine-model-preview");
+  const routineFormModeEl = byId("routine-form-mode");
+  const cancelEditEl = byId("cancel-edit-routine");
+  const createRoutineEl = byId("create-routine");
+  let editingRoutineId = "";
 
   const normalizeFilePath = () => {
     const fallback = `control-panel/routines/${slugify(nameEl.value || "new-routine")}.md`;
@@ -570,6 +749,100 @@ export async function renderAgents(ctx) {
     if (preferred) modelIdEl.value = preferred;
     const modelId = String(modelIdEl.value || "").trim();
     if (modelPreviewEl) modelPreviewEl.textContent = providerId && modelId ? `${providerId}/${modelId}` : "default engine route";
+  };
+
+  const applyScheduleToForm = (schedule) => {
+    const intervalSeconds = Number(
+      schedule?.interval_seconds?.seconds ??
+        schedule?.intervalSeconds?.seconds ??
+        schedule?.intervalSeconds ??
+        0
+    );
+    const cronExpr = String(
+      schedule?.cron?.expression ??
+        schedule?.cron?.cron ??
+        schedule?.expression ??
+        schedule?.cron ??
+        ""
+    ).trim();
+    if (intervalSeconds > 0) {
+      if (intervalSeconds % 3600 === 0) {
+        scheduleModeEl.value = "interval";
+        intervalUnitEl.value = "hours";
+        intervalValueEl.value = String(Math.max(1, Math.floor(intervalSeconds / 3600)));
+      } else {
+        scheduleModeEl.value = "interval";
+        intervalUnitEl.value = "minutes";
+        intervalValueEl.value = String(Math.max(1, Math.floor(intervalSeconds / 60)));
+      }
+      renderScheduleInputs();
+      return;
+    }
+    if (!cronExpr) {
+      scheduleModeEl.value = "manual";
+      renderScheduleInputs();
+      return;
+    }
+    const daily = cronExpr.match(/^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/);
+    if (daily) {
+      scheduleModeEl.value = "daily";
+      const mm = String(Number.parseInt(daily[1], 10)).padStart(2, "0");
+      const hh = String(Number.parseInt(daily[2], 10)).padStart(2, "0");
+      timeEl.value = `${hh}:${mm}`;
+      renderScheduleInputs();
+      return;
+    }
+    const weekly = cronExpr.match(/^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+([0-6])$/);
+    if (weekly) {
+      scheduleModeEl.value = "weekly";
+      const mm = String(Number.parseInt(weekly[1], 10)).padStart(2, "0");
+      const hh = String(Number.parseInt(weekly[2], 10)).padStart(2, "0");
+      weekdayEl.value = String(Number.parseInt(weekly[3], 10));
+      weeklyTimeEl.value = `${hh}:${mm}`;
+      renderScheduleInputs();
+      return;
+    }
+    scheduleModeEl.value = "customCron";
+    cronEl.value = cronExpr;
+    renderScheduleInputs();
+  };
+
+  const setRoutineModelFromSpec = (routine) => {
+    const providerId = String(routine?.args?.model_policy?.default_model?.provider_id || "").trim();
+    const modelId = String(routine?.args?.model_policy?.default_model?.model_id || "").trim();
+    if (!providerId || !providerIds.includes(providerId)) {
+      renderModelPicker();
+      return;
+    }
+    modelProviderEl.value = providerId;
+    renderModelPicker();
+    const models = modelIdsForProvider(providerId);
+    if (modelId && models.includes(modelId)) {
+      modelIdEl.value = modelId;
+      if (modelPreviewEl) modelPreviewEl.textContent = `${providerId}/${modelId}`;
+    }
+  };
+
+  const setEditMode = (routineId, routineName = "") => {
+    editingRoutineId = routineId;
+    if (routineFormModeEl) {
+      routineFormModeEl.textContent = `Editing routine ${routineName || routineId}`;
+    }
+    if (createRoutineEl) {
+      createRoutineEl.innerHTML = '<i data-lucide="save"></i> Save Changes';
+    }
+    if (cancelEditEl) {
+      cancelEditEl.classList.remove("hidden");
+    }
+    renderIcons(byId("view"));
+  };
+
+  const clearEditMode = () => {
+    editingRoutineId = "";
+    if (routineFormModeEl) routineFormModeEl.textContent = "Creating new routine";
+    if (createRoutineEl) createRoutineEl.innerHTML = '<i data-lucide="plus"></i> Create';
+    if (cancelEditEl) cancelEditEl.classList.add("hidden");
+    renderIcons(byId("view"));
   };
 
   const buildSchedule = () => {
@@ -699,9 +972,13 @@ export async function renderAgents(ctx) {
     const modelId = String(modelIdEl?.value || "").trim();
     if (modelPreviewEl) modelPreviewEl.textContent = providerId && modelId ? `${providerId}/${modelId}` : "default engine route";
   });
+  cancelEditEl?.addEventListener("click", () => {
+    renderAgents(ctx);
+  });
   renderScheduleInputs();
   normalizeFilePath();
   renderModelPicker();
+  clearEditMode();
 
   byId("create-routine").addEventListener("click", async () => {
     try {
@@ -731,19 +1008,36 @@ export async function renderAgents(ctx) {
           },
         };
       }
-      const created = await state.client.routines.create({
-        name,
-        entrypoint,
-        schedule,
-        args,
-      });
-      if (manualOnly) {
-        const routineId = routineKey(created?.routine || created || {});
-        if (routineId) {
-          await state.client.routines.update(routineId, { status: "paused" });
+      if (editingRoutineId) {
+        const current = routineById.get(editingRoutineId);
+        const patch = {
+          name,
+          entrypoint,
+          schedule,
+          args,
+        };
+        if (manualOnly) {
+          patch.status = "paused";
+        } else if (current?.status) {
+          patch.status = String(current.status).toLowerCase();
         }
+        await state.client.routines.update(editingRoutineId, patch);
+        toast("ok", "Routine updated.");
+      } else {
+        const created = await state.client.routines.create({
+          name,
+          entrypoint,
+          schedule,
+          args,
+        });
+        if (manualOnly) {
+          const routineId = routineKey(created?.routine || created || {});
+          if (routineId) {
+            await state.client.routines.update(routineId, { status: "paused" });
+          }
+        }
+        toast("ok", "Routine created.");
       }
-      toast("ok", "Routine created.");
       renderAgents(ctx);
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
