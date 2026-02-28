@@ -5,7 +5,7 @@ Full web control center for Tandem Engine (non-desktop entry point).
 ## Install
 
 ```bash
-npm i -g @frumu/tandem-control-panel
+npm i -g @frumu/tandem-panel
 ```
 
 ## Run
