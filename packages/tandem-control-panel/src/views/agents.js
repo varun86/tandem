@@ -1,11 +1,15 @@
 export async function renderAgents(ctx) {
   const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
-  const [routinesRaw, automationsRaw] = await Promise.all([
+  const [routinesRaw, automationsRaw, routineRunsRaw, automationRunsRaw] = await Promise.all([
     state.client.routines.list().catch(() => ({ routines: [] })),
     state.client.automations.list().catch(() => ({ automations: [] })),
+    state.client.routines.listRuns({ limit: 100 }).catch(() => ({ runs: [] })),
+    state.client.automations.listRuns({ limit: 100 }).catch(() => ({ runs: [] })),
   ]);
   const routines = routinesRaw.routines || [];
   const automations = automationsRaw.automations || [];
+  const routineRuns = Array.isArray(routineRunsRaw?.runs) ? routineRunsRaw.runs : [];
+  const automationRuns = Array.isArray(automationRunsRaw?.runs) ? automationRunsRaw.runs : [];
 
   const slugify = (value = "") =>
     String(value)
@@ -68,6 +72,134 @@ export async function renderAgents(ctx) {
 
   const routineKey = (routine) =>
     String(routine?.id || routine?.routine_id || routine?.routineID || routine?.routineId || "").trim();
+  const automationKey = (automation) =>
+    String(
+      automation?.id ||
+        automation?.automation_id ||
+        automation?.automationID ||
+        automation?.automationId ||
+        ""
+    ).trim();
+  const runIdOf = (run) => String(run?.runId || run?.runID || run?.run_id || run?.id || "").trim();
+  const runRoutineIdOf = (run) =>
+    String(run?.routineId || run?.routine_id || run?.routineID || run?.routineId || "").trim();
+  const runAutomationIdOf = (run) =>
+    String(run?.automationId || run?.automation_id || run?.automationID || run?.automationId || "").trim();
+  const runStatusOf = (run) => String(run?.status || "unknown").toLowerCase();
+  const runDetailOf = (run) => String(run?.detail || run?.reason || "").trim();
+  const firstTimestamp = (run) => {
+    const candidates = [
+      run?.updatedAtMs,
+      run?.updated_at_ms,
+      run?.finishedAtMs,
+      run?.finished_at_ms,
+      run?.startedAtMs,
+      run?.started_at_ms,
+      run?.createdAtMs,
+      run?.created_at_ms,
+      run?.firedAtMs,
+      run?.fired_at_ms,
+    ];
+    for (const v of candidates) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  };
+  const formatTimestamp = (ts) => {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return "time n/a";
+    return new Date(n).toLocaleString();
+  };
+  const truncate = (value, max = 120) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+  };
+  const runStatusClass = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (normalized.includes("complete") || normalized.includes("succeed")) return "tcp-badge-info";
+    if (normalized.includes("fail") || normalized.includes("cancel") || normalized.includes("deny"))
+      return "tcp-badge-err";
+    if (normalized.includes("block") || normalized.includes("approval") || normalized.includes("pause"))
+      return "tcp-badge-warn";
+    return "tcp-badge-info";
+  };
+  const latestRunsBy = (runs, idOf) => {
+    const map = new Map();
+    const sorted = [...runs].sort((a, b) => firstTimestamp(b) - firstTimestamp(a));
+    for (const run of sorted) {
+      const id = idOf(run);
+      if (!id || map.has(id)) continue;
+      map.set(id, run);
+    }
+    return map;
+  };
+  const routineNameById = new Map(
+    routines
+      .map((r) => [routineKey(r), String(r.name || routineKey(r) || "Routine").trim()])
+      .filter(([id]) => !!id)
+  );
+  const automationNameById = new Map(
+    automations
+      .map((a) => [automationKey(a), String(a.name || automationKey(a) || "Automation").trim()])
+      .filter(([id]) => !!id)
+  );
+  const latestRoutineRunById = latestRunsBy(routineRuns, runRoutineIdOf);
+  const latestAutomationRunById = latestRunsBy(automationRuns, runAutomationIdOf);
+  const recentRuns = [...routineRuns.map((run) => ({ family: "routine", run })), ...automationRuns.map((run) => ({ family: "automation", run }))]
+    .sort((a, b) => firstTimestamp(b.run) - firstTimestamp(a.run))
+    .slice(0, 30);
+  const automationsMarkup =
+    automations
+      .map((a) => {
+        const aid = automationKey(a);
+        const latest = latestAutomationRunById.get(aid);
+        const status = runStatusOf(latest);
+        const runId = runIdOf(latest);
+        const detail = truncate(runDetailOf(latest));
+        return `<div class="tcp-list-item">
+          <div class="flex items-center justify-between gap-2">
+            <span>${escapeHtml(String(a.name || aid || "Automation"))}</span>
+            <span class="tcp-subtle">${escapeHtml(String(a.status || ""))}</span>
+          </div>
+          ${
+            latest
+              ? `<div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
+                <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(latest)))}</span>
+                <span class="tcp-subtle font-mono">${escapeHtml(runId || "run n/a")}</span>
+              </div>
+              ${detail ? `<div class="mt-1 text-xs text-slate-400">${escapeHtml(detail)}</div>` : ""}`
+              : `<div class="mt-1 text-xs text-slate-500">No automation runs yet.</div>`
+          }
+        </div>`;
+      })
+      .join("") || '<p class="tcp-subtle">No automations.</p>';
+  const recentRunsMarkup =
+    recentRuns
+      .map(({ family, run }) => {
+        const isRoutine = family === "routine";
+        const ownerId = isRoutine ? runRoutineIdOf(run) : runAutomationIdOf(run);
+        const ownerName = isRoutine
+          ? routineNameById.get(ownerId) || ownerId || "Routine"
+          : automationNameById.get(ownerId) || ownerId || "Automation";
+        const status = runStatusOf(run);
+        const detail = truncate(runDetailOf(run), 180);
+        return `<div class="tcp-list-item">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium">${escapeHtml(ownerName)}</span>
+            <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
+          </div>
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <span class="tcp-subtle">${isRoutine ? "Routine" : "Automation"}</span>
+            <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(run)))}</span>
+            <span class="tcp-subtle font-mono">${escapeHtml(runIdOf(run) || "run n/a")}</span>
+          </div>
+          ${detail ? `<div class="mt-1 text-xs text-slate-400">${escapeHtml(detail)}</div>` : ""}
+        </div>`;
+      })
+      .join("") || '<p class="tcp-subtle">No runs yet.</p>';
 
   byId("view").innerHTML = `
     <div class="tcp-card">
@@ -136,7 +268,14 @@ export async function renderAgents(ctx) {
     </div>
     <div class="tcp-card">
       <h3 class="tcp-title mb-3">Automations (${automations.length})</h3>
-      <div class="tcp-list">${automations.map((r) => `<div class="tcp-list-item flex items-center justify-between gap-2"><span>${escapeHtml(r.name || r.id)}</span><span class="tcp-subtle">${escapeHtml(String(r.status || ""))}</span></div>`).join("") || '<p class="tcp-subtle">No automations.</p>'}</div>
+      <div class="tcp-list">${automationsMarkup}</div>
+    </div>
+    <div class="tcp-card">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h3 class="tcp-title">Recent Runs (${recentRuns.length})</h3>
+        <button id="refresh-runs" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
+      </div>
+      <div class="tcp-list">${recentRunsMarkup}</div>
     </div>
   `;
 
@@ -145,11 +284,25 @@ export async function renderAgents(ctx) {
     routines
       .map((r) => {
         const rid = routineKey(r);
+        const latest = latestRoutineRunById.get(rid);
+        const latestStatus = runStatusOf(latest);
+        const latestRunId = runIdOf(latest);
+        const latestDetail = truncate(runDetailOf(latest));
         return `
       <div class="tcp-list-item flex items-center justify-between gap-3">
         <div>
           <div class="font-medium">${escapeHtml(r.name || rid || "Unnamed routine")}</div>
           <div class="tcp-subtle font-mono">${escapeHtml(formatSchedule(r.schedule))}</div>
+          ${
+            latest
+              ? `<div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span class="${runStatusClass(latestStatus)}">${escapeHtml(latestStatus)}</span>
+                <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(latest)))}</span>
+                <span class="tcp-subtle font-mono">${escapeHtml(latestRunId || "run n/a")}</span>
+              </div>
+              ${latestDetail ? `<div class="mt-1 text-xs text-slate-400">${escapeHtml(latestDetail)}</div>` : ""}`
+              : `<div class="mt-1 text-xs text-slate-500">No runs yet.</div>`
+          }
           ${
             detectPromptFile(r)
               ? `<div class="mt-1 text-xs text-slate-400 font-mono">${escapeHtml(detectPromptFile(r))}</div>`
@@ -169,6 +322,9 @@ export async function renderAgents(ctx) {
       })
       .join("") || '<p class="tcp-subtle">No routines.</p>';
   renderIcons(routineList);
+  byId("refresh-runs").addEventListener("click", () => {
+    renderAgents(ctx);
+  });
 
   routineList.querySelectorAll("[data-run]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -188,13 +344,23 @@ export async function renderAgents(ctx) {
         const bits = [];
         if (runId) bits.push(`run ${runId}`);
         if (status) bits.push(`status ${status}`);
-        toast("ok", bits.length ? `Routine triggered (${bits.join(", ")}).` : "Routine triggered.");
+        toast(
+          "ok",
+          bits.length
+            ? `Routine triggered (${bits.join(", ")}). It should move from queued to running within ~1 second.`
+            : "Routine triggered."
+        );
+        setTimeout(() => {
+          renderAgents(ctx);
+        }, 500);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
       } finally {
-        b.disabled = false;
-        b.innerHTML = prev;
-        renderIcons(b);
+        if (b.isConnected) {
+          b.disabled = false;
+          b.innerHTML = prev;
+          renderIcons(b);
+        }
       }
     })
   );
@@ -231,6 +397,7 @@ export async function renderAgents(ctx) {
       }
     })
   );
+  renderIcons(byId("view"));
 
   const scheduleModeEl = byId("routine-schedule-mode");
   const intervalControlsEl = byId("routine-interval-controls");
