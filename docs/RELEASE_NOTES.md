@@ -26,6 +26,8 @@
   - Added retrieval/injection events:
     - `memory.search.performed` (score distribution, sources, latency)
     - `memory.context.injected` (count + token-size estimate)
+- **SDK parity for memory APIs**:
+  - TypeScript and Python client memory surfaces now tolerate durable-memory response variants and support explicit demotion calls.
 
 ---
 

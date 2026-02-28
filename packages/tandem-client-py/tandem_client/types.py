@@ -203,7 +203,10 @@ class ChannelsStatusResponse(BaseModel):
 class MemoryItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: Optional[str] = None
-    text: str
+    text: Optional[str] = Field(None, validation_alias=AliasChoices("text", "content"))
+    content: Optional[str] = Field(None, validation_alias=AliasChoices("content", "text"))
+    user_id: Optional[str] = Field(None, validation_alias=AliasChoices("userID", "userId", "user_id"))
+    source_type: Optional[str] = Field(None, validation_alias=AliasChoices("sourceType", "source_type"))
     tags: Optional[list[str]] = None
     source: Optional[str] = None
     session_id: Optional[str] = Field(None, validation_alias=AliasChoices("sessionID", "sessionId", "session_id"))
@@ -213,14 +216,21 @@ class MemoryItem(BaseModel):
 class MemoryPutResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
-    ok: bool
+    ok: Optional[bool] = None
+    stored: Optional[bool] = None
+    tier: Optional[str] = None
+    partition_key: Optional[str] = Field(None, validation_alias=AliasChoices("partitionKey", "partition_key"))
+    audit_id: Optional[str] = Field(None, validation_alias=AliasChoices("auditID", "audit_id"))
 
 
 class MemorySearchResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
-    text: str
+    text: Optional[str] = Field(None, validation_alias=AliasChoices("text", "content"))
+    content: Optional[str] = Field(None, validation_alias=AliasChoices("content", "text"))
     score: Optional[float] = None
+    source_type: Optional[str] = Field(None, validation_alias=AliasChoices("sourceType", "source_type"))
+    run_id: Optional[str] = Field(None, validation_alias=AliasChoices("runID", "runId", "run_id"))
     tags: Optional[list[str]] = None
 
 
@@ -238,8 +248,12 @@ class MemoryListResponse(BaseModel):
 
 class MemoryPromoteResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    ok: bool
-    id: str
+    ok: Optional[bool] = None
+    id: Optional[str] = None
+    promoted: Optional[bool] = None
+    new_memory_id: Optional[str] = Field(None, validation_alias=AliasChoices("newMemoryId", "new_memory_id"))
+    to_tier: Optional[str] = Field(None, validation_alias=AliasChoices("toTier", "to_tier"))
+    audit_id: Optional[str] = Field(None, validation_alias=AliasChoices("auditID", "audit_id"))
 
 
 class MemoryAuditEntry(BaseModel):

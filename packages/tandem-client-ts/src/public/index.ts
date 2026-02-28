@@ -228,7 +228,10 @@ export interface AddMcpServerOptions {
 
 export interface MemoryItem {
   id?: string;
-  text: string;
+  text?: string;
+  content?: string;
+  userId?: string;
+  sourceType?: string;
   tags?: string[];
   source?: string;
   sessionId?: string;
@@ -247,7 +250,11 @@ export interface MemoryPutOptions {
 
 export interface MemoryPutResponse {
   id: string;
-  ok: boolean;
+  ok?: boolean;
+  stored?: boolean;
+  tier?: string;
+  partitionKey?: string;
+  auditId?: string;
   [key: string]: unknown;
 }
 
@@ -261,8 +268,11 @@ export interface MemorySearchOptions {
 
 export interface MemorySearchResult {
   id: string;
-  text: string;
+  text?: string;
+  content?: string;
   score?: number;
+  sourceType?: string;
+  runId?: string;
   tags?: string[];
   [key: string]: unknown;
 }
@@ -283,8 +293,22 @@ export interface MemoryPromoteOptions {
 }
 
 export interface MemoryPromoteResponse {
-  ok: boolean;
+  ok?: boolean;
+  id?: string;
+  promoted?: boolean;
+  newMemoryId?: string;
+  toTier?: string;
+  auditId?: string;
+  [key: string]: unknown;
+}
+
+export interface MemoryDemoteOptions {
   id: string;
+  runId?: string;
+}
+
+export interface MemoryDemoteResponse {
+  ok: boolean;
   [key: string]: unknown;
 }
 

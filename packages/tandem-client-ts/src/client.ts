@@ -31,6 +31,8 @@ import type {
   MemoryListResponse,
   MemoryPromoteOptions,
   MemoryPromoteResponse,
+  MemoryDemoteOptions,
+  MemoryDemoteResponse,
   MemoryAuditResponse,
   SkillLocation,
   SkillRecord,
@@ -812,11 +814,13 @@ class Memory {
     q?: string;
     limit?: number;
     offset?: number;
+    userId?: string;
   }): Promise<MemoryListResponse> {
     const params = new URLSearchParams();
     if (options?.q) params.set("q", options.q);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
+    if (options?.userId) params.set("user_id", options.userId);
     const qs = params.toString() ? `?${params.toString()}` : "";
     const raw = await this.req<unknown>(`/memory${qs}`);
     return parseResponse(MemoryListResponseSchema, raw, "/memory", 200);
@@ -834,6 +838,18 @@ class Memory {
     return this.req<MemoryPromoteResponse>("/memory/promote", {
       method: "POST",
       body: JSON.stringify(options),
+    });
+  }
+
+  /** Demote a memory item back to private/demoted state. */
+  async demote(options: MemoryDemoteOptions): Promise<MemoryDemoteResponse> {
+    const payload = {
+      id: options.id,
+      run_id: options.runId,
+    };
+    return this.req<MemoryDemoteResponse>("/memory/demote", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   }
 

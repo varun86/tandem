@@ -26,6 +26,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Memory API surface expansion
   - Added `POST /memory/demote` for private/demoted tier fallback without deleting memory.
   - Existing `/memory/put`, `/memory/search`, `/memory/list`, `/memory/promote`, `/memory/{id}` now operate on durable global records.
+  - Updated TypeScript/Python SDK memory clients for response-shape compatibility and added memory demote client helpers.
 
 - MCP auth/retry behavior and loop hardening
   - Improved MCP auth challenge extraction to prefer structured payload fields (`structuredContent.message`, `structuredContent.authorization_url`) over noisy nested text blobs.

@@ -608,11 +608,13 @@ class _Memory:
             return MemorySearchResponse(results=[MemorySearchResult.model_validate(r) for r in raw], count=len(raw))
         return MemorySearchResponse.model_validate(raw)
 
-    async def list(self, *, q: Optional[str] = None, limit: Optional[int] = None, offset: Optional[int] = None) -> MemoryListResponse:
+    async def list(self, *, q: Optional[str] = None, limit: Optional[int] = None, offset: Optional[int] = None,
+                   user_id: Optional[str] = None) -> MemoryListResponse:
         params: dict[str, Any] = {}
         if q: params["q"] = q
         if limit is not None: params["limit"] = limit
         if offset is not None: params["offset"] = offset
+        if user_id: params["user_id"] = user_id
         res = await self._http.get("/memory", params=params)
         res.raise_for_status()
         raw = res.json()
@@ -631,6 +633,13 @@ class _Memory:
         res = await self._http.post("/memory/promote", json=payload)
         res.raise_for_status()
         return MemoryPromoteResponse.model_validate(res.json())
+
+    async def demote(self, memory_id: str, *, run_id: Optional[str] = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"id": memory_id}
+        if run_id: payload["run_id"] = run_id
+        res = await self._http.post("/memory/demote", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
 
     async def audit(self, *, run_id: Optional[str] = None, limit: Optional[int] = None) -> MemoryAuditResponse:
         params: dict[str, Any] = {}
