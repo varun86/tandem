@@ -93,6 +93,7 @@ async function refreshProviderStatus() {
     state.needsProviderOnboarding = false;
     state.providerReady = false;
     state.providerDefault = "";
+    state.providerDefaultModel = "";
     state.providerConnected = [];
     state.providerError = "";
     return;
@@ -100,9 +101,11 @@ async function refreshProviderStatus() {
   try {
     const [config, catalog] = await Promise.all([state.client.providers.config(), state.client.providers.catalog()]);
     const defaultProvider = String(config?.default || "").trim();
+    const defaultModel = String(config?.providers?.[defaultProvider]?.default_model || "").trim();
     const connected = new Set(catalog?.connected || []);
     const ready = !!defaultProvider && (defaultProvider === "ollama" || connected.has(defaultProvider));
     state.providerDefault = defaultProvider;
+    state.providerDefaultModel = defaultModel;
     state.providerConnected = [...connected];
     state.providerReady = ready;
     state.providerError = "";
@@ -110,6 +113,7 @@ async function refreshProviderStatus() {
   } catch (e) {
     state.providerReady = false;
     state.providerDefault = "";
+    state.providerDefaultModel = "";
     state.providerConnected = [];
     state.providerError = e instanceof Error ? e.message : String(e);
     state.needsProviderOnboarding = true;
@@ -303,15 +307,8 @@ function renderShell() {
           <button id="logout-btn" class="tcp-btn w-full"><i data-lucide="log-out"></i> Logout</button>
         </div>
       </aside>
-      <main class="min-w-0 p-4 md:p-6">
-        <header class="tcp-panel mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 class="text-xl font-semibold tracking-tight">${escapeHtml((ROUTES.find((r) => r[0] === state.route) || ["", "Dashboard"])[1])}</h2>
-            <p class="mt-1 font-mono text-xs text-slate-400">${escapeHtml(state.me?.engineUrl || "")}</p>
-          </div>
-          <span class="${state.me?.localEngine ? "tcp-badge-ok" : "tcp-badge-warn"}">${state.me?.localEngine ? "Local Engine" : "Remote Engine"}</span>
-        </header>
-        <section id="view" class="grid gap-4"></section>
+      <main class="min-w-0 p-3 md:p-4">
+        <section id="view" class="grid h-full gap-4"></section>
       </main>
     </div>
   `;

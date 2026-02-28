@@ -31,6 +31,7 @@ export function createState() {
     needsProviderOnboarding: false,
     providerReady: false,
     providerDefault: "",
+    providerDefaultModel: "",
     providerConnected: [],
     providerError: "",
     currentSessionId: "",

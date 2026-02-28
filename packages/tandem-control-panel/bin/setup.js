@@ -3,7 +3,7 @@
 import { spawn } from "child_process";
 import { createServer } from "http";
 import { readFileSync, existsSync, createReadStream, createWriteStream } from "fs";
-import { mkdir, readdir, stat, rm } from "fs/promises";
+import { mkdir, readdir, stat, rm, readFile, writeFile } from "fs/promises";
 import { randomBytes } from "crypto";
 import { join, dirname, extname, normalize, resolve, basename } from "path";
 import { Transform } from "stream";
@@ -39,9 +39,58 @@ function loadDotEnvFile(pathname) {
   return true;
 }
 
-const cliArgs = new Set(process.argv.slice(2));
-const initRequested = cliArgs.has("--init") || cliArgs.has("init");
-const resetTokenRequested = cliArgs.has("--reset-token");
+function parseCliArgs(argv) {
+  const flags = new Set();
+  const values = new Map();
+  for (let i = 0; i < argv.length; i += 1) {
+    const raw = String(argv[i] || "").trim();
+    if (!raw) continue;
+    if (!raw.startsWith("--")) {
+      flags.add(raw);
+      continue;
+    }
+    const eq = raw.indexOf("=");
+    if (eq > 2) {
+      values.set(raw.slice(2, eq), raw.slice(eq + 1));
+      continue;
+    }
+    const key = raw.slice(2);
+    const next = String(argv[i + 1] || "").trim();
+    if (next && !next.startsWith("-")) {
+      values.set(key, next);
+      i += 1;
+      continue;
+    }
+    flags.add(raw);
+  }
+  return {
+    flags,
+    values,
+    has(flag) {
+      return flags.has(flag) || flags.has(`--${flag}`) || values.has(flag);
+    },
+    value(key) {
+      return values.get(key);
+    },
+  };
+}
+
+const cli = parseCliArgs(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+const initRequested = cli.has("init");
+const resetTokenRequested = cli.has("reset-token");
+const installServicesRequested = cli.has("install-services");
+const serviceModeRaw = String(cli.value("service-mode") || "both")
+  .trim()
+  .toLowerCase();
+const serviceMode = ["both", "engine", "panel"].includes(serviceModeRaw) ? serviceModeRaw : "both";
+const serviceUserArg = String(cli.value("service-user") || "").trim();
+const serviceSetupOnly = rawArgs.length > 0 && rawArgs.every((arg) => {
+  if (arg === "--install-services") return true;
+  if (arg.startsWith("--service-mode")) return true;
+  if (arg.startsWith("--service-user")) return true;
+  return false;
+});
 const cwdEnvPath = resolve(process.cwd(), ".env");
 
 if (initRequested) {
@@ -51,7 +100,9 @@ if (initRequested) {
   console.log(`[Tandem Control Panel] Engine URL: ${result.engineUrl}`);
   console.log(`[Tandem Control Panel] Panel URL:  http://localhost:${result.panelPort}`);
   console.log(`[Tandem Control Panel] Token:      ${result.token}`);
-  if (cliArgs.size === 1 || (cliArgs.size === 2 && resetTokenRequested)) process.exit(0);
+  if (process.argv.slice(2).length === 1 || (process.argv.slice(2).length === 2 && resetTokenRequested)) {
+    process.exit(0);
+  }
 }
 
 loadDotEnvFile(cwdEnvPath);
@@ -97,6 +148,7 @@ const MAX_UPLOAD_BYTES = Math.max(
     250 * 1024 * 1024
 );
 const require = createRequire(import.meta.url);
+const SETUP_ENTRYPOINT = fileURLToPath(import.meta.url);
 
 const log = (msg) => console.log(`[Tandem Control Panel] ${msg}`);
 const err = (msg) => console.error(`[Tandem Control Panel] ERROR: ${msg}`);
@@ -143,6 +195,176 @@ const swarmState = {
 const swarmSseClients = new Set();
 
 const sleep = (ms) => new Promise((resolveFn) => setTimeout(resolveFn, ms));
+
+function shellEscape(token) {
+  const text = String(token || "");
+  if (/^[A-Za-z0-9_./:@-]+$/.test(text)) return text;
+  return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function runCmd(bin, args = [], options = {}) {
+  return new Promise((resolveFn, reject) => {
+    const child = spawn(bin, args, {
+      stdio: options.stdio || "pipe",
+      env: options.env || process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString("utf8");
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+    }
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolveFn({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`${bin} ${args.join(" ")} exited ${code}: ${stderr || stdout}`));
+    });
+  });
+}
+
+async function installServices() {
+  if (process.platform !== "linux") {
+    throw new Error("--install-services currently supports Linux/systemd only.");
+  }
+  if (typeof process.getuid === "function" && process.getuid() !== 0) {
+    throw new Error("Service installation needs root privileges. Re-run with sudo.");
+  }
+
+  const serviceUser = serviceUserArg || String(process.env.SUDO_USER || process.env.USER || "root").trim();
+  if (!serviceUser) throw new Error("Could not determine service user.");
+  const serviceGroup = serviceUser;
+  const installEngine = serviceMode === "both" || serviceMode === "engine";
+  const installPanel = serviceMode === "both" || serviceMode === "panel";
+  const stateDir = String(process.env.TANDEM_STATE_DIR || "/srv/tandem").trim();
+  const engineEnvPath = "/etc/tandem/engine.env";
+  const panelEnvPath = "/etc/tandem/control-panel.env";
+  const engineServiceName = "tandem-engine";
+  const panelServiceName = "tandem-control-panel";
+  const engineBin = String(process.env.TANDEM_ENGINE_BIN || "tandem-engine").trim();
+  const token =
+    CONFIGURED_ENGINE_TOKEN ||
+    (existsSync(engineEnvPath) ? parseDotEnv(readFileSync(engineEnvPath, "utf8")).TANDEM_API_TOKEN || "" : "") ||
+    `tk_${randomBytes(16).toString("hex")}`;
+
+  await mkdir("/etc/tandem", { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  try {
+    await runCmd("chown", ["-R", `${serviceUser}:${serviceGroup}`, stateDir]);
+  } catch (e) {
+    log(`Warning: could not chown ${stateDir} to ${serviceUser}:${serviceGroup}: ${e.message}`);
+  }
+
+  const existingEngineEnv = existsSync(engineEnvPath) ? parseDotEnv(readFileSync(engineEnvPath, "utf8")) : {};
+  const engineEnv = {
+    ...existingEngineEnv,
+    TANDEM_API_TOKEN: token,
+    TANDEM_STATE_DIR: stateDir,
+    TANDEM_MEMORY_DB_PATH: existingEngineEnv.TANDEM_MEMORY_DB_PATH || `${stateDir}/memory.sqlite`,
+    TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
+  };
+  const engineEnvBody = Object.entries(engineEnv)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  await writeFile(engineEnvPath, `${engineEnvBody}\n`, "utf8");
+  await runCmd("chmod", ["640", engineEnvPath]);
+
+  const panelAutoStart = serviceMode === "panel" ? "1" : "0";
+  const existingPanelEnv = existsSync(panelEnvPath) ? parseDotEnv(readFileSync(panelEnvPath, "utf8")) : {};
+  const panelEnv = {
+    ...existingPanelEnv,
+    TANDEM_CONTROL_PANEL_PORT: String(PORTAL_PORT),
+    TANDEM_ENGINE_URL: ENGINE_URL,
+    TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: panelAutoStart,
+    TANDEM_CONTROL_PANEL_ENGINE_TOKEN: token,
+  };
+  const panelEnvBody = Object.entries(panelEnv)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  await writeFile(panelEnvPath, `${panelEnvBody}\n`, "utf8");
+  await runCmd("chmod", ["640", panelEnvPath]);
+
+  if (installEngine) {
+    const engineExec = [
+      engineBin,
+      "serve",
+      "--hostname",
+      ENGINE_HOST,
+      "--port",
+      String(ENGINE_PORT),
+    ]
+      .map(shellEscape)
+      .join(" ");
+    const engineUnit = `[Unit]
+Description=Tandem Engine
+After=network.target
+
+[Service]
+Type=simple
+User=${serviceUser}
+Group=${serviceGroup}
+EnvironmentFile=-${engineEnvPath}
+ExecStart=${engineExec}
+Restart=always
+RestartSec=2
+WorkingDirectory=${REPO_ROOT}
+
+[Install]
+WantedBy=multi-user.target
+`;
+    await writeFile(`/etc/systemd/system/${engineServiceName}.service`, engineUnit, "utf8");
+  }
+
+  if (installPanel) {
+    const panelExec = [process.execPath, SETUP_ENTRYPOINT].map(shellEscape).join(" ");
+    const unitDependencies = installEngine
+      ? `After=network.target ${engineServiceName}.service\nWants=${engineServiceName}.service`
+      : "After=network.target";
+    const panelUnit = `[Unit]
+Description=Tandem Control Panel
+${unitDependencies}
+
+[Service]
+Type=simple
+User=${serviceUser}
+Group=${serviceGroup}
+EnvironmentFile=-${panelEnvPath}
+ExecStart=${panelExec}
+Restart=always
+RestartSec=2
+WorkingDirectory=${REPO_ROOT}
+
+[Install]
+WantedBy=multi-user.target
+`;
+    await writeFile(`/etc/systemd/system/${panelServiceName}.service`, panelUnit, "utf8");
+  }
+
+  await runCmd("systemctl", ["daemon-reload"], { stdio: "inherit" });
+  if (installEngine) {
+    await runCmd("systemctl", ["enable", "--now", `${engineServiceName}.service`], { stdio: "inherit" });
+  }
+  if (installPanel) {
+    await runCmd("systemctl", ["enable", "--now", `${panelServiceName}.service`], { stdio: "inherit" });
+  }
+
+  log("Services installed.");
+  log(`Mode: ${serviceMode}`);
+  log(`Service user: ${serviceUser}`);
+  log(`Engine env: ${engineEnvPath}`);
+  log(`Panel env: ${panelEnvPath}`);
+  if (installEngine) log(`Engine service: ${engineServiceName}.service`);
+  if (installPanel) log(`Panel service:  ${panelServiceName}.service`);
+  log(`Token: ${token}`);
+}
 
 function isLocalEngineUrl(url) {
   try {
@@ -534,6 +756,70 @@ async function handleFilesApi(req, res, _session) {
         absPath: fullPath,
         size: meta.size,
         downloadUrl: `/api/files/download?path=${encodeURIComponent(relPath)}`,
+      });
+    } catch (e) {
+      if (e && typeof e === "object" && "code" in e && e.code === "EEXIST") {
+        sendJson(res, 409, { ok: false, error: "File already exists." });
+      } else {
+        sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return true;
+  }
+
+  if (pathname === "/api/files/read" && req.method === "GET") {
+    const rel = toSafeRelPath(url.searchParams.get("path") || "");
+    if (!rel) {
+      sendJson(res, 400, { ok: false, error: "Missing or invalid file path." });
+      return true;
+    }
+    const full = resolve(FILES_ROOT, rel);
+    try {
+      const info = await stat(full);
+      if (!info.isFile()) throw new Error("Not a file");
+      if (info.size > MAX_UPLOAD_BYTES) {
+        sendJson(res, 413, { ok: false, error: "File too large to read through API." });
+        return true;
+      }
+      const text = await readFile(full, "utf8");
+      sendJson(res, 200, {
+        ok: true,
+        root: FILES_ROOT,
+        path: rel,
+        absPath: full,
+        size: info.size,
+        text,
+      });
+    } catch {
+      sendJson(res, 404, { ok: false, error: "File not found." });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/files/write" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const rel = toSafeRelPath(body?.path || "");
+      const text = String(body?.text ?? "");
+      const overwrite = body?.overwrite !== false;
+      if (!rel) {
+        sendJson(res, 400, { ok: false, error: "Missing or invalid file path." });
+        return true;
+      }
+      if (Buffer.byteLength(text, "utf8") > MAX_UPLOAD_BYTES) {
+        sendJson(res, 413, { ok: false, error: "Text payload exceeds max upload bytes limit." });
+        return true;
+      }
+      const full = resolve(FILES_ROOT, rel);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, text, { encoding: "utf8", flag: overwrite ? "w" : "wx" });
+      const info = await stat(full);
+      sendJson(res, 200, {
+        ok: true,
+        root: FILES_ROOT,
+        path: rel,
+        absPath: full,
+        size: info.size,
       });
     } catch (e) {
       if (e && typeof e === "object" && "code" in e && e.code === "EEXIST") {
@@ -976,6 +1262,13 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main() {
+  if (installServicesRequested) {
+    await installServices();
+    if (serviceSetupOnly) {
+      return;
+    }
+  }
+
   if (!existsSync(DIST_DIR)) {
     err(`Missing build output at ${DIST_DIR}`);
     err("Run: npm run build");

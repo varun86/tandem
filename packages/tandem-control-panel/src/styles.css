@@ -327,7 +327,7 @@
 
 @layer components {
   .chat-layout {
-    @apply relative min-h-0 overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/70;
+    @apply relative min-h-0 overflow-hidden rounded-xl border border-zinc-800/90 bg-zinc-950/90;
   }
 
   .chat-workspace {
@@ -336,7 +336,7 @@
   }
 
   .chat-sessions-panel {
-    @apply absolute inset-y-0 left-0 z-30 flex w-[280px] max-w-[92vw] flex-col border-r border-slate-800 bg-slate-950/95 p-3;
+    @apply absolute inset-y-0 left-0 z-30 flex w-[280px] max-w-[92vw] flex-col border-r border-zinc-800 bg-zinc-950/95 p-3;
     transform: translateX(-104%);
     transition: transform 180ms ease;
   }
@@ -354,17 +354,17 @@
   }
 
   .chat-sessions-header {
-    @apply mb-2 flex items-center justify-between gap-2 border-b border-slate-800 pb-2;
+    @apply mb-2 flex items-center justify-between gap-2 border-b border-zinc-800 pb-2;
   }
 
   .chat-sessions-title {
-    @apply inline-flex items-center gap-2 text-sm font-medium text-slate-200;
+    @apply inline-flex items-center gap-2 text-sm font-medium text-zinc-200;
   }
 
   .chat-sessions-title svg {
     width: 14px;
     height: 14px;
-    color: rgb(148 163 184);
+    color: rgb(161 161 170);
   }
 
   .chat-session-list {
@@ -378,11 +378,11 @@
   }
 
   .chat-session-btn {
-    @apply min-w-0 flex-1 truncate rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 text-left text-sm text-slate-300 transition hover:border-slate-700 hover:text-slate-100;
+    @apply min-w-0 flex-1 truncate rounded-md border border-zinc-800 bg-zinc-900/80 px-2.5 py-1.5 text-left text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-zinc-100;
   }
 
   .chat-session-btn.active {
-    @apply border-violet-500/45 bg-violet-500/15 text-violet-100;
+    @apply border-zinc-500/55 bg-zinc-800/90 text-zinc-100;
   }
 
   .chat-session-del {
@@ -390,15 +390,15 @@
   }
 
   .chat-main-shell {
-    @apply min-h-0 border-r border-slate-800/80 bg-slate-950/55;
+    @apply min-h-0 border-r border-zinc-800/80 bg-zinc-950/70;
   }
 
   .chat-main-header {
-    @apply mb-0 flex items-center gap-2 border-b border-slate-800 px-3 py-2.5;
+    @apply mb-0 flex items-center gap-2 border-b border-zinc-800 px-3 py-2.5;
   }
 
   .chat-main-dot {
-    @apply h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400/90;
+    @apply h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400/90;
   }
 
   .chat-main-title {
@@ -406,25 +406,25 @@
   }
 
   .chat-main-tools {
-    @apply shrink-0 rounded-md border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-400;
+    @apply shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400;
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
   .chat-messages {
-    @apply bg-slate-950/40;
+    @apply bg-zinc-950/55;
   }
 
   .chat-right-rail {
-    @apply border-l border-slate-800 bg-slate-950/65 p-3;
+    @apply border-l border-zinc-800 bg-zinc-950/80 p-3;
   }
 
   .chat-rail-label {
-    @apply text-[10px] uppercase tracking-[0.18em] text-slate-500;
+    @apply text-[10px] uppercase tracking-[0.18em] text-zinc-500;
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
   .chat-rail-count {
-    @apply rounded-md border border-slate-600/70 px-1.5 py-0.5 text-[10px] text-slate-300;
+    @apply rounded-md border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300;
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
@@ -436,7 +436,7 @@
   }
 
   .chat-tool-pill {
-    @apply rounded-sm border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300 transition hover:border-slate-500 hover:text-slate-100;
+    @apply rounded-sm border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100;
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
@@ -452,7 +452,7 @@
   }
 
   .chat-tool-chip-running {
-    @apply border-sky-500/35 bg-sky-500/10 text-sky-300;
+    @apply border-zinc-500/35 bg-zinc-700/25 text-zinc-300;
   }
 
   .chat-tool-chip-ok {
@@ -464,11 +464,11 @@
   }
 
   .chat-rail-empty {
-    @apply text-[11px] text-slate-500;
+    @apply text-[11px] text-zinc-500;
   }
 
   .chat-composer {
-    @apply border-t border-slate-800 bg-slate-950/80 px-3 py-2;
+    @apply border-t border-zinc-800 bg-zinc-950/90 px-3 py-2;
   }
 
   .chat-attach-row {
@@ -484,7 +484,7 @@
   }
 
   .chat-input-modern {
-    @apply min-h-[46px] rounded-lg border-slate-700 bg-slate-900/80 py-2.5 pr-12 leading-relaxed;
+    @apply min-h-[46px] rounded-lg border-zinc-700 bg-zinc-900/85 py-2.5 pr-12 leading-relaxed;
     max-height: 180px;
   }
 
@@ -501,7 +501,7 @@
   }
 
   .chat-icon-btn {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-slate-400 transition hover:border-slate-500 hover:text-slate-100;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 bg-zinc-900 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-100;
   }
 
   .chat-icon-btn-inner {
@@ -509,11 +509,11 @@
   }
 
   .chat-send-btn {
-    @apply absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-violet-600/50 bg-violet-600/20 text-violet-100 transition hover:bg-violet-600/35 disabled:cursor-not-allowed disabled:opacity-45;
+    @apply absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-600/70 bg-zinc-700/60 text-zinc-100 transition hover:bg-zinc-600/75 disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .chat-file-pill {
-    @apply inline-flex max-w-[280px] shrink-0 items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-200;
+    @apply inline-flex max-w-[280px] shrink-0 items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200;
   }
 
   .chat-file-pill-name {
@@ -521,11 +521,11 @@
   }
 
   .chat-file-pill-size {
-    @apply text-[10px] text-slate-500;
+    @apply text-[10px] text-zinc-500;
   }
 
   .chat-file-pill-btn {
-    @apply inline-flex h-[18px] w-[18px] items-center justify-center rounded-sm border border-slate-700 text-slate-300 transition hover:border-slate-500 hover:text-slate-100;
+    @apply inline-flex h-[18px] w-[18px] items-center justify-center rounded-sm border border-zinc-700 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100;
   }
 
   .chat-file-pill-btn-danger {
@@ -533,7 +533,7 @@
   }
 
   .chat-msg {
-    @apply max-w-[84%] border border-slate-800 bg-slate-900/80 px-3 py-2.5 text-sm text-slate-100;
+    @apply max-w-[84%] border border-zinc-800 bg-zinc-900/90 px-3 py-2.5 text-sm text-zinc-100;
     border-radius: 12px;
   }
 
@@ -542,15 +542,15 @@
   }
 
   .chat-msg.user {
-    @apply ml-auto border-violet-500/40 bg-violet-600/25 text-violet-50;
+    @apply ml-auto border-zinc-600/70 bg-zinc-800/90 text-zinc-100;
   }
 
   .chat-msg-role {
-    @apply mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500;
+    @apply mb-1 text-[10px] uppercase tracking-[0.12em] text-zinc-500;
   }
 
   .chat-msg.user .chat-msg-role {
-    @apply text-violet-200/85;
+    @apply text-zinc-300;
   }
 }
 

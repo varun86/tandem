@@ -32,6 +32,17 @@ Or:
 tandem-control-panel-init
 ```
 
+Install Linux systemd services (engine + panel):
+
+```bash
+sudo tandem-control-panel --install-services
+```
+
+Options:
+
+- `--service-mode=both|engine|panel` (default `both`)
+- `--service-user=<linux-user>` (default: `SUDO_USER`/current user)
+
 ## Features
 
 - Token-gated web portal

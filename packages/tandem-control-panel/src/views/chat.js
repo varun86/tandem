@@ -33,10 +33,10 @@ export async function renderChat(ctx) {
   let sessionsOpen = false;
 
   byId("view").innerHTML = `
-    <div id="chat-layout" class="chat-layout min-w-0 xl:h-[calc(100vh-12rem)]">
+    <div id="chat-layout" class="chat-layout min-w-0 h-[calc(100vh-2rem)]">
       <aside id="chat-sessions-panel" class="chat-sessions-panel">
         <div class="chat-sessions-header">
-          <h3 class="chat-sessions-title"><i data-lucide="history"></i> Sessions</h3>
+          <h3 class="chat-sessions-title"><i data-lucide="clock-3"></i> Sessions</h3>
           <button id="new-session" class="tcp-btn h-8 px-2.5 text-xs"><i data-lucide="plus"></i> New</button>
         </div>
         <div id="session-list" class="chat-session-list"></div>
@@ -45,7 +45,7 @@ export async function renderChat(ctx) {
       <div class="chat-workspace min-h-0 min-w-0">
       <div class="chat-main-shell flex min-h-0 min-w-0 flex-col overflow-hidden">
         <div class="chat-main-header shrink-0">
-          <button id="chat-toggle-sessions" type="button" class="chat-icon-btn h-8 w-8" title="Sessions"><i data-lucide="history"></i></button>
+          <button id="chat-toggle-sessions" type="button" class="chat-icon-btn h-8 w-8" title="Sessions"><i data-lucide="clock-3"></i></button>
           <div class="chat-main-dot"></div>
           <h3 id="chat-title" class="tcp-title chat-main-title">Chat</h3>
           <span id="chat-tool-count" class="chat-main-tools hidden"></span>
@@ -141,8 +141,37 @@ export async function renderChat(ctx) {
     }
   }
 
+  function currentModelRoute() {
+    const providerID = String(state.providerDefault || "").trim();
+    const modelID = String(state.providerDefaultModel || "").trim();
+    if (!providerID || !modelID) return null;
+    return { providerID, modelID };
+  }
+
+  async function resolveModelRoute() {
+    const known = currentModelRoute();
+    if (known) return known;
+    try {
+      const cfg = await state.client.providers.config();
+      const providerID = String(cfg?.default || "").trim();
+      const modelID = String(cfg?.providers?.[providerID]?.default_model || "").trim();
+      if (providerID) state.providerDefault = providerID;
+      if (modelID) state.providerDefaultModel = modelID;
+      if (providerID && modelID) return { providerID, modelID };
+    } catch {
+      // Use existing state fallback below.
+    }
+    return currentModelRoute();
+  }
+
   async function createSession() {
-    const sid = await state.client.sessions.create({ title: `Chat ${new Date().toLocaleTimeString()}` });
+    const modelRoute = await resolveModelRoute();
+    const createPayload = { title: `Chat ${new Date().toLocaleTimeString()}` };
+    if (modelRoute) {
+      createPayload.provider = modelRoute.providerID;
+      createPayload.model = modelRoute.modelID;
+    }
+    const sid = await state.client.sessions.create(createPayload);
     const rec = await state.client.sessions.get(sid).catch(() => ({ id: sid, title: sid }));
     sessions.unshift(rec);
     state.currentSessionId = sid;
@@ -502,6 +531,10 @@ export async function renderChat(ctx) {
 
     try {
       if (!state.currentSessionId) await createSession();
+      const modelRoute = await resolveModelRoute();
+      if (!modelRoute) {
+        throw new Error("No default provider/model configured. Set it in Settings before sending chat.");
+      }
       if (attached.length > 0) {
         toast("info", `Sending with ${attached.length} attached file${attached.length === 1 ? "" : "s"}.`);
       }
@@ -512,23 +545,68 @@ export async function renderChat(ctx) {
         url: f.url || f.path,
       }));
       parts.push({ type: "text", text: prompt });
-      const runResp = await fetch(
-        `/api/engine/session/${encodeURIComponent(state.currentSessionId)}/prompt_async?return=run`,
-        {
+
+      const getActiveRunId = async () => {
+        const res = await fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/run`, {
+          method: "GET",
+          credentials: "include",
+        });
+        if (!res.ok) return "";
+        const payload = await res.json().catch(() => ({}));
+        return (
+          payload?.active?.runID ||
+          payload?.active?.runId ||
+          payload?.active?.run_id ||
+          ""
+        );
+      };
+
+      const cancelAndWaitForIdle = async () => {
+        await fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/cancel`, {
           method: "POST",
           credentials: "include",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ parts }),
+          body: JSON.stringify({}),
+        }).catch(() => {});
+        for (let i = 0; i < 25; i += 1) {
+          const active = await getActiveRunId().catch(() => "");
+          if (!active) return true;
+          await new Promise((resolve) => setTimeout(resolve, 120));
         }
-      );
+        return false;
+      };
+
+      const startRun = async () =>
+        fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/prompt_async?return=run`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            parts,
+            model: {
+              providerID: modelRoute.providerID,
+              modelID: modelRoute.modelID,
+            },
+          }),
+        });
+
+      let runResp = await startRun();
       let runId = "";
       if (runResp.status === 409) {
-        const conflict = await runResp.json().catch(() => ({}));
-        runId =
-          conflict?.activeRun?.runID ||
-          conflict?.activeRun?.runId ||
-          conflict?.activeRun?.run_id ||
-          "";
+        const becameIdle = await cancelAndWaitForIdle();
+        if (!becameIdle) {
+          throw new Error("Session has a stuck active run. Cancel it from engine/session and retry.");
+        }
+        runResp = await startRun();
+        if (runResp.ok) {
+          const retryPayload = await runResp.json().catch(() => ({}));
+          runId = retryPayload?.runID || retryPayload?.runId || retryPayload?.run_id || "";
+        } else if (runResp.status === 409) {
+          throw new Error("Session is still busy with another run. Please retry in a moment.");
+        } else {
+          const body = await runResp.text().catch(() => "");
+          throw new Error(`prompt_async retry failed (${runResp.status}): ${body}`);
+        }
       } else if (runResp.ok) {
         const payload = await runResp.json().catch(() => ({}));
         runId = payload?.runID || payload?.runId || payload?.run_id || "";
@@ -573,60 +651,104 @@ export async function renderChat(ctx) {
         "session.run.canceled",
       ]);
 
-      for await (const event of state.client.stream(state.currentSessionId, runId)) {
-        const evRunId = String(event.runId || event.runID || event.run_id || event.properties?.runID || "").trim();
-        if (evRunId && evRunId !== runId) continue;
-        if (event.type === "session.response") {
-          const delta = String(event.properties?.delta || "");
-          if (!delta) continue;
-          gotDelta = true;
-          if (thinking) thinking.classList.add("hidden");
-          pre.classList.remove("hidden");
-          responseText += delta;
-          pre.textContent = responseText;
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-        if (event.type === "tool.called" || event.type === "tool_call.started") {
-          const tool = String(event.properties?.tool || "tool");
-          recordToolActivity(tool, "started", `${event.type}:${evRunId || runId}:${tool}:start`);
-        }
-        if (
-          event.type === "tool.result" ||
-          event.type === "tool_call.completed" ||
-          event.type === "tool_call.failed"
-        ) {
-          const tool = String(event.properties?.tool || "tool");
-          const failed = event.type === "tool_call.failed";
-          recordToolActivity(
-            tool,
-            failed ? "failed" : "completed",
-            `${event.type}:${evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
-          );
-        }
-        if (event.type === "message.part.updated") {
-          const part = event.properties?.part || {};
-          const partType = String(part.type || "").trim();
-          const tool = String(part.tool || part.toolName || "").trim();
-          if (tool && partType === "tool_invocation") {
-            const partId = String(part.id || "").trim();
-            recordToolActivity(tool, "started", `${event.type}:${partId || evRunId || runId}:${tool}:start`);
+      let streamTimedOut = false;
+      const streamAbort = new AbortController();
+      let noEventTimer = null;
+      const isRunSignalEvent = (eventType) => {
+        const t = String(eventType || "").trim();
+        return t !== "server.connected" && t !== "engine.lifecycle.ready";
+      };
+      const resetNoEventTimer = () => {
+        if (noEventTimer) clearTimeout(noEventTimer);
+        noEventTimer = setTimeout(() => {
+          streamTimedOut = true;
+          streamAbort.abort("no-events-timeout");
+        }, 12000);
+      };
+      resetNoEventTimer();
+
+      try {
+        for await (const event of state.client.stream(state.currentSessionId, runId, { signal: streamAbort.signal })) {
+          if (isRunSignalEvent(event.type)) {
+            resetNoEventTimer();
           }
-          if (tool && partType === "tool_result") {
-            const partId = String(part.id || "").trim();
-            const pState = String(part.state || "").toLowerCase();
-            const failed = pState === "failed" || pState === "error";
+          const evRunId = String(event.runId || event.runID || event.run_id || event.properties?.runID || "").trim();
+          if (evRunId && evRunId !== runId) continue;
+          if (event.type === "session.response") {
+            const delta = String(event.properties?.delta || "");
+            if (!delta) continue;
+            gotDelta = true;
+            if (thinking) thinking.classList.add("hidden");
+            pre.classList.remove("hidden");
+            responseText += delta;
+            pre.textContent = responseText;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+          if (event.type === "tool.called" || event.type === "tool_call.started") {
+            const tool = String(event.properties?.tool || "tool");
+            recordToolActivity(tool, "started", `${event.type}:${evRunId || runId}:${tool}:start`);
+          }
+          if (
+            event.type === "tool.result" ||
+            event.type === "tool_call.completed" ||
+            event.type === "tool_call.failed"
+          ) {
+            const tool = String(event.properties?.tool || "tool");
+            const failed = event.type === "tool_call.failed";
             recordToolActivity(
               tool,
               failed ? "failed" : "completed",
-              `${event.type}:${partId || evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
+              `${event.type}:${evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
             );
           }
+          if (event.type === "message.part.updated") {
+            const part = event.properties?.part || {};
+            const partType = String(part.type || "").trim();
+            const tool = String(part.tool || part.toolName || "").trim();
+            if (tool && partType === "tool_invocation") {
+              const partId = String(part.id || "").trim();
+              recordToolActivity(tool, "started", `${event.type}:${partId || evRunId || runId}:${tool}:start`);
+            }
+            if (tool && partType === "tool_result") {
+              const partId = String(part.id || "").trim();
+              const pState = String(part.state || "").toLowerCase();
+              const failed = pState === "failed" || pState === "error";
+              recordToolActivity(
+                tool,
+                failed ? "failed" : "completed",
+                `${event.type}:${partId || evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
+              );
+            }
+          }
+          if (terminalFailureEvents.has(event.type)) {
+            throw new Error(String(event.properties?.error || "Run failed."));
+          }
+          if (
+            (event.type === "session.updated" || event.type === "session.status") &&
+            String(event.properties?.status || "").toLowerCase() === "idle"
+          ) {
+            break;
+          }
+          if (terminalSuccessEvents.has(event.type)) {
+            break;
+          }
         }
-        if (terminalFailureEvents.has(event.type)) {
-          throw new Error(String(event.properties?.error || "Run failed."));
+      } catch (streamErr) {
+        if (!streamTimedOut) throw streamErr;
+      }
+      if (noEventTimer) clearTimeout(noEventTimer);
+
+      if (streamTimedOut) {
+        // Fallback: if run already settled, refresh messages; otherwise fail explicitly.
+        let active = runId;
+        for (let i = 0; i < 15; i += 1) {
+          active = await getActiveRunId().catch(() => runId);
+          if (!active || active !== runId) break;
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
-        if (terminalSuccessEvents.has(event.type)) {
-          break;
+        await renderMessages();
+        if (active === runId) {
+          throw new Error("Run appears stuck before provider call (no stream events and still active).");
         }
       }
 
@@ -640,7 +762,12 @@ export async function renderChat(ctx) {
       await new Promise((resolve) => setTimeout(resolve, 220));
       await renderMessages();
     } catch (e) {
-      toast("err", e instanceof Error ? e.message : String(e));
+      const rawMsg = e instanceof Error ? e.message : String(e);
+      const msg =
+        rawMsg.includes("no-events-timeout") || rawMsg.includes("AbortError")
+          ? "Run stream timed out before events were received. Check engine/provider logs and retry."
+          : rawMsg;
+      toast("err", msg);
       await renderMessages();
     } finally {
       sending = false;
