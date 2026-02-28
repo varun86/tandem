@@ -70,6 +70,23 @@ pub trait ToolPolicyHook: Send + Sync {
     ) -> BoxFuture<'static, anyhow::Result<ToolPolicyDecision>>;
 }
 
+#[derive(Debug, Clone)]
+pub struct PromptContextHookContext {
+    pub session_id: String,
+    pub message_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub iteration: usize,
+}
+
+pub trait PromptContextHook: Send + Sync {
+    fn augment_provider_messages(
+        &self,
+        ctx: PromptContextHookContext,
+        messages: Vec<ChatMessage>,
+    ) -> BoxFuture<'static, anyhow::Result<Vec<ChatMessage>>>;
+}
+
 #[derive(Clone)]
 pub struct EngineLoop {
     storage: std::sync::Arc<Storage>,
@@ -85,6 +102,7 @@ pub struct EngineLoop {
     session_allowed_tools: std::sync::Arc<RwLock<HashMap<String, Vec<String>>>>,
     spawn_agent_hook: std::sync::Arc<RwLock<Option<std::sync::Arc<dyn SpawnAgentHook>>>>,
     tool_policy_hook: std::sync::Arc<RwLock<Option<std::sync::Arc<dyn ToolPolicyHook>>>>,
+    prompt_context_hook: std::sync::Arc<RwLock<Option<std::sync::Arc<dyn PromptContextHook>>>>,
 }
 
 impl EngineLoop {
@@ -114,6 +132,7 @@ impl EngineLoop {
             session_allowed_tools: std::sync::Arc::new(RwLock::new(HashMap::new())),
             spawn_agent_hook: std::sync::Arc::new(RwLock::new(None)),
             tool_policy_hook: std::sync::Arc::new(RwLock::new(None)),
+            prompt_context_hook: std::sync::Arc::new(RwLock::new(None)),
         }
     }
 
@@ -123,6 +142,10 @@ impl EngineLoop {
 
     pub async fn set_tool_policy_hook(&self, hook: std::sync::Arc<dyn ToolPolicyHook>) {
         *self.tool_policy_hook.write().await = Some(hook);
+    }
+
+    pub async fn set_prompt_context_hook(&self, hook: std::sync::Arc<dyn PromptContextHook>) {
+        *self.prompt_context_hook.write().await = Some(hook);
     }
 
     pub async fn set_session_allowed_tools(&self, session_id: &str, allowed_tools: Vec<String>) {
@@ -302,6 +325,7 @@ impl EngineLoop {
             let mut auto_workspace_probe_attempted = false;
 
             while max_iterations > 0 && !cancel.is_cancelled() {
+                let iteration = 26usize.saturating_sub(max_iterations);
                 max_iterations -= 1;
                 let mut messages = load_chat_history(self.storage.clone(), &session_id).await;
                 let mut system_parts =
@@ -321,6 +345,20 @@ impl EngineLoop {
                         role: "user".to_string(),
                         content: extra,
                     });
+                }
+                if let Some(hook) = self.prompt_context_hook.read().await.clone() {
+                    let ctx = PromptContextHookContext {
+                        session_id: session_id.clone(),
+                        message_id: user_message_id.clone(),
+                        provider_id: provider_id.clone(),
+                        model_id: model_id_value.clone(),
+                        iteration,
+                    };
+                    if let Ok(augmented) =
+                        hook.augment_provider_messages(ctx, messages.clone()).await
+                    {
+                        messages = augmented;
+                    }
                 }
                 let mut tool_schemas = self.tools.list().await;
                 if active_agent.tools.is_some() {

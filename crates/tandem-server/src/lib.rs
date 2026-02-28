@@ -6,8 +6,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition};
 use tandem_orchestrator::MissionState;
 use tandem_types::{
@@ -20,8 +22,10 @@ use tokio::sync::RwLock;
 use tandem_channels::config::{ChannelsConfig, DiscordConfig, SlackConfig, TelegramConfig};
 use tandem_core::{
     resolve_shared_paths, AgentRegistry, CancellationRegistry, ConfigStore, EngineLoop, EventBus,
-    PermissionManager, PluginRegistry, Storage,
+    PermissionManager, PluginRegistry, PromptContextHook, PromptContextHookContext, Storage,
 };
+use tandem_memory::db::MemoryDatabase;
+use tandem_providers::ChatMessage;
 use tandem_providers::ProviderRegistry;
 use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
 use tandem_tools::ToolRegistry;
@@ -683,6 +687,11 @@ impl AppState {
             .set_tool_policy_hook(std::sync::Arc::new(
                 crate::agent_teams::ServerToolPolicyHook::new(self.clone()),
             ))
+            .await;
+        self.engine_loop
+            .set_prompt_context_hook(std::sync::Arc::new(ServerPromptContextHook::new(
+                self.clone(),
+            )))
             .await;
         let _ = self.load_shared_resources().await;
         let _ = self.load_routines().await;
@@ -1598,6 +1607,131 @@ impl Deref for AppState {
         self.runtime
             .get()
             .expect("runtime accessed before startup completion")
+    }
+}
+
+#[derive(Clone)]
+struct ServerPromptContextHook {
+    state: AppState,
+}
+
+impl ServerPromptContextHook {
+    fn new(state: AppState) -> Self {
+        Self { state }
+    }
+
+    async fn open_memory_db(&self) -> Option<MemoryDatabase> {
+        let paths = resolve_shared_paths().ok()?;
+        MemoryDatabase::new(&paths.memory_db_path).await.ok()
+    }
+
+    fn hash_query(input: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn build_memory_block(hits: &[tandem_memory::types::GlobalMemorySearchHit]) -> String {
+        let mut out = vec!["<memory_context>".to_string()];
+        let mut used = 0usize;
+        for hit in hits {
+            let text = hit
+                .record
+                .content
+                .split_whitespace()
+                .take(60)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let line = format!(
+                "- [{:.3}] {} (source={}, run={})",
+                hit.score, text, hit.record.source_type, hit.record.run_id
+            );
+            used = used.saturating_add(line.len());
+            if used > 2200 {
+                break;
+            }
+            out.push(line);
+        }
+        out.push("</memory_context>".to_string());
+        out.join("\n")
+    }
+}
+
+impl PromptContextHook for ServerPromptContextHook {
+    fn augment_provider_messages(
+        &self,
+        ctx: PromptContextHookContext,
+        mut messages: Vec<ChatMessage>,
+    ) -> BoxFuture<'static, anyhow::Result<Vec<ChatMessage>>> {
+        let this = self.clone();
+        Box::pin(async move {
+            let run = this.state.run_registry.get(&ctx.session_id).await;
+            let Some(run) = run else {
+                return Ok(messages);
+            };
+            let run_id = run.run_id;
+            let user_id = run.client_id.unwrap_or_else(|| "default".to_string());
+            let query = messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            if query.trim().is_empty() {
+                return Ok(messages);
+            }
+
+            let Some(db) = this.open_memory_db().await else {
+                return Ok(messages);
+            };
+            let started = now_ms();
+            let hits = db
+                .search_global_memory(&user_id, &query, 8, None, None, None)
+                .await
+                .unwrap_or_default();
+            let latency_ms = now_ms().saturating_sub(started);
+            let scores = hits.iter().map(|h| h.score).collect::<Vec<_>>();
+            this.state.event_bus.publish(EngineEvent::new(
+                "memory.search.performed",
+                json!({
+                    "runID": run_id,
+                    "sessionID": ctx.session_id,
+                    "messageID": ctx.message_id,
+                    "providerID": ctx.provider_id,
+                    "modelID": ctx.model_id,
+                    "iteration": ctx.iteration,
+                    "queryHash": Self::hash_query(&query),
+                    "resultCount": hits.len(),
+                    "scoreMin": scores.iter().copied().reduce(f64::min),
+                    "scoreMax": scores.iter().copied().reduce(f64::max),
+                    "scores": scores,
+                    "latencyMs": latency_ms,
+                    "sources": hits.iter().map(|h| h.record.source_type.clone()).collect::<Vec<_>>(),
+                }),
+            ));
+
+            if hits.is_empty() {
+                return Ok(messages);
+            }
+
+            let memory_block = Self::build_memory_block(&hits);
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: memory_block.clone(),
+            });
+            this.state.event_bus.publish(EngineEvent::new(
+                "memory.context.injected",
+                json!({
+                    "runID": run_id,
+                    "sessionID": ctx.session_id,
+                    "messageID": ctx.message_id,
+                    "iteration": ctx.iteration,
+                    "count": hits.len(),
+                    "tokenSizeApprox": memory_block.split_whitespace().count(),
+                }),
+            ));
+            Ok(messages)
+        })
     }
 }
 

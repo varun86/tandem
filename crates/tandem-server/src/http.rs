@@ -2155,108 +2155,14 @@ fn spawn_run_task(
     });
 }
 
-fn request_text(req: &SendMessageRequest) -> String {
-    req.parts
-        .iter()
-        .filter_map(|part| match part {
-            MessagePartInput::Text { text } => Some(text.clone()),
-            MessagePartInput::File { .. } => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-async fn inject_memory_context_for_run(
-    state: &AppState,
-    session_id: &str,
-    run_id: &str,
-    user_hint: Option<&str>,
-    mut req: SendMessageRequest,
-) -> SendMessageRequest {
-    let Some(db) = open_global_memory_db().await else {
-        return req;
-    };
-    let query = request_text(&req);
-    if query.trim().is_empty() {
-        return req;
-    }
-
-    let user_id = user_hint
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or("default");
-    let search_started = Instant::now();
-    let hits = match db
-        .search_global_memory(user_id, &query, 8, None, None, None)
-        .await
-    {
-        Ok(hits) => hits,
-        Err(_) => return req,
-    };
-    let scores = hits.iter().map(|h| h.score).collect::<Vec<_>>();
-    state.event_bus.publish(EngineEvent::new(
-        "memory.search.performed",
-        json!({
-            "runID": run_id,
-            "sessionID": session_id,
-            "userID": user_id,
-            "queryHash": hash_text(&query),
-            "latencyMs": search_started.elapsed().as_millis() as u64,
-            "resultCount": hits.len(),
-            "scoreMin": scores.iter().copied().reduce(f64::min),
-            "scoreMax": scores.iter().copied().reduce(f64::max),
-            "scores": scores,
-            "sources": hits.iter().map(|h| h.record.source_type.clone()).collect::<Vec<_>>(),
-        }),
-    ));
-
-    if hits.is_empty() {
-        return req;
-    }
-
-    let mut lines = vec!["<memory_context>".to_string()];
-    let mut used = 0usize;
-    for hit in hits {
-        let snippet = truncate_text(&hit.record.content, 240);
-        let line = format!(
-            "- [{:.3}] {} (source={}, run={})",
-            hit.score, snippet, hit.record.source_type, hit.record.run_id
-        );
-        used += line.len();
-        if used > 1800 {
-            break;
-        }
-        lines.push(line);
-    }
-    lines.push("</memory_context>".to_string());
-    let memory_block = lines.join("\n");
-    req.parts.insert(
-        0,
-        MessagePartInput::Text {
-            text: memory_block.clone(),
-        },
-    );
-    state.event_bus.publish(EngineEvent::new(
-        "memory.context.injected",
-        json!({
-            "runID": run_id,
-            "sessionID": session_id,
-            "count": lines.len().saturating_sub(2),
-            "tokenSizeApprox": memory_block.split_whitespace().count(),
-        }),
-    ));
-    req
-}
-
 async fn execute_run(
     state: AppState,
     session_id: String,
     run_id: String,
-    mut req: SendMessageRequest,
+    req: SendMessageRequest,
     correlation_id: Option<String>,
-    client_id: Option<String>,
+    _client_id: Option<String>,
 ) -> anyhow::Result<()> {
-    req = inject_memory_context_for_run(&state, &session_id, &run_id, client_id.as_deref(), req)
-        .await;
     let mut run_fut = Box::pin(state.engine_loop.run_prompt_async_with_context(
         session_id.clone(),
         req,
