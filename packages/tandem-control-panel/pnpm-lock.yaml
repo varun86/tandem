@@ -1,0 +1,47 @@
+lockfileVersion: "9.0"
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      "@frumu/tandem":
+        specifier: latest
+        version: 0.3.25
+      "@frumu/tandem-client":
+        specifier: latest
+        version: 0.3.25
+
+packages:
+  "@frumu/tandem-client@0.3.25":
+    resolution:
+      {
+        integrity: sha512-uYkOwNSa/lokeW2miloMQ4w+SikgbS4FaNS7PHzsVEqI5xqQasRH9tSRge6R3IIJ9Iy8JA093QZ+UCEweJf4AQ==,
+      }
+    engines: { node: ">=18" }
+
+  "@frumu/tandem@0.3.25":
+    resolution:
+      {
+        integrity: sha512-0Jf82bY6PLFKaUciagITIHEv15pNbkrcq85z/J8TlOcg7YtwCTWwVjauiSp26CFS3i+0h4qhyH9YLUVuU3TxrA==,
+      }
+    cpu: [x64, arm64]
+    os: [darwin, linux, win32]
+    hasBin: true
+
+  zod@4.3.6:
+    resolution:
+      {
+        integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==,
+      }
+
+snapshots:
+  "@frumu/tandem-client@0.3.25":
+    dependencies:
+      zod: 4.3.6
+
+  "@frumu/tandem@0.3.25": {}
+
+  zod@4.3.6: {}

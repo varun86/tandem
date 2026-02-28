@@ -26,6 +26,7 @@ const jsonFiles = [
   "src-tauri/tauri.conf.json",
   "packages/tandem-ai/package.json",
   "packages/tandem-client-ts/package.json",
+  "packages/tandem-control-panel/package.json",
   "packages/tandem-engine/package.json",
   "packages/tandem-tui/package.json",
 ];
@@ -120,4 +121,4 @@ pyprojectFiles.forEach(updatePyproject);
 process.stdout.write(`Updated ${updatedFiles.length} files to ${version}\n`);
 '@
 
-node -e $script
+$script | node

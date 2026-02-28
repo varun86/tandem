@@ -1,0 +1,19 @@
+{
+  "name": "@frumu/tandem-setup",
+  "version": "0.3.26",
+  "description": "Standalone command-and-control setup interface for Tandem Engine",
+  "type": "module",
+  "bin": {
+    "tandem-setup": "bin/setup.js"
+  },
+  "scripts": {
+    "start": "node bin/setup.js"
+  },
+  "dependencies": {
+    "@frumu/tandem-client": "latest",
+    "@frumu/tandem": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

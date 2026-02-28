@@ -1,0 +1,41 @@
+/* Base resets and overrides since we use Tailwind natively */
+:root {
+    font-family: "Inter", system-ui, sans-serif;
+}
+
+body {
+    background-image:
+        radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.03), transparent 25%),
+        radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.03), transparent 25%);
+    background-attachment: fixed;
+}
+
+/* Premium Webkit Scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Input autofill overrides (hack to prevent Chrome's ugly stark white/yellow background on autofill) */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #030712 inset !important;
+    -webkit-text-fill-color: white !important;
+    caret-color: white !important;
+    border-color: rgba(16, 185, 129, 0.3) !important;
+}

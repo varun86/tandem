@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tandem Setup</title>
+    <!-- We use the precompiled Tailwind CDN script here to avoid a build step for the vanilla HTML setup app -->
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+
+    <!-- Feather Icons for lightweight iconography -->
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+
+<body class="bg-[#030712] text-white min-h-screen flex items-center justify-center p-6 selection:bg-emerald-500/30">
+    <!-- Ambient glowing backgrounds -->
+    <div
+        class="fixed top-0 right-0 w-[500px] h-[500px] bg-emerald-500/10 blur-[120px] rounded-full pointer-events-none -translate-y-1/2 translate-x-1/2">
+    </div>
+    <div
+        class="fixed bottom-0 left-0 w-[600px] h-[600px] bg-violet-500/10 blur-[150px] rounded-full pointer-events-none translate-y-1/2 -translate-x-1/4">
+    </div>
+
+    <main class="relative z-10 w-full max-w-2xl">
+
+        <!-- Header -->
+        <header class="mb-10 text-center">
+            <div
+                class="inline-flex p-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 shadow-[0_0_30px_rgba(16,185,129,0.2)] mb-6">
+                <i data-feather="cpu" class="text-emerald-400 w-8 h-8"></i>
+            </div>
+            <h1 class="text-4xl font-bold tracking-tight mb-3">Tandem <span class="text-gray-500 font-light">Control
+                    Panel</span></h1>
+            <p class="text-gray-400">Configure your local Agent Engine, Providers, and MCP Plugins.</p>
+        </header>
+
+        <!-- Main Card Container -->
+        <div
+            class="bg-gray-950/40 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+
+            <!-- Connection Status Bar -->
+            <div id="status-bar"
+                class="px-6 py-4 border-b border-white/10 flex items-center justify-between transition-colors duration-500 bg-black/40">
+                <div class="flex items-center gap-3">
+                    <span id="status-indicator"
+                        class="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse"></span>
+                    <span id="status-text" class="text-sm font-semibold tracking-wide text-gray-300">Connecting to
+                        Engine...</span>
+                </div>
+                <div id="engine-version" class="text-xs font-mono text-gray-500">v--</div>
+            </div>
+
+            <!-- Content Area -->
+            <div class="p-8">
+
+                <!-- Loading State -->
+                <div id="view-loading" class="py-12 flex flex-col items-center justify-center text-gray-500">
+                    <i data-feather="loader" class="w-8 h-8 animate-spin mb-4 text-emerald-500"></i>
+                    <p class="text-sm">Initializing SDK...</p>
+                </div>
+
+                <!-- Provider Setup View -->
+                <div id="view-providers" class="hidden space-y-6">
+                    <div>
+                        <h2 class="text-xl font-semibold mb-1 flex items-center gap-2">
+                            <i data-feather="key" class="w-5 h-5 text-gray-400"></i> API Providers
+                        </h2>
+                        <p class="text-sm text-gray-400 mb-6">Tandem requires at least one LLM provider configured to
+                            orchestrate agents.</p>
+                    </div>
+
+                    <form id="provider-form" class="space-y-4">
+                        <!-- OpenRouter -->
+                        <div class="group relative">
+                            <label
+                                class="block text-xs font-medium text-gray-400 uppercase tracking-widest mb-1.5 ml-1">OpenRouter
+                                Key</label>
+                            <input type="password" id="input-openrouter" placeholder="sk-or-v1-..."
+                                class="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all font-mono text-sm">
+                        </div>
+
+                        <!-- Anthropic -->
+                        <div class="group relative">
+                            <label
+                                class="block text-xs font-medium text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Anthropic
+                                Key</label>
+                            <input type="password" id="input-anthropic" placeholder="sk-ant-..."
+                                class="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all font-mono text-sm">
+                        </div>
+
+                        <!-- OpenAI -->
+                        <div class="group relative">
+                            <label
+                                class="block text-xs font-medium text-gray-400 uppercase tracking-widest mb-1.5 ml-1">OpenAI
+                                Key</label>
+                            <input type="password" id="input-openai" placeholder="sk-proj-..."
+                                class="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all font-mono text-sm">
+                        </div>
+
+                        <div class="pt-4 flex items-center justify-end gap-3">
+                            <span id="save-status"
+                                class="text-sm text-emerald-400 opacity-0 transition-opacity">Saved!</span>
+                            <button type="submit"
+                                class="bg-gray-100 hover:bg-white text-gray-900 px-6 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2">
+                                <i data-feather="save" class="w-4 h-4"></i> Save Keys
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+            </div>
+
+            <!-- Footer Navigation -->
+            <div
+                class="bg-black/40 border-t border-white/5 p-4 flex justify-between items-center text-sm text-gray-500">
+                <button class="hover:text-white transition-colors flex items-center gap-1"><i data-feather="settings"
+                        class="w-4 h-4"></i> Core Settings</button>
+                <button class="hover:text-white transition-colors flex items-center gap-1 hover:text-emerald-400">MCP
+                    Plugins <i data-feather="chevron-right" class="w-4 h-4"></i></button>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Map the external npm imports to CDN imports for the browser via ESM -->
+    <script type="importmap">
+    {
+        "imports": {
+            "@frumu/tandem-client": "https://unpkg.com/@frumu/tandem-client@latest/dist/index.js",
+            "zod": "https://unpkg.com/zod@3.22.4/lib/index.mjs"
+        }
+    }
+    </script>
+
+    <!-- Load custom logic -->
+    <script type="module" src="/app.js"></script>
+
+    <script>
+        // Initialize feather icons eagerly for UI hydration
+        feather.replace();
+    </script>
+</body>
+
+</html>
