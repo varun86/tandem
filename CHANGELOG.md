@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Composio MCP stream response compatibility**: Fixed MCP runtime parsing for streamable/SSE JSON-RPC responses during remote discovery (`initialize` / `tools/list`), resolving `Invalid MCP JSON response: expected value at line 1 column 1` failures on Composio endpoints.
 - **Routine hard-pause runtime semantics**: Pausing a `running` routine run now actively cancels tracked live session(s) and records cancelled session IDs in pause responses/events.
 - **Swarm view route-stability fix**: Fixed Swarm page re-render race/leak where timer/SSE-triggered refreshes could leave Swarm content stuck after navigating to other views.
+- **Control panel hash-query soft routing**: Fixed excessive full-shell re-renders on same-route hash/query changes (for example Automations tab/wizard clicks), reducing UI flash and stale render races.
 
 ## [0.3.27] - 2026-03-01
 

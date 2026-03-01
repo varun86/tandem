@@ -13,6 +13,7 @@ const app = document.getElementById("app");
 const state = createState();
 const { toast, renderToasts } = createToasts(state);
 const TOKEN_STORAGE_KEY = "tandem_control_panel_token";
+let routeRenderSeq = 0;
 
 const ctx = {
   app,
@@ -158,9 +159,19 @@ async function refreshIdentityStatus() {
 }
 
 function setRoute(route) {
-  state.route = ensureRoute(route, ROUTES);
-  setHashRoute(state.route);
-  renderShell();
+  const nextRoute = ensureRoute(route, ROUTES);
+  const targetHash = `#/${nextRoute}`;
+  if (window.location.hash !== targetHash) {
+    setHashRoute(nextRoute);
+    return;
+  }
+  state.route = nextRoute;
+  if (!state.authed) {
+    renderLogin();
+    return;
+  }
+  clearCleanup();
+  void renderRoute({ showLoading: false });
 }
 
 function renderLogin() {
@@ -320,10 +331,14 @@ function renderLogin() {
   });
 }
 
-async function renderRoute() {
+async function renderRoute(options = {}) {
+  const { showLoading = true } = options;
+  const renderSeq = ++routeRenderSeq;
   const view = byId("view");
   if (!view) return;
-  view.innerHTML = '<div class="tcp-subtle">Loading...</div>';
+  if (showLoading) {
+    view.innerHTML = '<div class="tcp-subtle">Loading...</div>';
+  }
 
   const providerRequiredRoutes = new Set(["chat", "agents", "swarm", "teams"]);
   if (providerRequiredRoutes.has(state.route) && !state.providerReady) {
@@ -347,6 +362,7 @@ async function renderRoute() {
 
   const renderer = VIEW_RENDERERS[state.route] || VIEW_RENDERERS.dashboard;
   await renderer(ctx);
+  if (renderSeq !== routeRenderSeq) return;
   renderIcons(byId("view"));
   animateRouteView(view);
   animateNav();
@@ -454,8 +470,19 @@ async function renderDashboardIfAuthLost() {
 }
 
 window.addEventListener("hashchange", () => {
-  state.route = ensureRoute(routeFromHash(), ROUTES);
-  renderShell();
+  const nextRoute = ensureRoute(routeFromHash(), ROUTES);
+  const routeChanged = nextRoute !== state.route;
+  state.route = nextRoute;
+  if (!state.authed) {
+    renderLogin();
+    return;
+  }
+  if (routeChanged) {
+    renderShell();
+    return;
+  }
+  clearCleanup();
+  void renderRoute({ showLoading: false });
 });
 
 async function boot() {

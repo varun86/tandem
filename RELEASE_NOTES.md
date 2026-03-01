@@ -17,6 +17,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Extended animation coverage across routed views (cards/list/nav) with reduced-motion safeguards.
   - Fixed Swarm refresh race where polling/SSE re-renders could leave Swarm UI content visible after route changes.
   - Clarified Swarm positioning in UI as live orchestration (`Swarm (Live)`), with guidance to use Automations for persistent scheduled flows.
+  - Fixed same-route hash/query navigation churn causing visible full-page flash on tab/wizard interactions (notably Automations), by using soft in-place rerenders and stale-render guards.
 - Chat reliability and approvals-state fixes
   - Fixed delayed user-message rendering: user messages now appear immediately on send (optimistic render).
   - Fixed missing right-rail tool activity by normalizing additional tool event families (`session.tool_call`, `session.tool_result`, and tool message-part updates).
