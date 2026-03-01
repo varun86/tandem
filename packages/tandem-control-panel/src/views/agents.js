@@ -1,5 +1,3 @@
-import { animate } from "motion";
-
 export async function renderAgents(ctx) {
   const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
   const AGENTS_TABS = ["overview", "routines", "automations", "templates", "runs"];
@@ -835,17 +833,6 @@ export async function renderAgents(ctx) {
   byId("agents-wizard-open-runs")?.addEventListener("click", () => {
     writeAgentsUiState({ tab: "runs", step: 2 });
   });
-  byId("view")
-    .querySelectorAll("[data-agents-panel]")
-    .forEach((panel) => {
-      if (panel.classList.contains("hidden")) return;
-      animate(
-        panel,
-        { opacity: [0.0, 1.0], transform: ["translateY(8px)", "translateY(0px)"] },
-        { duration: 0.22, easing: "ease-out" }
-      );
-    });
-
   const routineList = byId("routine-list");
   routineList.innerHTML =
     routines

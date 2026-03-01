@@ -332,7 +332,7 @@ function renderLogin() {
 }
 
 async function renderRoute(options = {}) {
-  const { showLoading = true } = options;
+  const { showLoading = true, animateView = true } = options;
   const renderSeq = ++routeRenderSeq;
   const view = byId("view");
   if (!view) return;
@@ -364,8 +364,10 @@ async function renderRoute(options = {}) {
   await renderer(ctx);
   if (renderSeq !== routeRenderSeq) return;
   renderIcons(byId("view"));
-  animateRouteView(view);
-  animateNav();
+  if (animateView) {
+    animateRouteView(view);
+    animateNav();
+  }
 }
 
 function animateRouteView(view) {
@@ -482,7 +484,7 @@ window.addEventListener("hashchange", () => {
     return;
   }
   clearCleanup();
-  void renderRoute({ showLoading: false });
+  void renderRoute({ showLoading: false, animateView: false });
 });
 
 async function boot() {
