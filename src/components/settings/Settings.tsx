@@ -358,11 +358,11 @@ export function Settings({
 
   const handleIdentityAvatarUpload = (file: File | null) => {
     if (!file) return;
-    const maxBytes = 1024 * 1024;
+    const maxBytes = 10 * 1024 * 1024;
     if (file.size > maxBytes) {
       setIdentityNotice({
         kind: "error",
-        message: "Avatar image is too large (max 1 MB).",
+        message: "Avatar image is too large (max 10 MB).",
       });
       return;
     }

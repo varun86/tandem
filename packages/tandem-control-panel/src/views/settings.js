@@ -337,8 +337,8 @@ async function renderIdentityBlock(ctx, container) {
       avatarFileEl.addEventListener("change", async (e) => {
         const file = e.target?.files?.[0];
         if (!file) return;
-        if (file.size > 1024 * 1024) {
-          toast("err", "Avatar image is too large (max 1 MB).");
+        if (file.size > 10 * 1024 * 1024) {
+          toast("err", "Avatar image is too large (max 10 MB).");
           return;
         }
         const reader = new FileReader();

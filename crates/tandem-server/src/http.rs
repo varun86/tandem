@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
+use std::io::Cursor;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path as FsPath;
@@ -19,6 +20,7 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use base64::Engine;
 use futures::Stream;
 use ignore::WalkBuilder;
 use regex::Regex;
@@ -3614,7 +3616,67 @@ fn normalize_config_patch_input(mut input: Value) -> Value {
 
     root.remove("bot_name");
     root.remove("persona");
+    normalize_identity_avatar_patch(root);
     input
+}
+
+fn normalize_identity_avatar_patch(root: &mut serde_json::Map<String, Value>) {
+    let avatar_slot = root
+        .get_mut("identity")
+        .and_then(Value::as_object_mut)
+        .and_then(|identity| identity.get_mut("bot"))
+        .and_then(Value::as_object_mut)
+        .and_then(|bot| bot.get_mut("avatar_url"));
+
+    let Some(slot) = avatar_slot else {
+        return;
+    };
+    let Some(raw) = slot.as_str() else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        *slot = Value::Null;
+        return;
+    }
+    if let Some(normalized) = normalize_avatar_data_url(trimmed) {
+        *slot = Value::String(normalized);
+    }
+}
+
+fn normalize_avatar_data_url(input: &str) -> Option<String> {
+    if !input.starts_with("data:image/") {
+        return Some(input.to_string());
+    }
+
+    let (meta, payload) = input.split_once(',')?;
+    if !meta.contains(";base64") {
+        return None;
+    }
+    // Safety guard against very large inline payloads.
+    if payload.len() > 24 * 1024 * 1024 {
+        return None;
+    }
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.as_bytes())
+        .ok()?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+
+    let mut image = image::load_from_memory(&bytes).ok()?;
+    if image.width() > 512 || image.height() > 512 {
+        image = image.thumbnail(512, 512);
+    }
+
+    // Re-encode to PNG for consistent, browser-safe storage.
+    let mut out = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(out);
+    Some(format!("data:image/png;base64,{encoded}"))
 }
 
 async fn get_config(State(state): State<AppState>) -> Json<Value> {
