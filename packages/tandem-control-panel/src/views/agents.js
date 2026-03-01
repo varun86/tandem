@@ -183,6 +183,10 @@ export async function renderAgents(ctx) {
       return "tcp-badge-warn";
     return "tcp-badge-info";
   };
+  const isPendingApprovalStatus = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    return normalized === "pending_approval" || normalized.includes("awaiting_approval");
+  };
   const latestRunsBy = (runs, idOf) => {
     const map = new Map();
     const sorted = [...runs].sort((a, b) => firstTimestamp(b) - firstTimestamp(a));
@@ -273,6 +277,7 @@ export async function renderAgents(ctx) {
         const status = runStatusOf(latest);
         const runId = runIdOf(latest);
         const detail = truncate(runDetailOf(latest));
+        const needsReview = isPendingApprovalStatus(status) && !!runId;
         return `<div class="tcp-list-item">
           <div class="flex items-center justify-between gap-2">
             <span>${escapeHtml(String(a.name || aid || "Automation"))}</span>
@@ -292,6 +297,14 @@ export async function renderAgents(ctx) {
                 <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(latest)))}</span>
                 <span class="tcp-subtle font-mono">${escapeHtml(runId || "run n/a")}</span>
               </div>
+              ${
+                needsReview
+                  ? `<div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  <button data-run-review="approve" data-run-id="${escapeHtml(runId)}" data-run-family="automation" class="tcp-btn h-7 px-2 text-xs">Approve</button>
+                  <button data-run-review="deny" data-run-id="${escapeHtml(runId)}" data-run-family="automation" class="tcp-btn-danger h-7 px-2 text-xs">Deny</button>
+                </div>`
+                  : ""
+              }
               ${detail ? `<div class="mt-1 text-xs text-slate-400">${escapeHtml(detail)}</div>` : ""}`
               : `<div class="mt-1 text-xs text-slate-500">No automation runs yet.</div>`
           }
@@ -308,6 +321,7 @@ export async function renderAgents(ctx) {
           ? routineNameById.get(ownerId) || ownerId || "Routine"
           : automationNameById.get(ownerId) || ownerId || "Automation";
         const status = runStatusOf(run);
+        const needsReview = isPendingApprovalStatus(status) && !!rid;
         const detail = truncate(runDetailOf(run), 180);
         return `<div class="tcp-list-item">
           <div class="flex items-center justify-between gap-2">
@@ -316,6 +330,12 @@ export async function renderAgents(ctx) {
               ${
                 rid
                   ? `<button data-inspect-run="${escapeHtml(rid)}" data-run-family="${escapeHtml(family)}" class="tcp-btn h-7 px-2 text-xs">Details</button>`
+                  : ""
+              }
+              ${
+                needsReview
+                  ? `<button data-run-review="approve" data-run-id="${escapeHtml(rid)}" data-run-family="${escapeHtml(family)}" class="tcp-btn h-7 px-2 text-xs">Approve</button>
+                <button data-run-review="deny" data-run-id="${escapeHtml(rid)}" data-run-family="${escapeHtml(family)}" class="tcp-btn-danger h-7 px-2 text-xs">Deny</button>`
                   : ""
               }
               <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
@@ -392,6 +412,10 @@ export async function renderAgents(ctx) {
         Model route for this routine: <span id="routine-model-preview" class="font-mono">${escapeHtml(initialProviderId && initialModelId ? `${initialProviderId}/${initialModelId}` : "default engine route")}</span>
       </div>
       <div class="mt-3 rounded-xl border border-slate-700/70 bg-slate-900/35 p-3">
+        <label class="mb-2 inline-flex items-center gap-2 text-xs text-slate-200">
+          <input id="routine-allow-everything" type="checkbox" class="h-4 w-4 accent-slate-400" />
+          Allow everything (no approval, all tools, external integrations)
+        </label>
         <label class="mb-1 block text-sm text-slate-300">Tool Allowlist (optional)</label>
         <input
           id="routine-allowed-tools"
@@ -482,6 +506,7 @@ export async function renderAgents(ctx) {
           false
         );
         const isPaused = routineStatus === "paused";
+        const needsReview = isPendingApprovalStatus(latestStatus) && !!latestRunId;
         return `
       <div class="tcp-list-item flex items-center justify-between gap-3">
         <div>
@@ -516,6 +541,12 @@ export async function renderAgents(ctx) {
         </div>
         <div class="flex gap-2">
           <button data-run="${escapeHtml(rid)}" class="tcp-btn"><i data-lucide="play"></i> Run</button>
+          ${
+            needsReview
+              ? `<button data-run-review="approve" data-run-id="${escapeHtml(latestRunId)}" data-run-family="routine" class="tcp-btn">Approve</button>
+          <button data-run-review="deny" data-run-id="${escapeHtml(latestRunId)}" data-run-family="routine" class="tcp-btn-danger">Deny</button>`
+              : ""
+          }
           <button data-toggle-status="${escapeHtml(rid)}" data-next-status="${isPaused ? "active" : "paused"}" class="tcp-btn">
             <i data-lucide="${isPaused ? "play-circle" : "pause-circle"}"></i> ${isPaused ? "Resume" : "Pause"}
           </button>
@@ -535,6 +566,67 @@ export async function renderAgents(ctx) {
     renderAgents(ctx);
   });
   const runInspectorEl = byId("run-inspector");
+  const runReview = async (runId, family, decision) => {
+    const isAutomation = String(family || "").toLowerCase() === "automation";
+    const action = String(decision || "").toLowerCase() === "deny" ? "deny" : "approve";
+    if (!runId) throw new Error("Run ID is missing.");
+    if (action === "approve") {
+      if (isAutomation) {
+        await state.client.automations.approveRun(runId, "approved from control panel");
+      } else {
+        await state.client.routines.approveRun(runId, "approved from control panel");
+      }
+      return;
+    }
+    if (isAutomation) {
+      await state.client.automations.denyRun(runId, "denied from control panel");
+    } else {
+      await state.client.routines.denyRun(runId, "denied from control panel");
+    }
+  };
+  const wireRunReviewButtons = (rootEl) => {
+    rootEl.querySelectorAll("[data-run-review]").forEach((b) => {
+      if (b.dataset.wired === "1") return;
+      b.dataset.wired = "1";
+      b.addEventListener("click", async () => {
+        const runId = String(b.dataset.runId || "").trim();
+        const family = String(b.dataset.runFamily || "routine").trim().toLowerCase();
+        const decision = String(b.dataset.runReview || "approve").trim().toLowerCase();
+        if (!runId) {
+          toast("err", "Run ID is missing.");
+          return;
+        }
+        const peerButtons = [...byId("view").querySelectorAll("[data-run-review]")].filter(
+          (node) =>
+            String(node.dataset.runId || "").trim() === runId &&
+            String(node.dataset.runFamily || "routine").trim().toLowerCase() === family
+        );
+        const original = new Map();
+        for (const node of peerButtons) {
+          original.set(node, node.innerHTML);
+          node.disabled = true;
+          node.innerHTML = '<i data-lucide="refresh-cw" class="animate-spin"></i>';
+          renderIcons(node);
+        }
+        try {
+          await runReview(runId, family, decision);
+          toast("ok", `${decision === "deny" ? "Denied" : "Approved"} ${family} run ${runId}.`);
+          setTimeout(() => {
+            renderAgents(ctx);
+          }, 250);
+        } catch (e) {
+          toast("err", e instanceof Error ? e.message : String(e));
+          for (const node of peerButtons) {
+            if (!node.isConnected) continue;
+            node.disabled = false;
+            node.innerHTML = original.get(node) || node.innerHTML;
+            renderIcons(node);
+          }
+        }
+      });
+    });
+  };
+  wireRunReviewButtons(byId("view"));
   byId("view").querySelectorAll("[data-inspect-run]").forEach((b) =>
     b.addEventListener("click", async () => {
       const runId = String(b.dataset.inspectRun || "").trim();
@@ -557,6 +649,7 @@ export async function renderAgents(ctx) {
         if (!run) throw new Error("Run details not found.");
         const artifacts = Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [];
         const runAllowedTools = listFromRoutine(run, "allowed_tools", "allowedTools");
+        const runStatus = runStatusOf(run);
         const runRequiresApproval = boolFromRoutine(
           run,
           "requires_approval",
@@ -572,7 +665,7 @@ export async function renderAgents(ctx) {
         runInspectorEl.innerHTML = `
           <div class="tcp-list-item">
             <div class="mb-2 flex flex-wrap items-center gap-2">
-              <span class="${runStatusClass(runStatusOf(run))}">${escapeHtml(runStatusOf(run))}</span>
+              <span class="${runStatusClass(runStatus)}">${escapeHtml(runStatus)}</span>
               <span class="tcp-subtle font-mono">${escapeHtml(runId)}</span>
               <span class="tcp-subtle">${escapeHtml(formatTimestamp(firstTimestamp(run)))}</span>
             </div>
@@ -587,6 +680,14 @@ export async function renderAgents(ctx) {
               <span class="${runRequiresApproval ? "tcp-badge-warn" : "tcp-badge-info"}">${runRequiresApproval ? "approval required" : "no approval gate"}</span>
               <span class="${runExternalAllowed ? "tcp-badge-info" : "tcp-badge-warn"}">${runExternalAllowed ? "external integrations allowed" : "external integrations blocked"}</span>
             </div>
+            ${
+              isPendingApprovalStatus(runStatus)
+                ? `<div class="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <button data-run-review="approve" data-run-id="${escapeHtml(runId)}" data-run-family="${escapeHtml(family)}" class="tcp-btn h-7 px-2 text-xs">Approve</button>
+                <button data-run-review="deny" data-run-id="${escapeHtml(runId)}" data-run-family="${escapeHtml(family)}" class="tcp-btn-danger h-7 px-2 text-xs">Deny</button>
+              </div>`
+                : ""
+            }
             <div class="mb-2 text-xs text-slate-300">${escapeHtml(runDetailOf(run) || "No detail text available.")}</div>
             <div class="mb-2 text-xs text-slate-400">Artifacts: ${artifacts.length}</div>
             ${
@@ -607,6 +708,8 @@ export async function renderAgents(ctx) {
             </details>
           </div>
         `;
+        wireRunReviewButtons(runInspectorEl);
+        renderIcons(runInspectorEl);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
       } finally {
@@ -798,6 +901,12 @@ export async function renderAgents(ctx) {
         "externalIntegrationsAllowed",
         false
       );
+      const routineAllowEverything = isAllowEverythingPolicy(
+        normalizeToolList(allowedToolsEl.value || ""),
+        !!requiresApprovalEl.checked,
+        !!externalIntegrationsEl.checked
+      );
+      setAllowEverythingState(routineAllowEverything, { restore: false });
       renderToolScopePreview();
       setRoutineModelFromSpec(routine);
       setEditMode(routineId, String(routine.name || ""));
@@ -825,6 +934,7 @@ export async function renderAgents(ctx) {
   const modelProviderEl = byId("routine-model-provider");
   const modelIdEl = byId("routine-model-id");
   const modelPreviewEl = byId("routine-model-preview");
+  const allowEverythingEl = byId("routine-allow-everything");
   const allowedToolsEl = byId("routine-allowed-tools");
   const toolScopePreviewEl = byId("routine-tool-scope-preview");
   const requiresApprovalEl = byId("routine-requires-approval");
@@ -873,9 +983,53 @@ export async function renderAgents(ctx) {
   const renderToolScopePreview = () => {
     const allowlist = normalizeToolList(allowedToolsEl?.value || "");
     if (!toolScopePreviewEl) return;
+    if (allowEverythingEl?.checked) {
+      toolScopePreviewEl.textContent = "Tool scope: unrestricted (all tools + external integrations, no approval gate)";
+      return;
+    }
     toolScopePreviewEl.textContent = allowlist.length
       ? `Tool scope: allowlist (${allowlist.length})`
       : "Tool scope: all tools allowed by policy";
+  };
+  const isAllowEverythingPolicy = (allowedTools, requiresApproval, externalIntegrationsAllowed) =>
+    !requiresApproval && externalIntegrationsAllowed && allowedTools.length === 0;
+  const setAllowEverythingState = (enabled, { restore = true } = {}) => {
+    if (!allowEverythingEl) return;
+    allowEverythingEl.checked = !!enabled;
+    if (enabled) {
+      allowEverythingEl.dataset.prevTools = String(allowedToolsEl?.value || "");
+      allowEverythingEl.dataset.prevRequiresApproval = requiresApprovalEl?.checked ? "1" : "0";
+      allowEverythingEl.dataset.prevExternalIntegrations = externalIntegrationsEl?.checked ? "1" : "0";
+      if (allowedToolsEl) {
+        allowedToolsEl.value = "";
+        allowedToolsEl.disabled = true;
+      }
+      if (requiresApprovalEl) {
+        requiresApprovalEl.checked = false;
+        requiresApprovalEl.disabled = true;
+      }
+      if (externalIntegrationsEl) {
+        externalIntegrationsEl.checked = true;
+        externalIntegrationsEl.disabled = true;
+      }
+    } else {
+      if (allowedToolsEl) allowedToolsEl.disabled = false;
+      if (requiresApprovalEl) requiresApprovalEl.disabled = false;
+      if (externalIntegrationsEl) externalIntegrationsEl.disabled = false;
+      if (restore) {
+        if (allowedToolsEl) {
+          allowedToolsEl.value = String(allowEverythingEl.dataset.prevTools || "");
+        }
+        if (requiresApprovalEl) {
+          requiresApprovalEl.checked = String(allowEverythingEl.dataset.prevRequiresApproval || "1") === "1";
+        }
+        if (externalIntegrationsEl) {
+          externalIntegrationsEl.checked =
+            String(allowEverythingEl.dataset.prevExternalIntegrations || "0") === "1";
+        }
+      }
+    }
+    renderToolScopePreview();
   };
 
   const applyScheduleToForm = (schedule) => {
@@ -1099,6 +1253,9 @@ export async function renderAgents(ctx) {
     const modelId = String(modelIdEl?.value || "").trim();
     if (modelPreviewEl) modelPreviewEl.textContent = providerId && modelId ? `${providerId}/${modelId}` : "default engine route";
   });
+  allowEverythingEl?.addEventListener("change", () => {
+    setAllowEverythingState(!!allowEverythingEl.checked, { restore: true });
+  });
   allowedToolsEl?.addEventListener("input", renderToolScopePreview);
   cancelEditEl?.addEventListener("click", () => {
     renderAgents(ctx);
@@ -1106,6 +1263,7 @@ export async function renderAgents(ctx) {
   renderScheduleInputs();
   normalizeFilePath();
   renderModelPicker();
+  setAllowEverythingState(!!allowEverythingEl?.checked, { restore: false });
   renderToolScopePreview();
   clearEditMode();
 
@@ -1137,9 +1295,10 @@ export async function renderAgents(ctx) {
           },
         };
       }
-      const allowedTools = normalizeToolList(allowedToolsEl?.value || "");
-      const requiresApproval = !!requiresApprovalEl?.checked;
-      const externalIntegrationsAllowed = !!externalIntegrationsEl?.checked;
+      const allowEverything = !!allowEverythingEl?.checked;
+      const allowedTools = allowEverything ? [] : normalizeToolList(allowedToolsEl?.value || "");
+      const requiresApproval = allowEverything ? false : !!requiresApprovalEl?.checked;
+      const externalIntegrationsAllowed = allowEverything ? true : !!externalIntegrationsEl?.checked;
       if (editingRoutineId) {
         const current = routineById.get(editingRoutineId);
         const patch = {

@@ -2,6 +2,25 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.27 (Unreleased)
+
+- Telegram MarkdownV2 rendering and delivery hardening
+  - Telegram heading rendering now outputs readable heading text style (instead of visible escaped `###` markers).
+  - Long Telegram responses now split on markdown-safe boundaries where possible, reducing entity breakage across chunks.
+  - Existing Telegram fallback behavior remains: if MarkdownV2 send fails, message retries as plain text.
+- Telegram style profiles (bot presentation control)
+  - Added Telegram style profile support: `default`, `compact`, `friendly`, `ops`.
+  - Profile can be configured through channel config and is applied before MarkdownV2 conversion.
+  - Added control-panel support for selecting Telegram style profile in Channels settings.
+- Control panel routine automation UX + approvals
+  - Added one-click routine policy shortcut: **Allow everything** (all tools, external integrations allowed, no approval gate).
+  - Added Approve/Deny controls for pending routine/automation runs across:
+    - routine cards
+    - automations list
+    - recent runs
+    - run inspector
+  - Closes the control-panel gap where approval-gated runs had no in-UI resolution path.
+
 ## v0.3.26 (Unreleased)
 
 - Channel attachment ingestion + engine dispatch parity

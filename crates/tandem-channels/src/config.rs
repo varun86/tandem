@@ -36,6 +36,18 @@ pub struct TelegramConfig {
     pub allowed_users: Vec<String>,
     /// Only respond when the bot is @-mentioned (useful in group chats).
     pub mention_only: bool,
+    /// Presentation preset for outgoing Telegram messages.
+    pub style_profile: TelegramStyleProfile,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramStyleProfile {
+    #[default]
+    Default,
+    Compact,
+    Friendly,
+    Ops,
 }
 
 #[derive(Debug, Clone)]
@@ -123,10 +135,20 @@ impl ChannelsConfig {
         let mention_only = std::env::var("TANDEM_TELEGRAM_MENTION_ONLY")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
+        let style_profile = std::env::var("TANDEM_TELEGRAM_STYLE_PROFILE")
+            .ok()
+            .map(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+                "compact" => TelegramStyleProfile::Compact,
+                "friendly" => TelegramStyleProfile::Friendly,
+                "ops" => TelegramStyleProfile::Ops,
+                _ => TelegramStyleProfile::Default,
+            })
+            .unwrap_or_default();
         Some(TelegramConfig {
             bot_token,
             allowed_users,
             mention_only,
+            style_profile,
         })
     }
 
@@ -222,5 +244,17 @@ mod tests {
         ));
 
         std::env::remove_var("TANDEM_CHANNEL_TOOL_POLICY");
+    }
+
+    #[test]
+    fn telegram_style_profile_from_env() {
+        std::env::set_var("TANDEM_TELEGRAM_BOT_TOKEN", "test");
+        std::env::set_var("TANDEM_TELEGRAM_STYLE_PROFILE", "friendly");
+        let config = ChannelsConfig::from_env().expect("channels");
+        assert_eq!(
+            config.telegram.as_ref().map(|t| t.style_profile),
+            Some(TelegramStyleProfile::Friendly)
+        );
+        std::env::remove_var("TANDEM_TELEGRAM_STYLE_PROFILE");
     }
 }

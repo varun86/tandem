@@ -70,6 +70,8 @@ pub struct TelegramConfigFile {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub mention_only: bool,
+    #[serde(default)]
+    pub style_profile: tandem_channels::config::TelegramStyleProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1371,6 +1373,7 @@ async fn build_channels_config(
             bot_token: cfg.bot_token,
             allowed_users: cfg.allowed_users,
             mention_only: cfg.mention_only,
+            style_profile: cfg.style_profile,
         }),
         discord: channels.discord.clone().map(|cfg| DiscordConfig {
             bot_token: cfg.bot_token,

@@ -12,11 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel channel configuration UX**: Channels view now loads persisted channel config, pre-fills existing values, and supports editing Discord `mention_only`/`guild_id` and Slack `channel_id` directly from the web control panel.
 - **Channel diagnostics visibility in control panel**: Channel cards now surface backend `last_error` status so connector failures are visible without log tailing.
 - **Discord usage guidance in control panel**: Added inline Discord guidance clarifying Tandem command style (`@bot /help`) and that Discord application slash commands are not registered by this integration.
+- **Routine policy UX simplification (control panel)**: Added one-click `Allow everything` policy mode in routine create/edit that maps to unrestricted tools, external integrations enabled, and no approval gate.
+- **Routine approvals operability in control panel**: Added Approve/Deny actions for pending routine/automation runs directly in routine cards, automations list, recent runs, and run inspector.
+- **Telegram channel style customization**: Added configurable Telegram style profiles (`default`, `compact`, `friendly`, `ops`) with control panel support and server config exposure.
 
 ### Fixed
 
 - **Discord allowlist identity matching**: Discord inbound authorization now supports user ID, username, global name, and mention-style identity entries (for example `@name`, `<@id>`, `<@!id>`) instead of ID-only matching.
 - **Discord non-response misconfiguration path**: Fixed common “connected but not responding” states caused by hidden/default Discord settings by exposing mention-only and guild filters in the control panel.
+- **Telegram MarkdownV2 heading readability**: Telegram formatter now renders markdown headings as styled heading text instead of leaking literal escaped `###` markers in bot replies.
+- **Telegram MarkdownV2 chunk boundary robustness**: Message chunking now prefers safe markdown-entity boundaries to reduce formatting breakage and parse-mode failures when splitting long responses.
 
 ## [0.3.26] - 2026-02-28
 

@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
-use crate::config::{is_user_allowed, TelegramConfig};
+use crate::config::{is_user_allowed, TelegramConfig, TelegramStyleProfile};
 use crate::traits::{Channel, ChannelMessage, SendMessage};
 
 const MAX_MESSAGE_LEN: usize = 4096;
@@ -29,37 +29,265 @@ pub fn split_message(text: &str) -> Vec<String> {
         return vec![text.to_string()];
     }
 
+    #[derive(Default, Clone, Copy)]
+    struct MarkdownV2State {
+        escape_next: bool,
+        in_code_block: bool,
+        in_inline_code: bool,
+        in_link_text: bool,
+        in_link_dest: bool,
+        await_link_dest: bool,
+        in_bold: bool,
+        in_italic: bool,
+        in_strike: bool,
+        in_underline: bool,
+    }
+
+    impl MarkdownV2State {
+        fn is_neutral(self) -> bool {
+            !self.escape_next
+                && !self.in_code_block
+                && !self.in_inline_code
+                && !self.in_link_text
+                && !self.in_link_dest
+                && !self.await_link_dest
+                && !self.in_bold
+                && !self.in_italic
+                && !self.in_strike
+                && !self.in_underline
+        }
+    }
+
+    fn byte_index_at_char_limit(text: &str, max_chars: usize) -> usize {
+        text.char_indices()
+            .nth(max_chars)
+            .map_or(text.len(), |(idx, _)| idx)
+    }
+
     let mut chunks = Vec::new();
-    let mut remaining = text;
+    let mut start = 0usize;
 
-    while !remaining.is_empty() {
-        let hard_split = remaining
-            .char_indices()
-            .nth(MAX_MESSAGE_LEN)
-            .map_or(remaining.len(), |(idx, _)| idx);
+    while start < text.len() {
+        let remaining = &text[start..];
+        if remaining.chars().count() <= MAX_MESSAGE_LEN {
+            chunks.push(remaining.to_string());
+            break;
+        }
 
-        let chunk_end = if hard_split == remaining.len() {
-            hard_split
-        } else {
-            let search_area = &remaining[..hard_split];
-            if let Some(pos) = search_area.rfind('\n') {
-                if search_area[..pos].chars().count() >= MAX_MESSAGE_LEN / 2 {
-                    pos + 1
-                } else {
-                    search_area.rfind(' ').map_or(hard_split, |s| s + 1)
-                }
-            } else if let Some(pos) = search_area.rfind(' ') {
-                pos + 1
+        let mut state = MarkdownV2State::default();
+        let mut offset = 0usize;
+        let mut chars_used = 0usize;
+        let mut last_safe_any: Option<usize> = None;
+        let mut last_safe_space: Option<usize> = None;
+        let mut last_safe_newline: Option<usize> = None;
+
+        while offset < remaining.len() && chars_used < MAX_MESSAGE_LEN {
+            let rest = &remaining[offset..];
+            let mut consumed_bytes = 0usize;
+            let mut consumed_chars = 0usize;
+            let mut last_char = '\0';
+
+            if state.escape_next {
+                let ch = rest.chars().next().unwrap_or('\0');
+                state.escape_next = false;
+                consumed_bytes = ch.len_utf8();
+                consumed_chars = 1;
+                last_char = ch;
+            } else if !state.in_inline_code && rest.starts_with("```") {
+                state.in_code_block = !state.in_code_block;
+                consumed_bytes = 3;
+                consumed_chars = 3;
+                last_char = '`';
             } else {
-                hard_split
-            }
-        };
+                let ch = rest.chars().next().unwrap_or('\0');
+                if !state.in_code_block && !state.in_inline_code && ch == '\\' {
+                    state.escape_next = true;
+                } else if !state.in_code_block && ch == '`' {
+                    state.in_inline_code = !state.in_inline_code;
+                } else if !state.in_code_block && !state.in_inline_code {
+                    if state.in_link_dest {
+                        if ch == ')' {
+                            state.in_link_dest = false;
+                        }
+                    } else if state.in_link_text {
+                        if ch == ']' {
+                            state.in_link_text = false;
+                            state.await_link_dest = true;
+                        }
+                    } else if state.await_link_dest {
+                        if ch == '(' {
+                            state.in_link_dest = true;
+                            state.await_link_dest = false;
+                        } else if !ch.is_whitespace() {
+                            state.await_link_dest = false;
+                        }
+                    } else if ch == '[' {
+                        state.in_link_text = true;
+                    } else if rest.starts_with("__") {
+                        state.in_underline = !state.in_underline;
+                        consumed_bytes = 2;
+                        consumed_chars = 2;
+                        last_char = '_';
+                    } else if ch == '*' {
+                        state.in_bold = !state.in_bold;
+                    } else if ch == '_' {
+                        state.in_italic = !state.in_italic;
+                    } else if ch == '~' {
+                        state.in_strike = !state.in_strike;
+                    }
+                }
 
-        chunks.push(remaining[..chunk_end].to_string());
-        remaining = &remaining[chunk_end..];
+                if consumed_bytes == 0 {
+                    consumed_bytes = ch.len_utf8();
+                    consumed_chars = 1;
+                    last_char = ch;
+                }
+            }
+
+            if chars_used + consumed_chars > MAX_MESSAGE_LEN {
+                break;
+            }
+
+            offset += consumed_bytes;
+            chars_used += consumed_chars;
+            let boundary = start + offset;
+
+            if state.is_neutral() {
+                last_safe_any = Some(boundary);
+                if last_char == '\n' {
+                    last_safe_newline = Some(boundary);
+                } else if last_char.is_whitespace() {
+                    last_safe_space = Some(boundary);
+                }
+            }
+        }
+
+        let mut split_at = last_safe_newline
+            .or(last_safe_space)
+            .or(last_safe_any)
+            .unwrap_or(start + byte_index_at_char_limit(remaining, MAX_MESSAGE_LEN));
+        if split_at <= start {
+            split_at = start + byte_index_at_char_limit(remaining, MAX_MESSAGE_LEN);
+        }
+
+        chunks.push(text[start..split_at].to_string());
+        start = split_at;
     }
 
     chunks
+}
+
+fn apply_telegram_style_profile(input: &str, profile: TelegramStyleProfile) -> String {
+    match profile {
+        TelegramStyleProfile::Default => input.to_string(),
+        TelegramStyleProfile::Compact => compact_telegram_text(input),
+        TelegramStyleProfile::Friendly => transform_profile_lines(input, "✨", "•"),
+        TelegramStyleProfile::Ops => transform_profile_lines(input, "▶", "▪"),
+    }
+}
+
+fn compact_telegram_text(input: &str) -> String {
+    let mut out = String::new();
+    let mut blank_run = 0usize;
+    for line in input.lines() {
+        let trimmed_end = line.trim_end();
+        if trimmed_end.trim().is_empty() {
+            blank_run += 1;
+            if blank_run > 1 {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            continue;
+        }
+        blank_run = 0;
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(trimmed_end);
+    }
+    if out.is_empty() {
+        input.trim().to_string()
+    } else {
+        out
+    }
+}
+
+fn transform_profile_lines(input: &str, heading_prefix: &str, bullet_prefix: &str) -> String {
+    let compacted = compact_telegram_text(input);
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    for line in compacted.lines() {
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") {
+            in_fence = !in_fence;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_fence {
+            out.push(line.to_string());
+            continue;
+        }
+
+        let indent_len = line.len().saturating_sub(trimmed_start.len());
+        let indent = &line[..indent_len];
+        let transformed = if let Some(rest) = parse_markdown_heading(trimmed_start) {
+            format!("{indent}{heading_prefix} {rest}")
+        } else if let Some(rest) = parse_markdown_bullet(trimmed_start) {
+            format!("{indent}{bullet_prefix} {rest}")
+        } else {
+            line.to_string()
+        };
+        out.push(transformed);
+    }
+    out.join("\n")
+}
+
+fn parse_markdown_heading(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx] == b'#' && idx < 6 {
+        idx += 1;
+    }
+    if idx == 0 || idx >= bytes.len() || bytes[idx] != b' ' {
+        return None;
+    }
+    let heading = line[idx + 1..].trim();
+    if heading.is_empty() {
+        None
+    } else {
+        Some(heading)
+    }
+}
+
+fn parse_markdown_bullet(line: &str) -> Option<&str> {
+    if let Some(rest) = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("+ "))
+    {
+        let cleaned = rest.trim();
+        return if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
+        };
+    }
+    let mut i = 0usize;
+    let bytes = line.as_bytes();
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == 0 || i + 1 >= bytes.len() || bytes[i] != b'.' || bytes[i + 1] != b' ' {
+        return None;
+    }
+    let cleaned = line[i + 2..].trim();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
 }
 
 pub fn format_markdown_for_telegram(input: &str) -> String {
@@ -82,6 +310,7 @@ struct TelegramMarkdownV2Writer {
     list_stack: Vec<ListState>,
     blockquote_depth: usize,
     in_code_block: bool,
+    in_heading: bool,
     pending_link: Option<PendingLink>,
 }
 
@@ -125,14 +354,13 @@ impl TelegramMarkdownV2Writer {
                 }
             }
             Tag::Heading { level, .. } => {
+                let _ = level;
                 if !self.current.is_empty() {
                     self.newline();
                 }
                 self.prefix();
-                for _ in 0..(level as usize) {
-                    self.current.push_str("\\#");
-                }
-                self.current.push(' ');
+                self.current.push('*');
+                self.in_heading = true;
             }
             Tag::BlockQuote => {
                 self.blockquote_depth += 1;
@@ -194,7 +422,14 @@ impl TelegramMarkdownV2Writer {
 
     fn end(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::Item => self.newline(),
+            TagEnd::Paragraph | TagEnd::Item => self.newline(),
+            TagEnd::Heading(_) => {
+                if self.in_heading {
+                    self.current.push('*');
+                    self.in_heading = false;
+                }
+                self.newline();
+            }
             TagEnd::BlockQuote => {
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
                 self.newline();
@@ -482,6 +717,7 @@ pub struct TelegramChannel {
     bot_token: String,
     allowed_users: Vec<String>,
     mention_only: bool,
+    style_profile: TelegramStyleProfile,
     client: Client,
     typing_handles: Arc<Mutex<std::collections::HashMap<String, JoinHandle<()>>>>,
 }
@@ -492,6 +728,7 @@ impl TelegramChannel {
             bot_token: config.bot_token,
             allowed_users: config.allowed_users,
             mention_only: config.mention_only,
+            style_profile: config.style_profile,
             client: Client::builder()
                 .timeout(Duration::from_secs(35))
                 .build()
@@ -616,7 +853,8 @@ impl Channel for TelegramChannel {
             }
         }
 
-        let formatted = format_markdown_for_telegram(&text_to_send);
+        let styled = apply_telegram_style_profile(&text_to_send, self.style_profile);
+        let formatted = format_markdown_for_telegram(&styled);
         for chunk in split_message(&formatted) {
             let markdown_body = serde_json::json!({
                 "chat_id": message.recipient,
@@ -881,6 +1119,16 @@ mod tests {
     }
 
     #[test]
+    fn test_split_prefers_safe_markdown_v2_boundary() {
+        let bold = format!("*{}*", "x".repeat(4040));
+        let msg = format!("{bold}\n{}", "y".repeat(300));
+        let chunks = split_message(&msg);
+        assert!(chunks.len() >= 2);
+        assert!(chunks[0].ends_with('\n'));
+        assert!(chunks[0].contains("*"));
+    }
+
+    #[test]
     fn test_markdown_v2_escapes_reserved_text_chars() {
         let out = format_markdown_for_telegram("Hello! (a+b) #1.");
         assert_eq!(out, "Hello\\! \\(a\\+b\\) \\#1\\.");
@@ -912,8 +1160,19 @@ mod tests {
     #[test]
     fn test_markdown_v2_headings_and_lists_render_as_safe_text() {
         let out = format_markdown_for_telegram("## Heading\n- item");
-        assert!(out.contains("\\#\\# Heading"));
+        assert!(out.contains("*Heading*"));
         assert!(out.contains("\\- item"));
+    }
+
+    #[test]
+    fn test_telegram_style_profile_friendly_transforms_headings_and_lists() {
+        let out = apply_telegram_style_profile(
+            "## Updates\n- first\n1. second",
+            TelegramStyleProfile::Friendly,
+        );
+        assert!(out.contains("✨ Updates"));
+        assert!(out.contains("• first"));
+        assert!(out.contains("• second"));
     }
 
     #[test]

@@ -5530,6 +5530,10 @@ async fn channels_config(State(state): State<AppState>) -> Json<Value> {
                 .and_then(|cfg| cfg.get("mention_only"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            "style_profile": telegram
+                .and_then(|cfg| cfg.get("style_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or("default"),
         },
         "discord": {
             "has_token": discord_has_token,

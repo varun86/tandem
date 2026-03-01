@@ -34,7 +34,12 @@ export async function renderChannels(ctx) {
                 ? `<input id="${c}-guild" class="tcp-input" placeholder="guild id (optional)" />`
                 : c === "slack"
                   ? `<input id="${c}-channel" class="tcp-input" placeholder="channel id (required for slack)" />`
-                  : `<div></div>`
+                  : `<select id="${c}-style" class="tcp-select">
+                      <option value="default">style: default</option>
+                      <option value="compact">style: compact</option>
+                      <option value="friendly">style: friendly</option>
+                      <option value="ops">style: ops</option>
+                    </select>`
             }
             <div class="flex gap-2">
               <button class="tcp-btn-primary" data-save="${c}"><i data-lucide="save"></i> Save</button>
@@ -62,6 +67,7 @@ export async function renderChannels(ctx) {
     );
     const guildId = readField(cfg, "guild_id", "guildId", "");
     const channelId = readField(cfg, "channel_id", "channelId", "");
+    const styleProfile = String(readField(cfg, "style_profile", "styleProfile", "default") || "default");
     const hasToken = !!readField(cfg, "has_token", "hasToken", false);
 
     const tokenEl = byId(`${c}-token`);
@@ -74,6 +80,8 @@ export async function renderChannels(ctx) {
     if (guildEl) guildEl.value = guildId || "";
     const channelEl = byId(`${c}-channel`);
     if (channelEl) channelEl.value = channelId || "";
+    const styleEl = byId(`${c}-style`);
+    if (styleEl) styleEl.value = styleProfile;
   });
 
   list.querySelectorAll("[data-save]").forEach((btn) =>
@@ -87,6 +95,9 @@ export async function renderChannels(ctx) {
       };
       if (ch === "telegram" || ch === "discord") {
         payload.mention_only = !!byId(`${ch}-mention`)?.checked;
+      }
+      if (ch === "telegram") {
+        payload.style_profile = String(byId(`${ch}-style`)?.value || "default");
       }
       if (ch === "discord") {
         payload.guild_id = byId(`${ch}-guild`)?.value?.trim() || null;
