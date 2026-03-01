@@ -27,6 +27,7 @@ const ctx = {
   setRoute,
   renderShell,
   refreshProviderStatus,
+  refreshIdentityStatus,
   renderIcons,
 };
 
@@ -101,11 +102,15 @@ async function refreshProviderStatus() {
     return;
   }
   try {
-    const [config, catalog] = await Promise.all([state.client.providers.config(), state.client.providers.catalog()]);
+    const [config, catalog] = await Promise.all([
+      state.client.providers.config(),
+      state.client.providers.catalog(),
+    ]);
     const defaultProvider = String(config?.default || "").trim();
     const defaultModel = String(config?.providers?.[defaultProvider]?.default_model || "").trim();
     const connected = new Set(catalog?.connected || []);
-    const ready = !!defaultProvider && (defaultProvider === "ollama" || connected.has(defaultProvider));
+    const ready =
+      !!defaultProvider && (defaultProvider === "ollama" || connected.has(defaultProvider));
     state.providerDefault = defaultProvider;
     state.providerDefaultModel = defaultModel;
     state.providerConnected = [...connected];
@@ -131,11 +136,11 @@ async function refreshIdentityStatus() {
   try {
     const payload = await state.client.identity.get();
     const identity = payload?.identity || {};
-    const canonical = String(identity?.bot?.canonical_name || identity?.bot?.canonicalName || "").trim();
-    const aliases = identity?.bot?.aliases || {};
-    const controlPanelAlias = String(
-      aliases?.control_panel || aliases?.controlPanel || ""
+    const canonical = String(
+      identity?.bot?.canonical_name || identity?.bot?.canonicalName || ""
     ).trim();
+    const aliases = identity?.bot?.aliases || {};
+    const controlPanelAlias = String(aliases?.control_panel || aliases?.controlPanel || "").trim();
     state.botName = canonical || "Tandem";
     state.controlPanelName = controlPanelAlias || `${state.botName} Control Panel`;
   } catch {
@@ -268,7 +273,10 @@ function renderLogin() {
       const stateText = health.engine?.ready || health.engine?.healthy ? "healthy" : "unhealthy";
       errEl.textContent = `Engine check: ${stateText} at ${health.engineUrl}`;
       errEl.className = "min-h-[1.2rem] text-sm text-lime-300";
-      toast(health.engine?.ready || health.engine?.healthy ? "ok" : "warn", `Engine ${stateText}: ${health.engineUrl}`);
+      toast(
+        health.engine?.ready || health.engine?.healthy ? "ok" : "warn",
+        `Engine ${stateText}: ${health.engineUrl}`
+      );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       errEl.textContent = message;

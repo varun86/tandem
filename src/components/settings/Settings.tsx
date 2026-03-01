@@ -47,7 +47,9 @@ import {
 import {
   clearCustomBackgroundImage,
   getCustomBackground,
+  getIdentityConfig,
   getProvidersConfig,
+  patchIdentityConfig,
   setProvidersConfig,
   getUserProjects,
   getActiveProject,
@@ -66,6 +68,8 @@ import {
   type EngineApiTokenInfo,
   type ProvidersConfig,
   type CustomBackgroundInfo,
+  type IdentityConfigResponse,
+  type IdentityPreset,
   type UserProject,
   type StorageMigrationStatus,
   type StorageMigrationRunResult,
@@ -76,7 +80,7 @@ interface SettingsProps {
   onClose?: () => void;
   onProjectChange?: () => void;
   onProviderChange?: () => void; // Called when API keys are added/removed
-  initialSection?: "providers" | "projects";
+  initialSection?: "providers" | "projects" | "identity";
   onInitialSectionConsumed?: () => void;
 }
 
@@ -93,6 +97,14 @@ interface LatestJsonPayload {
   notes?: string;
   pub_date?: string;
 }
+
+const FALLBACK_IDENTITY_PRESETS: IdentityPreset[] = [
+  { id: "balanced", label: "Balanced" },
+  { id: "concise", label: "Concise" },
+  { id: "friendly", label: "Friendly" },
+  { id: "mentor", label: "Mentor" },
+  { id: "critical", label: "Critical" },
+];
 
 export function Settings({
   onClose,
@@ -122,6 +134,7 @@ export function Settings({
 
   const projectsSectionRef = useRef<HTMLDivElement>(null);
   const providersSectionRef = useRef<HTMLDivElement>(null);
+  const identitySectionRef = useRef<HTMLDivElement>(null);
 
   // Version info
   const [appVersion, setAppVersion] = useState<string>("");
@@ -162,6 +175,17 @@ export function Settings({
   const [latestReleaseLoading, setLatestReleaseLoading] = useState(false);
   const [latestReleaseError, setLatestReleaseError] = useState<string | null>(null);
   const [providerCatalogModels, setProviderCatalogModels] = useState<Record<string, string[]>>({});
+  const [identityPresets, setIdentityPresets] =
+    useState<IdentityPreset[]>(FALLBACK_IDENTITY_PRESETS);
+  const [identityCanonicalName, setIdentityCanonicalName] = useState("");
+  const [identityDesktopAlias, setIdentityDesktopAlias] = useState("");
+  const [identityPreset, setIdentityPreset] = useState("balanced");
+  const [identityCustomInstructions, setIdentityCustomInstructions] = useState("");
+  const [identitySaving, setIdentitySaving] = useState(false);
+  const [identityNotice, setIdentityNotice] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -216,8 +240,11 @@ export function Settings({
 
     if (initialSection === "projects") setProjectsExpanded(true);
 
-    const target =
-      initialSection === "projects" ? projectsSectionRef.current : providersSectionRef.current;
+    const target = (() => {
+      if (initialSection === "projects") return projectsSectionRef.current;
+      if (initialSection === "identity") return identitySectionRef.current;
+      return providersSectionRef.current;
+    })();
 
     // Wait a tick so accordions have time to open.
     setTimeout(() => target?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -227,16 +254,20 @@ export function Settings({
 
   const loadSettings = async () => {
     try {
-      const [config, userProjects, activeProj, tokenInfo] = await Promise.all([
+      const [config, userProjects, activeProj, tokenInfo, identityPayload] = await Promise.all([
         getProvidersConfig(),
         getUserProjects(),
         getActiveProject(),
         getEngineApiToken(false),
+        getIdentityConfig().catch(() => null),
       ]);
       setProviders(config);
       setProjects(userProjects);
       setEngineTokenInfo(tokenInfo);
       setEngineTokenVisible(false);
+      if (identityPayload) {
+        applyIdentityResponse(identityPayload);
+      }
 
       // Load custom provider if exists
       if (config.custom && config.custom.length > 0) {
@@ -256,6 +287,67 @@ export function Settings({
       console.error("Failed to load settings:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const applyIdentityResponse = (payload: IdentityConfigResponse) => {
+    const identity = payload?.identity || {};
+    const bot = identity.bot || {};
+    const aliases = bot.aliases || {};
+    const personality = identity.personality || {};
+    const defaults = personality.default || {};
+
+    const canonical = String(bot.canonical_name || "").trim();
+    const desktopAlias = String(aliases.desktop || "").trim();
+    const preset = String(defaults.preset || "balanced").trim() || "balanced";
+    const customInstructions = String(defaults.custom_instructions || "").trim();
+    const presets =
+      Array.isArray(payload?.presets) && payload.presets.length > 0
+        ? payload.presets
+        : FALLBACK_IDENTITY_PRESETS;
+
+    setIdentityCanonicalName(canonical);
+    setIdentityDesktopAlias(desktopAlias);
+    setIdentityPreset(preset);
+    setIdentityCustomInstructions(customInstructions);
+    setIdentityPresets(presets);
+  };
+
+  const handleIdentitySave = async () => {
+    setIdentitySaving(true);
+    setIdentityNotice(null);
+    try {
+      const canonical = identityCanonicalName.trim();
+      if (!canonical) {
+        throw new Error("Bot name is required.");
+      }
+      const desktopAlias = identityDesktopAlias.trim();
+      const customInstructions = identityCustomInstructions.trim();
+      const payload = await patchIdentityConfig({
+        identity: {
+          bot: {
+            canonical_name: canonical,
+            aliases: {
+              desktop: desktopAlias || undefined,
+            },
+          },
+          personality: {
+            default: {
+              preset: identityPreset || "balanced",
+              custom_instructions: customInstructions || null,
+            },
+          },
+        },
+      });
+      applyIdentityResponse(payload);
+      setIdentityNotice({ kind: "success", message: "Identity settings saved." });
+    } catch (err) {
+      setIdentityNotice({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Failed to save identity settings.",
+      });
+    } finally {
+      setIdentitySaving(false);
     }
   };
 
@@ -1735,6 +1827,84 @@ export function Settings({
             </div>
           )}
         </div>
+
+        <div ref={identitySectionRef} />
+        <Card variant="glass">
+          <CardHeader>
+            <CardTitle>Bot Identity</CardTitle>
+            <CardDescription>
+              Set the assistant name and default personality used across sessions.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-text-subtle">Canonical bot name</label>
+                <Input
+                  placeholder="Assistant"
+                  value={identityCanonicalName}
+                  onChange={(e) => setIdentityCanonicalName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-text-subtle">
+                  Desktop alias (optional)
+                </label>
+                <Input
+                  placeholder="Desktop Assistant"
+                  value={identityDesktopAlias}
+                  onChange={(e) => setIdentityDesktopAlias(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-text-subtle">Personality preset</label>
+                <select
+                  className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  value={identityPreset}
+                  onChange={(e) => setIdentityPreset(e.target.value)}
+                >
+                  {identityPresets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label || preset.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-text-subtle">
+                Custom personality instructions (optional)
+              </label>
+              <textarea
+                className="min-h-24 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/40"
+                placeholder="Example: Keep answers concise and include clear rollback guidance."
+                value={identityCustomInstructions}
+                onChange={(e) => setIdentityCustomInstructions(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={handleIdentitySave} disabled={identitySaving}>
+                {identitySaving ? "Saving..." : "Save Identity"}
+              </Button>
+              {identityNotice && (
+                <p
+                  className={
+                    identityNotice.kind === "success"
+                      ? "text-xs text-success"
+                      : "text-xs text-error"
+                  }
+                >
+                  {identityNotice.message}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Language Settings */}
         <LanguageSettings />

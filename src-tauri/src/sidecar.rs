@@ -5235,6 +5235,32 @@ impl SidecarManager {
         Ok(())
     }
 
+    pub async fn identity_config(&self) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/config/identity", self.base_url().await?);
+        let response =
+            self.http_client.get(&url).send().await.map_err(|e| {
+                TandemError::Sidecar(format!("Failed to fetch identity config: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn patch_identity_config(
+        &self,
+        patch: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/config/identity", self.base_url().await?);
+        let response = self
+            .http_client
+            .patch(&url)
+            .json(&patch)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to patch identity config: {}", e)))?;
+        self.handle_response(response).await
+    }
+
     /// Set runtime-only auth token for a provider on the engine sidecar.
     pub async fn set_provider_auth(&self, provider_id: &str, api_key: &str) -> Result<()> {
         self.check_circuit_breaker().await?;

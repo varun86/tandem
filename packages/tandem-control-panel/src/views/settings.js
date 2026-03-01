@@ -8,13 +8,14 @@ export async function renderSettings(ctx) {
         <h3 class="tcp-title flex items-center gap-2"><i data-lucide="settings-2"></i> Provider Setup Wizard</h3>
         <span class="${state.providerReady ? "tcp-badge-ok" : "tcp-badge-warn"}">${state.providerReady ? "Ready" : "Not Configured"}</span>
       </div>
-      <p class="tcp-subtle">Step 1: Select provider. Step 2: Configure model. Step 3: Add key (if required). Step 4: Run test.</p>
+      <p class="tcp-subtle">Step 1: Select provider. Step 2: Configure model. Step 3: Add key (if required). Step 4: Run test. Step 5: Set bot identity + personality.</p>
       <div class="mt-3 flex flex-wrap gap-2">
         <span class="${state.providerDefault ? "tcp-badge-ok" : "tcp-badge-warn"}">Default: ${escapeHtml(state.providerDefault || "none")}</span>
         <span class="${state.providerConnected.length > 0 ? "tcp-badge-info" : "tcp-badge-warn"}">Connected: ${state.providerConnected.length}</span>
       </div>
       ${state.providerError ? `<p class="mt-3 rounded-xl border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-300"><i data-lucide="triangle-alert"></i> ${escapeHtml(state.providerError)}</p>` : ""}
       <div id="provider-settings" class="mt-4"></div>
+      <div id="identity-settings" class="mt-6 border-t border-slate-800 pt-5"></div>
     </div>
     <div class="tcp-card">
       <h3 class="tcp-title mb-2 flex items-center gap-2"><i data-lucide="shield"></i> Session Authorization</h3>
@@ -22,6 +23,7 @@ export async function renderSettings(ctx) {
     </div>
   `;
   await renderProvidersBlock(ctx, byId("provider-settings"));
+  await renderIdentityBlock(ctx, byId("identity-settings"));
 }
 
 async function renderProvidersBlock(ctx, container) {
@@ -31,14 +33,22 @@ async function renderProvidersBlock(ctx, container) {
 
   const catalogProviders = catalog.all || [];
   const providerIds = new Set(catalogProviders.map((p) => p.id));
-  const defaultProvider = String(catalog.default || config.default || catalogProviders[0]?.id || "").trim();
+  const defaultProvider = String(
+    catalog.default || config.default || catalogProviders[0]?.id || ""
+  ).trim();
 
   let selectedProvider = providerIds.has(defaultProvider) ? defaultProvider : CUSTOM_PROVIDER_VALUE;
   let selectedModel = "";
   let customProviderId = selectedProvider === CUSTOM_PROVIDER_VALUE ? defaultProvider : "";
-  let customProviderUrl = customProviderId ? String(config.providers?.[customProviderId]?.url || "") : "";
+  let customProviderUrl = customProviderId
+    ? String(config.providers?.[customProviderId]?.url || "")
+    : "";
   let customProviderModel = customProviderId
-    ? String(config.providers?.[customProviderId]?.defaultModel || config.providers?.[customProviderId]?.default_model || "")
+    ? String(
+        config.providers?.[customProviderId]?.defaultModel ||
+          config.providers?.[customProviderId]?.default_model ||
+          ""
+      )
     : "";
 
   const syncModel = () => {
@@ -51,7 +61,10 @@ async function renderProvidersBlock(ctx, container) {
   syncModel();
 
   const providerOptions = [
-    ...catalogProviders.map((p) => ({ id: p.id, label: providerHints[p.id]?.label || p.name || p.id })),
+    ...catalogProviders.map((p) => ({
+      id: p.id,
+      label: providerHints[p.id]?.label || p.name || p.id,
+    })),
     { id: CUSTOM_PROVIDER_VALUE, label: "Custom Provider" },
   ];
 
@@ -67,7 +80,10 @@ async function renderProvidersBlock(ctx, container) {
           <label class="mb-1 block text-sm text-slate-300">Provider</label>
           <select id="provider-select" class="tcp-select">
             ${providerOptions
-              .map((o) => `<option value="${escapeHtml(o.id)}" ${o.id === selectedProvider ? "selected" : ""}>${escapeHtml(o.label)}</option>`)
+              .map(
+                (o) =>
+                  `<option value="${escapeHtml(o.id)}" ${o.id === selectedProvider ? "selected" : ""}>${escapeHtml(o.label)}</option>`
+              )
               .join("")}
           </select>
         </div>
@@ -122,13 +138,16 @@ async function renderProvidersBlock(ctx, container) {
     if (modelEl) modelEl.addEventListener("change", (e) => (selectedModel = e.target.value));
 
     const customIdEl = container.querySelector("#custom-provider-id");
-    if (customIdEl) customIdEl.addEventListener("input", (e) => (customProviderId = e.target.value.trim()));
+    if (customIdEl)
+      customIdEl.addEventListener("input", (e) => (customProviderId = e.target.value.trim()));
 
     const customUrlEl = container.querySelector("#custom-provider-url");
-    if (customUrlEl) customUrlEl.addEventListener("input", (e) => (customProviderUrl = e.target.value.trim()));
+    if (customUrlEl)
+      customUrlEl.addEventListener("input", (e) => (customProviderUrl = e.target.value.trim()));
 
     const customModelEl = container.querySelector("#custom-provider-model");
-    if (customModelEl) customModelEl.addEventListener("input", (e) => (customProviderModel = e.target.value.trim()));
+    if (customModelEl)
+      customModelEl.addEventListener("input", (e) => (customProviderModel = e.target.value.trim()));
 
     container.querySelector("#provider-save").addEventListener("click", async () => {
       const key = container.querySelector("#provider-key").value.trim();
@@ -167,7 +186,9 @@ async function renderProvidersBlock(ctx, container) {
 
     container.querySelector("#provider-test").addEventListener("click", async () => {
       try {
-        const sid = await state.client.sessions.create({ title: `Provider test ${new Date().toISOString()}` });
+        const sid = await state.client.sessions.create({
+          title: `Provider test ${new Date().toISOString()}`,
+        });
         const { runId } = await state.client.sessions.promptAsync(sid, "Reply with exactly: READY");
         let sawResponse = false;
         for await (const event of state.client.stream(sid, runId)) {
@@ -175,15 +196,160 @@ async function renderProvidersBlock(ctx, container) {
             const delta = String(event.properties?.delta || "").trim();
             if (delta) sawResponse = true;
           }
-          if (event.type === "run.complete" || event.type === "run.failed" || event.type === "session.run.finished") break;
+          if (
+            event.type === "run.complete" ||
+            event.type === "run.failed" ||
+            event.type === "session.run.finished"
+          )
+            break;
         }
-        if (!sawResponse) throw new Error("No model tokens received. Save provider + key first, then retry.");
+        if (!sawResponse)
+          throw new Error("No model tokens received. Save provider + key first, then retry.");
         await refreshProviderStatus();
         toast("ok", "Model run test succeeded.");
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
       }
     });
+  };
+
+  render();
+}
+
+async function renderIdentityBlock(ctx, container) {
+  const { state, toast, escapeHtml, refreshIdentityStatus, renderShell, renderIcons } = ctx;
+  let payload;
+  try {
+    payload = await state.client.identity.get();
+  } catch (e) {
+    container.innerHTML = `
+      <p class="rounded-xl border border-rose-700/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-300">
+        Failed to load identity settings: ${escapeHtml(e instanceof Error ? e.message : String(e))}
+      </p>
+    `;
+    return;
+  }
+
+  const identity = payload?.identity || {};
+  const bot = identity?.bot || {};
+  const aliases = bot?.aliases || {};
+  const personality = identity?.personality || {};
+  const defaults = personality?.default || {};
+  const presets =
+    Array.isArray(payload?.presets) && payload.presets.length > 0
+      ? payload.presets
+      : [
+          { id: "balanced", label: "Balanced" },
+          { id: "concise", label: "Concise" },
+          { id: "friendly", label: "Friendly" },
+          { id: "mentor", label: "Mentor" },
+          { id: "critical", label: "Critical" },
+        ];
+
+  let canonicalName = String(bot?.canonical_name || bot?.canonicalName || "").trim();
+  let controlPanelAlias = String(aliases?.control_panel || aliases?.controlPanel || "").trim();
+  let preset = String(defaults?.preset || "balanced").trim() || "balanced";
+  let customInstructions = String(
+    defaults?.custom_instructions || defaults?.customInstructions || ""
+  ).trim();
+
+  const render = () => {
+    container.innerHTML = `
+      <div class="mb-3">
+        <h4 class="tcp-title flex items-center gap-2"><i data-lucide="bot"></i> Identity & Personality</h4>
+        <p class="tcp-subtle mt-1">Control assistant naming and default response style.</p>
+      </div>
+
+      <div class="grid gap-3 md:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-sm text-slate-300">Canonical bot name</label>
+          <input id="identity-canonical-name" class="tcp-input" placeholder="Assistant" value="${escapeHtml(canonicalName)}" />
+        </div>
+        <div>
+          <label class="mb-1 block text-sm text-slate-300">Control panel alias (optional)</label>
+          <input id="identity-control-panel-alias" class="tcp-input" placeholder="Assistant Control Panel" value="${escapeHtml(controlPanelAlias)}" />
+        </div>
+      </div>
+
+      <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-sm text-slate-300">Personality preset</label>
+          <select id="identity-preset" class="tcp-select">
+            ${presets
+              .map(
+                (entry) =>
+                  `<option value="${escapeHtml(entry.id)}" ${entry.id === preset ? "selected" : ""}>${escapeHtml(entry.label || entry.id)}</option>`
+              )
+              .join("")}
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <label class="mb-1 block text-sm text-slate-300">Custom personality instructions (optional)</label>
+        <textarea id="identity-custom-instructions" class="tcp-input min-h-[96px]" rows="4" placeholder="Keep responses concise and operationally focused.">${escapeHtml(customInstructions)}</textarea>
+      </div>
+
+      <div class="mt-3 flex items-center justify-end gap-2">
+        <button id="identity-save" class="tcp-btn-primary"><i data-lucide="save"></i> Save Identity</button>
+      </div>
+    `;
+
+    container.querySelector("#identity-canonical-name").addEventListener("input", (e) => {
+      canonicalName = e.target.value;
+    });
+    container.querySelector("#identity-control-panel-alias").addEventListener("input", (e) => {
+      controlPanelAlias = e.target.value;
+    });
+    container.querySelector("#identity-preset").addEventListener("change", (e) => {
+      preset = e.target.value;
+    });
+    container.querySelector("#identity-custom-instructions").addEventListener("input", (e) => {
+      customInstructions = e.target.value;
+    });
+
+    container.querySelector("#identity-save").addEventListener("click", async () => {
+      try {
+        const nextCanonical = canonicalName.trim();
+        if (!nextCanonical) throw new Error("Canonical bot name is required.");
+        const nextAlias = controlPanelAlias.trim();
+        const nextCustom = customInstructions.trim();
+
+        const updated = await state.client.identity.patch({
+          identity: {
+            bot: {
+              canonical_name: nextCanonical,
+              aliases: {
+                control_panel: nextAlias || undefined,
+              },
+            },
+            personality: {
+              default: {
+                preset: preset || "balanced",
+                custom_instructions: nextCustom || null,
+              },
+            },
+          },
+        });
+
+        await refreshIdentityStatus();
+        renderShell();
+        toast("ok", "Identity settings saved.");
+        payload = updated;
+        canonicalName = String(updated?.identity?.bot?.canonical_name || "").trim();
+        controlPanelAlias = String(updated?.identity?.bot?.aliases?.control_panel || "").trim();
+        preset =
+          String(updated?.identity?.personality?.default?.preset || "balanced").trim() ||
+          "balanced";
+        customInstructions = String(
+          updated?.identity?.personality?.default?.custom_instructions || ""
+        ).trim();
+        render();
+      } catch (e) {
+        toast("err", e instanceof Error ? e.message : String(e));
+      }
+    });
+    renderIcons();
   };
 
   render();

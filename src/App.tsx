@@ -141,7 +141,7 @@ function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
   const [settingsInitialSection, setSettingsInitialSection] = useState<
-    "providers" | "projects" | null
+    "providers" | "projects" | "identity" | null
   >(null);
   const [extensionsInitialTab, setExtensionsInitialTab] = useState<
     "skills" | "plugins" | "mcp" | "modes" | null
@@ -1475,10 +1475,8 @@ function App() {
   const activeOrchestrationCount = useMemo(
     () =>
       orchestratorRuns.filter(
-        (run) =>
-          run.status === "queued" || run.status === "planning" || run.status === "running"
-      )
-        .length,
+        (run) => run.status === "queued" || run.status === "planning" || run.status === "running"
+      ).length,
     [orchestratorRuns]
   );
   const currentOrchestratorRunSessionId = useMemo(
@@ -1758,6 +1756,10 @@ function App() {
               onChooseFolder={handleAddProject}
               onOpenProviders={() => {
                 setSettingsInitialSection("providers");
+                setView("settings");
+              }}
+              onOpenIdentity={() => {
+                setSettingsInitialSection("identity");
                 setView("settings");
               }}
               onBrowsePacks={() => setView("packs")}

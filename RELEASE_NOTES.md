@@ -17,7 +17,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Branding/identity surface updates
   - VPS Web Portal now reads configured identity aliases and renders portal/bot labels dynamically.
   - Control Panel now reads configured identity aliases and renders control-panel/bot labels dynamically.
+  - Control Panel Settings now includes an Identity & Personality editor (canonical name, control-panel alias, preset, custom instructions).
+  - Desktop (Tauri) Settings now includes a Bot Identity section (canonical name, desktop alias, preset, custom instructions).
   - Core UI/TUI assistant-facing copy reduces hardcoded Tandem naming in primary runtime labels/placeholders.
+- Setup flow updates
+  - Desktop onboarding wizard now includes an identity setup step with direct navigation to the Settings identity section.
 - Compatibility and protocol naming updates
   - OpenRouter `X-Title` now supports configurable protocol title via `AGENT_PROTOCOL_TITLE` with `TANDEM_PROTOCOL_TITLE` compatibility fallback.
   - Engine auth header parsing now accepts both canonical `x-agent-token` and compatibility `x-tandem-token`.

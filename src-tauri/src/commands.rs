@@ -2315,6 +2315,19 @@ pub async fn set_providers_config(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_identity_config(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    state.sidecar.identity_config().await
+}
+
+#[tauri::command]
+pub async fn patch_identity_config(
+    state: State<'_, AppState>,
+    patch: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.patch_identity_config(patch).await
+}
+
 // ============================================================================
 // Channel Connections (Telegram / Discord / Slack)
 // ============================================================================

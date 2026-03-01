@@ -597,6 +597,8 @@ pub fn run() {
             // Provider configuration
             commands::get_providers_config,
             commands::set_providers_config,
+            commands::get_identity_config,
+            commands::patch_identity_config,
             // Channel connections
             commands::get_channel_connections,
             commands::set_channel_connection,

@@ -17,6 +17,7 @@ interface OnboardingWizardProps {
   error?: string | null;
   onChooseFolder: () => void;
   onOpenProviders: () => void;
+  onOpenIdentity: () => void;
   onBrowsePacks: () => void;
   onSkip: () => void;
 }
@@ -27,6 +28,7 @@ export function OnboardingWizard({
   error,
   onChooseFolder,
   onOpenProviders,
+  onOpenIdentity,
   onBrowsePacks,
   onSkip,
 }: OnboardingWizardProps) {
@@ -127,11 +129,32 @@ export function OnboardingWizard({
 
           <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex items-start gap-3">
+              <SettingsIcon className="mt-0.5 h-5 w-5 text-accent" />
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-text">
+                      3) Name and tune your assistant (optional)
+                    </p>
+                    <p className="text-sm text-text-muted">
+                      Configure bot name, desktop alias, and personality preset.
+                    </p>
+                  </div>
+                  <Button onClick={onOpenIdentity} variant="ghost">
+                    Identity
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-start gap-3">
               <Sparkles className="mt-0.5 h-5 w-5 text-accent" />
               <div className="flex-1">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-text">3) Run a starter pack</p>
+                    <p className="font-medium text-text">4) Run a starter pack</p>
                     <p className="text-sm text-text-muted">
                       We’ll set up a sample folder and draft the first message for you.
                     </p>

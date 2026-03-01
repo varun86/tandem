@@ -745,6 +745,54 @@ export async function setProvidersConfig(config: ProvidersConfig): Promise<void>
 }
 
 // ============================================================================
+// Identity Configuration
+// ============================================================================
+
+export interface IdentityAliasConfig {
+  desktop?: string;
+  tui?: string;
+  portal?: string;
+  control_panel?: string;
+  channels?: string;
+  protocol?: string;
+  cli?: string;
+}
+
+export interface IdentityConfig {
+  bot?: {
+    canonical_name?: string;
+    aliases?: IdentityAliasConfig;
+  };
+  personality?: {
+    default?: {
+      preset?: string;
+      custom_instructions?: string | null;
+    };
+  };
+}
+
+export interface IdentityPreset {
+  id: string;
+  label: string;
+  description?: string | null;
+}
+
+export interface IdentityConfigResponse {
+  identity?: IdentityConfig;
+  presets?: IdentityPreset[];
+}
+
+export async function getIdentityConfig(): Promise<IdentityConfigResponse> {
+  return invoke("get_identity_config");
+}
+
+export async function patchIdentityConfig(
+  patch: Record<string, unknown>
+): Promise<IdentityConfigResponse> {
+  return invoke("patch_identity_config", { patch });
+}
+
+// ============================================================================
 // Channel Connections (Telegram / Discord / Slack)
 // ============================================================================
 

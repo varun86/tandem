@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Portal/control-panel identity naming**: VPS portal and control panel now fetch identity config and render bot/portal/control-panel labels from configured aliases instead of fixed hardcoded branding.
 - **Protocol/header branding compatibility**: OpenRouter `X-Title` now supports `AGENT_PROTOCOL_TITLE` (canonical) with `TANDEM_PROTOCOL_TITLE` compatibility fallback, and auth now accepts both `x-agent-token` and `x-tandem-token`.
 - **Guide docs identity/auth refresh**: Updated `guide/src` docs for identity/personality configuration and SDK usage, and switched curl examples to canonical `X-Agent-Token` while documenting `X-Tandem-Token` compatibility.
+- **Identity settings UI across frontends**: Added bot-name/personality settings editors in Desktop (Tauri) Settings and Control Panel Settings, including personality preset selection and custom instructions save flow through `/config/identity`.
+- **Onboarding wizard identity step (desktop)**: Added a first-run setup shortcut to the new Identity section so bot name/personality can be configured during initial setup.
 - **Engine tool-loop guard tuning**: Engine loop now supports `TANDEM_MAX_TOOL_ITERATIONS` and `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` to reduce high-cost retry spirals on repeated tool signatures.
 
 ### Fixed
