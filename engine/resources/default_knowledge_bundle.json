@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_root": "guide/src/content/docs",
   "docs_site_base_url": "https://tandem.docs.frumu.ai/",
-  "generated_at": "2026-03-01T19:02:57.886Z",
+  "generated_at": "2028-07-04T13:41:33.000Z",
   "docs": [
     {
       "relative_path": "agent-teams.md",

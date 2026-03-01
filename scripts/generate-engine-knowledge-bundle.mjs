@@ -21,6 +21,16 @@ function sha256Hex(input) {
   return createHash("sha256").update(input).digest("hex");
 }
 
+function deterministicGeneratedAt(corpusHash) {
+  // Make bundle output stable across runs so CI drift checks only fail on
+  // actual docs-content changes, not wall-clock timestamps.
+  const seed = Number.parseInt(corpusHash.slice(0, 12), 16);
+  const baseMs = Date.UTC(2020, 0, 1, 0, 0, 0, 0);
+  const windowSeconds = 10 * 365 * 24 * 60 * 60;
+  const offsetMs = (seed % windowSeconds) * 1000;
+  return new Date(baseMs + offsetMs).toISOString();
+}
+
 function toPosixRelative(baseDir, targetPath) {
   return path.relative(baseDir, targetPath).split(path.sep).join("/");
 }
@@ -98,7 +108,7 @@ async function main() {
     schema_version: SCHEMA_VERSION,
     source_root: "guide/src/content/docs",
     docs_site_base_url: DOCS_SITE_BASE_URL,
-    generated_at: new Date().toISOString(),
+    generated_at: deterministicGeneratedAt(corpusHash),
     docs,
   };
   const manifest = {
