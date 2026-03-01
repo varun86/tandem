@@ -433,6 +433,7 @@ async function readJsonBody(req) {
 }
 
 function sendJson(res, code, payload) {
+  if (res.headersSent || res.writableEnded || res.destroyed) return;
   const body = JSON.stringify(payload);
   res.writeHead(code, {
     "content-type": "application/json",
@@ -960,15 +961,31 @@ async function proxyEngineRequest(req, res, session) {
     responseHeaders[key] = value;
   });
 
-  res.writeHead(upstream.status, responseHeaders);
-  if (!upstream.body) {
-    res.end();
-    return;
+  try {
+    res.writeHead(upstream.status, responseHeaders);
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    for await (const chunk of upstream.body) {
+      if (res.writableEnded || res.destroyed) break;
+      res.write(chunk);
+    }
+    if (!res.writableEnded && !res.destroyed) {
+      res.end();
+    }
+  } catch (e) {
+    if (res.headersSent) {
+      if (!res.destroyed) {
+        res.destroy(e instanceof Error ? e : undefined);
+      }
+      return;
+    }
+    sendJson(res, 502, {
+      ok: false,
+      error: `Engine proxy stream failed: ${e instanceof Error ? e.message : String(e)}`,
+    });
   }
-  for await (const chunk of upstream.body) {
-    res.write(chunk);
-  }
-  res.end();
 }
 
 async function readSwarmRegistry(token) {
@@ -1287,7 +1304,11 @@ async function main() {
       serveStatic(req, res);
     } catch (e) {
       err(e instanceof Error ? e.stack || e.message : String(e));
-      sendJson(res, 500, { ok: false, error: "Internal server error" });
+      if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+        sendJson(res, 500, { ok: false, error: "Internal server error" });
+      } else if (!res.destroyed) {
+        res.destroy(e instanceof Error ? e : undefined);
+      }
     }
   });
 
