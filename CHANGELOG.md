@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Routine hard-pause runtime semantics**: Pausing a `running` routine run now actively cancels tracked live session(s) and records cancelled session IDs in pause responses/events.
 - **Swarm view route-stability fix**: Fixed Swarm page re-render race/leak where timer/SSE-triggered refreshes could leave Swarm content stuck after navigating to other views.
 - **Control panel hash-query soft routing**: Fixed excessive full-shell re-renders on same-route hash/query changes (for example Automations tab/wizard clicks), reducing UI flash and stale render races.
+- **Automation Builder model selection UX**: Per-agent provider/model fields now default from configured settings with provider/model dropdowns and explicit custom override inputs for clearer, lower-error setup.
 
 ## [0.3.27] - 2026-03-01
 

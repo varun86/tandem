@@ -743,7 +743,7 @@ export async function renderAgents(ctx) {
         </select>
         <button id="automation-v2-apply-preset" class="tcp-btn"><i data-lucide="sparkles"></i> Apply Preset</button>
       </div>
-      <div class="mt-2 text-xs text-slate-400">Per-agent model routing is supported. Example model policy: provider/model for each agent row below.</div>
+      <div class="mt-2 text-xs text-slate-400">Per-agent model routing: choose provider + model per agent. Defaults come from Settings. Use “Custom” only when needed.</div>
       <div class="mt-3">
         <button id="automation-v2-generate-agents" class="tcp-btn"><i data-lucide="users"></i> Generate Agent Rows</button>
       </div>
@@ -924,14 +924,24 @@ export async function renderAgents(ctx) {
     if (!v2Enabled) throw new Error("Advanced automation API unavailable.");
     return fn(automationV2Api);
   };
+  const providerSelectOptionsMarkup = [
+    `<option value="">Default from settings</option>`,
+    ...providerIds.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`),
+    `<option value="__custom__">Custom provider...</option>`,
+  ].join("");
   const v2AgentRowMarkup = (index, seed = {}) => `
     <div data-v2-agent-row="${index}" class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
       <div class="mb-2 text-xs text-slate-300 font-semibold">Agent ${index + 1}</div>
       <div class="grid gap-2 md:grid-cols-2">
         <input data-v2-agent-field="agent_id" data-v2-agent-index="${index}" class="tcp-input font-mono text-xs" value="${escapeHtml(String(seed.agent_id || `agent-${index + 1}`))}" />
         <input data-v2-agent-field="display_name" data-v2-agent-index="${index}" class="tcp-input" placeholder="Display name" value="${escapeHtml(String(seed.display_name || `Agent ${index + 1}`))}" />
-        <input data-v2-agent-field="model_provider" data-v2-agent-index="${index}" class="tcp-input" placeholder="model provider (e.g. openrouter)" value="${escapeHtml(String(seed.model_provider || ""))}" />
-        <input data-v2-agent-field="model_id" data-v2-agent-index="${index}" class="tcp-input" placeholder="model id (e.g. openai/gpt-4o-mini)" value="${escapeHtml(String(seed.model_id || ""))}" />
+        <select data-v2-agent-field="model_provider_select" data-v2-agent-index="${index}" class="tcp-select">${providerSelectOptionsMarkup}</select>
+        <input data-v2-agent-field="model_provider_custom" data-v2-agent-index="${index}" class="tcp-input hidden" placeholder="Custom provider id" value="${escapeHtml(String(seed.model_provider || ""))}" />
+        <select data-v2-agent-field="model_id_select" data-v2-agent-index="${index}" class="tcp-select">
+          <option value="">Default model for provider</option>
+          <option value="__custom__">Custom model...</option>
+        </select>
+        <input data-v2-agent-field="model_id_custom" data-v2-agent-index="${index}" class="tcp-input hidden" placeholder="Custom model id (e.g. openai/gpt-4o-mini)" value="${escapeHtml(String(seed.model_id || ""))}" />
         <input data-v2-agent-field="skills" data-v2-agent-index="${index}" class="tcp-input" placeholder="skills csv" value="${escapeHtml(String(Array.isArray(seed.skills) ? seed.skills.join(", ") : seed.skills || ""))}" />
         <input data-v2-agent-field="mcp_servers" data-v2-agent-index="${index}" class="tcp-input" placeholder="mcp servers csv (github, composio)" value="${escapeHtml(String(Array.isArray(seed.mcp_servers) ? seed.mcp_servers.join(", ") : seed.mcp_servers || ""))}" />
         <input data-v2-agent-field="allowlist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool allowlist csv (read,mcp.github.*)" value="${escapeHtml(String(Array.isArray(seed.allowlist) ? seed.allowlist.join(", ") : seed.allowlist || ""))}" />
@@ -956,12 +966,73 @@ export async function renderAgents(ctx) {
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean);
+  const syncV2AgentRowModelControls = (index) => {
+    const root = byId("view");
+    const readEl = (field) =>
+      root.querySelector(`[data-v2-agent-index="${index}"][data-v2-agent-field="${field}"]`);
+    const providerSelect = readEl("model_provider_select");
+    const providerCustom = readEl("model_provider_custom");
+    const modelSelect = readEl("model_id_select");
+    const modelCustom = readEl("model_id_custom");
+    if (!providerSelect || !providerCustom || !modelSelect || !modelCustom) return;
+
+    const providerValue =
+      providerSelect.value === "__custom__" ? String(providerCustom.value || "").trim() : String(providerSelect.value || "").trim();
+    const modelCandidates = providerValue ? modelIdsForProvider(providerValue) : [];
+    const previousModel = String(modelCustom.value || modelSelect.value || "").trim();
+    modelSelect.innerHTML = [
+      `<option value="">Default model for provider</option>`,
+      ...modelCandidates.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`),
+      `<option value="__custom__">Custom model...</option>`,
+    ].join("");
+    const hasKnownModel = !!previousModel && modelCandidates.includes(previousModel);
+    modelSelect.value = hasKnownModel ? previousModel : previousModel ? "__custom__" : "";
+    modelCustom.classList.toggle("hidden", modelSelect.value !== "__custom__");
+    if (modelSelect.value === "__custom__" && previousModel) modelCustom.value = previousModel;
+    providerCustom.classList.toggle("hidden", providerSelect.value !== "__custom__");
+  };
+  const initializeV2AgentModelControls = () => {
+    const rows = [...byId("automation-v2-agents-editor").querySelectorAll("[data-v2-agent-row]")];
+    for (const row of rows) {
+      const index = String(row.getAttribute("data-v2-agent-index") || "").trim();
+      if (!index) continue;
+      const root = byId("view");
+      const readEl = (field) =>
+        root.querySelector(`[data-v2-agent-index="${index}"][data-v2-agent-field="${field}"]`);
+      const providerSelect = readEl("model_provider_select");
+      const providerCustom = readEl("model_provider_custom");
+      const modelSelect = readEl("model_id_select");
+      const modelCustom = readEl("model_id_custom");
+      const presetProvider = String(providerCustom?.value || "").trim();
+      if (providerSelect) {
+        if (presetProvider && providerIds.includes(presetProvider)) providerSelect.value = presetProvider;
+        else if (presetProvider) providerSelect.value = "__custom__";
+        else providerSelect.value = initialProviderId || "";
+      }
+      syncV2AgentRowModelControls(index);
+      if (providerSelect && providerSelect.dataset.wired !== "1") {
+        providerSelect.dataset.wired = "1";
+        providerSelect.addEventListener("change", () => syncV2AgentRowModelControls(index));
+      }
+      if (providerCustom && providerCustom.dataset.wired !== "1") {
+        providerCustom.dataset.wired = "1";
+        providerCustom.addEventListener("input", () => syncV2AgentRowModelControls(index));
+      }
+      if (modelSelect && modelSelect.dataset.wired !== "1") {
+        modelSelect.dataset.wired = "1";
+        modelSelect.addEventListener("change", () =>
+          modelCustom?.classList.toggle("hidden", modelSelect.value !== "__custom__")
+        );
+      }
+    }
+  };
   const rebuildV2AgentRows = () => {
     const count = Math.max(
       1,
       Math.min(12, Number.parseInt(String(byId("automation-v2-agent-count")?.value || "2"), 10) || 2)
     );
     byId("automation-v2-agents-editor").innerHTML = Array.from({ length: count }, (_, i) => v2AgentRowMarkup(i)).join("");
+    initializeV2AgentModelControls();
   };
   const appendV2NodeRow = () => {
     const editor = byId("automation-v2-nodes-editor");
@@ -975,6 +1046,7 @@ export async function renderAgents(ctx) {
       .slice(0, 12)
       .map((agent, i) => v2AgentRowMarkup(i, agent))
       .join("");
+    initializeV2AgentModelControls();
     const safeNodes = Array.isArray(nodes) && nodes.length ? nodes : [{ node_id: "node-1", agent_id: "agent-1" }];
     byId("automation-v2-nodes-editor").innerHTML = safeNodes.map((node, i) => v2NodeRowMarkup(i, node)).join("");
   };
@@ -1174,8 +1246,16 @@ export async function renderAgents(ctx) {
         if (!agentId) continue;
         if (seenAgents.has(agentId)) throw new Error(`Duplicate agent_id: ${agentId}`);
         seenAgents.add(agentId);
-        const modelProvider = String(read("model_provider")).trim();
-        const modelId = String(read("model_id")).trim();
+        const providerSelect = String(read("model_provider_select")).trim();
+        const providerCustom = String(read("model_provider_custom")).trim();
+        const modelSelect = String(read("model_id_select")).trim();
+        const modelCustom = String(read("model_id_custom")).trim();
+        const modelProvider =
+          providerSelect === "__custom__"
+            ? providerCustom
+            : providerSelect || String(read("model_provider")).trim();
+        const modelId =
+          modelSelect === "__custom__" ? modelCustom : modelSelect || String(read("model_id")).trim();
         agents.push({
           agent_id: agentId,
           display_name: String(read("display_name")).trim() || agentId,
