@@ -51,7 +51,7 @@ export function ChatInput({
   onStop,
   disabled,
   isGenerating,
-  placeholder = "Ask Tandem anything...",
+  placeholder = "Ask your assistant anything...",
   draftMessage,
   onDraftMessageConsumed,
   selectedAgent,

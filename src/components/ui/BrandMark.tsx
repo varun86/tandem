@@ -12,7 +12,7 @@ const sizeClasses: Record<NonNullable<BrandMarkProps["size"]>, string> = {
   lg: "h-20 w-20 rounded-2xl text-5xl",
 };
 
-export function BrandMark({ className, size = "md", title = "Tandem" }: BrandMarkProps) {
+export function BrandMark({ className, size = "md", title = "Assistant" }: BrandMarkProps) {
   return (
     <div
       className={cn(

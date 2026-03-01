@@ -554,6 +554,17 @@ export class EngineAPI {
     return this.request<ProvidersConfigResponse>(`/config/providers`);
   }
 
+  async getIdentityConfig(): Promise<IdentityConfigResponse> {
+    return this.request<IdentityConfigResponse>(`/config/identity`);
+  }
+
+  async patchIdentityConfig(identity: IdentityConfig): Promise<IdentityConfigResponse> {
+    return this.request<IdentityConfigResponse>(`/config/identity`, {
+      method: "PATCH",
+      body: JSON.stringify(identity),
+    });
+  }
+
   async getProviderKeyPreview(providerId: string): Promise<ProviderKeyPreviewResponse> {
     return this.request<ProviderKeyPreviewResponse>(
       `/provider/key-preview?providerId=${encodeURIComponent(providerId)}`,
@@ -1073,6 +1084,41 @@ export interface ProviderConfigEntry {
 export interface ProvidersConfigResponse {
   default?: string | null;
   providers: Record<string, ProviderConfigEntry>;
+}
+
+export interface PersonalityProfile {
+  preset?: string;
+  custom_instructions?: string | null;
+}
+
+export interface PersonalityConfig {
+  default?: PersonalityProfile;
+  per_agent?: Record<string, PersonalityProfile>;
+}
+
+export interface BotIdentityAliases {
+  desktop?: string;
+  tui?: string;
+  portal?: string;
+  control_panel?: string;
+  channels?: string;
+  protocol?: string;
+  cli?: string;
+}
+
+export interface BotIdentityConfig {
+  canonical_name?: string;
+  aliases?: BotIdentityAliases;
+}
+
+export interface IdentityConfig {
+  bot?: BotIdentityConfig;
+  personality?: PersonalityConfig;
+}
+
+export interface IdentityConfigResponse {
+  identity: IdentityConfig;
+  presets?: Array<{ id: string; label: string; description?: string }>;
 }
 
 export interface ProviderKeyPreviewResponse {

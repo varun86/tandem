@@ -103,7 +103,7 @@ export function PermissionToast({ request, onApprove, onDeny }: PermissionToastP
           <div>
             <h3 className="font-semibold text-text">{getTitle()}</h3>
             <p className="text-xs text-text-subtle">
-              {toolLabel ? `Tool request: ${toolLabel}` : "Tandem requests your approval"}
+              {toolLabel ? `Tool request: ${toolLabel}` : "Assistant requests your approval"}
             </p>
           </div>
         </div>

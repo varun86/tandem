@@ -34,6 +34,8 @@ export function createState() {
     providerDefaultModel: "",
     providerConnected: [],
     providerError: "",
+    botName: "Tandem",
+    controlPanelName: "Tandem Control Panel",
     currentSessionId: "",
     chatUploadedFiles: [],
     filesDir: "uploads",

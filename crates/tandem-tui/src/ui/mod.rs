@@ -112,7 +112,7 @@ fn draw_main_menu(f: &mut Frame, app: &App) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(f.area());
 
-    let title = Paragraph::new("Tandem TUI")
+    let title = Paragraph::new("Assistant TUI")
         .style(
             Style::default()
                 .fg(Color::Green)
@@ -737,7 +737,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
         };
         let status_line = Line::from(vec![
             Span::styled(
-                " Tandem TUI | ",
+                " Assistant TUI | ",
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD),
@@ -1038,7 +1038,7 @@ fn draw_status_bar(f: &mut Frame, app: &App) {
         .unwrap_or("engine");
     let status_line = Line::from(vec![
         Span::styled(
-            " Tandem TUI | ",
+            " Assistant TUI | ",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
@@ -1402,7 +1402,7 @@ fn draw_connecting(f: &mut Frame, app: &App) {
 
 fn draw_setup_wizard(f: &mut Frame, app: &App) {
     let area = f.area();
-    let title = Paragraph::new("Tandem Setup Wizard")
+    let title = Paragraph::new("Assistant Setup Wizard")
         .style(Style::default().fg(Color::Cyan))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Welcome"));
@@ -1423,7 +1423,7 @@ fn draw_setup_wizard(f: &mut Frame, app: &App) {
             match step {
                 SetupStep::Welcome => {
                     Paragraph::new(
-                        "Welcome to Tandem AI!\n\nPress ENTER to get started.\n\nUse j/k or Up/Down to navigate, Enter to select.",
+                        "Welcome to your assistant!\n\nPress ENTER to get started.\n\nUse j/k or Up/Down to navigate, Enter to select.",
                     )
                     .style(Style::default().fg(Color::White))
                     .alignment(Alignment::Center)

@@ -75,7 +75,7 @@ async function checkAuth() {
     state.authed = true;
     state.me = me;
     state.client = new TandemClient({ baseUrl: "/api/engine", token: "session" });
-    await refreshProviderStatus();
+    await Promise.all([refreshProviderStatus(), refreshIdentityStatus()]);
   } catch {
     state.authed = false;
     state.me = null;
@@ -85,6 +85,8 @@ async function checkAuth() {
     state.providerDefault = "";
     state.providerConnected = [];
     state.providerError = "";
+    state.botName = "Tandem";
+    state.controlPanelName = "Tandem Control Panel";
   }
 }
 
@@ -117,6 +119,28 @@ async function refreshProviderStatus() {
     state.providerConnected = [];
     state.providerError = e instanceof Error ? e.message : String(e);
     state.needsProviderOnboarding = true;
+  }
+}
+
+async function refreshIdentityStatus() {
+  if (!state.client) {
+    state.botName = "Tandem";
+    state.controlPanelName = "Tandem Control Panel";
+    return;
+  }
+  try {
+    const payload = await state.client.identity.get();
+    const identity = payload?.identity || {};
+    const canonical = String(identity?.bot?.canonical_name || identity?.bot?.canonicalName || "").trim();
+    const aliases = identity?.bot?.aliases || {};
+    const controlPanelAlias = String(
+      aliases?.control_panel || aliases?.controlPanel || ""
+    ).trim();
+    state.botName = canonical || "Tandem";
+    state.controlPanelName = controlPanelAlias || `${state.botName} Control Panel`;
+  } catch {
+    state.botName = "Tandem";
+    state.controlPanelName = "Tandem Control Panel";
   }
 }
 
@@ -187,7 +211,7 @@ function renderLogin() {
             </g>
           </svg>
         </div>
-        <h1 class="mb-1 text-4xl font-semibold tracking-tight">Tandem Control Panel</h1>
+        <h1 class="mb-1 text-4xl font-semibold tracking-tight">${escapeHtml(state.controlPanelName)}</h1>
         <p class="tcp-subtle mb-6">Use your engine API token to unlock the full web control center.</p>
         <form id="login-form" class="grid gap-3">
           <label class="text-sm text-slate-300">Engine Token</label>
@@ -298,7 +322,7 @@ function renderShell() {
         <div class="mb-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-black/20 p-3">
           <div class="grid h-10 w-10 place-items-center rounded-xl border border-slate-600 bg-muted text-slate-200"><i data-lucide="cpu"></i></div>
           <div>
-            <div class="text-base font-semibold">Tandem</div>
+            <div class="text-base font-semibold">${escapeHtml(state.botName)}</div>
             <div class="text-xs uppercase tracking-wider text-slate-400">Control Center</div>
           </div>
         </div>

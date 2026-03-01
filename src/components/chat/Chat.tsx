@@ -3293,7 +3293,7 @@ ${g.example}
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">
           <div>
-            <h1 className="font-semibold text-text">Tandem</h1>
+            <h1 className="font-semibold text-text">Assistant</h1>
             {workspacePath && (
               <p className="flex items-center gap-1 text-sm text-text-muted">
                 <FolderOpen className="h-3 w-3" />
@@ -3689,7 +3689,7 @@ Use the 'write' tool to create files immediately.`;
                   workspacePath
                     ? needsConnection
                       ? "Type to connect and start chatting..."
-                      : "Ask Tandem anything..."
+                      : "Ask your assistant anything..."
                     : "Select a folder to start chatting"
                 }
                 draftMessage={draftMessage}

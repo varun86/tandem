@@ -536,7 +536,7 @@ function MessageComponent({
         <div className="relative flex-shrink-0">
           <div className="absolute inset-0 rounded-xl bg-primary/15 blur-[2px]" />
           <div className="relative h-8 w-8 overflow-hidden rounded-xl ring-1 ring-white/10">
-            <img src="/tandem-logo.png" alt="Tandem" className="h-full w-full object-cover" />
+            <img src="/tandem-logo.png" alt="Assistant" className="h-full w-full object-cover" />
           </div>
         </div>
       )}
@@ -545,7 +545,7 @@ function MessageComponent({
       <div className="flex-1 min-w-0 space-y-3">
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">
-            {isUser ? "You" : isSystem ? "System" : "Tandem"}
+            {isUser ? "You" : isSystem ? "System" : "Assistant"}
           </span>
           <span className="text-xs text-text-subtle">
             {timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
