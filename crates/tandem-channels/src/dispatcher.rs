@@ -840,15 +840,43 @@ async fn run_in_session(
     }
 
     // Request run metadata so we can bind SSE to this specific run.
-    let resp = add_auth(
-        client.post(format!(
-            "{base_url}/session/{session_id}/prompt_async?return=run"
-        )),
-        api_token,
-    )
-    .json(&body)
-    .send()
-    .await?;
+    let submit_prompt = || {
+        add_auth(
+            client.post(format!(
+                "{base_url}/session/{session_id}/prompt_async?return=run"
+            )),
+            api_token,
+        )
+        .json(&body)
+    };
+    let mut resp = submit_prompt().send().await?;
+    if resp.status() == reqwest::StatusCode::CONFLICT {
+        let conflict_text = resp.text().await.unwrap_or_default();
+        let conflict_json: serde_json::Value =
+            serde_json::from_str(&conflict_text).unwrap_or_default();
+        let active_run_id = conflict_json
+            .get("activeRun")
+            .and_then(|v| v.get("runID").or_else(|| v.get("run_id")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let retry_after_ms = conflict_json
+            .get("retryAfterMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(500)
+            .clamp(100, 5_000);
+        if active_run_id.is_empty() {
+            anyhow::bail!("prompt_async failed (409 Conflict): {conflict_text}");
+        }
+        let cancel_url = format!("{base_url}/session/{session_id}/run/{active_run_id}/cancel");
+        let _ = add_auth(client.post(cancel_url), api_token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await;
+        tokio::time::sleep(Duration::from_millis(retry_after_ms)).await;
+        resp = submit_prompt().send().await?;
+    }
 
     if !resp.status().is_success() {
         let status = resp.status();

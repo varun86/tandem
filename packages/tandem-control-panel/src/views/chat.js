@@ -562,16 +562,28 @@ export async function renderChat(ctx) {
       };
 
       const cancelAndWaitForIdle = async () => {
+        const activeRunId = await getActiveRunId().catch(() => "");
+        if (activeRunId) {
+          await fetch(
+            `/api/engine/session/${encodeURIComponent(state.currentSessionId)}/run/${encodeURIComponent(activeRunId)}/cancel`,
+            {
+              method: "POST",
+              credentials: "include",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({}),
+            }
+          ).catch(() => {});
+        }
         await fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/cancel`, {
           method: "POST",
           credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({}),
         }).catch(() => {});
-        for (let i = 0; i < 25; i += 1) {
+        for (let i = 0; i < 50; i += 1) {
           const active = await getActiveRunId().catch(() => "");
           if (!active) return true;
-          await new Promise((resolve) => setTimeout(resolve, 120));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
         return false;
       };
