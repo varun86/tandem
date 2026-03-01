@@ -326,6 +326,8 @@ impl EngineLoop {
             let mut blocked_mcp_servers: HashSet<String> = HashSet::new();
             let mut websearch_query_blocked = false;
             let mut auto_workspace_probe_attempted = false;
+            let greeting_prompt =
+                runtime_attachments.is_empty() && is_trivial_chitchat_prompt(&text);
 
             while max_iterations > 0 && !cancel.is_cancelled() {
                 let iteration = 26usize.saturating_sub(max_iterations);
@@ -368,7 +370,11 @@ impl EngineLoop {
                         messages = augmented;
                     }
                 }
-                let mut tool_schemas = self.tools.list().await;
+                let mut tool_schemas = if greeting_prompt && iteration == 1 {
+                    Vec::new()
+                } else {
+                    self.tools.list().await
+                };
                 if active_agent.tools.is_some() {
                     tool_schemas.retain(|schema| agent_can_use_tool(&active_agent, &schema.name));
                 }
@@ -3059,6 +3065,50 @@ fn is_os_mismatch_tool_output(output: &str) -> bool {
         || lower.contains("shell command blocked on windows")
 }
 
+fn is_trivial_chitchat_prompt(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.len() > 48 {
+        return false;
+    }
+    let normalized = trimmed
+        .chars()
+        .filter_map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                Some(ch.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    let words = normalized
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() || words.len() > 6 {
+        return false;
+    }
+    let joined = words.join(" ");
+    matches!(
+        joined.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "yo"
+            | "sup"
+            | "hiya"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "thanks"
+            | "thank you"
+            | "ok thanks"
+            | "okay thanks"
+            | "cool thanks"
+    )
+}
+
 fn tandem_runtime_system_prompt(host: &HostRuntimeContext) -> String {
     let mut sections = Vec::new();
     if os_aware_prompts_enabled() {
@@ -3075,6 +3125,11 @@ fn tandem_runtime_system_prompt(host: &HostRuntimeContext) -> String {
 Use tool calls to inspect and modify the workspace when needed instead of asking the user
 to manually run basic discovery steps. Permission prompts may occur for some tools; if
 a tool is denied or blocked, explain what was blocked and suggest a concrete next step."
+            .to_string(),
+    );
+    sections.push(
+        "For greetings or simple conversational messages (for example: hi, hello, thanks),
+respond directly without calling tools."
             .to_string(),
     );
     if host.os == HostOs::Windows {
@@ -4933,6 +4988,28 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(prompt.contains("Host OS: windows"));
         assert!(prompt.contains("Shell: powershell"));
         assert!(prompt.contains("Path style: windows"));
+    }
+
+    #[test]
+    fn trivial_chitchat_detector_matches_greetings() {
+        assert!(is_trivial_chitchat_prompt("hi"));
+        assert!(is_trivial_chitchat_prompt("Hello!"));
+        assert!(is_trivial_chitchat_prompt("good morning"));
+        assert!(is_trivial_chitchat_prompt("thanks"));
+        assert!(is_trivial_chitchat_prompt("ok thanks"));
+    }
+
+    #[test]
+    fn trivial_chitchat_detector_rejects_action_requests() {
+        assert!(!is_trivial_chitchat_prompt(
+            "Use local code evidence in engine/src/main.rs"
+        ));
+        assert!(!is_trivial_chitchat_prompt(
+            "summarize repository and list risks"
+        ));
+        assert!(!is_trivial_chitchat_prompt(
+            "hello can you grep for TODO in src"
+        ));
     }
 
     #[test]
