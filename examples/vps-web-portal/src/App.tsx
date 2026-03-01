@@ -122,6 +122,7 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
   const [newDirectoryName, setNewDirectoryName] = useState("");
   const [creatingDirectory, setCreatingDirectory] = useState(false);
   const [botName, setBotName] = useState("Tandem");
+  const [botAvatarUrl, setBotAvatarUrl] = useState<string>("");
   const [portalName, setPortalName] = useState("Tandem Portal");
 
   useEffect(() => {
@@ -174,10 +175,12 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
         const payload = await api.getIdentityConfig();
         const identity = payload?.identity || {};
         const canonical = String(identity?.bot?.canonical_name || "").trim();
+        const avatar = String(identity?.bot?.avatar_url || "").trim();
         const aliases = identity?.bot?.aliases || {};
         const portalAlias = String(aliases?.portal || "").trim();
         if (canceled) return;
         if (canonical) setBotName(canonical);
+        setBotAvatarUrl(avatar);
         if (portalAlias) setPortalName(portalAlias);
         else if (canonical) setPortalName(`${canonical} Portal`);
       } catch {
@@ -316,7 +319,11 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 blur-[50px] rounded-full -translate-y-1/2 translate-x-1/2"></div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2 relative z-10 tracking-tight">
             <div className="p-1.5 bg-emerald-500/20 rounded-lg border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-              <BrainCircuit className="text-emerald-400" size={20} />
+              {botAvatarUrl ? (
+                <img src={botAvatarUrl} alt={botName} className="h-5 w-5 rounded-md object-cover" />
+              ) : (
+                <BrainCircuit className="text-emerald-400" size={20} />
+              )}
             </div>
             {portalName}
           </h1>
@@ -554,7 +561,16 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
           <div className="absolute left-0 top-0 h-full w-[88vw] max-w-sm bg-gray-900 border-r border-gray-800 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-gray-800">
               <h2 className="text-white font-semibold flex items-center gap-2">
-                <BrainCircuit className="text-emerald-500" size={18} /> {portalName}
+                {botAvatarUrl ? (
+                  <img
+                    src={botAvatarUrl}
+                    alt={botName}
+                    className="h-[18px] w-[18px] rounded object-cover"
+                  />
+                ) : (
+                  <BrainCircuit className="text-emerald-500" size={18} />
+                )}{" "}
+                {portalName}
               </h2>
               <button
                 type="button"
@@ -579,7 +595,12 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
             <Menu size={20} />
           </button>
           <span className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-            <BrainCircuit size={16} className="text-emerald-400" /> {botName}
+            {botAvatarUrl ? (
+              <img src={botAvatarUrl} alt={botName} className="h-4 w-4 rounded object-cover" />
+            ) : (
+              <BrainCircuit size={16} className="text-emerald-400" />
+            )}{" "}
+            {botName}
           </span>
           <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white/5 text-gray-400 border border-white/5">
             Pending: {pendingApprovals.length}

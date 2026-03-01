@@ -3373,6 +3373,7 @@ fn identity_default_value() -> Value {
     json!({
         "bot": {
             "canonical_name": "Tandem",
+            "avatar_url": null,
             "aliases": {
                 "desktop": "Tandem",
                 "tui": "Tandem TUI",

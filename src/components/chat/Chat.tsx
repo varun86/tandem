@@ -421,9 +421,14 @@ export function Chat({
         const bot = identity.bot || {};
         const aliases = bot.aliases || {};
         const name = String(aliases.desktop || bot.canonical_name || "").trim();
+        const avatar = String(bot.avatar_url || "").trim();
         setAssistantName(name || "Assistant");
+        setAssistantAvatarUrl(avatar || "/tandem-logo.png");
       } catch {
-        if (!cancelled) setAssistantName("Assistant");
+        if (!cancelled) {
+          setAssistantName("Assistant");
+          setAssistantAvatarUrl("/tandem-logo.png");
+        }
       }
     };
     void loadIdentity();
@@ -445,7 +450,7 @@ export function Chat({
   );
   const [startupHealth, setStartupHealth] = useState<SidecarStartupHealth | null>(null);
   const [assistantName, setAssistantName] = useState("Assistant");
-  const [assistantAvatarUrl] = useState("/tandem-logo.png");
+  const [assistantAvatarUrl, setAssistantAvatarUrl] = useState("/tandem-logo.png");
   const [engineReady, setEngineReady] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -3317,6 +3322,13 @@ ${g.example}
       {/* Header */}
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">
+          <div className="h-8 w-8 overflow-hidden rounded-xl ring-1 ring-white/10">
+            <img
+              src={assistantAvatarUrl}
+              alt={assistantName}
+              className="h-full w-full object-cover"
+            />
+          </div>
           <div>
             <h1 className="font-semibold text-text">{assistantName}</h1>
             {workspacePath && (

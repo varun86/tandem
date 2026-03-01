@@ -41,6 +41,7 @@ pub struct BotIdentityAliasesConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BotIdentityConfig {
     pub canonical_name: Option<String>,
+    pub avatar_url: Option<String>,
     #[serde(default)]
     pub aliases: BotIdentityAliasesConfig,
 }

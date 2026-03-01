@@ -87,6 +87,7 @@ async function checkAuth() {
     state.providerConnected = [];
     state.providerError = "";
     state.botName = "Tandem";
+    state.botAvatarUrl = "";
     state.controlPanelName = "Tandem Control Panel";
   }
 }
@@ -130,6 +131,7 @@ async function refreshProviderStatus() {
 async function refreshIdentityStatus() {
   if (!state.client) {
     state.botName = "Tandem";
+    state.botAvatarUrl = "";
     state.controlPanelName = "Tandem Control Panel";
     return;
   }
@@ -142,11 +144,14 @@ async function refreshIdentityStatus() {
       identity?.bot?.canonical_name || identity?.bot?.canonicalName || ""
     ).trim();
     const aliases = identity?.bot?.aliases || {};
+    const avatar = String(identity?.bot?.avatar_url || identity?.bot?.avatarUrl || "").trim();
     const controlPanelAlias = String(aliases?.control_panel || aliases?.controlPanel || "").trim();
     state.botName = canonical || "Tandem";
+    state.botAvatarUrl = avatar;
     state.controlPanelName = controlPanelAlias || `${state.botName} Control Panel`;
   } catch {
     state.botName = "Tandem";
+    state.botAvatarUrl = "";
     state.controlPanelName = "Tandem Control Panel";
   }
 }
@@ -330,7 +335,13 @@ function renderShell() {
     <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[260px_1fr]">
       <aside class="border-r border-slate-700 bg-panel/90 p-4">
         <div class="mb-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-black/20 p-3">
-          <div class="grid h-10 w-10 place-items-center rounded-xl border border-slate-600 bg-muted text-slate-200"><i data-lucide="cpu"></i></div>
+          <div class="grid h-10 w-10 place-items-center overflow-hidden rounded-xl border border-slate-600 bg-muted text-slate-200">
+            ${
+              state.botAvatarUrl
+                ? `<img src="${escapeHtml(state.botAvatarUrl)}" alt="${escapeHtml(state.botName)}" class="h-full w-full object-cover" />`
+                : `<i data-lucide="cpu"></i>`
+            }
+          </div>
           <div>
             <div class="text-base font-semibold">${escapeHtml(state.botName)}</div>
             <div class="text-xs uppercase tracking-wider text-slate-400">Control Center</div>

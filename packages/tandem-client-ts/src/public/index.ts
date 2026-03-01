@@ -230,6 +230,7 @@ export interface BotIdentityAliases {
 
 export interface BotIdentity {
   canonicalName?: string;
+  avatarUrl?: string | null;
   aliases?: BotIdentityAliases;
 }
 

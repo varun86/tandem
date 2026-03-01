@@ -179,6 +179,7 @@ export function Settings({
     useState<IdentityPreset[]>(FALLBACK_IDENTITY_PRESETS);
   const [identityCanonicalName, setIdentityCanonicalName] = useState("");
   const [identityDesktopAlias, setIdentityDesktopAlias] = useState("");
+  const [identityAvatarUrl, setIdentityAvatarUrl] = useState<string | null>(null);
   const [identityPreset, setIdentityPreset] = useState("balanced");
   const [identityCustomInstructions, setIdentityCustomInstructions] = useState("");
   const [identitySaving, setIdentitySaving] = useState(false);
@@ -298,6 +299,7 @@ export function Settings({
     const defaults = personality.default || {};
 
     const canonical = String(bot.canonical_name || "").trim();
+    const avatarUrl = String(bot.avatar_url || "").trim();
     const desktopAlias = String(aliases.desktop || "").trim();
     const preset = String(defaults.preset || "balanced").trim() || "balanced";
     const customInstructions = String(defaults.custom_instructions || "").trim();
@@ -307,6 +309,7 @@ export function Settings({
         : FALLBACK_IDENTITY_PRESETS;
 
     setIdentityCanonicalName(canonical);
+    setIdentityAvatarUrl(avatarUrl || null);
     setIdentityDesktopAlias(desktopAlias);
     setIdentityPreset(preset);
     setIdentityCustomInstructions(customInstructions);
@@ -322,11 +325,13 @@ export function Settings({
         throw new Error("Bot name is required.");
       }
       const desktopAlias = identityDesktopAlias.trim();
+      const avatarUrl = identityAvatarUrl?.trim() || null;
       const customInstructions = identityCustomInstructions.trim();
       const payload = await patchIdentityConfig({
         identity: {
           bot: {
             canonical_name: canonical,
+            avatar_url: avatarUrl,
             aliases: {
               desktop: desktopAlias || undefined,
             },
@@ -349,6 +354,38 @@ export function Settings({
     } finally {
       setIdentitySaving(false);
     }
+  };
+
+  const handleIdentityAvatarUpload = (file: File | null) => {
+    if (!file) return;
+    const maxBytes = 1024 * 1024;
+    if (file.size > maxBytes) {
+      setIdentityNotice({
+        kind: "error",
+        message: "Avatar image is too large (max 1 MB).",
+      });
+      return;
+    }
+    const reader = new globalThis.FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      if (!value) {
+        setIdentityNotice({
+          kind: "error",
+          message: "Failed to read avatar file.",
+        });
+        return;
+      }
+      setIdentityAvatarUrl(value);
+      setIdentityNotice(null);
+    };
+    reader.onerror = () => {
+      setIdentityNotice({
+        kind: "error",
+        message: "Failed to read avatar file.",
+      });
+    };
+    reader.readAsDataURL(file);
   };
 
   const loadLatestReleaseNotes = async () => {
@@ -1855,6 +1892,34 @@ export function Settings({
                   value={identityDesktopAlias}
                   onChange={(e) => setIdentityDesktopAlias(e.target.value)}
                 />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-text-subtle">Avatar (optional)</label>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="h-10 w-10 overflow-hidden rounded-xl border border-border bg-surface-elevated">
+                  <img
+                    src={identityAvatarUrl || "/tandem-logo.png"}
+                    alt={identityCanonicalName || "Assistant"}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(e) => handleIdentityAvatarUpload(e.target.files?.[0] ?? null)}
+                  className="text-xs text-text-muted file:mr-2 file:rounded-md file:border file:border-border file:bg-surface file:px-2 file:py-1 file:text-xs file:text-text"
+                />
+                {identityAvatarUrl && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setIdentityAvatarUrl(null)}
+                    className="h-8 px-2 text-xs"
+                  >
+                    Remove
+                  </Button>
+                )}
               </div>
             </div>
 

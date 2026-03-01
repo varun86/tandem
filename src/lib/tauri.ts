@@ -761,6 +761,7 @@ export interface IdentityAliasConfig {
 export interface IdentityConfig {
   bot?: {
     canonical_name?: string;
+    avatar_url?: string | null;
     aliases?: IdentityAliasConfig;
   };
   personality?: {

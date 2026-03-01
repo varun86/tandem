@@ -262,6 +262,7 @@ async function renderIdentityBlock(ctx, container) {
         ];
 
   let canonicalName = String(bot?.canonical_name || bot?.canonicalName || "").trim();
+  let avatarUrl = String(bot?.avatar_url || bot?.avatarUrl || "").trim();
   let controlPanelAlias = String(aliases?.control_panel || aliases?.controlPanel || "").trim();
   let preset = String(defaults?.preset || "balanced").trim() || "balanced";
   let customInstructions = String(
@@ -283,6 +284,21 @@ async function renderIdentityBlock(ctx, container) {
         <div>
           <label class="mb-1 block text-sm text-slate-300">Control panel alias (optional)</label>
           <input id="identity-control-panel-alias" class="tcp-input" placeholder="Assistant Control Panel" value="${escapeHtml(controlPanelAlias)}" />
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <label class="mb-1 block text-sm text-slate-300">Avatar (optional)</label>
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="h-10 w-10 overflow-hidden rounded-xl border border-slate-600 bg-muted">
+            <img src="${escapeHtml(avatarUrl || "/tandem-logo.png")}" alt="${escapeHtml(canonicalName || "Assistant")}" class="h-full w-full object-cover" />
+          </div>
+          <input id="identity-avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="tcp-input !h-auto !py-1.5 text-xs" />
+          ${
+            avatarUrl
+              ? '<button id="identity-avatar-clear" class="tcp-btn h-8 px-2 text-xs">Remove</button>'
+              : ""
+          }
         </div>
       </div>
 
@@ -316,6 +332,36 @@ async function renderIdentityBlock(ctx, container) {
     container.querySelector("#identity-control-panel-alias").addEventListener("input", (e) => {
       controlPanelAlias = e.target.value;
     });
+    const avatarFileEl = container.querySelector("#identity-avatar-file");
+    if (avatarFileEl) {
+      avatarFileEl.addEventListener("change", async (e) => {
+        const file = e.target?.files?.[0];
+        if (!file) return;
+        if (file.size > 1024 * 1024) {
+          toast("err", "Avatar image is too large (max 1 MB).");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const value = typeof reader.result === "string" ? reader.result : "";
+          if (!value) {
+            toast("err", "Failed to read avatar file.");
+            return;
+          }
+          avatarUrl = value;
+          render();
+        };
+        reader.onerror = () => toast("err", "Failed to read avatar file.");
+        reader.readAsDataURL(file);
+      });
+    }
+    const avatarClearEl = container.querySelector("#identity-avatar-clear");
+    if (avatarClearEl) {
+      avatarClearEl.addEventListener("click", () => {
+        avatarUrl = "";
+        render();
+      });
+    }
     container.querySelector("#identity-preset").addEventListener("change", (e) => {
       preset = e.target.value;
     });
@@ -334,6 +380,7 @@ async function renderIdentityBlock(ctx, container) {
           identity: {
             bot: {
               canonical_name: nextCanonical,
+              avatar_url: avatarUrl || null,
               aliases: {
                 control_panel: nextAlias || undefined,
               },
@@ -352,6 +399,7 @@ async function renderIdentityBlock(ctx, container) {
         toast("ok", "Identity settings saved.");
         payload = updated;
         canonicalName = String(updated?.identity?.bot?.canonical_name || "").trim();
+        avatarUrl = String(updated?.identity?.bot?.avatar_url || "").trim();
         controlPanelAlias = String(updated?.identity?.bot?.aliases?.control_panel || "").trim();
         preset =
           String(updated?.identity?.personality?.default?.preset || "balanced").trim() ||

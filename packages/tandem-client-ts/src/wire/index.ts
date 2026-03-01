@@ -211,6 +211,7 @@ export interface BotIdentityAliases {
 
 export interface BotIdentity {
   canonical_name?: string;
+  avatar_url?: string | null;
   aliases?: BotIdentityAliases;
 }
 

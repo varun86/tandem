@@ -494,6 +494,7 @@ export async function renderChat(ctx) {
 
     const messages = await state.client.sessions.messages(state.currentSessionId).catch(() => []);
     const assistantLabel = String(state.botName || "Assistant").trim() || "Assistant";
+    const assistantAvatar = String(state.botAvatarUrl || "").trim();
     messagesEl.innerHTML = messages
       .map((m) => {
         const roleRaw = String(m?.info?.role || "unknown");
@@ -506,13 +507,17 @@ export async function renderChat(ctx) {
                 ? "System"
                 : roleRaw;
         const role = escapeHtml(displayRole);
+        const roleHtml =
+          roleRaw === "assistant"
+            ? `<span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${escapeHtml(assistantLabel)}" class="h-5 w-5 rounded-full object-cover ring-1 ring-slate-600" />` : ""}<span>${role}</span></span>`
+            : role;
         const textRaw = (m.parts || []).map((p) => p.text || "").join("\n");
         const isAssistantLike = roleRaw === "assistant" || roleRaw === "system";
         const content = isAssistantLike
           ? `<div class="tcp-markdown tcp-markdown-ai">${renderMarkdown(textRaw)}</div>`
           : `<pre class="max-w-full whitespace-pre-wrap break-all font-mono text-xs text-slate-200">${escapeHtml(textRaw)}</pre>`;
         const roleClass = isAssistantLike ? "assistant" : "user";
-        return `<div class="chat-msg ${roleClass}"><div class="chat-msg-role">${role}</div>${content}</div>`;
+        return `<div class="chat-msg ${roleClass}"><div class="chat-msg-role">${roleHtml}</div>${content}</div>`;
       })
       .join("");
 
@@ -651,10 +656,11 @@ export async function renderChat(ctx) {
       let responseText = "";
       let gotDelta = false;
       const assistantLabel = escapeHtml(String(state.botName || "Assistant").trim() || "Assistant");
+      const assistantAvatar = String(state.botAvatarUrl || "").trim();
       const placeholder = document.createElement("div");
       placeholder.className = "chat-msg assistant";
       placeholder.innerHTML = `
-        <div class="chat-msg-role">${assistantLabel}</div>
+        <div class="chat-msg-role"><span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${assistantLabel}" class="h-5 w-5 rounded-full object-cover ring-1 ring-slate-600" />` : ""}<span>${assistantLabel}</span></span></div>
         <div class="tcp-thinking" aria-live="polite">
           <span>Thinking</span>
           <i></i><i></i><i></i>

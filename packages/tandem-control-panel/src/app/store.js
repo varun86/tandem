@@ -13,12 +13,28 @@ export const ROUTES = [
 ];
 
 export const providerHints = {
-  openai: { label: "OpenAI", keyUrl: "https://platform.openai.com/api-keys", placeholder: "sk-proj-..." },
-  anthropic: { label: "Anthropic", keyUrl: "https://console.anthropic.com/settings/keys", placeholder: "sk-ant-..." },
-  google: { label: "Google", keyUrl: "https://aistudio.google.com/app/apikey", placeholder: "AIza..." },
+  openai: {
+    label: "OpenAI",
+    keyUrl: "https://platform.openai.com/api-keys",
+    placeholder: "sk-proj-...",
+  },
+  anthropic: {
+    label: "Anthropic",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    placeholder: "sk-ant-...",
+  },
+  google: {
+    label: "Google",
+    keyUrl: "https://aistudio.google.com/app/apikey",
+    placeholder: "AIza...",
+  },
   groq: { label: "Groq", keyUrl: "https://console.groq.com/keys", placeholder: "gsk_..." },
   mistral: { label: "Mistral", keyUrl: "https://console.mistral.ai/api-keys/", placeholder: "..." },
-  openrouter: { label: "OpenRouter", keyUrl: "https://openrouter.ai/settings/keys", placeholder: "sk-or-v1-..." },
+  openrouter: {
+    label: "OpenRouter",
+    keyUrl: "https://openrouter.ai/settings/keys",
+    placeholder: "sk-or-v1-...",
+  },
   ollama: { label: "Ollama", keyUrl: "", placeholder: "No key required" },
 };
 
@@ -35,6 +51,7 @@ export function createState() {
     providerConnected: [],
     providerError: "",
     botName: "Tandem",
+    botAvatarUrl: "",
     controlPanelName: "Tandem Control Panel",
     currentSessionId: "",
     chatUploadedFiles: [],

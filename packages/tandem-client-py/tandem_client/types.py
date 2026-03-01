@@ -216,6 +216,9 @@ class BotIdentity(BaseModel):
     canonical_name: Optional[str] = Field(
         None, validation_alias=AliasChoices("canonicalName", "canonical_name")
     )
+    avatar_url: Optional[str] = Field(
+        None, validation_alias=AliasChoices("avatarUrl", "avatar_url")
+    )
     aliases: Optional[BotIdentityAliases] = None
 
 
