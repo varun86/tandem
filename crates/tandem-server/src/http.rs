@@ -509,6 +509,12 @@ struct PackInstallFromAttachmentInput {
     sender_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct PackUpdateApplyInput {
+    #[serde(default)]
+    target_version: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct SkillLocationQuery {
     location: Option<SkillLocation>,
@@ -1235,6 +1241,59 @@ async fn packs_export(
     Ok(Json(json!({ "exported": exported })))
 }
 
+async fn packs_updates_get(
+    State(state): State<AppState>,
+    Path(PackSelectorPath { selector }): Path<PackSelectorPath>,
+) -> Result<Json<Value>, StatusCode> {
+    let inspection = state.pack_manager.inspect(&selector).await.map_err(|err| {
+        if err.to_string().contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            tracing::warn!("pack updates check failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
+    Ok(Json(json!({
+        "pack_id": inspection.installed.pack_id,
+        "name": inspection.installed.name,
+        "current_version": inspection.installed.version,
+        "updates": []
+    })))
+}
+
+async fn packs_update_post(
+    State(state): State<AppState>,
+    Path(PackSelectorPath { selector }): Path<PackSelectorPath>,
+    Json(input): Json<PackUpdateApplyInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let inspection = state.pack_manager.inspect(&selector).await.map_err(|err| {
+        if err.to_string().contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            tracing::warn!("pack update apply failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
+    state.event_bus.publish(EngineEvent::new(
+        "pack.update.not_available",
+        json!({
+            "pack_id": inspection.installed.pack_id,
+            "name": inspection.installed.name,
+            "current_version": inspection.installed.version,
+            "target_version": input.target_version,
+            "reason": "updates_not_implemented",
+        }),
+    ));
+    Ok(Json(json!({
+        "updated": false,
+        "pack_id": inspection.installed.pack_id,
+        "name": inspection.installed.name,
+        "current_version": inspection.installed.version,
+        "target_version": input.target_version,
+        "reason": "updates_not_implemented"
+    })))
+}
+
 async fn packs_detect(
     State(state): State<AppState>,
     Json(input): Json<PackDetectInput>,
@@ -1578,6 +1637,8 @@ fn app_router(state: AppState) -> Router {
         .route("/packs/uninstall", post(packs_uninstall))
         .route("/packs/export", post(packs_export))
         .route("/packs/detect", post(packs_detect))
+        .route("/packs/{selector}/updates", get(packs_updates_get))
+        .route("/packs/{selector}/update", post(packs_update_post))
         .route(
             "/capabilities/bindings",
             get(capabilities_bindings_get).put(capabilities_bindings_put),
@@ -10716,6 +10777,8 @@ async fn openapi_doc() -> Json<Value> {
             "/packs/uninstall":{"post":{"summary":"Uninstall tandem pack"}},
             "/packs/export":{"post":{"summary":"Export installed tandem pack as zip"}},
             "/packs/detect":{"post":{"summary":"Detect tandem pack marker in zip and emit pack.detected"}},
+            "/packs/{selector}/updates":{"get":{"summary":"Check updates for installed pack (stub)"}},
+            "/packs/{selector}/update":{"post":{"summary":"Apply update for installed pack (stub)"}},
             "/capabilities/bindings":{"get":{"summary":"List capability bindings"},"put":{"summary":"Replace capability bindings file"}},
             "/capabilities/discovery":{"get":{"summary":"Discover available provider tools for capability resolution"}},
             "/capabilities/resolve":{"post":{"summary":"Resolve required capabilities to provider tools based on bindings and preference"}},
@@ -11221,6 +11284,69 @@ mod tests {
             .and_then(|row| row.get("provider"))
             .and_then(|v| v.as_str());
         assert_eq!(provider, Some("arcade"));
+    }
+
+    #[tokio::test]
+    async fn packs_updates_endpoints_return_stub_payload() {
+        let state = test_state().await;
+        let root = std::env::temp_dir().join(format!("tandem-pack-updates-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let pack_zip = root.join("pack.zip");
+        write_pack_zip(
+            &pack_zip,
+            "name: update-pack\nversion: 1.0.0\ntype: workflow\npack_id: update-pack\n",
+        );
+        let app = app_router(state.clone());
+        let install_req = Request::builder()
+            .method("POST")
+            .uri("/packs/install")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "path": pack_zip.to_string_lossy(),
+                    "source": {"kind":"test"}
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let install_resp = app.clone().oneshot(install_req).await.expect("response");
+        assert_eq!(install_resp.status(), StatusCode::OK);
+
+        let updates_req = Request::builder()
+            .method("GET")
+            .uri("/packs/update-pack/updates")
+            .body(Body::empty())
+            .expect("request");
+        let updates_resp = app.clone().oneshot(updates_req).await.expect("response");
+        assert_eq!(updates_resp.status(), StatusCode::OK);
+        let updates_body = to_bytes(updates_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let updates_payload: Value = serde_json::from_slice(&updates_body).expect("json");
+        assert_eq!(
+            updates_payload
+                .get("current_version")
+                .and_then(|v| v.as_str()),
+            Some("1.0.0")
+        );
+
+        let apply_req = Request::builder()
+            .method("POST")
+            .uri("/packs/update-pack/update")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"target_version":"1.1.0"}).to_string()))
+            .expect("request");
+        let apply_resp = app.clone().oneshot(apply_req).await.expect("response");
+        assert_eq!(apply_resp.status(), StatusCode::OK);
+        let apply_body = to_bytes(apply_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let apply_payload: Value = serde_json::from_slice(&apply_body).expect("json");
+        assert_eq!(
+            apply_payload.get("reason").and_then(|v| v.as_str()),
+            Some("updates_not_implemented")
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]

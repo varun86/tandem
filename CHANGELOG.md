@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /packs/uninstall`
     - `POST /packs/export`
     - `POST /packs/detect`
+    - `GET /packs/{selector}/updates` (stub)
+    - `POST /packs/{selector}/update` (stub)
   - root-marker detection enforced via zip central directory entry `tandempack.yaml`
   - safe install extraction checks added (path traversal, size/count/depth limits)
   - deterministic install/index paths under `TANDEM_HOME/packs` with atomic index writes

@@ -70,6 +70,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `POST /packs/uninstall`
     - `POST /packs/export`
     - `POST /packs/detect`
+    - `GET /packs/{selector}/updates` (stub)
+    - `POST /packs/{selector}/update` (stub)
   - Added zip root-marker detection for pack eligibility (`tandempack.yaml` at archive root only).
   - Added install safety controls for zip extraction:
     - path traversal rejection
