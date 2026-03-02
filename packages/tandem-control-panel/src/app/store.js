@@ -55,6 +55,7 @@ export function createState() {
     providerDefaultModel: "",
     providerConnected: [],
     providerError: "",
+    providerGateNoticeShown: false,
     botName: "Tandem",
     botAvatarUrl: "",
     controlPanelName: "Tandem Control Panel",

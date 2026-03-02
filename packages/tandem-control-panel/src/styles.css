@@ -23,8 +23,9 @@
     --color-text-subtle: rgba(245, 245, 245, 0.5);
     --color-glass: rgba(255, 255, 255, 0.03);
     --color-glass-border: rgba(255, 255, 255, 0.08);
-    --font-sans: "Geist Sans", "Inter", system-ui, -apple-system, sans-serif;
-    --font-mono: "Geist Mono", "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-sans: "Manrope", "Geist Sans", "Inter", system-ui, -apple-system, sans-serif;
+    --font-display: "Rubik", "Geist Sans", "Inter", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", "Geist Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
     --tcp-glow-a: rgba(245, 158, 11, 0.16);
     --tcp-glow-b: rgba(239, 68, 68, 0.12);
   }
@@ -33,9 +34,8 @@
     @apply bg-canvas antialiased;
     color: var(--color-text);
     font-family: var(--font-sans);
-    background-image:
-      radial-gradient(55rem 55rem at 100% -10%, var(--tcp-glow-a), transparent 60%),
-      radial-gradient(65rem 65rem at -5% 105%, var(--tcp-glow-b), transparent 60%);
+    letter-spacing: 0.003em;
+    background-image: radial-gradient(42rem 42rem at 85% -8%, var(--tcp-glow-a), transparent 64%);
   }
 
   ::-webkit-scrollbar {
@@ -55,14 +55,14 @@
 @layer components {
   .tcp-card {
     @apply rounded-2xl p-5 shadow-soft backdrop-blur-sm;
-    border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
-    background: color-mix(in srgb, var(--color-surface-elevated) 88%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 94%, #000 6%);
   }
 
   .tcp-panel {
     @apply rounded-2xl p-5 shadow-soft;
-    border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
-    background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+    background: color-mix(in srgb, var(--color-surface) 96%, #000 4%);
   }
 
   .tcp-input {
@@ -78,15 +78,15 @@
   }
 
   .tcp-btn {
-    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3.5 text-[13px] font-medium leading-none shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_8px_18px_rgba(2,6,23,0.24)] backdrop-blur-sm transition-all duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
-    border: 1px solid color-mix(in srgb, var(--color-border) 95%, transparent);
-    background: color-mix(in srgb, var(--color-surface-elevated) 80%, transparent);
+    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3.5 text-[13px] font-semibold leading-none shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm transition-all duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 94%, #000 6%);
     color: var(--color-text);
   }
 
   .tcp-btn:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border) 58%);
-    background: color-mix(in srgb, var(--color-surface-elevated) 72%, var(--color-primary) 8%);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border-subtle) 60%);
+    background: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-primary) 12%);
   }
 
   .tcp-btn svg {
@@ -95,20 +95,20 @@
   }
 
   .tcp-btn-primary {
-    @apply tcp-btn text-slate-50;
-    border-color: color-mix(in srgb, var(--color-primary) 48%, transparent);
+    @apply tcp-btn text-[#111111];
+    border-color: color-mix(in srgb, var(--color-primary) 62%, transparent);
     background: linear-gradient(
       180deg,
-      color-mix(in srgb, var(--color-primary) 50%, transparent),
-      color-mix(in srgb, var(--color-primary-muted) 65%, transparent)
+      color-mix(in srgb, #f4b43a 94%, transparent),
+      color-mix(in srgb, #d89217 92%, transparent)
     );
   }
 
   .tcp-btn-primary:hover {
     background: linear-gradient(
       180deg,
-      color-mix(in srgb, var(--color-primary-hover) 58%, transparent),
-      color-mix(in srgb, var(--color-primary-muted) 78%, transparent)
+      color-mix(in srgb, #f7c056 94%, transparent),
+      color-mix(in srgb, #e29d21 93%, transparent)
     );
   }
 
@@ -167,15 +167,11 @@
     color: var(--color-text-muted);
   }
 
-  .nav-item.active {
+.nav-item.active {
     color: var(--color-text);
-    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-primary) 22%, var(--color-surface-elevated) 78%),
-      color-mix(in srgb, var(--color-surface) 88%, #000 12%)
-    );
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 12px 22px rgba(2, 6, 23, 0.3);
+    border-color: color-mix(in srgb, var(--color-primary) 52%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface-elevated) 82%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   .toast {
@@ -201,6 +197,17 @@
   }
 }
 
+.nav-item.locked,
+.nav-item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.tcp-onboarding-lock {
+  border: 1px solid color-mix(in srgb, var(--color-warning) 36%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface-elevated) 90%);
+}
+
 .toasts {
   position: fixed;
   top: 16px;
@@ -213,18 +220,46 @@
 
 .tcp-sidebar {
   border-right: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
-  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 98%, #000 2%);
 }
 
 .tcp-brand-tile {
-  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
-  background: color-mix(in srgb, var(--color-surface-elevated) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 96%, #000 4%);
 }
 
 .tcp-brand-avatar {
   border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
   background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
   color: var(--color-text);
+}
+
+.tcp-shell-glass {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 95%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%)
+    );
+  backdrop-filter: blur(12px);
+}
+
+.tcp-soft-block {
+  background: color-mix(in srgb, var(--color-surface-elevated) 80%, #000 20%) !important;
+  border-color: color-mix(in srgb, var(--color-border-subtle) 90%, transparent) !important;
+}
+
+.tcp-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.tcp-sidebar-footer {
+  border-top-color: color-mix(in srgb, var(--color-border-subtle) 80%, transparent) !important;
+}
+
+.tcp-view-surface {
+  align-content: start;
 }
 
 .tcp-loading-shell {
@@ -988,11 +1023,11 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   align-items: center;
   justify-content: space-between;
   font-size: 0.76rem;
-  color: rgb(203 213 225);
+  color: var(--color-text);
 }
 
 .dashboard-bar-count {
-  color: rgb(148 163 184);
+  color: var(--color-text-muted);
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -1000,8 +1035,8 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   height: 0.48rem;
   overflow: hidden;
   border-radius: 9999px;
-  border: 1px solid rgba(71, 85, 105, 0.52);
-  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 90%, #000 10%);
 }
 
 .dashboard-bar-fill {
@@ -1019,7 +1054,11 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .dashboard-bar-fill.running {
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.48), rgba(125, 211, 252, 0.95));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 50%, transparent),
+    color-mix(in srgb, var(--color-primary-hover) 88%, transparent)
+  );
 }
 
 .dashboard-bar-fill.queued {
@@ -1027,7 +1066,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .dashboard-bar-fill.scheduled {
-  background: linear-gradient(90deg, rgba(14, 165, 233, 0.55), rgba(147, 197, 253, 0.95));
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.55), rgba(251, 191, 36, 0.95));
 }
 
 .dashboard-bar-fill.manual {
@@ -1045,10 +1084,10 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .dashboard-kpis > div {
-  border: 1px solid rgba(71, 85, 105, 0.5);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
   border-radius: 0.5rem;
   padding: 0.45rem 0.55rem;
-  background: rgba(2, 6, 23, 0.35);
+  background: color-mix(in srgb, var(--color-surface-elevated) 96%, #000 4%);
   display: grid;
   gap: 0.1rem;
 }
@@ -1060,24 +1099,16 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 
 .dashboard-kpi-label {
   font-size: 0.7rem;
-  color: rgb(148 163 184);
+  color: var(--color-text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .dashboard-histogram {
   height: 172px;
-  border: 1px solid rgba(71, 85, 105, 0.46);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
   border-radius: 0.8rem;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.26), rgba(2, 6, 23, 0.52)),
-    repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 22px,
-      rgba(148, 163, 184, 0.05) 22px,
-      rgba(148, 163, 184, 0.05) 23px
-    );
+  background: color-mix(in srgb, var(--color-surface-elevated) 95%, #000 5%);
   padding: 0.5rem 0.45rem 0.45rem;
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1096,7 +1127,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 .dashboard-histogram-count {
   text-align: center;
   font-size: 0.66rem;
-  color: rgb(148 163 184);
+  color: var(--color-text-muted);
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -1104,15 +1135,19 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   display: block;
   width: 100%;
   border-radius: 0.38rem 0.38rem 0.2rem 0.2rem;
-  border: 1px solid rgba(148, 163, 184, 0.46);
-  background: linear-gradient(180deg, rgba(148, 163, 184, 0.82), rgba(71, 85, 105, 0.95));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-primary) 82%, transparent),
+    color-mix(in srgb, var(--color-primary-muted) 96%, transparent)
+  );
   min-height: 8%;
 }
 
 .dashboard-histogram-label {
   text-align: center;
   font-size: 0.62rem;
-  color: rgb(148 163 184);
+  color: var(--color-text-subtle);
 }
 
 .agents-tabs {
@@ -1219,6 +1254,10 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   accent-color: var(--color-primary) !important;
 }
 
+.accent-slate-400 {
+  accent-color: var(--color-primary) !important;
+}
+
 .tcp-settings-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1265,6 +1304,53 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 .tcp-settings-tab svg {
   width: 13px;
   height: 13px;
+}
+
+.tcp-settings-tab.locked,
+.tcp-settings-tab:disabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+}
+
+#view .text-slate-500,
+#view .text-zinc-500 {
+  color: var(--color-text-subtle) !important;
+}
+
+#view .text-slate-400,
+#view .text-zinc-400 {
+  color: var(--color-text-muted) !important;
+}
+
+#view .text-slate-300,
+#view .text-zinc-300 {
+  color: var(--color-text-muted) !important;
+}
+
+#view .text-slate-200,
+#view .text-zinc-200 {
+  color: var(--color-text) !important;
+}
+
+#view [class*="border-slate-"],
+#view [class*="border-zinc-"] {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 88%, transparent) !important;
+}
+
+#view [class*="bg-amber-"] {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent) !important;
+}
+
+#view [class*="border-amber-"] {
+  border-color: color-mix(in srgb, var(--color-warning) 36%, transparent) !important;
+}
+
+#view [class*="bg-rose-"] {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent) !important;
+}
+
+#view [class*="border-rose-"] {
+  border-color: color-mix(in srgb, var(--color-error) 34%, transparent) !important;
 }
 
 .wire-line-active {
