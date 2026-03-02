@@ -211,6 +211,49 @@
   pointer-events: none;
 }
 
+.tcp-sidebar {
+  border-right: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+}
+
+.tcp-brand-tile {
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 82%, transparent);
+}
+
+.tcp-brand-avatar {
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
+  color: var(--color-text);
+}
+
+.tcp-loading-shell {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tcp-skeleton {
+  border-radius: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%) 0%,
+    color-mix(in srgb, var(--color-surface-elevated) 72%, var(--color-primary) 12%) 50%,
+    color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%) 100%
+  );
+  background-size: 180% 100%;
+  animation: tcpSkeletonPulse 1.15s ease-in-out infinite;
+}
+
+@keyframes tcpSkeletonPulse {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .tcp-markdown {
   color: rgb(226 232 240);
   font-size: 13px;

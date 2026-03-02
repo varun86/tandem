@@ -235,6 +235,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Kept Settings content grouped under one parent Settings card and fixed missing tab icon rendering by registering required Lucide icons (`package`, `sliders-horizontal`).
   - Added an Appearance section in Settings with a shared theme selector backed by `tandem.themeId`, and applied desktop-style color/font tokens at control-panel boot for tighter desktop parity.
   - Updated control-panel shell styles (cards, nav, buttons, inputs, tabs) to consume theme tokens for cleaner first paint and more consistent transitions across route/tab changes.
+  - Replaced plain loading copy with themed skeleton placeholders and tokenized sidebar/brand surfaces for a more polished first impression during route changes.
   - Expanded registered Lucide icon set used in packs/preset/settings surfaces to avoid missing icons during rerenders (`archive`, `copy-plus`, `sparkles`, `shield-check`, `arrow-up-circle`, `badge-check`, `binary`, `list`, `pencil`).
 
 - Internal execution tracking

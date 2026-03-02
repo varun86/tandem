@@ -64,6 +64,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Add shared control-panel theme registry + runtime apply hooks (`tandem.themeId`)
   - [x] Add Settings > Appearance theme selector for cross-surface parity
   - [x] Refactor shell styles (cards/nav/buttons/inputs/settings tabs) to token-driven theme variables
+  - [x] Replace route-loading placeholders with themed skeleton surfaces for first-paint polish
   - [x] Expand icon registry for packs/presets/settings surfaces to prevent missing icons across rerenders
 
 ## Active Backlog

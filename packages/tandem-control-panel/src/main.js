@@ -347,7 +347,16 @@ async function renderRoute(options = {}) {
   const view = byId("view");
   if (!view) return;
   if (showLoading) {
-    view.innerHTML = '<div class="tcp-subtle">Loading...</div>';
+    view.innerHTML = `
+      <div class="tcp-loading-shell">
+        <div class="tcp-skeleton h-6 w-44"></div>
+        <div class="tcp-skeleton h-24 w-full"></div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="tcp-skeleton h-32 w-full"></div>
+          <div class="tcp-skeleton h-32 w-full"></div>
+        </div>
+      </div>
+    `;
   }
 
   const providerRequiredRoutes = new Set(["chat", "agents", "swarm", "teams"]);
@@ -421,9 +430,9 @@ function renderShell() {
 
   app.innerHTML = `
     <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[260px_1fr]">
-      <aside class="border-r border-slate-700 bg-panel/90 p-4">
-        <div class="mb-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-black/20 p-3">
-          <div class="grid h-10 w-10 place-items-center overflow-hidden rounded-xl border border-slate-600 bg-muted text-slate-200">
+      <aside class="tcp-sidebar p-4">
+        <div class="tcp-brand-tile mb-4 flex items-center gap-3 rounded-xl p-3">
+          <div class="tcp-brand-avatar grid h-10 w-10 place-items-center overflow-hidden rounded-xl">
             ${
               state.botAvatarUrl
                 ? `<img src="${escapeHtml(state.botAvatarUrl)}" alt="${escapeHtml(state.botName)}" class="h-full w-full object-cover" />`
@@ -432,11 +441,11 @@ function renderShell() {
           </div>
           <div>
             <div class="text-base font-semibold">${escapeHtml(state.botName)}</div>
-            <div class="text-xs uppercase tracking-wider text-slate-400">Control Center</div>
+            <div class="tcp-subtle text-xs uppercase tracking-wider">Control Center</div>
           </div>
         </div>
         <nav id="nav" class="grid gap-1"></nav>
-        <div class="mt-4 border-t border-slate-700 pt-4">
+        <div class="mt-4 border-t border-slate-700/40 pt-4">
           <button id="logout-btn" class="tcp-btn w-full"><i data-lucide="log-out"></i> Logout</button>
         </div>
       </aside>
