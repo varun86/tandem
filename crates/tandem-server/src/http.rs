@@ -3895,8 +3895,120 @@ async fn list_providers_legacy(State(state): State<AppState>) -> Json<Vec<Legacy
         .collect::<Vec<_>>();
     Json(providers)
 }
-async fn provider_auth() -> Json<Value> {
-    Json(json!({}))
+fn provider_env_candidates(provider_id: &str) -> Vec<String> {
+    let normalized = provider_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .to_ascii_uppercase();
+
+    let mut out = vec![format!("{}_API_KEY", normalized)];
+    match provider_id.to_ascii_lowercase().as_str() {
+        "openai" => out.push("OPENAI_API_KEY".to_string()),
+        "openrouter" => out.push("OPENROUTER_API_KEY".to_string()),
+        "anthropic" => out.push("ANTHROPIC_API_KEY".to_string()),
+        "groq" => out.push("GROQ_API_KEY".to_string()),
+        "mistral" => out.push("MISTRAL_API_KEY".to_string()),
+        "together" => out.push("TOGETHER_API_KEY".to_string()),
+        "azure" => out.push("AZURE_OPENAI_API_KEY".to_string()),
+        "vertex" => out.push("VERTEX_API_KEY".to_string()),
+        "bedrock" => out.push("BEDROCK_API_KEY".to_string()),
+        "copilot" => out.push("GITHUB_TOKEN".to_string()),
+        "cohere" => out.push("COHERE_API_KEY".to_string()),
+        _ => {}
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn provider_has_env_secret(provider_id: &str) -> bool {
+    provider_env_candidates(provider_id).into_iter().any(|key| {
+        std::env::var(&key)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    })
+}
+
+async fn provider_auth(State(state): State<AppState>) -> Json<Value> {
+    let cfg = state.config.get_effective_value().await;
+    let providers_cfg = cfg
+        .get("providers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let persisted = tandem_core::load_provider_auth();
+    let persisted_ids = persisted
+        .keys()
+        .map(|id| id.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let runtime_auth = state.auth.read().await.clone();
+    let connected = state
+        .providers
+        .list()
+        .await
+        .into_iter()
+        .map(|provider| provider.id.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let mut known_ids = std::collections::HashSet::new();
+
+    if let Some(default_id) = cfg.get("default_provider").and_then(Value::as_str) {
+        let normalized = default_id.trim().to_ascii_lowercase();
+        if !normalized.is_empty() {
+            known_ids.insert(normalized);
+        }
+    }
+    known_ids.extend(providers_cfg.keys().map(|id| id.to_ascii_lowercase()));
+    known_ids.extend(connected.iter().cloned());
+    known_ids.extend(runtime_auth.keys().map(|id| id.to_ascii_lowercase()));
+    known_ids.extend(persisted_ids.iter().cloned());
+
+    let mut ids = known_ids.into_iter().collect::<Vec<_>>();
+    ids.sort();
+
+    let mut providers = serde_json::Map::new();
+    for provider_id in ids {
+        let has_runtime_key = runtime_auth
+            .get(&provider_id)
+            .map(|token| !token.trim().is_empty())
+            .unwrap_or(false);
+        let has_config_key = providers_cfg
+            .get(&provider_id)
+            .and_then(Value::as_object)
+            .map(|entry| {
+                entry
+                    .get("api_key")
+                    .or_else(|| entry.get("apiKey"))
+                    .and_then(Value::as_str)
+                    .map(|token| !token.trim().is_empty())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let has_env_key = provider_has_env_secret(&provider_id);
+        let has_persisted_key = persisted_ids.contains(&provider_id);
+        let has_key = has_env_key || has_runtime_key || has_config_key || has_persisted_key;
+        let source = if has_env_key {
+            "env"
+        } else if has_persisted_key {
+            "persisted"
+        } else if has_runtime_key || has_config_key {
+            "runtime"
+        } else {
+            "none"
+        };
+        let configured = connected.contains(&provider_id);
+        providers.insert(
+            provider_id,
+            json!({
+                "has_key": has_key,
+                "configured": configured,
+                "connected": configured,
+                "source": source,
+            }),
+        );
+    }
+
+    Json(json!({ "providers": providers }))
 }
 async fn provider_oauth_authorize() -> Json<Value> {
     Json(json!({"authorizationUrl": null}))
@@ -5124,18 +5236,38 @@ async fn set_auth(
     Path(id): Path<String>,
     Json(input): Json<AuthInput>,
 ) -> Json<Value> {
+    let normalized_id = id.trim().to_ascii_lowercase();
+    if normalized_id.is_empty() {
+        return Json(json!({"ok": false, "error": "provider id cannot be empty"}));
+    }
     let token = input.token.unwrap_or_default().trim().to_string();
     if token.is_empty() {
         return Json(json!({"ok": false, "error": "token cannot be empty"}));
     }
 
+    let backend = match tandem_core::set_provider_auth(&normalized_id, &token) {
+        Ok(tandem_core::ProviderAuthBackend::Keychain) => "keychain",
+        Ok(tandem_core::ProviderAuthBackend::File) => "file",
+        Err(err) => {
+            return Json(json!({
+                "ok": false,
+                "id": normalized_id,
+                "error": format!("failed to persist provider auth: {err}")
+            }));
+        }
+    };
+
     // Keep legacy in-memory auth map for compatibility while runtime config
     // becomes the canonical provider-key source.
-    state.auth.write().await.insert(id.clone(), token.clone());
+    state
+        .auth
+        .write()
+        .await
+        .insert(normalized_id.clone(), token.clone());
 
     let patch = json!({
         "providers": {
-            id.clone(): {
+            normalized_id.clone(): {
                 "api_key": token
             }
         }
@@ -5147,18 +5279,29 @@ async fn set_auth(
             .reload(state.config.get().await.into())
             .await;
     }
-    Json(json!({"ok": ok, "id": id}))
+    Json(json!({"ok": ok, "id": normalized_id, "backend": backend}))
 }
 async fn delete_auth(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let removed = state.auth.write().await.remove(&id).is_some();
-    let runtime_removed = state.config.delete_runtime_provider_key(&id).await.is_ok();
+    let normalized_id = id.trim().to_ascii_lowercase();
+    if normalized_id.is_empty() {
+        return Json(json!({"ok": false, "error": "provider id cannot be empty"}));
+    }
+    let removed = state.auth.write().await.remove(&normalized_id).is_some();
+    let persisted_removed = tandem_core::delete_provider_auth(&normalized_id)
+        .map(|ok| ok)
+        .unwrap_or(false);
+    let runtime_removed = state
+        .config
+        .delete_runtime_provider_key(&normalized_id)
+        .await
+        .is_ok();
     if runtime_removed {
         state
             .providers
             .reload(state.config.get().await.into())
             .await;
     }
-    Json(json!({"ok": removed || runtime_removed}))
+    Json(json!({"ok": removed || runtime_removed || persisted_removed}))
 }
 
 async fn set_api_token(

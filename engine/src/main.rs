@@ -12,9 +12,9 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tandem_core::{
-    build_mode_permission_rules, resolve_shared_paths, AgentRegistry, CancellationRegistry,
-    ConfigStore, EngineLoop, EventBus, PermissionAction, PermissionManager, PluginRegistry,
-    Storage, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
+    build_mode_permission_rules, load_provider_auth, resolve_shared_paths, AgentRegistry,
+    CancellationRegistry, ConfigStore, EngineLoop, EventBus, PermissionAction, PermissionManager,
+    PluginRegistry, Storage, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
 };
 use tandem_memory::{types::StoreMessageRequest, MemoryManager};
 use tandem_observability::{
@@ -801,6 +801,21 @@ async fn build_runtime(
     let phase_start = Instant::now();
     let config_path = override_config_path.unwrap_or_else(|| state_dir.join("config.json"));
     let config = ConfigStore::new(config_path, cli_overrides).await?;
+    let persisted_provider_auth = load_provider_auth();
+    if !persisted_provider_auth.is_empty() {
+        let mut providers = serde_json::Map::new();
+        for (provider_id, token) in &persisted_provider_auth {
+            providers.insert(
+                provider_id.clone(),
+                serde_json::json!({
+                    "api_key": token
+                }),
+            );
+        }
+        let _ = config
+            .patch_runtime(serde_json::json!({ "providers": providers }))
+            .await;
+    }
     info!(
         "engine.startup.phase config_init elapsed_ms={}",
         phase_start.elapsed().as_millis()
@@ -832,7 +847,7 @@ async fn build_runtime(
     let mcp = McpRegistry::new();
     let pty = PtyManager::new();
     let lsp = LspManager::new(".");
-    let auth = Arc::new(RwLock::new(std::collections::HashMap::new()));
+    let auth = Arc::new(RwLock::new(persisted_provider_auth));
     let logs = Arc::new(RwLock::new(Vec::new()));
     let workspace_index = WorkspaceIndex::new(".").await;
     info!(
