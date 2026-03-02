@@ -544,15 +544,16 @@ export async function renderAgents(ctx) {
           <button id="agents-launch-wizard" class="tcp-btn-primary"><i data-lucide="sparkles"></i> Launch Walkthrough</button>
         </div>
       </div>
-      <div class="tcp-settings-tabs mt-3" role="tablist" aria-label="Automation sections">
+    </div>
+    <div class="tcp-card" data-agents-panel="tab-shell">
+      <div class="tcp-settings-tabs" role="tablist" aria-label="Automation sections">
         <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "overview" ? "active" : ""}" data-agents-tab="overview" role="tab" aria-selected="${uiState.tab === "overview"}">Overview</button>
         <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "routines" ? "active" : ""}" data-agents-tab="routines" role="tab" aria-selected="${uiState.tab === "routines"}">Routines</button>
         <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "automations" ? "active" : ""}" data-agents-tab="automations" role="tab" aria-selected="${uiState.tab === "automations"}">Automations</button>
         <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "templates" ? "active" : ""}" data-agents-tab="templates" role="tab" aria-selected="${uiState.tab === "templates"}">Templates</button>
         <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "runs" ? "active" : ""}" data-agents-tab="runs" role="tab" aria-selected="${uiState.tab === "runs"}">Runs & Approvals</button>
       </div>
-    </div>
-    <div class="tcp-card${panelClass("overview")}" data-agents-panel="overview">
+    <div class="agents-tab-panel${panelClass("overview")}" data-agents-panel="overview">
       <h3 class="tcp-title mb-2">Overview</h3>
       <div class="dashboard-kpis mb-3">
         <div><span class="dashboard-kpi-label">Routines</span><strong>${routines.length}</strong></div>
@@ -572,7 +573,7 @@ export async function renderAgents(ctx) {
         </div>
       </div>
     </div>
-    <div class="tcp-card${uiState.wizard ? "" : " hidden"}" data-agents-panel="wizard">
+    <div class="agents-tab-panel${uiState.wizard ? "" : " hidden"}" data-agents-panel="wizard">
       <div class="flex items-center justify-between gap-2">
         <h3 class="tcp-title">Walkthrough Wizard</h3>
         <button id="agents-wizard-close" class="tcp-btn">Close</button>
@@ -611,7 +612,7 @@ export async function renderAgents(ctx) {
         <button id="agents-wizard-next" class="tcp-btn-primary">${uiState.step >= 2 ? "Finish" : "Next"}</button>
       </div>
     </div>
-    <div class="tcp-card${panelClass("templates")}" data-agents-panel="templates">
+    <div class="agents-tab-panel${panelClass("templates")}" data-agents-panel="templates">
       <h3 class="tcp-title mb-3">Automation Templates</h3>
       <div class="grid gap-2 md:grid-cols-2">
         <button class="tcp-btn justify-start" data-template-id="github_bug_hunter">GitHub bug hunter</button>
@@ -623,7 +624,7 @@ export async function renderAgents(ctx) {
       </div>
       <p class="tcp-subtle mt-3 text-xs">Selecting a template pre-fills the advanced automation builder and opens the walkthrough.</p>
     </div>
-    <div class="tcp-card${panelClass("routines")}" data-agents-panel="routines">
+    <div class="agents-tab-panel${panelClass("routines")}" data-agents-panel="routines">
       <h3 class="tcp-title mb-3">Create Routine</h3>
       <p id="routine-form-mode" class="mb-2 text-xs text-slate-400">Creating new routine</p>
       <div class="grid gap-3 md:grid-cols-2">
@@ -729,11 +730,11 @@ export async function renderAgents(ctx) {
         </div>
       </div>
     </div>
-    <div class="tcp-card${panelClass("routines")}" data-agents-panel="routines">
+    <div class="agents-tab-panel${panelClass("routines")}" data-agents-panel="routines">
       <h3 class="tcp-title mb-3">Routines (${routines.length})</h3>
       <div id="routine-list" class="tcp-list"></div>
     </div>
-    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
+    <div class="agents-tab-panel${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Automations (${automations.length})</h3>
       ${
         automationsMirrorRoutines
@@ -742,7 +743,7 @@ export async function renderAgents(ctx) {
       }
       <div class="tcp-list">${automationsMarkup}</div>
     </div>
-    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
+    <div class="agents-tab-panel${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Automation Builder</h3>
       <div class="grid gap-3 md:grid-cols-2">
         <input id="automation-v2-name" class="tcp-input" placeholder="Automation name" />
@@ -798,24 +799,24 @@ export async function renderAgents(ctx) {
         <button id="automation-v2-create" class="tcp-btn-primary"><i data-lucide="save"></i> Create Automation</button>
       </div>
     </div>
-    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
+    <div class="agents-tab-panel${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Advanced Automations (${automationsV2.length})</h3>
       <div class="tcp-list">${automationsV2Markup}</div>
     </div>
-    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
+    <div class="agents-tab-panel${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-2">Automation Run Inspector</h3>
       <div id="automation-v2-run-inspector" class="tcp-list">
         <p class="tcp-subtle">Click an automation "Runs" button to inspect and control run state.</p>
       </div>
     </div>
-    <div class="tcp-card${panelClass("runs")}" data-agents-panel="runs">
+    <div class="agents-tab-panel${panelClass("runs")}" data-agents-panel="runs">
       <div class="mb-3 flex items-center justify-between gap-2">
         <h3 class="tcp-title">Recent Runs (${dedupedRecentRuns.length})</h3>
         <button id="refresh-runs" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
       </div>
       <div class="tcp-list">${recentRunsMarkup}</div>
     </div>
-    <div class="tcp-card${panelClass("runs")}" data-agents-panel="runs">
+    <div class="agents-tab-panel${panelClass("runs")}" data-agents-panel="runs">
       <h3 class="tcp-title mb-2">Run Inspector</h3>
       <div id="run-inspector" class="tcp-list">
         <p class="tcp-subtle">Pick any recent run and click Details to inspect status, full detail, and artifacts.</p>

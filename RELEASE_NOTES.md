@@ -18,6 +18,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Reduced false “No stored key detected” states by consuming the real `/provider/auth` status response.
   - Replaced browser-native delete confirms with themed in-app confirmation modals for session, file, and pack deletion actions.
   - Moved toast notifications to the top-center anchor for better visibility across wide layouts.
+  - Grouped Automations tabs and tab content inside one shared panel container for a cleaner, consistent layout.
 
 - Marketplace Pack architecture/spec expansion
   - Added a full marketplace-ready spec set under `specs/packs/`:

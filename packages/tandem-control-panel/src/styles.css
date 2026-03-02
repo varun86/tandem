@@ -264,6 +264,14 @@
   align-content: start;
 }
 
+.agents-tab-panel {
+  margin-top: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
+}
+
 .tcp-loading-shell {
   display: grid;
   gap: 0.75rem;
