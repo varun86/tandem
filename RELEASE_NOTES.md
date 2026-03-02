@@ -198,6 +198,15 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added Skill Module Library in the Packs view:
     - data source: `/presets/index`
     - filters: text/id/tag/layer, publisher, required capability
+  - Added Agent Preset Builder in the Packs view:
+    - source preset selection + fork action
+    - deterministic prompt preview (`/presets/compose/preview`)
+    - capability summary (`/presets/capability_summary`)
+    - save override (`PUT /presets/overrides/agent_preset/{id}`)
+  - Added Automation Preset Builder in the Packs view:
+    - task-agent binding rows with add/remove and per-step capability inputs
+    - merged automation capability summary (`/presets/capability_summary`)
+    - save override (`PUT /presets/overrides/automation_preset/{id}`)
 
 - Control Panel pack event cards + actions
   - Added `pack.*` event-specific cards in `Live Feed` with direct actions:

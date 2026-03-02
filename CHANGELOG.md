@@ -110,6 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added inspect-time trust/risk summary card in Pack Library (verification badge, signature state, capability/routine summary, provider-specific dependency count)
   - added update warning UX that surfaces `reapproval_required` on update checks/apply calls
   - added Skill Module Library section powered by `/presets/index` with text/publisher/required-capability filters
+  - added Agent Preset Builder section with:
+    - source preset selection
+    - deterministic compose preview via `/presets/compose/preview`
+    - capability summary via `/presets/capability_summary`
+    - fork/save override flows via `/presets/fork` and `/presets/overrides/agent_preset/{id}`
+  - added Automation Preset Builder section with:
+    - task-agent binding rows (step-level agent swaps)
+    - automation-level merged capability summary via `/presets/capability_summary`
+    - override save flow via `/presets/overrides/automation_preset/{id}`
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

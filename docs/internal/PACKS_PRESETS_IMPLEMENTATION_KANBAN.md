@@ -48,14 +48,16 @@ Owner: Core Runtime + Product Architecture
   - [x] Permission/capability summary computation at agent + automation levels
   - [x] Export composed project overrides as pack content
 
-## Active Backlog
-
-- [ ] UI parity (Desktop + Control Panel)
+- [x] UI parity (Desktop + Control Panel)
   - [x] Pack Library view: install/inspect/uninstall/export/trust status
   - [x] Skill Module library with capability + publisher filters
-  - [ ] Agent Preset builder with prompt preview + capability summary
-  - [ ] Automation Preset builder with step-agent binding swaps
+  - [x] Agent Preset builder with prompt preview + capability summary
+  - [x] Automation Preset builder with step-agent binding swaps
   - [x] Upgrade flow with permissions diff + re-approval (stub-backed API/UI signaling)
+
+## Active Backlog
+
+- [ ] Desktop native surfaces for preset builders (control-panel parity currently complete; desktop reuses backend/API contracts)
 
 ## Done
 

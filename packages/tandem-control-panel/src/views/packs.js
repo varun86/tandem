@@ -7,6 +7,13 @@ export async function renderPacks(ctx) {
     return "tcp-badge-err";
   };
   const asArray = (value) => (Array.isArray(value) ? value : []);
+  const parseCsv = (value) =>
+    String(value || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+  const unique = (items) => [...new Set(asArray(items).map((item) => String(item || "").trim()).filter(Boolean))];
+
   const app = byId("view");
   app.innerHTML = `
     <div class="tcp-card mb-4">
@@ -24,7 +31,9 @@ export async function renderPacks(ctx) {
       <div id="packs-inspect-summary" class="mt-3 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200"></div>
       <pre id="packs-meta" class="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300 hidden"></pre>
     </div>
+
     <div id="packs-list" class="grid gap-3"></div>
+
     <div class="tcp-card mt-4">
       <div class="mb-2 flex items-center justify-between gap-2">
         <h3 class="tcp-title">Skill Module Library</h3>
@@ -37,16 +46,244 @@ export async function renderPacks(ctx) {
       </div>
       <div id="presets-skill-list" class="mt-3 grid gap-2"></div>
     </div>
+
+    <div class="tcp-card mt-4">
+      <h3 class="tcp-title mb-2">Agent Preset Builder</h3>
+      <p class="tcp-subtle mb-3">Create from a preset or compose from modules, preview prompt deterministically, and save/fork override.</p>
+      <div class="grid gap-2 md:grid-cols-3">
+        <select id="agent-builder-source" class="tcp-input"></select>
+        <input id="agent-builder-fork-id" class="tcp-input" placeholder="Fork target id (optional)" />
+        <button id="agent-builder-fork-btn" class="tcp-btn"><i data-lucide="copy-plus"></i> Fork Selected Preset</button>
+      </div>
+      <div class="mt-2 grid gap-2 md:grid-cols-2">
+        <div>
+          <label class="tcp-subtle block text-xs mb-1">Skill modules (multi-select)</label>
+          <select id="agent-builder-modules" class="tcp-input h-36" multiple></select>
+        </div>
+        <div>
+          <label class="tcp-subtle block text-xs mb-1">Base prompt</label>
+          <textarea id="agent-builder-base" class="tcp-input h-36" placeholder="You are a pragmatic coding agent..."></textarea>
+        </div>
+      </div>
+      <div class="mt-2 grid gap-2 md:grid-cols-2">
+        <input id="agent-builder-required" class="tcp-input" placeholder="Additional required capabilities (csv)" />
+        <input id="agent-builder-optional" class="tcp-input" placeholder="Additional optional capabilities (csv)" />
+      </div>
+      <div class="mt-2">
+        <label class="tcp-subtle block text-xs mb-1">Extra fragments JSON (optional array of {id,phase,content})</label>
+        <textarea id="agent-builder-fragments" class="tcp-input h-28" placeholder='[{"id":"tone.ops","phase":"style","content":"Be concise and operational."}]'></textarea>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button id="agent-builder-preview-btn" class="tcp-btn"><i data-lucide="sparkles"></i> Compose Preview</button>
+        <button id="agent-builder-summary-btn" class="tcp-btn"><i data-lucide="shield-check"></i> Capability Summary</button>
+        <button id="agent-builder-save-btn" class="tcp-btn-primary"><i data-lucide="save"></i> Save Override</button>
+      </div>
+      <pre id="agent-builder-preview" class="mt-3 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200"></pre>
+      <pre id="agent-builder-summary" class="mt-2 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200"></pre>
+    </div>
+
+    <div class="tcp-card mt-4">
+      <h3 class="tcp-title mb-2">Automation Preset Builder</h3>
+      <p class="tcp-subtle mb-3">Start from automation preset, bind steps to agents, and compute merged automation capabilities.</p>
+      <div class="grid gap-2 md:grid-cols-3">
+        <select id="automation-builder-source" class="tcp-input"></select>
+        <input id="automation-builder-id" class="tcp-input" placeholder="Override id (required to save)" />
+        <button id="automation-builder-add-task" class="tcp-btn"><i data-lucide="plus"></i> Add Step</button>
+      </div>
+      <div id="automation-builder-tasks" class="mt-3 grid gap-2"></div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button id="automation-builder-summary-btn" class="tcp-btn"><i data-lucide="shield-check"></i> Capability Summary</button>
+        <button id="automation-builder-save-btn" class="tcp-btn-primary"><i data-lucide="save"></i> Save Override</button>
+      </div>
+      <pre id="automation-builder-summary" class="mt-3 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200"></pre>
+    </div>
   `;
 
   const packsListEl = byId("packs-list");
   const metaEl = byId("packs-meta");
   const summaryEl = byId("packs-inspect-summary");
   const skillsHostEl = byId("presets-skill-list");
+  const agentPreviewEl = byId("agent-builder-preview");
+  const agentSummaryEl = byId("agent-builder-summary");
+  const automationSummaryEl = byId("automation-builder-summary");
+  const automationTasksEl = byId("automation-builder-tasks");
+
   let presetIndex = null;
+  let automationTaskRows = [];
+
+  const getSkills = () => asArray(presetIndex?.skill_modules);
+  const getAgentPresets = () => asArray(presetIndex?.agent_presets);
+  const getAutomationPresets = () => asArray(presetIndex?.automation_presets);
+  const findAgentPreset = (id) => getAgentPresets().find((row) => String(row?.id || "") === String(id || ""));
+  const findAutomationPreset = (id) =>
+    getAutomationPresets().find((row) => String(row?.id || "") === String(id || ""));
+
+  const setPre = (el, value) => {
+    if (!el) return;
+    if (!value) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.classList.remove("hidden");
+    el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  };
+
+  const selectedModuleIds = () => {
+    const select = byId("agent-builder-modules");
+    return asArray(select?.selectedOptions).map((option) => String(option?.value || "")).filter(Boolean);
+  };
+
+  const selectedModulesRequiredCaps = () =>
+    unique(
+      selectedModuleIds().flatMap((id) => {
+        const row = getSkills().find((item) => String(item?.id || "") === id);
+        return asArray(row?.required_capabilities);
+      })
+    );
+
+  const computeAgentCapabilityInput = () => {
+    const required = unique([
+      ...selectedModulesRequiredCaps(),
+      ...parseCsv(byId("agent-builder-required")?.value),
+    ]);
+    const optionalRaw = unique(parseCsv(byId("agent-builder-optional")?.value));
+    const optional = optionalRaw.filter((cap) => !required.includes(cap));
+    return { required, optional };
+  };
+
+  const parseExtraFragments = () => {
+    const raw = String(byId("agent-builder-fragments")?.value || "").trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Extra fragments JSON must be an array.");
+    }
+    return parsed
+      .map((row) => ({
+        id: String(row?.id || "").trim(),
+        phase: String(row?.phase || "").trim() || "domain",
+        content: String(row?.content || "").trim(),
+      }))
+      .filter((row) => row.id && row.content);
+  };
+
+  const collectAgentFragments = () => {
+    const moduleFragments = selectedModuleIds().map((id) => ({
+      id: `skill.${id}`,
+      phase: "domain",
+      content: `Enable skill module ${id}.`,
+    }));
+    return [...moduleFragments, ...parseExtraFragments()];
+  };
+
+  const renderAutomationRows = () => {
+    const agentOptions = getAgentPresets()
+      .map(
+        (row) =>
+          `<option value="${escapeHtml(String(row?.id || ""))}">${escapeHtml(String(row?.id || ""))}</option>`
+      )
+      .join("");
+    if (!automationTaskRows.length) {
+      automationTasksEl.innerHTML = '<p class="tcp-subtle">No steps yet. Click "Add Step" to add task-agent bindings.</p>';
+      return;
+    }
+    automationTasksEl.innerHTML = automationTaskRows
+      .map((row, index) => {
+        const id = escapeHtml(row.id || `step_${index + 1}`);
+        const required = escapeHtml((row.required || []).join(", "));
+        const optional = escapeHtml((row.optional || []).join(", "));
+        const selectedAgent = escapeHtml(String(row.agent_id || ""));
+        return `
+          <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3" data-task-row="${index}">
+            <div class="grid gap-2 md:grid-cols-5">
+              <input class="tcp-input" data-field="id" value="${id}" placeholder="step id" />
+              <select class="tcp-input" data-field="agent_id">
+                <option value="">(none)</option>
+                ${agentOptions}
+              </select>
+              <input class="tcp-input" data-field="required" value="${required}" placeholder="required caps csv" />
+              <input class="tcp-input" data-field="optional" value="${optional}" placeholder="optional caps csv" />
+              <button class="tcp-btn" data-remove-row="${index}"><i data-lucide="trash-2"></i> Remove</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    automationTasksEl.querySelectorAll("[data-task-row]").forEach((rowEl) => {
+      const index = Number(rowEl.getAttribute("data-task-row"));
+      const select = rowEl.querySelector('select[data-field="agent_id"]');
+      if (select && automationTaskRows[index]) {
+        select.value = String(automationTaskRows[index].agent_id || "");
+      }
+      rowEl.querySelectorAll("input,select").forEach((input) => {
+        input.addEventListener("input", () => {
+          const field = String(input.getAttribute("data-field") || "").trim();
+          if (!field || !automationTaskRows[index]) return;
+          const value = String(input.value || "");
+          if (field === "required" || field === "optional") {
+            automationTaskRows[index][field] = parseCsv(value);
+          } else {
+            automationTaskRows[index][field] = value.trim();
+          }
+        });
+      });
+    });
+
+    automationTasksEl.querySelectorAll("[data-remove-row]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const index = Number(btn.getAttribute("data-remove-row"));
+        automationTaskRows = automationTaskRows.filter((_, i) => i !== index);
+        renderAutomationRows();
+        renderIcons();
+      });
+    });
+
+    renderIcons();
+  };
+
+  const renderPresetSelects = () => {
+    const agentSource = byId("agent-builder-source");
+    const modulesSelect = byId("agent-builder-modules");
+    const automationSource = byId("automation-builder-source");
+
+    const agentOptions = getAgentPresets();
+    const autoOptions = getAutomationPresets();
+    const skillOptions = getSkills();
+
+    agentSource.innerHTML = [
+      '<option value="">Select source agent preset</option>',
+      ...agentOptions.map(
+        (row) =>
+          `<option value="${escapeHtml(String(row?.id || ""))}">${escapeHtml(String(row?.id || ""))} (${escapeHtml(
+            String(row?.layer || "unknown")
+          )})</option>`
+      ),
+    ].join("");
+
+    modulesSelect.innerHTML = skillOptions
+      .map(
+        (row) =>
+          `<option value="${escapeHtml(String(row?.id || ""))}">${escapeHtml(String(row?.id || ""))} (${escapeHtml(
+            String(row?.layer || "unknown")
+          )})</option>`
+      )
+      .join("");
+
+    automationSource.innerHTML = [
+      '<option value="">Select source automation preset</option>',
+      ...autoOptions.map(
+        (row) =>
+          `<option value="${escapeHtml(String(row?.id || ""))}">${escapeHtml(String(row?.id || ""))} (${escapeHtml(
+            String(row?.layer || "unknown")
+          )})</option>`
+      ),
+    ].join("");
+  };
 
   const renderSkills = () => {
-    const skills = Array.isArray(presetIndex?.skill_modules) ? presetIndex.skill_modules : [];
+    const skills = getSkills();
     const qText = String(byId("presets-filter-text")?.value || "").trim().toLowerCase();
     const qPub = String(byId("presets-filter-publisher")?.value || "")
       .trim()
@@ -96,11 +333,15 @@ export async function renderPacks(ctx) {
   const loadPresetIndex = async () => {
     try {
       const payload = await api("/api/presets/index");
-      presetIndex = payload?.index || { skill_modules: [] };
+      presetIndex = payload?.index || { skill_modules: [], agent_presets: [], automation_presets: [] };
+      renderPresetSelects();
       renderSkills();
+      renderAutomationRows();
     } catch (e) {
-      presetIndex = { skill_modules: [] };
+      presetIndex = { skill_modules: [], agent_presets: [], automation_presets: [] };
+      renderPresetSelects();
       renderSkills();
+      renderAutomationRows();
       toast("err", `Preset index load failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
@@ -281,6 +522,7 @@ export async function renderPacks(ctx) {
   byId("presets-filter-text")?.addEventListener("input", renderSkills);
   byId("presets-filter-publisher")?.addEventListener("input", renderSkills);
   byId("presets-filter-capability")?.addEventListener("input", renderSkills);
+
   byId("packs-cap-discovery-btn")?.addEventListener("click", async () => {
     try {
       const discovery = await state.client.capabilities.discovery();
@@ -291,6 +533,7 @@ export async function renderPacks(ctx) {
       toast("err", `Capability discovery failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
+
   byId("packs-install-btn")?.addEventListener("click", async () => {
     const url = String(byId("packs-install-url")?.value || "").trim();
     const path = String(byId("packs-install-path")?.value || "").trim();
@@ -312,6 +555,245 @@ export async function renderPacks(ctx) {
       await loadPacks();
     } catch (e) {
       toast("err", `Install failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("agent-builder-fork-btn")?.addEventListener("click", async () => {
+    const sourceId = String(byId("agent-builder-source")?.value || "").trim();
+    if (!sourceId) {
+      toast("err", "Select a source agent preset first.");
+      return;
+    }
+    const source = findAgentPreset(sourceId);
+    if (!source?.path) {
+      toast("err", "Selected source preset has no readable path.");
+      return;
+    }
+    try {
+      const payload = await api("/api/presets/fork", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent_preset",
+          source_path: source.path,
+          target_id: String(byId("agent-builder-fork-id")?.value || "").trim() || undefined,
+        }),
+      });
+      setMeta(payload);
+      toast("ok", `Forked to ${payload?.path || "override"}`);
+      await loadPresetIndex();
+    } catch (e) {
+      toast("err", `Fork failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("agent-builder-preview-btn")?.addEventListener("click", async () => {
+    try {
+      const payload = await api("/api/presets/compose/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          base_prompt: String(byId("agent-builder-base")?.value || ""),
+          fragments: collectAgentFragments(),
+        }),
+      });
+      const composition = payload?.composition || {};
+      setPre(
+        agentPreviewEl,
+        {
+          composition_hash: composition?.composition_hash,
+          ordered_fragment_ids: composition?.ordered_fragment_ids,
+          prompt: composition?.prompt,
+        }
+      );
+    } catch (e) {
+      toast("err", `Compose preview failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("agent-builder-summary-btn")?.addEventListener("click", async () => {
+    try {
+      const payload = await api("/api/presets/capability_summary", {
+        method: "POST",
+        body: JSON.stringify({
+          agent: computeAgentCapabilityInput(),
+          tasks: [],
+        }),
+      });
+      setPre(agentSummaryEl, payload?.summary || payload);
+    } catch (e) {
+      toast("err", `Capability summary failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("agent-builder-save-btn")?.addEventListener("click", async () => {
+    const sourceId = String(byId("agent-builder-source")?.value || "").trim();
+    const targetId = String(byId("agent-builder-fork-id")?.value || "").trim() || sourceId;
+    if (!targetId) {
+      toast("err", "Provide target id (or select source preset)." );
+      return;
+    }
+    const caps = computeAgentCapabilityInput();
+    const moduleIds = selectedModuleIds();
+    const basePrompt = String(byId("agent-builder-base")?.value || "").trim();
+    const yaml = [
+      `id: ${targetId}`,
+      "version: 0.1.0",
+      "publisher: local.user",
+      "description: Project override agent preset",
+      "tags:",
+      "  - override",
+      "modules:",
+      ...moduleIds.map((id) => `  - ${id}`),
+      "capabilities:",
+      "  required:",
+      ...(caps.required.length ? caps.required.map((cap) => `    - ${cap}`) : ["    - "]),
+      "  optional:",
+      ...(caps.optional.length ? caps.optional.map((cap) => `    - ${cap}`) : ["    - "]),
+      "prompt:",
+      "  base: |",
+      ...(basePrompt ? basePrompt.split("\n").map((line) => `    ${line}`) : ["    "]),
+      "  fragments:",
+      ...collectAgentFragments().map((fragment) => `    - id: ${fragment.id}\n      phase: ${fragment.phase}\n      content: ${JSON.stringify(fragment.content)}`),
+      "",
+    ].join("\n");
+
+    try {
+      const payload = await api(`/api/presets/overrides/agent_preset/${encodeURIComponent(targetId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ content: yaml }),
+      });
+      setMeta(payload);
+      toast("ok", `Saved agent override ${targetId}`);
+      await loadPresetIndex();
+    } catch (e) {
+      toast("err", `Save override failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("automation-builder-add-task")?.addEventListener("click", () => {
+    automationTaskRows.push({
+      id: `step_${automationTaskRows.length + 1}`,
+      agent_id: "",
+      required: [],
+      optional: [],
+    });
+    renderAutomationRows();
+  });
+
+  byId("automation-builder-source")?.addEventListener("change", () => {
+    const sourceId = String(byId("automation-builder-source")?.value || "").trim();
+    const source = findAutomationPreset(sourceId);
+    if (!sourceId || !source) {
+      automationTaskRows = [];
+      renderAutomationRows();
+      return;
+    }
+    automationTaskRows = [
+      {
+        id: `${sourceId}_step_1`,
+        agent_id: String(byId("agent-builder-source")?.value || "").trim(),
+        required: unique(asArray(source.required_capabilities)),
+        optional: [],
+      },
+    ];
+    renderAutomationRows();
+  });
+
+  byId("automation-builder-summary-btn")?.addEventListener("click", async () => {
+    try {
+      const selectedAgentId = String(byId("agent-builder-source")?.value || "").trim();
+      const selectedAgent = findAgentPreset(selectedAgentId);
+      const agent = {
+        required: unique(asArray(selectedAgent?.required_capabilities).concat(computeAgentCapabilityInput().required)),
+        optional: computeAgentCapabilityInput().optional,
+      };
+      const tasks = automationTaskRows.map((row) => {
+        const rowAgent = findAgentPreset(row.agent_id);
+        const rowAgentCaps = unique(asArray(rowAgent?.required_capabilities));
+        const required = unique(rowAgentCaps.concat(asArray(row.required)));
+        const optional = unique(asArray(row.optional)).filter((cap) => !required.includes(cap));
+        return { required, optional };
+      });
+      const payload = await api("/api/presets/capability_summary", {
+        method: "POST",
+        body: JSON.stringify({ agent, tasks }),
+      });
+      setPre(automationSummaryEl, payload?.summary || payload);
+    } catch (e) {
+      toast("err", `Automation summary failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  byId("automation-builder-save-btn")?.addEventListener("click", async () => {
+    const id = String(byId("automation-builder-id")?.value || "").trim();
+    if (!id) {
+      toast("err", "Automation override id is required.");
+      return;
+    }
+    let summary = null;
+    try {
+      const selectedAgentId = String(byId("agent-builder-source")?.value || "").trim();
+      const selectedAgent = findAgentPreset(selectedAgentId);
+      const agent = {
+        required: unique(asArray(selectedAgent?.required_capabilities).concat(computeAgentCapabilityInput().required)),
+        optional: computeAgentCapabilityInput().optional,
+      };
+      const tasks = automationTaskRows.map((row) => {
+        const rowAgent = findAgentPreset(row.agent_id);
+        const rowAgentCaps = unique(asArray(rowAgent?.required_capabilities));
+        const required = unique(rowAgentCaps.concat(asArray(row.required)));
+        const optional = unique(asArray(row.optional)).filter((cap) => !required.includes(cap));
+        return { required, optional };
+      });
+      const summaryResp = await api("/api/presets/capability_summary", {
+        method: "POST",
+        body: JSON.stringify({ agent, tasks }),
+      });
+      summary = summaryResp?.summary || null;
+    } catch {
+      summary = null;
+    }
+
+    const yaml = [
+      `id: ${id}`,
+      "version: 0.1.0",
+      "publisher: local.user",
+      "description: Project override automation preset",
+      "tags:",
+      "  - override",
+      "tasks:",
+      ...(automationTaskRows.length
+        ? automationTaskRows.flatMap((row) => [
+            `  - id: ${row.id || "step"}`,
+            `    agent_preset: ${row.agent_id || ""}`,
+            "    capabilities:",
+            "      required:",
+            ...(asArray(row.required).length ? asArray(row.required).map((cap) => `        - ${cap}`) : ["        - "]),
+            "      optional:",
+            ...(asArray(row.optional).length ? asArray(row.optional).map((cap) => `        - ${cap}`) : ["        - "]),
+          ])
+        : ["  - id: step_1", "    agent_preset: "]),
+      "capabilities:",
+      "  required:",
+      ...((summary?.automation?.required || []).length
+        ? summary.automation.required.map((cap) => `    - ${cap}`)
+        : ["    - "]),
+      "  optional:",
+      ...((summary?.automation?.optional || []).length
+        ? summary.automation.optional.map((cap) => `    - ${cap}`)
+        : ["    - "]),
+      "",
+    ].join("\n");
+
+    try {
+      const payload = await api(`/api/presets/overrides/automation_preset/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify({ content: yaml }),
+      });
+      setMeta(payload);
+      toast("ok", `Saved automation override ${id}`);
+      await loadPresetIndex();
+    } catch (e) {
+      toast("err", `Save automation override failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
 
