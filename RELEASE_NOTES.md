@@ -90,6 +90,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `detect` returns `is_pack=false` for zip files without root marker
     - install writes deterministic `.../packs/<name>/<version>` and updates `current`
     - detect/install emit expected pack lifecycle events for UI surfaces
+  - Pack inspect now returns computed trust/risk summary derived from installed files/manifest:
+    - signature status reflects root `tandempack.sig` presence (`present_unverified` vs `unsigned`)
+    - publisher verification tier is surfaced when declared in manifest
+    - risk summary includes capability counts, routine declaration flag, and non-portable dependency signal
 
 - Capability Resolver runtime/API implementation (first tranche)
   - Added capability endpoints:

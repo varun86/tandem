@@ -152,14 +152,8 @@ impl PackManager {
             .await
             .with_context(|| format!("read {}", manifest_path.display()))?;
         let manifest: Value = serde_yaml::from_str(&manifest_raw).context("parse manifest yaml")?;
-        let trust = serde_json::json!({
-            "publisher_verification": "unknown",
-            "signature": "unsigned",
-        });
-        let risk = serde_json::json!({
-            "routines_enabled": installed.routines_enabled,
-            "non_portable_dependencies": false,
-        });
+        let trust = inspect_trust(&manifest, &installed.install_path);
+        let risk = inspect_risk(&manifest, &installed);
         Ok(PackInspection {
             installed,
             manifest,
@@ -640,6 +634,59 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn inspect_trust(manifest: &Value, install_path: &str) -> Value {
+    let signature_path = PathBuf::from(install_path).join("tandempack.sig");
+    let signature = if signature_path.exists() {
+        "present_unverified"
+    } else {
+        "unsigned"
+    };
+    let publisher_verification = manifest
+        .pointer("/publisher/verification")
+        .or_else(|| manifest.pointer("/publisher/verification_tier"))
+        .or_else(|| manifest.pointer("/marketplace/publisher_verification"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    serde_json::json!({
+        "publisher_verification": publisher_verification,
+        "signature": signature,
+    })
+}
+
+fn inspect_risk(manifest: &Value, installed: &PackInstallRecord) -> Value {
+    let required_capabilities_count = manifest
+        .pointer("/capabilities/required")
+        .and_then(|v| v.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let optional_capabilities_count = manifest
+        .pointer("/capabilities/optional")
+        .and_then(|v| v.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let routines_declared = manifest
+        .pointer("/contents/routines")
+        .and_then(|v| v.as_array())
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    let non_portable_dependencies = manifest
+        .pointer("/capabilities/provider_specific")
+        .map(|v| match v {
+            Value::Array(rows) => !rows.is_empty(),
+            Value::Object(map) => !map.is_empty(),
+            Value::Bool(flag) => *flag,
+            _ => false,
+        })
+        .unwrap_or(false);
+    serde_json::json!({
+        "routines_enabled": installed.routines_enabled,
+        "routines_declared": routines_declared,
+        "required_capabilities_count": required_capabilities_count,
+        "optional_capabilities_count": optional_capabilities_count,
+        "non_portable_dependencies": non_portable_dependencies,
+    })
+}
+
 #[allow(dead_code)]
 pub fn map_missing_capability_error(
     workflow_id: &str,
@@ -731,6 +778,60 @@ mod tests {
         std::fs::create_dir_all(&out).expect("mkdir out");
         let err = safe_extract_zip(&bad, &out).expect_err("should fail");
         assert!(err.to_string().contains("compression ratio"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn inspect_reports_signature_and_risk_summary() {
+        let root = std::env::temp_dir().join(format!("tandem-pack-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let pack_zip = root.join("inspect.zip");
+        write_zip(
+            &pack_zip,
+            &[
+                (
+                    "tandempack.yaml",
+                    "name: inspect-pack\nversion: 1.0.0\ntype: workflow\npack_id: inspect-pack\npublisher:\n  verification: verified\ncapabilities:\n  required:\n    - github.create_pull_request\n  optional:\n    - slack.post_message\ncontents:\n  routines:\n    - routines/nightly.yaml\n",
+                ),
+                ("tandempack.sig", "fake-signature"),
+                ("routines/nightly.yaml", "id: nightly\n"),
+            ],
+        );
+        let manager = PackManager::new(root.join("packs"));
+        let installed = manager
+            .install(PackInstallRequest {
+                path: Some(pack_zip.to_string_lossy().to_string()),
+                url: None,
+                source: Value::Null,
+            })
+            .await
+            .expect("install");
+        let inspection = manager.inspect(&installed.pack_id).await.expect("inspect");
+        assert_eq!(
+            inspection.trust.get("signature").and_then(|v| v.as_str()),
+            Some("present_unverified")
+        );
+        assert_eq!(
+            inspection
+                .trust
+                .get("publisher_verification")
+                .and_then(|v| v.as_str()),
+            Some("verified")
+        );
+        assert_eq!(
+            inspection
+                .risk
+                .get("required_capabilities_count")
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .risk
+                .get("routines_declared")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - per-pack install/uninstall locking added so concurrent operations serialize by pack name while keeping index writes atomic
   - pack lifecycle events emitted (`pack.detected`, `pack.install.started|succeeded|failed`, `registry.updated`)
   - expanded HTTP regression tests for pack flows: marker-required detection, marker-negative zip behavior, deterministic install path/current pointer, and lifecycle events
+  - pack inspect trust/risk summary now derives from installed content (`tandempack.sig` presence, publisher verification fields, capability/routine risk counts)
 - **Initial capability resolver runtime/API implementation (server)**:
   - added capability routes:
     - `GET /capabilities/bindings`
