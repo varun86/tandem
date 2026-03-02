@@ -1,0 +1,10 @@
+id: release_notes_publish
+title: Release Notes Publish
+steps:
+  - id: list_commits
+    action: github.list_commits
+  - id: draft_release_pr
+    action: github.create_pull_request
+    optional: true
+  - id: publish_to_slack
+    action: slack.post_message

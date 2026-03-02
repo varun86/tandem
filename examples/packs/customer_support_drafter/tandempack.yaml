@@ -1,0 +1,25 @@
+manifest_schema_version: 1
+pack_id: "tpk_customer_support_drafter_v1"
+name: customer-support-drafter
+version: 0.1.0
+type: skill
+engine:
+  requires: ">=0.4.0 <2.0.0"
+
+entrypoints:
+  agents: ["support_drafter"]
+
+capabilities:
+  required: []
+  optional:
+    - gmail.fetch_emails
+    - slack.post_message
+  non_portable: []
+
+secrets:
+  required: []
+
+contents:
+  agents:
+    - id: support_drafter
+      path: agents/support_drafter.md

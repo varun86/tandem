@@ -244,6 +244,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - wrapped automations UI in a scoped theme surface
     - remapped residual `slate/zinc` utility classes to shared tokens
     - converted automations tab chips and wizard step chips to token-based colors
+  - Added starter import templates for hands-on learning:
+    - `examples/packs/daily_github_pr_reviewer/`
+    - `examples/packs/slack_release_notes_writer/`
+    - `examples/packs/customer_support_drafter/`
+  - Added a practical personal tutorial to build/zip/import/run your first pack:
+    - `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`
 
 - Internal execution tracking
   - Added implementation Kanban board:

@@ -80,6 +80,8 @@ Owner: Core Runtime + Product Architecture
 - [x] Added marketplace pack specs under `specs/packs/`
 - [x] Added modular preset specs under `specs/presets/`
 - [x] Added marketplace-ready pack examples under `examples/packs/*_marketplace/`
+- [x] Added hands-on starter packs under `examples/packs/` (`daily_github_pr_reviewer`, `slack_release_notes_writer`, `customer_support_drafter`)
+- [x] Added personal first-pack walkthrough at `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`
 - [x] Added v0.4.0 release-note/changelog sections
 
 ## Exit Criteria for v0.4.0

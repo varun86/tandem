@@ -1,0 +1,10 @@
+id: daily_pr_review
+title: Daily PR Review
+steps:
+  - id: list_prs
+    action: github.list_pull_requests
+  - id: create_followup_issue
+    action: github.create_issue
+  - id: post_summary
+    action: slack.post_message
+    optional: true

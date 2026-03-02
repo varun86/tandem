@@ -1,0 +1,6 @@
+id: daily_pr_review
+trigger:
+  type: cron
+  expression: "0 14 * * 1-5"
+mission_id: daily_pr_review
+enabled_by_default: false

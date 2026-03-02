@@ -1,0 +1,5 @@
+id: manual_release_publish
+trigger:
+  type: manual
+mission_id: release_notes_publish
+enabled_by_default: false

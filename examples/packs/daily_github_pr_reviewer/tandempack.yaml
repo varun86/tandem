@@ -1,0 +1,35 @@
+manifest_schema_version: 1
+pack_id: "tpk_daily_github_pr_reviewer_v1"
+name: daily-github-pr-reviewer
+version: 0.1.0
+type: workflow
+engine:
+  requires: ">=0.4.0 <2.0.0"
+
+entrypoints:
+  missions: ["daily_pr_review"]
+  routines: ["daily_pr_review"]
+
+capabilities:
+  required:
+    - github.list_pull_requests
+    - github.create_issue
+  optional:
+    - slack.post_message
+  non_portable: []
+
+secrets:
+  required:
+    - key: GITHUB_TOKEN
+      description: "Token with repo access for review and issue creation"
+
+contents:
+  agents:
+    - id: github_reviewer
+      path: agents/github_reviewer.md
+  missions:
+    - id: daily_pr_review
+      path: missions/daily_pr_review.yaml
+  routines:
+    - id: daily_pr_review
+      path: routines/daily_pr_review.yaml
