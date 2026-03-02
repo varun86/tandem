@@ -232,6 +232,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Fixed `Packs` view failures on environments where `state.client.packs` or `state.client.capabilities` namespaces are not present by adding direct `/api/engine/*` fallback calls for list/inspect/install/uninstall/export/update/discovery.
 - Settings tab visual polish
   - Reworked Settings section switching UI from generic buttons to dedicated tab styling for stronger active-state clarity and cleaner presentation.
+  - Kept Settings content grouped under one parent Settings card and fixed missing tab icon rendering by registering required Lucide icons (`package`, `sliders-horizontal`).
 
 - Internal execution tracking
   - Added implementation Kanban board:

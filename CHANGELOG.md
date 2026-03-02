@@ -143,6 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Control panel packs runtime compatibility**: `Packs` view now falls back to direct engine endpoints when `state.client.packs`/`state.client.capabilities` namespaces are unavailable, preventing `Cannot read properties of undefined (reading 'list')` failures.
 - **Settings tab UX**: Replaced generic button-like Settings section controls with dedicated tab styles (tab rail + active state) for clearer information hierarchy and better visual quality.
+- **Settings container + icon hydration**: Settings tab content now renders inside the same Settings card container, and missing icon registrations (`package`, `sliders-horizontal`) were added so tab icons remain visible across section switches.
 
 ## [0.3.28] - 2026-03-01
 

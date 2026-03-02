@@ -43,8 +43,10 @@ export async function renderSettings(ctx) {
         <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "mcp" ? "active" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}"><i data-lucide="link"></i> MCP</button>
         <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "files" ? "active" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}"><i data-lucide="folder-open"></i> Files</button>
       </div>
+      <div class="mt-4 border-t border-slate-800 pt-4">
+        <div id="settings-tab-content" class="grid gap-4"></div>
+      </div>
     </div>
-    <div id="settings-tab-content" class="grid gap-4"></div>
   `;
 
   byId("view")
