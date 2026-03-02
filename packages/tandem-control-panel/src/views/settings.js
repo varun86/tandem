@@ -27,9 +27,14 @@ function writeSettingsTabToHash(tab) {
 }
 
 export async function renderSettings(ctx) {
-  const { byId, state, escapeHtml, renderIcons, THEMES = [], setTheme, addCleanup } = ctx;
+  const { byId, state, escapeHtml, renderIcons } = ctx;
   const settingsRoot = byId("view");
-  const activeTab = parseSettingsTabFromHash();
+  const providerLocked = !state.providerReady;
+  const requestedTab = parseSettingsTabFromHash();
+  const activeTab = providerLocked ? "general" : requestedTab;
+  if (providerLocked && requestedTab !== "general" && window.location.hash !== "#/settings?tab=general") {
+    window.location.hash = "#/settings?tab=general";
+  }
   settingsRoot.innerHTML = `
     <div class="tcp-card">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -37,12 +42,19 @@ export async function renderSettings(ctx) {
         <span class="tcp-badge-info">Unified Surface</span>
       </div>
       <p class="tcp-subtle mb-3">Configure platform behavior, integrations, and assets without leaving Settings.</p>
+      ${
+        providerLocked
+          ? `<div class="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+               Complete provider + default model setup first. Other sections stay locked until this wizard is finished.
+             </div>`
+          : ""
+      }
       <div class="tcp-settings-tabs" role="tablist" aria-label="Settings sections">
         <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "general" ? "active" : ""}" data-settings-tab="general" role="tab" aria-selected="${activeTab === "general"}"><i data-lucide="settings-2"></i> General</button>
-        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "packs" ? "active" : ""}" data-settings-tab="packs" role="tab" aria-selected="${activeTab === "packs"}"><i data-lucide="package"></i> Packs</button>
-        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "channels" ? "active" : ""}" data-settings-tab="channels" role="tab" aria-selected="${activeTab === "channels"}"><i data-lucide="message-circle"></i> Channels</button>
-        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "mcp" ? "active" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}"><i data-lucide="link"></i> MCP</button>
-        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "files" ? "active" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}"><i data-lucide="folder-open"></i> Files</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "packs" ? "active" : ""} ${providerLocked ? "locked" : ""}" data-settings-tab="packs" role="tab" aria-selected="${activeTab === "packs"}" ${providerLocked ? 'disabled aria-disabled="true"' : ""}><i data-lucide="package"></i> Packs</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "channels" ? "active" : ""} ${providerLocked ? "locked" : ""}" data-settings-tab="channels" role="tab" aria-selected="${activeTab === "channels"}" ${providerLocked ? 'disabled aria-disabled="true"' : ""}><i data-lucide="message-circle"></i> Channels</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "mcp" ? "active" : ""} ${providerLocked ? "locked" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}" ${providerLocked ? 'disabled aria-disabled="true"' : ""}><i data-lucide="link"></i> MCP</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "files" ? "active" : ""} ${providerLocked ? "locked" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}" ${providerLocked ? 'disabled aria-disabled="true"' : ""}><i data-lucide="folder-open"></i> Files</button>
       </div>
       <div class="mt-4 border-t border-slate-800 pt-4">
         <div id="settings-tab-content" class="grid gap-4"></div>
@@ -54,24 +66,11 @@ export async function renderSettings(ctx) {
     .querySelectorAll("[data-settings-tab]")
     .forEach((btn) =>
       btn.addEventListener("click", () => {
+        if (btn.disabled) return;
         const tab = String(btn.getAttribute("data-settings-tab") || "").trim().toLowerCase();
         writeSettingsTabToHash(tab);
       })
     );
-
-  // Keep icons hydrated even when embedded tab views update asynchronously.
-  const iconObserver = new MutationObserver((mutations) => {
-    let shouldRender = false;
-    for (const mutation of mutations) {
-      if (mutation.type !== "childList") continue;
-      if (mutation.addedNodes.length === 0) continue;
-      shouldRender = true;
-      break;
-    }
-    if (shouldRender) renderIcons(settingsRoot);
-  });
-  iconObserver.observe(settingsRoot, { childList: true, subtree: true });
-  addCleanup?.(() => iconObserver.disconnect());
 
   const content = byId("settings-tab-content");
   if (!content) return;
@@ -81,17 +80,9 @@ export async function renderSettings(ctx) {
       <div class="tcp-card">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sparkles"></i> Appearance</h3>
-          <span class="tcp-badge-info">Desktop Theme Parity</span>
+          <span class="tcp-badge-info">Web Design Lock</span>
         </div>
-        <p class="tcp-subtle mb-3">Choose the shared Tandem theme used across desktop and control panel.</p>
-        <div class="grid gap-3 md:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-sm text-slate-300">Theme</label>
-            <select id="settings-theme-id" class="tcp-select">
-              ${THEMES.map((theme) => `<option value="${escapeHtml(theme.id)}" ${theme.id === state.themeId ? "selected" : ""}>${escapeHtml(theme.name)}</option>`).join("")}
-            </select>
-          </div>
-        </div>
+        <p class="tcp-subtle">The control panel now uses the shared web design system by default for consistent styling across all routes.</p>
       </div>
       <div class="tcp-card">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -112,12 +103,6 @@ export async function renderSettings(ctx) {
         <p class="tcp-subtle">Use Logout in the sidebar to clear your current portal session token binding.</p>
       </div>
     `;
-    byId("settings-theme-id")?.addEventListener("change", (e) => {
-      const id = String(e?.target?.value || "").trim();
-      if (!id || !setTheme) return;
-      setTheme(id);
-      renderSettings(ctx);
-    });
     await renderProvidersBlock(ctx, byId("provider-settings"));
     await renderIdentityBlock(ctx, byId("identity-settings"));
     renderIcons(settingsRoot);
@@ -145,9 +130,10 @@ export async function renderSettings(ctx) {
 }
 
 async function renderProvidersBlock(ctx, container) {
-  const { state, api, toast, escapeHtml, providerHints, refreshProviderStatus } = ctx;
+  const { state, api, toast, escapeHtml, providerHints, refreshProviderStatus, renderIcons } = ctx;
   const catalog = await state.client.providers.catalog();
   const config = await state.client.providers.config();
+  let authStatusRaw = await state.client.providers.authStatus().catch(() => ({}));
 
   const catalogProviders = catalog.all || [];
   const providerIds = new Set(catalogProviders.map((p) => p.id));
@@ -168,6 +154,7 @@ async function renderProvidersBlock(ctx, container) {
           ""
       )
     : "";
+  let replaceStoredKey = false;
 
   const syncModel = () => {
     if (selectedProvider === CUSTOM_PROVIDER_VALUE) return;
@@ -186,12 +173,42 @@ async function renderProvidersBlock(ctx, container) {
     { id: CUSTOM_PROVIDER_VALUE, label: "Custom Provider" },
   ];
 
+  const normalizeProviderId = (providerId) => String(providerId || "").trim().toLowerCase();
+  const resolveHasStoredKey = (providerId) => {
+    const id = normalizeProviderId(providerId);
+    if (!id) return false;
+    const status = authStatusRaw;
+    if (status && typeof status === "object") {
+      const direct = status[id];
+      if (direct && typeof direct === "object") {
+        if (direct.has_key === true || direct.hasKey === true) return true;
+        if (direct.configured === true || direct.connected === true) return true;
+      }
+      if (status.providers && typeof status.providers === "object") {
+        const nested = status.providers[id];
+        if (nested && typeof nested === "object") {
+          if (nested.has_key === true || nested.hasKey === true) return true;
+          if (nested.configured === true || nested.connected === true) return true;
+        }
+      }
+    }
+    return false;
+  };
+  const providerNeedsApiKey = (providerId) => {
+    const id = normalizeProviderId(providerId);
+    return !!id && id !== "ollama" && id !== "local";
+  };
+
   const render = () => {
     const models =
       selectedProvider === CUSTOM_PROVIDER_VALUE
         ? []
         : Object.keys((catalogProviders.find((p) => p.id === selectedProvider) || {}).models || {});
 
+    const effectiveProviderId =
+      selectedProvider === CUSTOM_PROVIDER_VALUE ? customProviderId : selectedProvider;
+    const hasStoredKey = resolveHasStoredKey(effectiveProviderId);
+    const allowKeyEntry = !hasStoredKey || replaceStoredKey;
     container.innerHTML = `
       <div class="grid gap-3 md:grid-cols-2">
         <div>
@@ -237,13 +254,25 @@ async function renderProvidersBlock(ctx, container) {
       <div class="mt-3 grid gap-3 md:grid-cols-2">
         <div>
           <label class="mb-1 block text-sm text-slate-300">API Key (optional)</label>
-          <input id="provider-key" class="tcp-input" type="password" placeholder="${escapeHtml(providerHints[selectedProvider]?.placeholder || "sk-...")}" />
+          <input id="provider-key" class="tcp-input" type="password" placeholder="${escapeHtml(providerHints[selectedProvider]?.placeholder || "sk-...")}" ${allowKeyEntry ? "" : "disabled"} />
+          <p class="mt-1 text-xs ${hasStoredKey ? "text-lime-300" : "text-amber-300"}">
+            ${hasStoredKey ? "A key is already stored for this provider. Leave blank to keep it." : "No stored key detected for this provider."}
+          </p>
+          ${
+            hasStoredKey
+              ? `<div class="mt-2 flex flex-wrap gap-2">
+                   <button id="provider-toggle-replace-key" class="tcp-btn h-8 px-2.5 text-xs">${replaceStoredKey ? "Keep existing key" : "Replace key"}</button>
+                   <button id="provider-clear-key" class="tcp-btn-danger h-8 px-2.5 text-xs">Clear stored key</button>
+                 </div>`
+              : ""
+          }
         </div>
         <div class="flex items-end justify-end gap-2">
           <button id="provider-test" class="tcp-btn"><i data-lucide="flask-conical"></i> Test Model Run</button>
           <button id="provider-save" class="tcp-btn-primary"><i data-lucide="save"></i> Save Provider</button>
         </div>
       </div>
+      <div id="provider-test-status" class="mt-2 text-xs tcp-subtle"></div>
     `;
 
     container.querySelector("#provider-select").addEventListener("change", (e) => {
@@ -267,68 +296,237 @@ async function renderProvidersBlock(ctx, container) {
     if (customModelEl)
       customModelEl.addEventListener("input", (e) => (customProviderModel = e.target.value.trim()));
 
-    container.querySelector("#provider-save").addEventListener("click", async () => {
-      const key = container.querySelector("#provider-key").value.trim();
-      try {
-        if (selectedProvider === CUSTOM_PROVIDER_VALUE) {
-          if (!customProviderId) throw new Error("Custom provider ID is required.");
-          if (!customProviderUrl) throw new Error("Custom provider URL is required.");
-          if (!customProviderModel) throw new Error("Custom default model is required.");
+    const replaceToggleEl = container.querySelector("#provider-toggle-replace-key");
+    if (replaceToggleEl) {
+      replaceToggleEl.addEventListener("click", () => {
+        replaceStoredKey = !replaceStoredKey;
+        render();
+      });
+    }
 
-          await api("/api/engine/config", {
-            method: "PATCH",
-            body: JSON.stringify({
-              default_provider: customProviderId,
-              providers: {
-                [customProviderId]: {
-                  url: customProviderUrl,
-                  default_model: customProviderModel,
-                },
-              },
-            }),
-          });
-
-          if (key) await state.client.providers.setApiKey(customProviderId, key);
-        } else {
-          if (key) await state.client.providers.setApiKey(selectedProvider, key);
-          await state.client.providers.setDefaults(selectedProvider, selectedModel);
+    const clearKeyEl = container.querySelector("#provider-clear-key");
+    if (clearKeyEl) {
+      clearKeyEl.addEventListener("click", async () => {
+        const providerId = normalizeProviderId(
+          selectedProvider === CUSTOM_PROVIDER_VALUE ? customProviderId : selectedProvider
+        );
+        if (!providerId) {
+          toast("err", "Select a provider first.");
+          return;
         }
+        try {
+          await api(`/api/engine/auth/${encodeURIComponent(providerId)}`, { method: "DELETE" });
+          authStatusRaw = await state.client.providers.authStatus().catch(() => authStatusRaw);
+          replaceStoredKey = true;
+          toast("ok", `Cleared stored key for ${providerId}.`);
+          render();
+        } catch (e) {
+          toast("err", e instanceof Error ? e.message : String(e));
+        }
+      });
+    }
 
-        await refreshProviderStatus();
-        toast("ok", "Provider configuration saved.");
+    const persistProviderConfig = async ({ quiet = false } = {}) => {
+      const key = container.querySelector("#provider-key")?.value?.trim?.() || "";
+      const targetProviderId = normalizeProviderId(
+        selectedProvider === CUSTOM_PROVIDER_VALUE ? customProviderId : selectedProvider
+      );
+      const hadStoredKey = resolveHasStoredKey(targetProviderId);
+      const shouldWriteKey = key.length > 0;
+      if (selectedProvider === CUSTOM_PROVIDER_VALUE) {
+        const normalizedCustomProviderId = normalizeProviderId(customProviderId);
+        if (!normalizedCustomProviderId) throw new Error("Custom provider ID is required.");
+        if (!customProviderUrl) throw new Error("Custom provider URL is required.");
+        if (!customProviderModel) throw new Error("Custom default model is required.");
+
+        await api("/api/engine/config", {
+          method: "PATCH",
+          body: JSON.stringify({
+            default_provider: normalizedCustomProviderId,
+            providers: {
+              [normalizedCustomProviderId]: {
+                url: customProviderUrl,
+                default_model: customProviderModel,
+              },
+            },
+          }),
+        });
+
+        if (hadStoredKey && replaceStoredKey && !key) {
+          throw new Error("Enter a new API key or keep existing key.");
+        }
+        if (shouldWriteKey) await state.client.providers.setApiKey(normalizedCustomProviderId, key);
+      } else {
+        if (!selectedProvider) throw new Error("Select a provider first.");
+        if (!selectedModel) throw new Error("Select a default model first.");
+        if (hadStoredKey && replaceStoredKey && !key) {
+          throw new Error("Enter a new API key or keep existing key.");
+        }
+        if (shouldWriteKey) await state.client.providers.setApiKey(selectedProvider, key);
+        await state.client.providers.setDefaults(selectedProvider, selectedModel);
+      }
+
+      await refreshProviderStatus();
+      if (shouldWriteKey) {
+        authStatusRaw = await state.client.providers.authStatus().catch(() => authStatusRaw);
+        replaceStoredKey = false;
+      }
+      if (!quiet) toast("ok", "Provider configuration saved.");
+    };
+
+    container.querySelector("#provider-save").addEventListener("click", async () => {
+      const saveBtn = container.querySelector("#provider-save");
+      try {
+        saveBtn.disabled = true;
+        await persistProviderConfig();
         renderSettings(ctx);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
+      } finally {
+        saveBtn.disabled = false;
       }
     });
 
     container.querySelector("#provider-test").addEventListener("click", async () => {
-      try {
-        const sid = await state.client.sessions.create({
-          title: `Provider test ${new Date().toISOString()}`,
-        });
-        const { runId } = await state.client.sessions.promptAsync(sid, "Reply with exactly: READY");
-        let sawResponse = false;
-        for await (const event of state.client.stream(sid, runId)) {
-          if (event.type === "session.response") {
-            const delta = String(event.properties?.delta || "").trim();
-            if (delta) sawResponse = true;
-          }
-          if (
-            event.type === "run.complete" ||
-            event.type === "run.failed" ||
-            event.type === "session.run.finished"
-          )
-            break;
+      const testBtn = container.querySelector("#provider-test");
+      const statusEl = container.querySelector("#provider-test-status");
+      const originalLabel = testBtn.innerHTML;
+      const TEST_TIMEOUT_MS = 45000;
+      const waitForRunToSettle = async (sessionId, targetRunId, timeoutMs) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          const runState = await state.client.sessions
+            .activeRun(sessionId)
+            .catch(() => ({ active: null }));
+          const activeRunId = String(runState?.active?.runId || "").trim();
+          if (!activeRunId || (targetRunId && activeRunId !== targetRunId)) return true;
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
-        if (!sawResponse)
-          throw new Error("No model tokens received. Save provider + key first, then retry.");
+        return false;
+      };
+      try {
+        testBtn.disabled = true;
+        testBtn.innerHTML = '<i data-lucide="flask-conical"></i> Testing...';
+        renderIcons?.(container);
+        if (statusEl) {
+          statusEl.className = "mt-2 text-xs tcp-subtle";
+          statusEl.textContent = "Saving provider settings and running a test request...";
+        }
+
+        await persistProviderConfig({ quiet: true });
+        const runProviderId = normalizeProviderId(
+          selectedProvider === CUSTOM_PROVIDER_VALUE ? customProviderId : selectedProvider
+        );
+        const runModelId = String(
+          selectedProvider === CUSTOM_PROVIDER_VALUE ? customProviderModel : selectedModel
+        ).trim();
+        if (!runProviderId) throw new Error("Select a provider before running the model test.");
+        if (!runModelId) throw new Error("Select a default model before running the model test.");
+        if (providerNeedsApiKey(runProviderId) && !resolveHasStoredKey(runProviderId)) {
+          throw new Error("No stored key detected for this provider. Save a valid API key first.");
+        }
+
+        const runSingleTest = async () => {
+          const sid = await state.client.sessions.create({
+            title: `Provider test ${new Date().toISOString()}`,
+            provider: runProviderId,
+            model: runModelId,
+          });
+          try {
+            const syncReply = await state.client.sessions
+              .promptSync(sid, "Reply with exactly: READY")
+              .catch(() => "");
+            if (String(syncReply || "").trim()) {
+              return String(syncReply).trim();
+            }
+
+            const { runId } = await state.client.sessions.promptAsync(
+              sid,
+              "Reply with exactly: READY",
+              { provider: runProviderId, model: runModelId }
+            );
+            if (statusEl) {
+              statusEl.className = "mt-2 text-xs tcp-subtle";
+              statusEl.textContent = "Run accepted. Waiting for provider response...";
+            }
+            const settled = await waitForRunToSettle(sid, String(runId || "").trim(), TEST_TIMEOUT_MS);
+            if (!settled) {
+              throw new Error("Model test timed out waiting for run completion.");
+            }
+            const runEvents = await state.client.runEvents(String(runId || "").trim(), {
+              tail: 80,
+            }).catch(() => []);
+            const providerErrorEvent = runEvents.find(
+              (ev) => String(ev?.type || "").trim() === "provider.call.error"
+            );
+            if (providerErrorEvent) {
+              const props = providerErrorEvent?.properties || {};
+              const detail = String(props?.detail || props?.error || "").trim();
+              const code = String(props?.error_code || "").trim();
+              throw new Error(
+                `Provider call failed${code ? ` (${code})` : ""}${detail ? `: ${detail}` : ""}`
+              );
+            }
+            const messages = await state.client.sessions.messages(sid).catch(() => []);
+            const assistantText = messages
+              .map((m) => (m.parts || []).map((p) => String(p?.text || "")).join("\n"))
+              .join("\n")
+              .trim();
+            if (!assistantText) {
+              const eventTypes = runEvents.map((ev) => String(ev?.type || "").trim()).filter(Boolean);
+              const summary = eventTypes.length
+                ? ` Events: ${eventTypes.slice(-8).join(", ")}`
+                : "";
+              throw new Error(`Run finished but no assistant response was returned.${summary}`);
+            }
+            return assistantText;
+          } finally {
+            await state.client.sessions.delete(sid).catch(() => {});
+          }
+        };
+
+        let assistantText = "";
+        try {
+          assistantText = await runSingleTest();
+        } catch (firstErr) {
+          const firstMessage = firstErr instanceof Error ? firstErr.message : String(firstErr);
+          if (/BodyStreamBuffer was aborted/i.test(firstMessage)) {
+            if (statusEl) {
+              statusEl.className = "mt-2 text-xs text-amber-300";
+              statusEl.textContent = "Provider stream aborted once. Retrying test...";
+            }
+            assistantText = await runSingleTest();
+          } else {
+            throw firstErr;
+          }
+        }
+
         await refreshProviderStatus();
-        toast("ok", "Model run test succeeded.");
+        if (statusEl) {
+          statusEl.className = "mt-2 text-xs text-lime-300";
+          statusEl.textContent = assistantText.toUpperCase().includes("READY")
+            ? "Model test succeeded."
+            : `Model replied: ${assistantText.slice(0, 140)}`;
+        }
+        toast("ok", "Model run test completed.");
       } catch (e) {
-        toast("err", e instanceof Error ? e.message : String(e));
+        const rawMessage = e instanceof Error ? e.message : String(e);
+        const message = /BodyStreamBuffer was aborted/i.test(rawMessage)
+          ? "Provider stream was aborted. Check provider credentials/network, then retry."
+          : rawMessage;
+        if (statusEl) {
+          statusEl.className = "mt-2 text-xs text-rose-300";
+          statusEl.textContent = message;
+        }
+        toast("err", message);
+      } finally {
+        testBtn.disabled = false;
+        testBtn.innerHTML = originalLabel;
+        renderIcons?.(container);
       }
     });
+
+    renderIcons?.(container);
   };
 
   render();
@@ -530,7 +728,7 @@ async function renderIdentityBlock(ctx, container) {
         toast("err", e instanceof Error ? e.message : String(e));
       }
     });
-    renderIcons();
+    renderIcons?.(container);
   };
 
   render();

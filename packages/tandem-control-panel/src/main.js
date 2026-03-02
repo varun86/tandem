@@ -57,6 +57,10 @@ function clearCleanup() {
   state.cleanup = [];
 }
 
+function requiresProviderWizard() {
+  return !!state.authed && !!state.needsProviderOnboarding;
+}
+
 function getSavedToken() {
   try {
     return localStorage.getItem(TOKEN_STORAGE_KEY) || "";
@@ -97,6 +101,7 @@ async function checkAuth() {
     state.providerDefault = "";
     state.providerConnected = [];
     state.providerError = "";
+    state.providerGateNoticeShown = false;
     state.botName = "Tandem";
     state.botAvatarUrl = "";
     state.controlPanelName = "Tandem Control Panel";
@@ -115,21 +120,47 @@ async function refreshProviderStatus() {
     return;
   }
   try {
-    const [config, catalog] = await Promise.all([
+    const [config, catalog, authStatus] = await Promise.all([
       state.client.providers.config(),
       state.client.providers.catalog(),
+      state.client.providers.authStatus().catch(() => ({})),
     ]);
     const defaultProvider = String(config?.default || "").trim();
     const defaultModel = String(config?.providers?.[defaultProvider]?.default_model || "").trim();
-    const connected = new Set(catalog?.connected || []);
+    const connected = new Set((catalog?.connected || []).map((id) => String(id || "").trim().toLowerCase()));
+    const providerNeedsApiKey = (providerId) => {
+      const id = String(providerId || "").trim().toLowerCase();
+      return !!id && id !== "ollama" && id !== "local";
+    };
+    const hasStoredKey = (() => {
+      const id = String(defaultProvider || "").trim().toLowerCase();
+      if (!id) return false;
+      if (authStatus && typeof authStatus === "object") {
+        const direct = authStatus[id];
+        if (direct && typeof direct === "object") {
+          if (direct.has_key === true || direct.hasKey === true) return true;
+          if (direct.configured === true && !providerNeedsApiKey(id)) return true;
+        }
+        const nested = authStatus.providers?.[id];
+        if (nested && typeof nested === "object") {
+          if (nested.has_key === true || nested.hasKey === true) return true;
+          if (nested.configured === true && !providerNeedsApiKey(id)) return true;
+        }
+      }
+      return false;
+    })();
     const ready =
-      !!defaultProvider && (defaultProvider === "ollama" || connected.has(defaultProvider));
+      !!defaultProvider &&
+      !!defaultModel &&
+      connected.has(String(defaultProvider || "").trim().toLowerCase()) &&
+      (!providerNeedsApiKey(defaultProvider) || hasStoredKey);
     state.providerDefault = defaultProvider;
     state.providerDefaultModel = defaultModel;
     state.providerConnected = [...connected];
     state.providerReady = ready;
     state.providerError = "";
     state.needsProviderOnboarding = !ready;
+    if (ready) state.providerGateNoticeShown = false;
   } catch (e) {
     state.providerReady = false;
     state.providerDefault = "";
@@ -170,6 +201,20 @@ async function refreshIdentityStatus() {
 
 function setRoute(route) {
   const nextRoute = ensureRoute(route, ROUTES);
+  if (requiresProviderWizard() && nextRoute !== "settings") {
+    if (!state.providerGateNoticeShown) {
+      toast("info", "Set provider + default model first to unlock the control panel.");
+      state.providerGateNoticeShown = true;
+    }
+    if (window.location.hash !== "#/settings?tab=general") {
+      window.location.hash = "#/settings?tab=general";
+      return;
+    }
+    state.route = "settings";
+    clearCleanup();
+    renderShell();
+    return;
+  }
   const targetHash = `#/${nextRoute}`;
   if (window.location.hash !== targetHash) {
     setHashRoute(nextRoute);
@@ -187,9 +232,9 @@ function setRoute(route) {
 function renderLogin() {
   const savedToken = getSavedToken();
   app.innerHTML = `
-    <main class="mx-auto grid min-h-screen w-full max-w-3xl place-items-center p-5">
-      <section class="tcp-panel w-full max-w-xl">
-        <div class="mb-6 rounded-2xl border border-slate-700 bg-black/20 p-3">
+    <main class="mx-auto grid min-h-screen w-full max-w-3xl place-items-center px-5 py-8">
+      <section class="tcp-panel tcp-shell-glass w-full max-w-xl">
+        <div class="mb-6 rounded-2xl border border-slate-700 bg-black/20 p-3 tcp-soft-block">
           <svg viewBox="0 0 520 160" class="hero-svg chip-hero" aria-hidden="true">
             <defs>
               <linearGradient id="hero-trace-grad" x1="0" y1="0" x2="1" y2="0">
@@ -271,12 +316,12 @@ function renderLogin() {
             </g>
           </svg>
         </div>
-        <h1 class="mb-1 text-4xl font-semibold tracking-tight">${escapeHtml(state.controlPanelName)}</h1>
+        <h1 class="mb-1 text-4xl font-semibold tracking-tight tcp-display">${escapeHtml(state.controlPanelName)}</h1>
         <p class="tcp-subtle mb-6">Use your engine API token to unlock the full web control center.</p>
         <form id="login-form" class="grid gap-3">
-          <label class="text-sm text-slate-300">Engine Token</label>
+          <label class="text-sm tcp-subtle">Engine Token</label>
           <input id="token" class="tcp-input" type="password" placeholder="tk_..." autocomplete="off" value="${escapeHtml(savedToken)}" />
-          <label class="inline-flex items-center gap-2 text-xs text-slate-400">
+          <label class="inline-flex items-center gap-2 text-xs tcp-subtle">
             <input id="remember-token" type="checkbox" class="h-4 w-4 accent-slate-400" checked />
             Remember token on this browser
           </label>
@@ -311,6 +356,9 @@ function renderLogin() {
       if (remember) saveToken(token);
       else clearSavedToken();
       await checkAuth();
+      if (state.authed) {
+        renderShell();
+      }
       toast("ok", "Signed in.");
       setRoute("dashboard");
     } catch (err) {
@@ -429,7 +477,7 @@ function renderShell() {
   clearCleanup();
 
   app.innerHTML = `
-    <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[260px_1fr]">
+    <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[270px_1fr]">
       <aside class="tcp-sidebar p-4">
         <div class="tcp-brand-tile mb-4 flex items-center gap-3 rounded-xl p-3">
           <div class="tcp-brand-avatar grid h-10 w-10 place-items-center overflow-hidden rounded-xl">
@@ -445,27 +493,41 @@ function renderShell() {
           </div>
         </div>
         <nav id="nav" class="grid gap-1"></nav>
-        <div class="mt-4 border-t border-slate-700/40 pt-4">
+        ${
+          requiresProviderWizard()
+            ? `<div class="tcp-onboarding-lock mt-3 rounded-xl p-3 text-xs">
+                 <div class="font-semibold text-amber-300">Setup Required</div>
+                 <p class="mt-1 tcp-subtle">Configure provider and default model in Settings to unlock all sections.</p>
+               </div>`
+            : ""
+        }
+        <div class="mt-4 border-t border-slate-700/40 pt-4 tcp-sidebar-footer">
           <button id="logout-btn" class="tcp-btn w-full"><i data-lucide="log-out"></i> Logout</button>
         </div>
       </aside>
-      <main class="min-w-0 p-3 md:p-4">
-        <section id="view" class="grid h-full gap-4"></section>
+      <main class="min-w-0 p-3 md:p-5">
+        <section id="view" class="grid h-full gap-4 tcp-view-surface"></section>
       </main>
     </div>
   `;
 
   const nav = byId("nav");
+  const providerLocked = requiresProviderWizard();
   nav.innerHTML = NAV_ROUTES.map(
-    ([id, label, icon]) => `
-      <button data-route="${id}" class="nav-item ${id === state.route ? "active" : ""}">
+    ([id, label, icon]) => {
+      const locked = providerLocked && id !== "settings";
+      return `<button data-route="${id}" class="nav-item ${id === state.route ? "active" : ""} ${locked ? "locked" : ""}" ${locked ? "disabled aria-disabled=\"true\"" : ""}>
         <i data-lucide="${icon}"></i><span>${label}</span>
       </button>
-    `
+    `;
+    }
   ).join("");
 
   nav.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => setRoute(btn.dataset.route));
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      setRoute(btn.dataset.route);
+    });
   });
 
   byId("logout-btn").addEventListener("click", async () => {
@@ -491,7 +553,13 @@ async function renderDashboardIfAuthLost() {
 }
 
 window.addEventListener("hashchange", () => {
-  const nextRoute = ensureRoute(routeFromHash(), ROUTES);
+  const requestedRoute = ensureRoute(routeFromHash(), ROUTES);
+  const nextRoute =
+    requiresProviderWizard() && requestedRoute !== "settings" ? "settings" : requestedRoute;
+  if (nextRoute !== requestedRoute && window.location.hash !== "#/settings?tab=general") {
+    window.location.hash = "#/settings?tab=general";
+    return;
+  }
   const routeChanged = nextRoute !== state.route;
   state.route = nextRoute;
   if (!state.authed) {
@@ -528,8 +596,7 @@ async function boot() {
   if (!state.authed) return renderLogin();
 
   renderShell();
-  if (state.needsProviderOnboarding && state.route === "dashboard") {
-    toast("info", "Complete provider setup to start using chat/agents.");
+  if (state.needsProviderOnboarding) {
     setRoute("settings");
   }
 
