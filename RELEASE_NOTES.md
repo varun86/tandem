@@ -180,6 +180,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `capabilities_bindings_get`, `capabilities_bindings_put`, `capabilities_discovery`, `capabilities_resolve`
   - Added preset API helpers:
     - `presets_index`, `presets_compose_preview`, `presets_capability_summary`, `presets_fork`, `presets_override_put`
+  - Added desktop command-first preset builder flows in TUI:
+    - `/preset index`
+    - `/preset agent compose <base_prompt> :: <fragments_json>`
+    - `/preset agent summary required=<csv> [:: optional=<csv>]`
+    - `/preset agent fork <source_path> [target_id]`
+    - `/preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]`
+    - `/preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]`
 
 - Control Panel Pack Library UI (`packages/tandem-control-panel`)
   - Added new `Packs` route in left nav.

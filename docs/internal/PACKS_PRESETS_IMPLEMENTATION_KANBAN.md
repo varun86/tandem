@@ -57,10 +57,10 @@ Owner: Core Runtime + Product Architecture
 
 ## Active Backlog
 
-- [ ] Desktop native surfaces for preset builders (control-panel parity currently complete; desktop reuses backend/API contracts)
+- [x] Desktop native surfaces for preset builders (command-first in TUI; backed by shared preset APIs)
   - [x] TUI engine client preset API methods (`presets_index`, `presets_compose_preview`, `presets_capability_summary`, `presets_fork`, `presets_override_put`)
-  - [ ] Add desktop commands/views for agent preset compose/summary/fork flows
-  - [ ] Add desktop commands/views for automation task-agent binding summary/save flows
+  - [x] Add desktop commands/views for agent preset compose/summary/fork flows
+  - [x] Add desktop commands/views for automation task-agent binding summary/save flows
 
 ## Done
 

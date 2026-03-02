@@ -2657,6 +2657,199 @@ impl App {
         format!("{}.{}.{}", version.0, version.1, version.2)
     }
 
+    fn parse_capability_csv(raw: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for part in raw.split(',') {
+            let item = part.trim();
+            if item.is_empty() {
+                continue;
+            }
+            if seen.insert(item.to_string()) {
+                out.push(item.to_string());
+            }
+        }
+        out
+    }
+
+    fn parse_required_optional_segments(raw: &str) -> (Vec<String>, Vec<String>) {
+        let mut required = Vec::new();
+        let mut optional = Vec::new();
+        for segment in raw.split("::") {
+            let trimmed = segment.trim();
+            if let Some(value) = trimmed.strip_prefix("required=") {
+                required = Self::parse_capability_csv(value);
+            } else if let Some(value) = trimmed.strip_prefix("optional=") {
+                optional = Self::parse_capability_csv(value);
+            } else {
+                for token in trimmed.split_whitespace() {
+                    if let Some(value) = token.strip_prefix("required=") {
+                        required = Self::parse_capability_csv(value);
+                    } else if let Some(value) = token.strip_prefix("optional=") {
+                        optional = Self::parse_capability_csv(value);
+                    }
+                }
+            }
+        }
+        optional.retain(|cap| !required.iter().any(|req| req == cap));
+        (required, optional)
+    }
+
+    fn caps_from_value(value: Option<&Value>) -> Vec<String> {
+        match value {
+            Some(Value::Array(items)) => {
+                let joined = items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                Self::parse_capability_csv(&joined)
+            }
+            Some(Value::String(text)) => Self::parse_capability_csv(text),
+            _ => Vec::new(),
+        }
+    }
+
+    fn normalize_automation_tasks(tasks: &Value) -> Result<Vec<Value>, String> {
+        let Some(items) = tasks.as_array() else {
+            return Err("tasks JSON must be an array of objects".to_string());
+        };
+        let mut normalized = Vec::new();
+        for item in items {
+            let Some(obj) = item.as_object() else {
+                return Err("each task in tasks JSON must be an object".to_string());
+            };
+            let required = Self::caps_from_value(obj.get("required"));
+            let optional = Self::caps_from_value(obj.get("optional"))
+                .into_iter()
+                .filter(|cap| !required.iter().any(|req| req == cap))
+                .collect::<Vec<_>>();
+            let id = obj
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| format!("step_{}", normalized.len() + 1));
+            let agent_id = obj
+                .get("agent_id")
+                .or_else(|| obj.get("agent_preset"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            normalized.push(json!({
+                "id": id,
+                "agent_id": agent_id,
+                "required": required,
+                "optional": optional,
+            }));
+        }
+        Ok(normalized)
+    }
+
+    fn automation_override_yaml(id: &str, tasks: &[Value], summary: &Value) -> String {
+        let required = summary
+            .get("automation")
+            .and_then(|v| v.get("required"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let optional = summary
+            .get("automation")
+            .and_then(|v| v.get("optional"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut lines = vec![
+            format!("id: {}", id),
+            "version: 0.1.0".to_string(),
+            "publisher: local.user".to_string(),
+            "description: Project override automation preset".to_string(),
+            "tags:".to_string(),
+            "  - override".to_string(),
+            "tasks:".to_string(),
+        ];
+        if tasks.is_empty() {
+            lines.push("  - id: step_1".to_string());
+            lines.push("    agent_preset:".to_string());
+            lines.push("    capabilities:".to_string());
+            lines.push("      required: []".to_string());
+            lines.push("      optional: []".to_string());
+        } else {
+            for task in tasks {
+                let task_id = task
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("step")
+                    .trim();
+                let agent = task
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                lines.push(format!("  - id: {}", task_id));
+                lines.push(format!("    agent_preset: {}", agent));
+                lines.push("    capabilities:".to_string());
+                lines.push("      required:".to_string());
+                if let Some(req) = task.get("required").and_then(|v| v.as_array()) {
+                    if req.is_empty() {
+                        lines.push("        -".to_string());
+                    } else {
+                        for cap in req {
+                            let cap = cap.as_str().unwrap_or("").trim();
+                            if cap.is_empty() {
+                                continue;
+                            }
+                            lines.push(format!("        - {}", cap));
+                        }
+                    }
+                } else {
+                    lines.push("        -".to_string());
+                }
+                lines.push("      optional:".to_string());
+                if let Some(opt) = task.get("optional").and_then(|v| v.as_array()) {
+                    if opt.is_empty() {
+                        lines.push("        -".to_string());
+                    } else {
+                        for cap in opt {
+                            let cap = cap.as_str().unwrap_or("").trim();
+                            if cap.is_empty() {
+                                continue;
+                            }
+                            lines.push(format!("        - {}", cap));
+                        }
+                    }
+                } else {
+                    lines.push("        -".to_string());
+                }
+            }
+        }
+        lines.push("capabilities:".to_string());
+        lines.push("  required:".to_string());
+        if required.is_empty() {
+            lines.push("    -".to_string());
+        } else {
+            for cap in required {
+                let cap = cap.as_str().unwrap_or("").trim();
+                if !cap.is_empty() {
+                    lines.push(format!("    - {}", cap));
+                }
+            }
+        }
+        lines.push("  optional:".to_string());
+        if optional.is_empty() {
+            lines.push("    -".to_string());
+        } else {
+            for cap in optional {
+                let cap = cap.as_str().unwrap_or("").trim();
+                if !cap.is_empty() {
+                    lines.push(format!("    - {}", cap));
+                }
+            }
+        }
+        lines.push(String::new());
+        lines.join("\n")
+    }
+
     fn desired_engine_version() -> Option<(u64, u64, u64)> {
         Self::parse_semver_triplet(env!("CARGO_PKG_VERSION"))
     }
@@ -4062,15 +4255,15 @@ impl App {
                 // Open docs in default browser
                 #[cfg(target_os = "windows")]
                 let _ = std::process::Command::new("cmd")
-                    .args(["/C", "start", "https://tandem.ai/docs"])
+                    .args(["/C", "start", "https://tandem.docs.frumu.ai/"])
                     .spawn();
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("open")
-                    .arg("https://tandem.ai/docs")
+                    .arg("https://tandem.docs.frumu.ai/")
                     .spawn();
                 #[cfg(target_os = "linux")]
                 let _ = std::process::Command::new("xdg-open")
-                    .arg("https://tandem.ai/docs")
+                    .arg("https://tandem.docs.frumu.ai/")
                     .spawn();
             }
             Action::CopyLastAssistant => {
@@ -6661,6 +6854,20 @@ MISSIONS:
   /agent-team approve tool <request_id>    Approve tool permission request
   /agent-team deny tool <request_id>       Deny tool permission request
 
+PRESETS:
+  /preset index
+                                           List layered preset counts
+  /preset agent compose <base_prompt> :: <fragments_json>
+                                           Deterministic prompt compose preview
+  /preset agent summary required=<csv> [:: optional=<csv>]
+                                           Compute agent capability summary
+  /preset agent fork <source_path> [target_id]
+                                           Fork source preset into project override
+  /preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]
+                                           Compute automation capability summary
+  /preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]
+                                           Save automation preset override from task-agent bindings
+
 CONFIG:
   /config            Show configuration
 
@@ -8610,6 +8817,234 @@ MULTI-AGENT KEYS:
                     _ => {
                         "Usage: /agent-team [summary|missions|instances [mission_id]|approvals|bindings [team]|approve <spawn|tool> <id> [reason]|deny <spawn|tool> <id> [reason]]".to_string()
                     }
+                }
+            }
+
+            "preset" | "presets" => {
+                let Some(client) = &self.client else {
+                    return "Engine client not connected.".to_string();
+                };
+                let sub = args.first().copied().unwrap_or("help").to_ascii_lowercase();
+                match sub.as_str() {
+                    "index" => match client.presets_index().await {
+                        Ok(index) => format!(
+                            "Preset index:\n  skill_modules: {}\n  agent_presets: {}\n  automation_presets: {}\n  generated_at_ms: {}",
+                            index.skill_modules.len(),
+                            index.agent_presets.len(),
+                            index.automation_presets.len(),
+                            index.generated_at_ms
+                        ),
+                        Err(err) => format!("Failed to load preset index: {}", err),
+                    },
+                    "agent" => {
+                        let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
+                        match action.as_str() {
+                            "compose" => {
+                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                                let mut pieces = tail.splitn(2, "::");
+                                let base_prompt = pieces.next().unwrap_or("").trim();
+                                let fragments_raw = pieces.next().unwrap_or("").trim();
+                                if base_prompt.is_empty() || fragments_raw.is_empty() {
+                                    return "Usage: /preset agent compose <base_prompt> :: <fragments_json>".to_string();
+                                }
+                                let fragments_json = match serde_json::from_str::<Value>(fragments_raw) {
+                                    Ok(value) if value.is_array() => value,
+                                    Ok(_) => return "fragments_json must be a JSON array of {id,phase,content}".to_string(),
+                                    Err(err) => return format!("Invalid fragments_json: {}", err),
+                                };
+                                let request = json!({
+                                    "base_prompt": base_prompt,
+                                    "fragments": fragments_json,
+                                });
+                                match client.presets_compose_preview(request).await {
+                                    Ok(payload) => {
+                                        let composition = payload.get("composition").cloned().unwrap_or(payload);
+                                        format!(
+                                            "Agent compose preview:\n{}",
+                                            serde_json::to_string_pretty(&composition)
+                                                .unwrap_or_else(|_| "{}".to_string())
+                                        )
+                                    }
+                                    Err(err) => format!("Compose preview failed: {}", err),
+                                }
+                            }
+                            "summary" => {
+                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                                let (required, optional) = Self::parse_required_optional_segments(&tail);
+                                let request = json!({
+                                    "agent": {
+                                        "required": required,
+                                        "optional": optional,
+                                    },
+                                    "tasks": [],
+                                });
+                                match client.presets_capability_summary(request).await {
+                                    Ok(payload) => {
+                                        let summary = payload.get("summary").cloned().unwrap_or(payload);
+                                        format!(
+                                            "Agent capability summary:\n{}",
+                                            serde_json::to_string_pretty(&summary)
+                                                .unwrap_or_else(|_| "{}".to_string())
+                                        )
+                                    }
+                                    Err(err) => format!("Capability summary failed: {}", err),
+                                }
+                            }
+                            "fork" => {
+                                if args.len() < 3 {
+                                    return "Usage: /preset agent fork <source_path> [target_id]".to_string();
+                                }
+                                let source_path = args[2];
+                                let target_id = args.get(3).copied();
+                                let request = json!({
+                                    "kind": "agent_preset",
+                                    "source_path": source_path,
+                                    "target_id": target_id,
+                                });
+                                match client.presets_fork(request).await {
+                                    Ok(payload) => {
+                                        format!(
+                                            "Forked agent preset override:\n{}",
+                                            serde_json::to_string_pretty(&payload)
+                                                .unwrap_or_else(|_| "{}".to_string())
+                                        )
+                                    }
+                                    Err(err) => format!("Agent preset fork failed: {}", err),
+                                }
+                            }
+                            _ => "Usage: /preset agent <compose|summary|fork> ...".to_string(),
+                        }
+                    }
+                    "automation" => {
+                        let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
+                        match action.as_str() {
+                            "summary" => {
+                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                                let segments = tail
+                                    .split("::")
+                                    .map(str::trim)
+                                    .filter(|part| !part.is_empty())
+                                    .collect::<Vec<_>>();
+                                if segments.is_empty() {
+                                    return "Usage: /preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string();
+                                }
+                                let tasks_json = match serde_json::from_str::<Value>(segments[0]) {
+                                    Ok(value) => value,
+                                    Err(err) => return format!("Invalid tasks_json: {}", err),
+                                };
+                                let tasks = match Self::normalize_automation_tasks(&tasks_json) {
+                                    Ok(items) => items,
+                                    Err(err) => return err,
+                                };
+                                let (required, optional) = if segments.len() > 1 {
+                                    Self::parse_required_optional_segments(&segments[1..].join(" :: "))
+                                } else {
+                                    (Vec::new(), Vec::new())
+                                };
+                                let capability_tasks = tasks
+                                    .iter()
+                                    .map(|task| {
+                                        json!({
+                                            "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
+                                            "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+                                let request = json!({
+                                    "agent": {
+                                        "required": required,
+                                        "optional": optional,
+                                    },
+                                    "tasks": capability_tasks,
+                                });
+                                match client.presets_capability_summary(request).await {
+                                    Ok(payload) => {
+                                        let summary = payload.get("summary").cloned().unwrap_or(payload);
+                                        format!(
+                                            "Automation capability summary ({} tasks):\n{}",
+                                            tasks.len(),
+                                            serde_json::to_string_pretty(&summary)
+                                                .unwrap_or_else(|_| "{}".to_string())
+                                        )
+                                    }
+                                    Err(err) => format!("Automation summary failed: {}", err),
+                                }
+                            }
+                            "save" => {
+                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                                let segments = tail
+                                    .split("::")
+                                    .map(str::trim)
+                                    .filter(|part| !part.is_empty())
+                                    .collect::<Vec<_>>();
+                                if segments.len() < 2 {
+                                    return "Usage: /preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string();
+                                }
+                                let id = segments[0];
+                                if id.is_empty() {
+                                    return "Automation preset id is required.".to_string();
+                                }
+                                let tasks_json = match serde_json::from_str::<Value>(segments[1]) {
+                                    Ok(value) => value,
+                                    Err(err) => return format!("Invalid tasks_json: {}", err),
+                                };
+                                let tasks = match Self::normalize_automation_tasks(&tasks_json) {
+                                    Ok(items) => items,
+                                    Err(err) => return err,
+                                };
+                                let (required, optional) = if segments.len() > 2 {
+                                    Self::parse_required_optional_segments(&segments[2..].join(" :: "))
+                                } else {
+                                    (Vec::new(), Vec::new())
+                                };
+                                let capability_tasks = tasks
+                                    .iter()
+                                    .map(|task| {
+                                        json!({
+                                            "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
+                                            "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+                                let summary_request = json!({
+                                    "agent": {
+                                        "required": required,
+                                        "optional": optional,
+                                    },
+                                    "tasks": capability_tasks,
+                                });
+                                let summary_payload = match client
+                                    .presets_capability_summary(summary_request)
+                                    .await
+                                {
+                                    Ok(payload) => payload,
+                                    Err(err) => return format!("Automation summary failed: {}", err),
+                                };
+                                let summary = summary_payload
+                                    .get("summary")
+                                    .cloned()
+                                    .unwrap_or_else(|| json!({}));
+                                let yaml = Self::automation_override_yaml(id, &tasks, &summary);
+                                match client
+                                    .presets_override_put("automation_preset", id, &yaml)
+                                    .await
+                                {
+                                    Ok(payload) => {
+                                        format!(
+                                            "Saved automation preset override `{}` with {} task(s).\n{}",
+                                            id,
+                                            tasks.len(),
+                                            serde_json::to_string_pretty(&payload)
+                                                .unwrap_or_else(|_| "{}".to_string())
+                                        )
+                                    }
+                                    Err(err) => format!("Automation override save failed: {}", err),
+                                }
+                            }
+                            _ => "Usage: /preset automation <summary|save> ...".to_string(),
+                        }
+                    }
+                    _ => "Usage: /preset <index|agent|automation> ...".to_string(),
                 }
             }
 
