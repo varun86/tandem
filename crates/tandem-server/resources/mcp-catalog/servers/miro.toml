@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.miro"
+slug = "miro"
+name = "Miro"
+description = "Access and create new content on Miro boards"
+documentation_url = "https://developers.miro.com/docs/miro-mcp"
+directory_url = "https://claude.ai/directory/72480fb8-32ed-4075-b1c4-79e09c858b29"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["development", "productivity"]
+tool_names = ["board_get_items", "board_get_image_download_url", "board_get_image_data", "context_get_board_docs", "draft_diagram_new"]
+visibility = ["commercial"]
+
+[server]
+name = "io.github.miroapp/mcp-server"
+version = "1.0.1"
+display_name = "Miro"
+transport_url = "https://mcp.miro.com/"
+
+[registry]
+uuid = "72480fb8-32ed-4075-b1c4-79e09c858b29"
+rank = 20
+author_name = "Miro"
+author_url = "https://miro.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.miro.com/"

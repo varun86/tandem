@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.harmonic"
+slug = "harmonic"
+name = "Harmonic"
+description = "Discover, research, and enrich companies and people"
+documentation_url = "https://support.harmonic.ai/en/articles/12785899-harmonic-mcp-server-getting-started-guide"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["enrich_company", "enrich_person", "get_saved_search_companies_results", "get_saved_search_companies_net_new", "get_saved_search_people_results", "get_saved_search_people_net_new", "get_saved_search_investors_results", "get_saved_search_investors_net_new", "search_companies_natural_language", "typeahead_company_name", "get_company_user_connections", "list_people_in_team_network", "list_companies_in_team_network", "get_company_list_entries", "create_company_list", "add_companies_to_list", "get_people_list_entries", "create_people_list", "add_people_to_list", "get_investor_by_canonical", "get_companies_by_id", "get_persons_by_id", "list_saved_searches"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.harmonic.mcp.api/harmonic"
+version = "1.0.0"
+display_name = "Harmonic"
+transport_url = "https://mcp.api.harmonic.ai"
+
+[registry]
+uuid = "27e16103-e402-4223-b8b2-a7324bfdebab"
+rank = 120
+author_name = "Harmonic"
+author_url = "https://harmonic.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.api.harmonic.ai"

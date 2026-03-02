@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.cms-coverage"
+slug = "cms-coverage"
+name = "CMS Coverage"
+description = "Access the CMS Coverage Database"
+documentation_url = "https://docs.mcp.deepsense.ai/guides/cms_coverage.html"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["get_contractors", "get_ncd", "sad_exclusion_list", "search_articles", "search_lcds", "search_nca_cals", "search_ncds", "whats_new_national"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.deepsense.mcp/cms-coverage"
+version = "1.0.0"
+display_name = "CMS Coverage"
+transport_url = "https://mcp.deepsense.ai/cms_coverage/mcp"
+
+[registry]
+uuid = "57dd8e8a-f030-4bb7-a9ed-4098933bd70b"
+rank = 54
+author_name = "deepsense.ai"
+author_url = "https://deepsense.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.deepsense.ai/cms_coverage/mcp"

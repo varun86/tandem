@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.lastminute-com"
+slug = "lastminute-com"
+name = "lastminute.com"
+description = "Search, compare and book flights, dynamic packages (flight + hotel) and hotels across global airlines and hotel suppliers."
+documentation_url = "https://mcp.lastminute.com/docs"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_flights"]
+visibility = ["commercial"]
+
+[server]
+name = "com.lastminute.mcp/lastminute-com"
+version = "1.0.0"
+display_name = "lastminute.com"
+transport_url = "https://mcp.lastminute.com/mcp"
+
+[registry]
+uuid = "3ae97a2c-ee7f-4dba-8e0c-23662d036124"
+rank = 97
+author_name = "lastminute.com"
+author_url = "https://www.lastminute.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.lastminute.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.legalzoom"
+slug = "legalzoom"
+name = "LegalZoom"
+description = "Attorney guidance & tools for business & personal needs"
+documentation_url = "https://www.legalzoom.com/tools/mcp-docs"
+directory_url = "https://claude.ai/directory/d87c0d44-2615-4af6-b3ac-ba22264496b2"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["productivity"]
+tool_names = ["check-attorney-consultation-entitlements", "get_consultation_topics", "get_valid_locations", "get_attorney_availability", "request_attorney_review", "attach_document_to_attorney_review", "prepare_document_upload", "add-bap-to-cart"]
+visibility = ["commercial"]
+
+[server]
+name = "com.legalzoom/mcp"
+version = "1.0.0"
+display_name = "LegalZoom"
+transport_url = "https://www.legalzoom.com/mcp/claude/v1"
+
+[registry]
+uuid = "d87c0d44-2615-4af6-b3ac-ba22264496b2"
+rank = 137
+author_name = "LegalZoom"
+author_url = "https://www.legalzoom.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://www.legalzoom.com/mcp/claude/v1"

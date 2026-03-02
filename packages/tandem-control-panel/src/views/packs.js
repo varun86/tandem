@@ -48,6 +48,13 @@ export async function renderPacks(ctx) {
       state.client?.capabilities?.discovery
         ? state.client.capabilities.discovery()
         : api("/api/engine/capabilities/discovery", { method: "GET" }),
+    readiness: (request) =>
+      state.client?.capabilities?.readiness
+        ? state.client.capabilities.readiness(request)
+        : api("/api/engine/capabilities/readiness", {
+            method: "POST",
+            body: JSON.stringify(request || {}),
+          }),
   };
   const parseCsv = (value) =>
     String(value || "")
@@ -182,6 +189,23 @@ export async function renderPacks(ctx) {
     }
     el.classList.remove("hidden");
     el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  };
+
+  const assertReadiness = async (workflowId, required, optional = []) => {
+    const payload = await capabilitiesApi.readiness({
+      workflow_id: workflowId,
+      required_capabilities: unique(required),
+      optional_capabilities: unique(optional),
+    });
+    const readiness = payload?.readiness || payload || {};
+    if (readiness?.runnable) return readiness;
+    const issues = asArray(readiness?.blocking_issues)
+      .map((row) => String(row?.message || row?.code || "").trim())
+      .filter(Boolean);
+    const message = issues.length
+      ? issues.join(" | ")
+      : "Capability readiness failed. Connect/refresh MCP servers and verify bindings.";
+    throw new Error(message);
   };
 
   const selectedModuleIds = () => {
@@ -695,6 +719,12 @@ export async function renderPacks(ctx) {
       return;
     }
     const caps = computeAgentCapabilityInput();
+    try {
+      await assertReadiness(`agent:${targetId}`, caps.required, caps.optional);
+    } catch (e) {
+      toast("err", `Readiness blocked save: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     const moduleIds = selectedModuleIds();
     const basePrompt = String(byId("agent-builder-base")?.value || "").trim();
     const yaml = [
@@ -793,6 +823,8 @@ export async function renderPacks(ctx) {
       return;
     }
     let summary = null;
+    let automationRequired = [];
+    let automationOptional = [];
     try {
       const selectedAgentId = String(byId("agent-builder-source")?.value || "").trim();
       const selectedAgent = findAgentPreset(selectedAgentId);
@@ -812,8 +844,16 @@ export async function renderPacks(ctx) {
         body: JSON.stringify({ agent, tasks }),
       });
       summary = summaryResp?.summary || null;
+      automationRequired = unique(asArray(summary?.automation?.required));
+      automationOptional = unique(asArray(summary?.automation?.optional));
     } catch {
       summary = null;
+    }
+    try {
+      await assertReadiness(`automation:${id}`, automationRequired, automationOptional);
+    } catch (e) {
+      toast("err", `Readiness blocked save: ${e instanceof Error ? e.message : String(e)}`);
+      return;
     }
 
     const yaml = [

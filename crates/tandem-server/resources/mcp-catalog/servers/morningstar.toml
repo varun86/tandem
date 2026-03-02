@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.morningstar"
+slug = "morningstar"
+name = "Morningstar"
+description = "Up-to-date investment and market insights"
+documentation_url = "https://developer.morningstar.com/direct-web-services/documentation/mcp-server/morningstar-mcp-server"
+directory_url = "https://claude.ai/directory/2e98be30-8dba-486e-94a9-9a01d34678e2"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["morningstar-id-lookup-tool", "morningstar-data-tool", "morningstar-analyst-research-tool", "morningstar-articles-tool", "morningstar-screener-tool", "morningstar-fund-holdings-tool"]
+visibility = ["commercial"]
+
+[server]
+name = "com.morningstar.mcp/morningstar"
+version = "1.0.0"
+display_name = "Morningstar"
+transport_url = "https://mcp.morningstar.com/mcp"
+
+[registry]
+uuid = "2e98be30-8dba-486e-94a9-9a01d34678e2"
+rank = 51
+author_name = "Morningstar"
+author_url = "https://www.morningstar.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:17 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.morningstar.com/mcp"

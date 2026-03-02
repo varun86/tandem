@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.honeycomb"
+slug = "honeycomb"
+name = "Honeycomb"
+description = "Query and explore observability data and SLOs"
+documentation_url = "https://docs.honeycomb.io/troubleshoot/product-lifecycle/beta/mcp/"
+directory_url = "https://claude.ai/directory/63125588-06e1-4567-8130-f5a26ed1d20f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["data"]
+tool_names = ["feedback", "get_dataset", "get_dataset_columns", "get_environment", "get_query_history", "get_slos", "get_team_info", "get_trace", "get_triggers", "list_datasets", "list_environments", "run_unsaved_query", "search_columns"]
+visibility = ["commercial"]
+
+[server]
+name = "io.honeycomb.mcp/honeycomb"
+version = "1.0.0"
+display_name = "Honeycomb"
+transport_url = "https://mcp.honeycomb.io/mcp"
+
+[registry]
+uuid = "63125588-06e1-4567-8130-f5a26ed1d20f"
+rank = 105
+author_name = "honeycomb.io"
+author_url = "https://www.honeycomb.io"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:18 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.honeycomb.io/mcp"

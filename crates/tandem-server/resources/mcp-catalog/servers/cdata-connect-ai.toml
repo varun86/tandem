@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.cdata-connect-ai"
+slug = "cdata-connect-ai"
+name = "CData Connect AI"
+description = "Managed MCP platform for 350 sources"
+documentation_url = "https://cloud.cdata.com/docs/Claude-Client.html"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["getTables", "getSchemas", "getProcedures", "getProcedureParameters", "getPrimaryKeys", "getIndexes", "getImportedKeys", "getExportedKeys", "getColumns", "getCatalogs", "execData", "queryData"]
+visibility = ["commercial"]
+
+[server]
+name = "com.cdata.cloud.mcp/cdata-connect-ai"
+version = "1.0.0"
+display_name = "CData Connect AI"
+transport_url = "https://mcp.cloud.cdata.com/mcp"
+
+[registry]
+uuid = "9df925ce-a2fc-42f1-93dd-748516052caf"
+rank = 93
+author_name = "CData"
+author_url = "https://www.cdata.com/ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.cloud.cdata.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.pitchbook"
+slug = "pitchbook"
+name = "PitchBook Premium"
+description = "PitchBook data, embedded in the way you work."
+documentation_url = "https://help.pitchbook.com/s/article/PitchBook-Premium-for-Claude-by-Anthropic"
+directory_url = "https://claude.ai/directory/79c545e3-8878-4557-bcbb-3add11c86890"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["pitchbook_search", "pitchbook_get_profile", "pitchbook_get_company_deals", "pitchbook_get_company_investors", "pitchbook_get_company_financials", "pitchbook_get_investor_investments", "pitchbook_get_deal_participants", "pitchbook_get_deal_cap_table", "pitchbook_get_team_members", "pitchbook_get_fund_lp_commitments", "pitchbook_get_investor_funds"]
+visibility = ["commercial"]
+
+[server]
+name = "com.pitchbook.mcp.premium/pitchbook-premium"
+version = "1.0.0"
+display_name = "PitchBook Premium"
+transport_url = "https://premium.mcp.pitchbook.com/mcp"
+
+[registry]
+uuid = "79c545e3-8878-4557-bcbb-3add11c86890"
+rank = 40
+author_name = "PitchBook"
+author_url = "https://www.pitchbook.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://premium.mcp.pitchbook.com/mcp"

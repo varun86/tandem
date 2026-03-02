@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.wordpress-com"
+slug = "wordpress-com"
+name = "WordPress.com"
+description = "Secure AI access to manage your WordPress.com sites"
+documentation_url = "https://developer.wordpress.com/docs/mcp/"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["user-profile", "user-sites", "user-domains", "user-achievements", "user-connections", "user-notifications", "user-notifications-inbox", "user-security", "user-subscriptions", "site-users", "posts-search", "post-get", "site-comments-search", "site-plugins", "site-settings", "site-statistics"]
+visibility = ["commercial"]
+
+[server]
+name = "com.wordpress.public-api/wordpress-com"
+version = "1.0.0"
+display_name = "WordPress.com"
+transport_url = "https://public-api.wordpress.com/wpcom/v2/mcp/v1"
+
+[registry]
+uuid = "e6fc4c18-ea48-4752-9912-7a13bf9999ed"
+rank = 49
+author_name = "Automattic (WordPress.com)"
+author_url = "https://wordpress.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://public-api.wordpress.com/wpcom/v2/mcp/v1"

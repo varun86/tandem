@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.bigquery"
+slug = "bigquery"
+name = "Google Cloud BigQuery"
+description = "BigQuery: Advanced analytical insights for agents"
+documentation_url = "https://cloud.google.com/bigquery/docs/use-bigquery-mcp"
+directory_url = "https://claude.ai/directory/7c316b77-98a0-4dbb-8b54-a96ae26a884f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_dataset_ids", "get_dataset_info", "list_table_ids", "get_table_info", "execute_sql"]
+visibility = ["commercial"]
+
+[server]
+name = "com.google.cloud/bigquery"
+version = "1.0.0"
+display_name = "Google Cloud BigQuery"
+transport_url = "https://bigquery.googleapis.com/mcp"
+
+[registry]
+uuid = "7c316b77-98a0-4dbb-8b54-a96ae26a884f"
+rank = 55
+author_name = "Google"
+author_url = "https://google.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://bigquery.googleapis.com/mcp"

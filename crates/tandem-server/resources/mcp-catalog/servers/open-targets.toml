@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.open-targets"
+slug = "open-targets"
+name = "Open Targets"
+description = "Drug target discovery and prioritisation platform"
+documentation_url = "https://github.com/opentargets/open-targets-platform-mcp"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_open_targets_graphql_schema", "search_entities", "query_open_targets_graphql", "batch_query_open_targets_graphql"]
+visibility = ["commercial"]
+
+[server]
+name = "org.opentargets.platform.mcp/open-targets"
+version = "1.0.0"
+display_name = "Open Targets"
+transport_url = "https://mcp.platform.opentargets.org/mcp"
+
+[registry]
+uuid = "097ab77c-338a-421c-8ba7-3960c928a540"
+rank = 65
+author_name = "OpenTargets"
+author_url = "https://www.opentargets.org"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.platform.opentargets.org/mcp"

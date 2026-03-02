@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.mt-newswires"
+slug = "mt-newswires"
+name = "MT Newswires"
+description = "Trusted real-time global financial news provider"
+documentation_url = "https://console.blueskyapi.com/docs/EDGE/news/MT_NEWSWIRES_Global#mcp"
+directory_url = "https://claude.ai/directory/441c79ad-8a68-4d73-9263-7cfcadd5d8cf"
+requires_auth = true
+requires_setup = false
+works_with = ["claude-api", "claude", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["current_date", "search", "fetch", "create_rule", "create_rules", "delete_rule"]
+visibility = ["commercial"]
+
+[server]
+name = "com.blueskyapi.vast-mcp/mt-newswires"
+version = "1.0.0"
+display_name = "MT Newswires"
+transport_url = "https://vast-mcp.blueskyapi.com/mcp"
+
+[registry]
+uuid = "441c79ad-8a68-4d73-9263-7cfcadd5d8cf"
+rank = 92
+author_name = "MT Newswires"
+author_url = "https://www.mtnewswires.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://vast-mcp.blueskyapi.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.chembl"
+slug = "chembl"
+name = "ChEMBL"
+description = "Access the ChEMBL Database"
+documentation_url = "https://docs.mcp.deepsense.ai/guides/chembl.html"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["get_admet", "get_bioactivity", "compound_search", "drug_search", "get_mechanism", "target_search"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.deepsense.mcp/chembl"
+version = "1.0.0"
+display_name = "ChEMBL"
+transport_url = "https://mcp.deepsense.ai/chembl/mcp"
+
+[registry]
+uuid = "711ccc94-754b-4659-903d-d61b29dd781e"
+rank = 56
+author_name = "deepsense.ai"
+author_url = "https://deepsense.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.deepsense.ai/chembl/mcp"

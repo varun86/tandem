@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.visier"
+slug = "visier"
+name = "Visier"
+description = "Find people, productivity and business impact insights"
+documentation_url = "https://docs.visier.com/developer/agents/mcp/mcp-server.htm"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_metrics", "search_analytic_objects", "search_dimensions_for_metric", "search_dimensions_for_analytic_object", "search_filter_dimension_members", "search_analytic_object_properties", "aggregate_metric_values", "list_analytic_object_property_values"]
+visibility = ["commercial"]
+
+[server]
+name = "com.visier.www/visier"
+version = "1.0.0"
+display_name = "Visier"
+transport_url = "{url}"
+
+[registry]
+uuid = "269911aa-9456-45c8-839f-c8d079fe0a5d"
+rank = 164
+author_name = "Visier"
+author_url = "https://www.visier.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

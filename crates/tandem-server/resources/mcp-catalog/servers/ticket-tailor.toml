@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.ticket-tailor"
+slug = "ticket-tailor"
+name = "Ticket Tailor"
+description = "Event platform for managing tickets, orders & more"
+documentation_url = "https://help.tickettailor.com/en/articles/11892797-how-to-connect-ticket-tailor-to-your-favourite-ai-agent"
+directory_url = "https://claude.ai/directory/7a28094f-541d-4ef8-89e2-6abc653d77a2"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["bundle_create", "bundle_delete", "bundle_update", "check_in_create", "check_ins_get", "checkout_form_element_by_id_get", "checkout_form_element_update", "checkout_form_elements_get", "checkout_forms_get", "discount_by_id_get", "discount_create", "discount_delete", "discount_update", "discounts_get", "event_by_id_get", "event_occurrence_by_id_get", "event_occurrence_create", "event_occurrence_delete", "event_occurrence_update", "event_occurrences_get", "event_series_by_id_get", "event_series_create", "event_series_delete", "event_series_get", "event_series_status_change", "event_series_update", "events_get", "hold_by_id_get", "hold_create", "hold_delete", "hold_update", "holds_get", "issued_ticket_by_id_get", "issued_ticket_create", "issued_ticket_void", "issued_tickets_get", "order_by_id_get", "order_confirm_payment", "order_update", "orders_get", "override_create", "override_update", "overrides_get", "overview_get", "ping_get", "product_by_id_get", "product_create", "product_delete", "product_update", "products_get", "store_get", "store_list", "store_update", "ticket_type_create", "ticket_type_delete", "ticket_type_update", "voucher_by_id_get", "voucher_code_void", "voucher_codes_get", "voucher_create", "voucher_delete", "voucher_update", "vouchers_get", "waitlist_signup_delete", "waitlist_signups_get"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.tickettailor/mcp"
+version = "1.0.0"
+display_name = "Ticket Tailor"
+transport_url = "https://mcp.tickettailor.ai/mcp"
+
+[registry]
+uuid = "7a28094f-541d-4ef8-89e2-6abc653d77a2"
+rank = 142
+author_name = "Ticket Tailor"
+author_url = "https://www.tickettailor.com/"
+published_on = "Tue Jan 13 2026 20:19:08 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Tue Jan 13 2026 18:42:36 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.tickettailor.ai/mcp"

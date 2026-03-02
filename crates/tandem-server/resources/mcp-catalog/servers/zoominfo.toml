@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.zoominfo"
+slug = "zoominfo"
+name = "ZoomInfo"
+description = "Enrich contacts & accounts with GTM intelligence"
+documentation_url = "https://docs.zoominfo.com/docs/zi-api-mcp-overview/"
+directory_url = "https://claude.ai/directory/f2cdf1b8-2f75-48a4-8d8c-8d9cce1b8643"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["search_contacts", "enrich_contact", "search_companies", "enrich_company", "lookup"]
+visibility = ["commercial"]
+
+[server]
+name = "com.zoominfo.mcp/zoominfo"
+version = "1.0.0"
+display_name = "ZoomInfo"
+transport_url = "https://mcp.zoominfo.com/mcp"
+
+[registry]
+uuid = "f2cdf1b8-2f75-48a4-8d8c-8d9cce1b8643"
+rank = 45
+author_name = "ZoomInfo Technologies Inc."
+author_url = "https://www.zoominfo.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:17 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.zoominfo.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.asana"
+slug = "asana"
+name = "Asana"
+description = "Connect to Asana to coordinate tasks, projects, and goals"
+documentation_url = "https://developers.asana.com/docs/mcp-server"
+directory_url = "http://claude.ai/directory/41aefcf3-a829-45eb-8cee-d90b93912f57"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["productivity", "communication"]
+tool_names = ["create_project_preview", "create_task_preview", "search_tasks_preview", "get_status_overview", "get_items_for_portfolio", "get_portfolio", "get_portfolios", "get_project", "get_projects", "get_task", "get_tasks", "get_user", "get_workspace_users", "search_objects", "update_task"]
+visibility = ["commercial"]
+
+[server]
+name = "com.asana.mcp/asana"
+version = "1.0.0"
+display_name = "Asana"
+transport_url = "https://mcp.asana.com/v2/mcp"
+
+[registry]
+uuid = "41aefcf3-a829-45eb-8cee-d90b93912f57"
+rank = 17
+author_name = "Asana"
+author_url = "https://asana.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.asana.com/v2/mcp"

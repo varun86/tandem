@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.monday"
+slug = "monday"
+name = "monday.com"
+description = "Manage projects, boards, and workflows in monday.com"
+documentation_url = "https://developer.monday.com/apps/docs/mondaycom-mcp-integration"
+directory_url = "https://claude.ai/directory/49e0f9ba-7d45-4fb6-b098-55eec956fbc6"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing", "productivity"]
+tool_names = ["delete_item", "get_board_items_by_name", "create_item", "create_update", "get_board_schema", "get_users_by_name", "change_item_column_values", "move_item_to_group", "create_board", "create_column", "delete_column", "all_monday_api", "get_graphql_schema", "get_type_details", "create_custom_activity", "create_timeline_item", "fetch_custom_activity", "create_workflow_instructions", "read_docs", "workspace_info"]
+visibility = ["commercial"]
+
+[server]
+name = "com.monday/monday.com"
+version = "0.0.1"
+display_name = "monday.com"
+transport_url = "https://mcp.monday.com/mcp"
+
+[registry]
+uuid = "49e0f9ba-7d45-4fb6-b098-55eec956fbc6"
+rank = 11
+author_name = "monday.com"
+author_url = "https://monday.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:17 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.monday.com/mcp"

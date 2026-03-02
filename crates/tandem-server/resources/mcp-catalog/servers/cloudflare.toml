@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.cloudflare"
+slug = "cloudflare"
+name = "Cloudflare Developer Platform"
+description = "Build applications with compute, storage, and AI"
+documentation_url = "https://www.support.cloudflare.com/"
+directory_url = "http://claude.ai/directory/2d60210c-dd92-4be0-b09c-3662f10445c9"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["code"]
+tool_names = ["accounts_list", "set_active_account", "kv_namespaces_list", "kv_namespace_create", "kv_namespace_delete", "kv_namespace_get", "kv_namespace_update", "workers_list", "workers_get_worker", "workers_get_worker_code", "r2_buckets_list", "r2_bucket_create", "r2_bucket_get", "r2_bucket_delete", "d1_databases_list", "d1_database_create", "d1_database_delete", "d1_database_get", "d1_database_query", "hyperdrive_configs_list", "hyperdrive_config_create", "hyperdrive_config_delete", "hyperdrive_config_get", "hyperdrive_config_edit"]
+visibility = ["commercial"]
+
+[server]
+name = "com.cloudflare.mcp/mcp"
+version = "1.0.0"
+display_name = "Cloudflare Developer Platform"
+transport_url = "https://bindings.mcp.cloudflare.com/mcp"
+
+[registry]
+uuid = "2d60210c-dd92-4be0-b09c-3662f10445c9"
+rank = 35
+author_name = "Cloudflare"
+author_url = "https://cloudflare.com"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:32:45 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://bindings.mcp.cloudflare.com/mcp"

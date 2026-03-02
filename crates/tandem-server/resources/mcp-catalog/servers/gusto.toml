@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.gusto"
+slug = "gusto"
+name = "Gusto"
+description = "Query and analyze your Gusto data"
+documentation_url = "https://docs.gusto.com/app-integrations/docs/mcp"
+directory_url = "https://claude.ai/directory/cf2b53a4-45ef-4541-9425-0116d42286ca"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["get_company", "get_compensation", "get_contractor", "get_contractor_payment", "get_contractor_payment_group", "get_department", "get_employee", "get_home_address", "get_rehire", "get_work_address", "get_job", "get_location", "get_pay_schedule", "get_payroll", "get_time_sheet", "get_token_info", "list_contractor_payment_groups", "list_contractor_payments", "list_contractors", "list_custom_fields", "list_departments", "list_earning_types", "list_employee_custom_fields", "list_employee_employments", "list_employee_home_addresses", "list_employee_jobs", "list_employee_separations", "list_employee_work_addresses", "list_employees", "list_job_compensations", "list_locations", "list_pay_periods", "list_pay_schedule_assignments", "list_pay_schedules", "list_payroll_blockers", "list_payrolls", "list_time_sheets", "query_faq", "calculate_payroll", "submit_payroll", "run_payroll"]
+visibility = ["commercial"]
+
+[server]
+name = "com.gusto/mcp"
+version = "1.0.0"
+display_name = "Gusto"
+transport_url = "https://mcp.api.gusto.com/anthropic"
+
+[registry]
+uuid = "cf2b53a4-45ef-4541-9425-0116d42286ca"
+rank = 158
+author_name = "Gusto"
+author_url = "https://gusto.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "sse"
+url = "https://mcp.api.gusto.com/anthropic"

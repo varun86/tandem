@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.day-ai"
+slug = "day-ai"
+name = "Day AI"
+description = "Analyze & update CRM records"
+documentation_url = "https://day.ai/mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["open_sidebar", "get_share_url", "analyze_before_create_or_update", "create_or_update_person_organization", "create_or_update_opportunity", "create_or_update_pipeline_stage", "update_property_definition", "read_crm_schema", "read_object_history", "search_related_objects", "create_email_draft", "send_email", "create_page", "update_page", "create_view", "keyword_search", "create_action", "get_assistant_actions", "web_search", "send_notification", "dismiss_objects", "update_assistant", "create_custom_property", "create_chart", "backfill_custom_property"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.day/day-ai"
+version = "1.0.0"
+display_name = "Day AI"
+transport_url = "https://day.ai/api/mcp"
+
+[registry]
+uuid = "87d31b20-90c3-42ca-94a7-51270953869d"
+rank = 90
+author_name = "Day AI"
+author_url = "https://day.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://day.ai/api/mcp"

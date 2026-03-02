@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.ramp"
+slug = "ramp"
+name = "Ramp"
+description = "Search, access, and analyze your Ramp financial data"
+documentation_url = "https://docs.ramp.com/developer-api/v1/guides/ramp-mcp-remote"
+directory_url = "https://claude.ai/directory/61bac03c-3f98-4b3c-affb-1b99533fa82c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["execute_query", "clear_table", "load_spend_export", "load_spend_exports", "load_purchase_orders", "load_cards", "load_limits", "load_entities", "load_departments", "load_users", "load_memos", "load_locations", "load_spend_programs", "load_vendors", "get_ramp_categories", "submit_feedback", "get_current_user"]
+visibility = ["commercial"]
+
+[server]
+name = "com.ramp.ramp-mcp-remote/ramp"
+version = "1.0.0"
+display_name = "Ramp"
+transport_url = "https://ramp-mcp-remote.ramp.com/mcp"
+
+[registry]
+uuid = "61bac03c-3f98-4b3c-affb-1b99533fa82c"
+rank = 41
+author_name = "Ramp"
+author_url = "https://ramp.com/"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:31:11 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://ramp-mcp-remote.ramp.com/mcp"

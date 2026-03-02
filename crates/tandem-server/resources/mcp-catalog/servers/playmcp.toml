@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.playmcp"
+slug = "playmcp"
+name = "PlayMCP"
+description = "Connect and use PlayMCP servers in your toolbox"
+documentation_url = "https://www.notion.so/2189b97b4888803dbbdcef264e7eff58"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "com.kakao.playmcp/playmcp"
+version = "1.0.0"
+display_name = "PlayMCP"
+transport_url = "https://playmcp.kakao.com/mcp"
+
+[registry]
+uuid = "34269403-d1cc-468f-8c0d-4bd01e8042c8"
+rank = 136
+author_name = "KAKAO"
+author_url = "https://www.kakaocorp.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://playmcp.kakao.com/mcp"

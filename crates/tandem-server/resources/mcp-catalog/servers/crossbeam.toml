@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.crossbeam"
+slug = "crossbeam"
+name = "Crossbeam"
+description = "Explore partner data and ecosystem insights in Claude"
+documentation_url = "https://help.crossbeam.com/en/articles/12601327-crossbeam-mcp-server-beta"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["find_partners", "get_partner_tags", "get_partner_suggestions", "get_partner_leaderboard", "get_own_populations", "get_partner_populations", "get_account_overlap_info", "get_own_account_info", "search_help_center", "search_blog_site", "search_elg_book"]
+visibility = ["commercial"]
+
+[server]
+name = "com.crossbeam.mcp/crossbeam"
+version = "1.0.0"
+display_name = "Crossbeam"
+transport_url = "https://mcp.crossbeam.com"
+
+[registry]
+uuid = "42ce667a-962d-432c-b667-35f0266ac6b5"
+rank = 85
+author_name = "Crossbeam"
+author_url = "https://crossbeam.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.crossbeam.com"

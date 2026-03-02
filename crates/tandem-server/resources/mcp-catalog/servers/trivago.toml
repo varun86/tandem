@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.trivago"
+slug = "trivago"
+name = "Trivago"
+description = "Find your ideal hotel at the best price."
+documentation_url = "https://mcp.trivago.com/docs"
+directory_url = "https://claude.ai/directory/81cc5080-a204-4aa1-a694-fa868a3c8718"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = []
+tool_names = ["trivago-accommodation-radius-search", "trivago-accommodation-search", "trivago-search-suggestions"]
+visibility = ["commercial"]
+
+[server]
+name = "com.trivago.mcp/trivago"
+version = "1.0.0"
+display_name = "Trivago"
+transport_url = "https://mcp.trivago.com/mcp"
+
+[registry]
+uuid = "81cc5080-a204-4aa1-a694-fa868a3c8718"
+rank = 75
+author_name = "trivago"
+author_url = "https://www.trivago.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.trivago.com/mcp"

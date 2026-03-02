@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.mercury"
+slug = "mercury"
+name = "Mercury"
+description = "Search, analyze and understand your finances on Mercury"
+documentation_url = "https://docs.mercury.com/docs/connecting-mercury-mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["load_account", "load_transaction", "load_recipient", "load_account_statement", "load_accounts_card"]
+visibility = ["commercial"]
+
+[server]
+name = "com.mercury.mcp/mercury"
+version = "1.0.0"
+display_name = "Mercury"
+transport_url = "https://mcp.mercury.com/mcp"
+
+[registry]
+uuid = "9c04294a-d69c-47e9-9fa6-6a0e780caf3a"
+rank = 99
+author_name = "Mercury"
+author_url = "https://mercury.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.mercury.com/mcp"

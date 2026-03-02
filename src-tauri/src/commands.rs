@@ -5734,6 +5734,14 @@ pub async fn mcp_list_tools(state: State<'_, AppState>) -> Result<Vec<McpRemoteT
 }
 
 #[tauri::command]
+pub async fn capability_readiness(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.capability_readiness(request).await
+}
+
+#[tauri::command]
 pub async fn tool_ids(state: State<'_, AppState>) -> Result<Vec<String>> {
     state.sidecar.tool_ids().await
 }

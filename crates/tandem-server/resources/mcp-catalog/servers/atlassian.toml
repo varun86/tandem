@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.atlassian"
+slug = "atlassian"
+name = "Atlassian"
+description = "Access Jira & Confluence from Claude"
+documentation_url = "https://community.atlassian.com/forums/Atlassian-Platform-articles/Using-the-Atlassian-Remote-MCP-Server-beta/ba-p/3005104"
+directory_url = "http://claude.ai/directory/11ba10d9-477b-4988-bd1c-90a7fa680dc1"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["atlassianUserInfo", "getAccessibleAtlassianResources", "getConfluenceSpaces", "getConfluencePage", "getPagesInConfluenceSpace", "getConfluencePageAncestors", "getConfluencePageFooterComments", "getConfluencePageInlineComments", "getConfluencePageDescendants", "createConfluencePage", "updateConfluencePage", "createConfluenceFooterComment", "createConfluenceInlineComment", "searchConfluenceUsingCql", "getJiraIssue", "editJiraIssue", "createJiraIssue", "getTransitionsForJiraIssue", "transitionJiraIssue", "lookupJiraAccountId", "searchJiraIssuesUsingJql", "addCommentToJiraIssue", "getJiraIssueRemoteIssueLinks", "getVisibleJiraProjects", "getJiraProjectIssueTypesMetadataZapier", "getCompassComponents", "getCompassComponent", "getCompassCustomFieldDefinitions", "createCompassCustomFieldDefinition", "createCompassComponent", "createCompassComponentRelationship"]
+visibility = ["commercial"]
+
+[server]
+name = "com.atlassian/atlassian-mcp-server"
+version = "1.1.0"
+display_name = "Atlassian"
+transport_url = "https://mcp.atlassian.com/v1/mcp"
+
+[registry]
+uuid = "11ba10d9-477b-4988-bd1c-90a7fa680dc1"
+rank = 6
+author_name = "Atlassian"
+author_url = "https://atlassian.com"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Feb 09 2026 21:00:00 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.atlassian.com/v1/mcp"

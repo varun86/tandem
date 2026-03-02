@@ -915,6 +915,26 @@ export interface McpActionResponse {
   count?: number | null;
 }
 
+export interface CapabilityReadinessIssue {
+  code: string;
+  message: string;
+  capability_ids?: string[];
+  providers?: string[];
+  tools?: string[];
+}
+
+export interface CapabilityReadinessResult {
+  workflow_id: string;
+  runnable: boolean;
+  missing_required_capabilities?: string[];
+  unbound_capabilities?: string[];
+  missing_servers?: string[];
+  disconnected_servers?: string[];
+  auth_pending_tools?: string[];
+  recommendations?: string[];
+  blocking_issues?: CapabilityReadinessIssue[];
+}
+
 export async function mcpListServers(): Promise<McpServerRecord[]> {
   return invoke("mcp_list_servers");
 }
@@ -941,6 +961,12 @@ export async function mcpRefresh(name: string): Promise<McpActionResponse> {
 
 export async function mcpListTools(): Promise<McpRemoteTool[]> {
   return invoke("mcp_list_tools");
+}
+
+export async function capabilityReadiness(
+  request: Record<string, unknown>
+): Promise<{ readiness: CapabilityReadinessResult }> {
+  return invoke("capability_readiness", { request });
 }
 
 export async function toolIds(): Promise<string[]> {

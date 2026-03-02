@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.jotform"
+slug = "jotform"
+name = "Jotform"
+description = "Create forms & analyze submissions inside Claude"
+documentation_url = "https://www.jotform.com/developers/mcp/"
+directory_url = "https://claude.ai/directory/aed7e2be-868e-4046-9e12-5c917b4e6b97"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["search", "create_form", "fetch", "edit_form", "create_submission", "assign_form"]
+visibility = ["commercial"]
+
+[server]
+name = "com.jotform/mcp"
+version = "1.0.0"
+display_name = "Jotform"
+transport_url = "https://mcp.jotform.com/mcp-app"
+
+[registry]
+uuid = "aed7e2be-868e-4046-9e12-5c917b4e6b97"
+rank = 113
+author_name = "Jotform"
+author_url = "https://www.jotform.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.jotform.com/mcp-app"

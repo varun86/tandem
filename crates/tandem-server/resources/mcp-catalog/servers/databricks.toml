@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.databricks"
+slug = "databricks"
+name = "Databricks"
+description = "Managed MCP servers with Unity Catalog and Mosaic AI"
+documentation_url = "https://docs.databricks.com/aws/en/generative-ai/mcp/connect-external-services"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["<catalog_name>__<schema_name>__<function_name>", "<catalog_name>__<schema_name>__<vectorindex_name>", "query_space_<space_id>"]
+visibility = ["commercial"]
+
+[server]
+name = "com.databricks.www/databricks"
+version = "1.0.0"
+display_name = "Databricks"
+transport_url = "{url}"
+
+[registry]
+uuid = "5f6045b0-e8c9-4ef7-ade5-f5030a69d4ba"
+rank = 63
+author_name = "Databricks"
+author_url = "https://www.databricks.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

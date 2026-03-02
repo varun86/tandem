@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.excalidraw-app-demo"
+slug = "excalidraw-app-demo"
+name = "Excalidraw"
+description = "MCP for creating interactive hand-drawn diagrams in Excalidraw"
+documentation_url = "https://github.com/excalidraw/excalidraw-mcp"
+directory_url = "https://claude.ai/directory/934bf25a-e0d1-43ff-a488-b2c5567ec956"
+requires_auth = false
+requires_setup = false
+works_with = ["claude"]
+use_cases = []
+tool_names = ["read_me", "create_view", "export_to_excalidraw", "save_checkpoint", "read_checkpoint"]
+visibility = ["commercial"]
+
+[server]
+name = "io.github.antonpk1/excalidraw-mcp-app"
+version = "1.0.0"
+display_name = "Excalidraw"
+transport_url = "https://mcp.excalidraw.com/mcp"
+
+[registry]
+uuid = "934bf25a-e0d1-43ff-a488-b2c5567ec956"
+rank = 30
+author_name = "Excalidraw"
+author_url = "https://github.com/excalidraw"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.excalidraw.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.dice"
+slug = "dice"
+name = "Dice"
+description = "Find active tech jobs on Dice"
+documentation_url = "https://www.dice.com/about/mcp"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_jobs"]
+visibility = ["commercial"]
+
+[server]
+name = "io.github.DiceHoldingsInc/dice-mcp"
+version = "1.0.0"
+display_name = "Dice"
+transport_url = "https://mcp.dice.com/mcp"
+
+[registry]
+uuid = "3035842b-464b-45f0-b8f0-1ddc01fb2eb2"
+rank = 125
+author_name = "Dice.com"
+author_url = "https://www.dice.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.dice.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.n8n"
+slug = "n8n"
+name = "n8n"
+description = "Access and run your n8n workflows"
+documentation_url = "https://docs.n8n.io/advanced-ai/accessing-n8n-mcp-server/"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_workflows", "get_workflow_details", "execute_workflow"]
+visibility = ["commercial"]
+
+[server]
+name = "io.n8n/n8n"
+version = "1.0.0"
+display_name = "n8n"
+transport_url = "{url}"
+
+[registry]
+uuid = "d86fa999-100c-4212-ad7f-2fefea661ef1"
+rank = 18
+author_name = "n8n GmbH"
+author_url = "https://n8n.io/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

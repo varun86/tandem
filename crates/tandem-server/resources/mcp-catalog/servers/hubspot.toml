@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.hubspot"
+slug = "hubspot"
+name = "HubSpot"
+description = "Chat with your CRM data to get personalized insights"
+documentation_url = "https://knowledge.hubspot.com/integrations/set-up-and-use-the-hubspot-connector-for-claude"
+directory_url = "https://claude.ai/directory/875dee50-9b3f-452b-af8c-fbc839966273"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["search_crm_objects", "get_user_details", "get_properties", "search_properties", "get_crm_objects"]
+visibility = ["commercial"]
+
+[server]
+name = "com.hubspot.mcp/hubspot"
+version = "1.0.0"
+display_name = "HubSpot"
+transport_url = "https://mcp.hubspot.com/anthropic"
+
+[registry]
+uuid = "875dee50-9b3f-452b-af8c-fbc839966273"
+rank = 8
+author_name = "HubSpot"
+author_url = "https://www.hubspot.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.hubspot.com/anthropic"

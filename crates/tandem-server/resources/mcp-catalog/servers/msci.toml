@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.msci"
+slug = "msci"
+name = "MSCI"
+description = "Converse, query and comprehend a world of MSCI indexes"
+documentation_url = "https://www.msci.com/downloads/documents/index/resources/indexai-insights-user-guide-feb26.pdf"
+directory_url = "https://claude.ai/directory/2cc10749-99cb-4853-a9d7-b2292ec589fc"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["getIndexGQLSchemaFragments", "executeIndexGQLSchema"]
+visibility = ["commercial"]
+
+[server]
+name = "com.msci/msci"
+version = "1.0.0"
+display_name = "MSCI"
+transport_url = "https://mcp.msci.com/index/index-mcp/v1.0/mcp"
+
+[registry]
+uuid = "2cc10749-99cb-4853-a9d7-b2292ec589fc"
+rank = 116
+author_name = "MSCI Inc"
+author_url = "https://msci.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.msci.com/index/index-mcp/v1.0/mcp"

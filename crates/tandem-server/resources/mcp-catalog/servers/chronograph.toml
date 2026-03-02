@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.chronograph"
+slug = "chronograph"
+name = "Chronograph"
+description = "Interact with your Chronograph data directly in Claude"
+documentation_url = "https://lp-help.chronograph.pe/article/735-chronograph-mcp"
+directory_url = "https://claude.ai/directory/01744591-790c-471b-9452-f338eff230af"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["query-help-center-documentation", "get-help-center-article", "top-exposures", "run-query", "entity-search", "commitment-history", "investment-metrics"]
+visibility = ["commercial"]
+
+[server]
+name = "pe.chronograph.ai/chronograph"
+version = "1.0.0"
+display_name = "Chronograph"
+transport_url = "https://ai.chronograph.pe/mcp"
+
+[registry]
+uuid = "01744591-790c-471b-9452-f338eff230af"
+rank = 127
+author_name = "Chronograph"
+author_url = "https://www.chronograph.pe/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://ai.chronograph.pe/mcp"

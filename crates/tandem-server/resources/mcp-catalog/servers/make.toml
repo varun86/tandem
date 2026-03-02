@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.make"
+slug = "make"
+name = "Make"
+description = "Run Make scenarios and manage your Make account"
+documentation_url = "https://developers.make.com/mcp-server/"
+directory_url = "https://claude.ai/directory/038318ff-ed0d-45f8-a453-b01de0071561"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["scenarios_list", "scenarios_get", "scenarios_create", "scenarios_update", "scenarios_delete", "scenarios_activate", "scenarios_deactivate", "scenarios_run", "scenarios_interface", "scenarios_set_interface", "connections_list", "connections_get", "data-stores_list", "data-stores_get", "data-stores_create", "data-stores_update", "data-stores_delete", "data-store-records_list", "data-store-records_create", "data-store-records_update", "data-store-records_replace", "data-store-records_delete", "teams_list", "teams_get", "teams_create", "teams_delete", "organizations_list", "organizations_get", "organizations_create", "organizations_update", "organizations_delete", "users_me", "executions_list", "executions_get_detail", "executions_get", "hooks_list", "hooks_get", "hooks_create", "hooks_update", "hooks_delete", "keys_list", "keys_get", "keys_create", "keys_update", "keys_delete", "folders_list", "folders_create", "folders_update", "folders_delete", "data-structures_list", "data-structures_get", "data-structures_create", "data-structures_update", "data-structures_delete", "enums_countries", "enums_regions", "enums_timezones", "app-modules_list", "app-module_get", "rpc_execute", "apps_recommend", "tools_create", "tools_get", "tools_update", "validate_module_configuration", "validate_blueprint_schema", "validate_scheduling_schema"]
+visibility = ["commercial"]
+
+[server]
+name = "com.make/mcp"
+version = "1.0.0"
+display_name = "Make"
+transport_url = "https://mcp.make.com"
+
+[registry]
+uuid = "038318ff-ed0d-45f8-a453-b01de0071561"
+rank = 53
+author_name = "Make"
+author_url = "https://www.make.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.make.com"

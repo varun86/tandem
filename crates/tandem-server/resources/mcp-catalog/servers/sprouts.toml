@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.sprouts"
+slug = "sprouts"
+name = "Sprouts Data Intelligence"
+description = "From query to qualified lead in seconds."
+documentation_url = "https://support.sprouts.ai/en/articles/13384582-sprouts-mcp-server-documentation#h_541c149a52"
+directory_url = "https://claude.ai/directory/fadebf8c-fa8d-42f0-b754-4635bd480ab0"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["sprouts_data_intelligence", "move_to_sprouts", "query_templates", "query_refinement", "search_history", "icp_analysis", "sprouts_user_preferences"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.sprouts/mcp"
+version = "1.0.0"
+display_name = "Sprouts Data Intelligence"
+transport_url = "https://sprouts-mcp-server.kartikay-dhar.workers.dev"
+
+[registry]
+uuid = "fadebf8c-fa8d-42f0-b754-4635bd480ab0"
+rank = 156
+author_name = "Sprouts.ai"
+author_url = "https://sprouts.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://sprouts-mcp-server.kartikay-dhar.workers.dev"

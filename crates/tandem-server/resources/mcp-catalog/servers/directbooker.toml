@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.directbooker"
+slug = "directbooker"
+name = "DirectBooker"
+description = "Compare hotels, then book direct"
+documentation_url = "https://www.directbooker.ai/products/mcp-server-documentation"
+directory_url = "https://claude.ai/directory/97369a45-f230-4124-9b9b-2944a26bca46"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = []
+tool_names = ["hotel-search", "hotel-details"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.directbooker/mcp"
+version = "1.0.0"
+display_name = "DirectBooker"
+transport_url = "https://www.directbooker.ai/claude"
+
+[registry]
+uuid = "97369a45-f230-4124-9b9b-2944a26bca46"
+rank = 146
+author_name = "DirectBooker, Inc"
+author_url = "https://www.directbooker.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://www.directbooker.ai/claude"

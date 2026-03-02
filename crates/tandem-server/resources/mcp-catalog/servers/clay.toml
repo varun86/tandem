@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.clay"
+slug = "clay"
+name = "Clay"
+description = "Find prospects. Research accounts. Personalize outreach"
+documentation_url = "https://www.notion.so/clayrun/Clay-Claude-MCP-Server-Documentation-2ef7e66eb01480c9820de48041591aeb?showMoveTo=true&saveParent=true"
+directory_url = "https://claude.ai/directory/a8159026-14b4-403a-933b-bd897a5b36ca"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["find-and-enrich-contacts-at-company", "find-and-enrich-list-of-contacts", "find-and-enrich-company", "add-contact-data-points", "add-company-data-points", "get-credits-available", "get-existing-search"]
+visibility = ["commercial"]
+
+[server]
+name = "com.clay.api/clay"
+version = "1.0.0"
+display_name = "Clay"
+transport_url = "https://api.clay.com/v3/mcp"
+
+[registry]
+uuid = "a8159026-14b4-403a-933b-bd897a5b36ca"
+rank = 31
+author_name = "Clay"
+author_url = "https://clay.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.clay.com/v3/mcp"

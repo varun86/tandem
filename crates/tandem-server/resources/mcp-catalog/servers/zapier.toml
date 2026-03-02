@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.zapier"
+slug = "zapier"
+name = "Zapier"
+description = "Automate workflows across thousands of apps via conversation"
+documentation_url = "https://docs.zapier.com/mcp/home"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "com.zapier/zapier"
+version = "1.0.0"
+display_name = "Zapier"
+transport_url = "{url}"
+
+[registry]
+uuid = "1f6f271e-3d29-4241-b35e-8abe6def4891"
+rank = 21
+author_name = "Zapier"
+author_url = "https://zapier.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

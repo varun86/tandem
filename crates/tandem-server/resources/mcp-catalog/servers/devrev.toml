@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.devrev"
+slug = "devrev"
+name = "DevRev"
+description = "Search and update your company's knowledge graph"
+documentation_url = "https://support.devrev.ai/en-US/devrev/article/ART-21859-remote-mcp-server"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["create_issue", "update_issue", "get_issue", "list_issues", "create_ticket", "update_ticket", "get_ticket", "get_enhancement", "update_enhancement", "list_enhancements", "get_part", "hybrid_search", "get_org_user", "fetch_object_context"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.devrev.api/devrev"
+version = "1.0.0"
+display_name = "DevRev"
+transport_url = "https://api.devrev.ai/mcp/v1"
+
+[registry]
+uuid = "7b562d2-7e99-42ad-bd85-b2c0a67fb323"
+rank = 134
+author_name = "DevRev"
+author_url = "https://devrev.ai/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.devrev.ai/mcp/v1"

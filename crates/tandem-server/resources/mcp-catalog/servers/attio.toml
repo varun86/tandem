@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.attio"
+slug = "attio"
+name = "Attio"
+description = "Search, manage, and update your Attio CRM from Claude"
+documentation_url = "https://docs.attio.com/mcp/overview"
+directory_url = "https://claude.ai/directory/ae5afdb9-e3c6-4b64-a13a-420e7a8d8124"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["create-note", "create-record", "create-task", "get-call-recording", "get-email-content", "get-note-body", "get-records-by-ids", "list-attribute-definitions", "list-records", "list-workspace-members", "list-workspace-teams", "search-call-recordings-by-metadata", "search-emails-by-metadata", "search-meetings", "search-notes-by-metadata", "search-records", "semantic-search-emails", "semantic-search-notes", "update-task", "update-record", "upsert-record", "whoami", "list-tasks"]
+visibility = ["commercial"]
+
+[server]
+name = "com.attio/attio"
+version = "1.0.0"
+display_name = "Attio"
+transport_url = "https://mcp.attio.com/mcp"
+
+[registry]
+uuid = "ae5afdb9-e3c6-4b64-a13a-420e7a8d8124"
+rank = 79
+author_name = "Attio"
+author_url = "https://attio.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.attio.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.coupler-io"
+slug = "coupler-io"
+name = "Coupler.io"
+description = "Access business data from hundreds of sources"
+documentation_url = "https://help.coupler.io/article/592-coupler-local-mcp-server"
+directory_url = "https://claude.ai/directory/dba65f24-3bd2-4d72-a86c-62b7c5290a5f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["get-data", "get-schema", "list-dataflows", "get-dataflow"]
+visibility = ["commercial"]
+
+[server]
+name = "io.coupler/remote-mcp-server"
+version = "0.0.1"
+display_name = "Coupler.io"
+transport_url = "https://mcp.coupler.io/mcp/"
+
+[registry]
+uuid = "dba65f24-3bd2-4d72-a86c-62b7c5290a5f"
+rank = 102
+author_name = "Coupler.io"
+author_url = "https://coupler.io"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.coupler.io/mcp/"

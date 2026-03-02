@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.indeed"
+slug = "indeed"
+name = "Indeed"
+description = "Search for jobs on Indeed"
+documentation_url = "https://docs.indeed.com/mcp"
+directory_url = "https://claude.ai/directory/78cb9092-b837-4439-845d-fdccd5723e7f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = []
+tool_names = ["search_jobs", "get_job_details"]
+visibility = ["commercial"]
+
+[server]
+name = "com.indeed.mcp/indeed"
+version = "1.0.0"
+display_name = "Indeed"
+transport_url = "https://mcp.indeed.com/claude/mcp"
+
+[registry]
+uuid = "78cb9092-b837-4439-845d-fdccd5723e7f"
+rank = 29
+author_name = "Indeed"
+author_url = "https://www.indeed.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.indeed.com/claude/mcp"

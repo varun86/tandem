@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.bitly"
+slug = "bitly"
+name = "Bitly"
+description = "Shorten links, generate QR Codes, and track performance"
+documentation_url = "https://dev.bitly.com/bitly-mcp/"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["create_short_link", "get_short_link_details", "update_short_link", "delete_short_link", "expand", "custom_backhalf", "link_metrics", "link_clicks_summary", "link_countries", "link_cities", "link_devices", "link_referrers", "link_referring_domains", "create_qr_code", "get_qr_code", "get_qr_code_image", "update_qr_code", "get_group_qr_codes", "get_user", "get_organizations", "get_groups", "get_group_details", "get_group_short_links", "get_group_short_links_sorted", "get_custom_domains", "get_custom_link_details", "update_destination"]
+visibility = ["commercial"]
+
+[server]
+name = "com.bitly.api-ssl/bitly"
+version = "1.0.0"
+display_name = "Bitly"
+transport_url = "https://api-ssl.bitly.com/v4/mcp"
+
+[registry]
+uuid = "b8f1c2a3-9d4e-5f6g-7h8i-9j0k1l2m3n4o"
+rank = 96
+author_name = "Bitly"
+author_url = "https://bitly.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api-ssl.bitly.com/v4/mcp"

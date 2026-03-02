@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.npi-registry"
+slug = "npi-registry"
+name = "NPI Registry"
+description = "Access US National Provider Identifier (NPI) Registry"
+documentation_url = "https://docs.mcp.deepsense.ai/guides/npi_registry.html"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["npi_lookup", "npi_search", "npi_validate"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.deepsense.mcp/npi-registry"
+version = "1.0.0"
+display_name = "NPI Registry"
+transport_url = "https://mcp.deepsense.ai/npi_registry/mcp"
+
+[registry]
+uuid = "e3b3e96f-6b4d-468d-a4b6-89f484b7e21c"
+rank = 52
+author_name = "deepsense.ai"
+author_url = "https://deepsense.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.deepsense.ai/npi_registry/mcp"

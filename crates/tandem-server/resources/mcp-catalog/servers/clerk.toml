@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.clerk"
+slug = "clerk"
+name = "Clerk"
+description = "Add authentication, organizations, and billing"
+documentation_url = "https://clerk.com/docs/guides/ai/mcp/clerk-mcp-server"
+directory_url = "https://claude.ai/directory/48a3eb31-a881-4d52-b179-1af31624356a"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code", "claude-api"]
+use_cases = ["code"]
+tool_names = ["clerk_sdk_snippet", "list_clerk_sdk_snippets"]
+visibility = ["commercial"]
+
+[server]
+name = "com.clerk/mcp"
+version = "1.0.0"
+display_name = "Clerk"
+transport_url = "https://mcp.clerk.com/mcp"
+
+[registry]
+uuid = "48a3eb31-a881-4d52-b179-1af31624356a"
+rank = 162
+author_name = "Clerk"
+author_url = "https://clerk.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.clerk.com/mcp"

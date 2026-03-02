@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.square"
+slug = "square"
+name = "Square"
+description = "Search and manage transaction, merchant, and payment data"
+documentation_url = "https://developer.squareup.com/docs/mcp"
+directory_url = "http://claude.ai/directory/25d61b20-3ba1-4477-b51a-a743d1ca65fb"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["get_service_info", "get_type_info", "make_api_request"]
+visibility = ["commercial"]
+
+[server]
+name = "com.squareup.mcp/square"
+version = "1.0.0"
+display_name = "Square"
+transport_url = "https://mcp.squareup.com/sse"
+
+[registry]
+uuid = "25d61b20-3ba1-4477-b51a-a743d1ca65fb"
+rank = 95
+author_name = "Square, Inc."
+author_url = "https://squareup.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "sse"
+url = "https://mcp.squareup.com/sse"

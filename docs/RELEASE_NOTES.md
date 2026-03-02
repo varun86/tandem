@@ -1,3 +1,37 @@
+# Tandem v0.4.0 Release Notes (Unreleased)
+
+### Highlights
+
+- **Engine-embedded MCP catalog for all frontends**:
+  - Added generated MCP catalog assets in engine resources (`index.json` + per-server TOMLs).
+  - Added server endpoints:
+    - `GET /mcp/catalog`
+    - `GET /mcp/catalog/{slug}/toml`
+  - Added generator pipeline (`scripts/generate-mcp-catalog.mjs`) and control-panel refresh command (`npm run mcp:catalog:refresh`).
+  - Added curated official remote MCP entries:
+    - GitHub: `https://api.githubcopilot.com/mcp/`
+    - Jira (Atlassian): `https://mcp.atlassian.com/v1/mcp`
+    - Notion: `https://mcp.notion.com/mcp`
+  - Removed Docker-first GitHub default from curated flow; official remote endpoint is now the default.
+
+- **Capability readiness preflight (fail-closed) across engine and clients**:
+  - Added `POST /capabilities/readiness` to validate required capabilities before saving/running automations.
+  - Added structured blocking issue output for:
+    - missing capability bindings
+    - unbound required capabilities
+    - missing/disconnected required MCP servers
+    - auth-pending MCP tools
+  - Added TypeScript SDK readiness API (`client.capabilities.readiness(...)`) and exported types.
+  - Added desktop/Tauri readiness command + wrapper integration (`capability_readiness`, `capabilityReadiness(...)`).
+
+- **Control panel MCP integration improvements**:
+  - MCP page now renders a searchable “Remote MCP Packs” list sourced from engine catalog.
+  - Added quick actions for pack apply (prefill transport/name) and TOML open.
+  - Added MCP settings readiness check UI with structured result display.
+  - Pack builder save flows now enforce capability-readiness checks before writing agent/automation overrides.
+
+---
+
 # Tandem v0.3.28 Release Notes (Unreleased)
 
 ### Highlights

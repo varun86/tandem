@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.fellow-ai"
+slug = "fellow-ai"
+name = "Fellow.ai"
+description = "Chat with your meetings to uncover actionable insights"
+documentation_url = "https://help.fellow.ai/en/articles/12622641-fellow-s-mcp-server"
+directory_url = "https://claude.ai/directory/069b18da-5c89-4a66-941f-0cb6eae49a8d"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["communication"]
+tool_names = ["get_action_items", "get_meeting_participants", "get_meeting_summary", "get_meeting_transcript", "search_meetings"]
+visibility = ["commercial"]
+
+[server]
+name = "app.fellow/fellow-ai"
+version = "1.0.0"
+display_name = "Fellow.ai"
+transport_url = "https://fellow.app/mcp"
+
+[registry]
+uuid = "069b18da-5c89-4a66-941f-0cb6eae49a8d"
+rank = 80
+author_name = "Fellow.ai"
+author_url = "https://fellow.ai/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://fellow.app/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.jam"
+slug = "jam"
+name = "Jam"
+description = "Record screen and collect automatic context for issues"
+documentation_url = "https://jam.dev/docs/debug-a-jam/mcp"
+directory_url = "https://claude.ai/directory/923fb14b-ed65-4e41-8dd5-4c2c38c00457"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["code"]
+tool_names = ["getDetails", "getConsoleLogs", "getNetworkRequests", "getScreenshot", "getUserEvents", "analyzeVideo"]
+visibility = ["commercial"]
+
+[server]
+name = "dev.jam.mcp/jam"
+version = "1.0.0"
+display_name = "Jam"
+transport_url = "https://mcp.jam.dev/mcp"
+
+[registry]
+uuid = "923fb14b-ed65-4e41-8dd5-4c2c38c00457"
+rank = 74
+author_name = "Jam"
+author_url = "https://jam.dev/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.jam.dev/mcp"

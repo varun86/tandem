@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.wix"
+slug = "wix"
+name = "Wix"
+description = "Manage and build sites and apps on Wix"
+documentation_url = "https://dev.wix.com/docs/sdk/articles/use-the-wix-mcp/about-the-wix-mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["WixREADME", "SearchWixWDSDocumentation", "SearchWixRESTDocumentation", "SearchWixSDKDocumentation", "SearchBuildAppsDocumentation", "SearchWixHeadlessDocumentation", "ReadFullDocsArticle", "ReadFullDocsMethodSchema", "CallWixSiteAPI", "ListWixSites", "ManageWixSite", "SupportAndFeedback"]
+visibility = ["commercial"]
+
+[server]
+name = "com.wix/mcp"
+version = "1.0.2"
+display_name = "Wix"
+transport_url = "https://mcp.wix.com/mcp"
+
+[registry]
+uuid = "780a3621-8271-4822-bd0b-b9cab309375d"
+rank = 70
+author_name = "Wix"
+author_url = "https://www.wix.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.wix.com/mcp"

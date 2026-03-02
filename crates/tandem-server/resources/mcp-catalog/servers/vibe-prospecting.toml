@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.vibe-prospecting"
+slug = "vibe-prospecting"
+name = "Vibe Prospecting"
+description = "Find company & contact data"
+documentation_url = "https://developers.explorium.ai/mcp-docs/agentsource-mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["autocomplete", "enrich-business", "enrich-prospects", "estimate-cost", "export-to-csv", "fetch-businesses-events", "fetch-entities", "fetch-entities-statistics", "fetch-prospects-events", "get-dataset", "match-business", "match-prospects"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.vibeprospecting/vibeprospecting"
+version = "1.0.0"
+display_name = "Vibe Prospecting"
+transport_url = "https://vibeprospecting.explorium.ai/mcp"
+
+[registry]
+uuid = "1bdcb159-b6f0-4f13-bc08-fdb40b007828"
+rank = 77
+author_name = "Vibeprospecting.ai"
+author_url = "https://www.vibeprospecting.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://vibeprospecting.explorium.ai/mcp"

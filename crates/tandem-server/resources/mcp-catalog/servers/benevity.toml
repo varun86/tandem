@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.benevity"
+slug = "benevity"
+name = "Benevity"
+description = "Find and engage with verified nonprofits"
+documentation_url = "https://support.claude.com/en/articles/12923227-using-the-benevity-connector-in-claude"
+directory_url = "https://claude.ai/directory/de72cab2-21e3-486f-b774-b35b6dded1d8"
+requires_auth = false
+requires_setup = false
+works_with = ["claude"]
+use_cases = []
+tool_names = ["Benevity Nonprofit Search", "Benevity Get Nonprofit Details"]
+visibility = ["commercial"]
+
+[server]
+name = "org.benevity.mcp/benevity"
+version = "1.0.0"
+display_name = "Benevity"
+transport_url = "https://mcp.benevity.org/general/v1/nonprofit"
+
+[registry]
+uuid = "de72cab2-21e3-486f-b774-b35b6dded1d8"
+rank = 140
+author_name = "Benevity"
+author_url = "https://www.benevity.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.benevity.org/general/v1/nonprofit"

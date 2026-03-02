@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.pigment"
+slug = "pigment"
+name = "Pigment"
+description = "Analyze business data"
+documentation_url = "https://kb.pigment.com/docs/mcp-server"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["GetApplications", "FindAiMetrics", "QueryData"]
+visibility = ["commercial"]
+
+[server]
+name = "com.pigment.app/pigment"
+version = "1.0.0"
+display_name = "Pigment"
+transport_url = "{url}"
+
+[registry]
+uuid = "505c326f-36ea-4a5a-ab99-8f86fad28af0"
+rank = 121
+author_name = "Pigment"
+author_url = "https://www.pigment.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

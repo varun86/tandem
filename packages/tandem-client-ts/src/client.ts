@@ -57,6 +57,8 @@ import type {
   PackExportOptions,
   PackDetectOptions,
   CapabilityBindingsFile,
+  CapabilityReadinessInput,
+  CapabilityReadinessOutput,
   CapabilityResolveInput,
   RoutineRecord,
   DefinitionListResponse,
@@ -1134,6 +1136,16 @@ class Capabilities {
    */
   async resolve(input: CapabilityResolveInput): Promise<{ resolution: JsonObject }> {
     return this.req<{ resolution: JsonObject }>("/capabilities/resolve", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** Evaluate runtime readiness for required capabilities and return blocking issues. */
+  async readiness(
+    input: CapabilityReadinessInput
+  ): Promise<{ readiness: CapabilityReadinessOutput }> {
+    return this.req<{ readiness: CapabilityReadinessOutput }>("/capabilities/readiness", {
       method: "POST",
       body: JSON.stringify(input),
     });

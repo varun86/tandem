@@ -554,6 +554,43 @@ export interface CapabilityResolveInput {
   }>;
 }
 
+export interface CapabilityReadinessInput {
+  workflow_id?: string;
+  required_capabilities?: string[];
+  optional_capabilities?: string[];
+  provider_preference?: string[];
+  available_tools?: Array<{
+    provider: string;
+    tool_name: string;
+    schema?: JsonObject;
+  }>;
+  allow_unbound?: boolean;
+}
+
+export interface CapabilityBlockingIssue {
+  code: string;
+  message: string;
+  capability_ids?: string[];
+  providers?: string[];
+  tools?: string[];
+}
+
+export interface CapabilityReadinessOutput {
+  workflow_id: string;
+  runnable: boolean;
+  resolved?: JsonObject[];
+  missing_required_capabilities?: string[];
+  unbound_capabilities?: string[];
+  missing_optional_capabilities?: string[];
+  missing_servers?: string[];
+  disconnected_servers?: string[];
+  auth_pending_tools?: string[];
+  missing_secret_refs?: string[];
+  considered_bindings?: number;
+  recommendations?: string[];
+  blocking_issues?: CapabilityBlockingIssue[];
+}
+
 // ─── Routines & Automations ──────────────────────────────────────────────────
 
 export type RoutineFamily = "routines" | "automations";

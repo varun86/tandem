@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.windsor-ai"
+slug = "windsor-ai"
+name = "Windsor.ai"
+description = "Connect 325+ marketing, analytics and CRM data sources"
+documentation_url = "https://windsor.ai/introducing-windsor-mcp/#method-1-using-claude-desktop-3"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_connectors", "get_fields", "get_accounts", "get_options", "get_data"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.windsor.mcp/windsor-ai"
+version = "1.0.0"
+display_name = "Windsor.ai"
+transport_url = "https://mcp.windsor.ai"
+
+[registry]
+uuid = "360c0c31-4bb6-42ca-8e50-5da0a100a68e"
+rank = 87
+author_name = "Windsor.ai"
+author_url = "https://windsor.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.windsor.ai"

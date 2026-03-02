@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.paypal"
+slug = "paypal"
+name = "PayPal"
+description = "Access PayPal payments platform"
+documentation_url = "https://mcp.paypal.com/"
+directory_url = "http://claude.ai/directory/001103b7-bcde-4b9c-b5d4-f209c2fed1f3"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["create_product", "list_product", "show_product_details", "list_disputes", "get_dispute", "accept_dispute_claim", "create_invoice", "list_invoices", "get_invoice", "send_invoice", "send_invoice_reminder", "cancel_sent_invoice", "generate_invoice_qr_code", "create_order", "create_refund", "get_order", "get_refund", "pay_order", "list_transaction", "create_shipment_tracking", "get_shipment_tracking", "cancel_subscription", "create_subscription", "create_subscription_plan", "list_subscription_plans", "show_subscription_details", "show_subscription_plan_details", "update_subscription"]
+visibility = ["commercial"]
+
+[server]
+name = "com.paypal.mcp/mcp"
+version = "1.0.0"
+display_name = "PayPal"
+transport_url = "https://mcp.paypal.com/mcp"
+
+[registry]
+uuid = "001103b7-bcde-4b9c-b5d4-f209c2fed1f3"
+rank = 48
+author_name = "PayPal"
+author_url = "https://paypal.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.paypal.com/mcp"

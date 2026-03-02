@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.clockwise"
+slug = "clockwise"
+name = "Clockwise"
+description = "Advanced scheduling and time management for work."
+documentation_url = "https://support.getclockwise.com/article/238-connecting-to-clockwise-mcp"
+directory_url = "https://claude.ai/directory/17a85e07-6e7b-46ea-a4bb-d3103f24e3bb"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["update_preferences", "search_people", "fetch_people_by_id", "search_events", "fetch_events", "create_proposal", "update_proposal", "confirm_proposal", "cancel_proposal", "optimize_schedule", "get_scheduling_links", "create_scheduling_link", "fetch_calendar_stats", "get_current_time", "select_scheduling_time"]
+visibility = ["commercial"]
+
+[server]
+name = "com.getclockwise/clockwise-mcp"
+version = "1.0.0"
+display_name = "Clockwise"
+transport_url = "https://mcp.getclockwise.com/mcp"
+
+[registry]
+uuid = "17a85e07-6e7b-46ea-a4bb-d3103f24e3bb"
+rank = 86
+author_name = "Clockwise"
+author_url = "https://www.getclockwise.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.getclockwise.com/mcp"

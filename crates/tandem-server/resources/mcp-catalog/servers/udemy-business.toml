@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.udemy-business"
+slug = "udemy-business"
+name = "Udemy Business"
+description = "Search and explore skill-building resources"
+documentation_url = "https://business-support.udemy.com/hc/en-us/articles/34213384429335-How-to-Integrate-the-Udemy-Business-MCP-Server-With-Your-AI-Tool#h_01K9CA42YGCV1AVXPY1RKABKP1"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_courses", "search_learning_paths", "search_lectures", "search_labs", "get_course_curriculum"]
+visibility = ["commercial"]
+
+[server]
+name = "com.udemy.api/udemy-business"
+version = "1.0.0"
+display_name = "Udemy Business"
+transport_url = "https://api.udemy.com/mcp"
+
+[registry]
+uuid = "d4ba36c1-89dd-49ee-aea3-2317efccc424"
+rank = 109
+author_name = "Udemy, Inc."
+author_url = "https://www.udemy.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.udemy.com/mcp"

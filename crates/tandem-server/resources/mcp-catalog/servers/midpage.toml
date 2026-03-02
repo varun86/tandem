@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.midpage"
+slug = "midpage"
+name = "Midpage Legal Research"
+description = "Conduct legal research and create work product"
+documentation_url = "https://midpage-docs.apidocumentation.com/documentation/integration/mcp-tools"
+directory_url = "https://claude.ai/directory/1a6a40cd-43c9-4752-9052-fed9c5e8c45c"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["search", "findInOpinion", "analyzeOpinion"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.midpage/mcp"
+version = "1.0.0"
+display_name = "Midpage Legal Research"
+transport_url = "https://app.midpage.ai/mcp"
+
+[registry]
+uuid = "1a6a40cd-43c9-4752-9052-fed9c5e8c45c"
+rank = 143
+author_name = "Midpage"
+author_url = "https://www.midpage.ai/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://app.midpage.ai/mcp"

@@ -4345,6 +4345,24 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn capability_readiness(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/capabilities/readiness", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to evaluate capability readiness: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
     pub async fn tool_ids(&self) -> Result<Vec<String>> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/tool/ids", self.base_url().await?);

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.yardi-virtuoso"
+slug = "yardi-virtuoso"
+name = "Yardi Virtuoso"
+description = "Real-time Yardi data & insights"
+documentation_url = "https://help.virtuoso.ai/en/articles/13679727-yardi-virtuoso-mcp-technical-documentation-guide"
+directory_url = "https://claude.ai/directory/01953ddd-4139-40c5-bbf9-47c1e2499623"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["rfm_connectai_create_work_order", "rfm_connectai_search_work_orders", "rfm_workorder_mark_work_order_as_complete", "vn_mcpframework_get_autocomplete", "vn_mcpframework_list_autocomplete_types"]
+visibility = ["commercial"]
+
+[server]
+name = "com.yardi/virtuoso"
+version = "1.0.0"
+display_name = "Yardi Virtuoso"
+transport_url = "https://mcp.virtuoso.ai/mcp"
+
+[registry]
+uuid = "01953ddd-4139-40c5-bbf9-47c1e2499623"
+rank = 147
+author_name = "Yardi"
+author_url = "https://yardi.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.virtuoso.ai/mcp"

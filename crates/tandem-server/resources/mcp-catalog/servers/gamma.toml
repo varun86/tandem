@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.gamma"
+slug = "gamma"
+name = "Gamma"
+description = "Create presentations, docs, socials, and sites with AI"
+documentation_url = "https://gamma.app/docs/Gamma-MCP-Server-Documentation-m6p43kobgzy15zj?mode=doc"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["generate", "get_themes", "get_folders"]
+visibility = ["commercial"]
+
+[server]
+name = "app.gamma.mcp/gamma"
+version = "1.0.0"
+display_name = "Gamma"
+transport_url = "https://mcp.gamma.app/mcp"
+
+[registry]
+uuid = "ba1eef5a-c510-416e-b5fa-c34d523d81a1"
+rank = 10
+author_name = "Gamma"
+author_url = "https://gamma.app/about"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.gamma.app/mcp"

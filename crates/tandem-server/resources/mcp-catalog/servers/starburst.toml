@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.starburst"
+slug = "starburst"
+name = "Starburst"
+description = "Securely retrieve data from your federated data sources"
+documentation_url = "https://docs.starburst.io/starburst-galaxy/ai-workflows/mcp-server.html"
+directory_url = "https://claude.ai/directory/2a9d8e2f-f935-4b4a-bd78-ec81ba9f2125"
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["readOnlyQuery"]
+visibility = ["commercial"]
+
+[server]
+name = "io.starburst/starburst"
+version = "1.0.0"
+display_name = "Starburst"
+transport_url = "{url}"
+
+[registry]
+uuid = "2a9d8e2f-f935-4b4a-bd78-ec81ba9f2125"
+rank = 165
+author_name = "Starburst Data"
+author_url = "https://www.starburst.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

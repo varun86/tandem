@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.threejs-3d-viewer"
+slug = "threejs-3d-viewer"
+name = "Three.js 3D Viewer"
+description = "Demo 3D viewer that renders interactive 3D scenes and models using Three.js"
+documentation_url = "https://github.com/modelcontextprotocol/ext-apps/blob/main/examples/pdf-server/README.md"
+directory_url = "https://claude.ai/directory/471ca2be-244d-4d9a-955a-3cdbcf76a12b"
+requires_auth = true
+requires_setup = true
+works_with = ["claude"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "io.modelcontextprotocol/server-threejs"
+version = "1.0.0"
+display_name = "Three.js 3D Viewer"
+transport_url = "https://example-server.modelcontextprotocol.io/threejs/mcp"
+
+[registry]
+uuid = "471ca2be-244d-4d9a-955a-3cdbcf76a12b"
+rank = 84
+author_name = "Model Context Protocol Community"
+author_url = "https://modelcontextprotocol.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://example-server.modelcontextprotocol.io/threejs/mcp"

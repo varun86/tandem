@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.canva"
+slug = "canva"
+name = "Canva"
+description = "Search, create, autofill, and export Canva designs"
+documentation_url = "https://www.canva.dev/docs/connect/canva-mcp-server-setup/"
+directory_url = "http://claude.ai/directory/eb9240f2-e1c1-43c1-828f-0fda40c22e4c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["design"]
+tool_names = ["search-designs", "get-design", "get-design-pages", "get-design-content", "search", "fetch", "import-design-from-url", "get-design-import-from-url-status", "export-design", "get-export-formats", "get-design-export-status", "create-folder", "move-item-to-folder", "list-folder-items", "add-comment-thread-to-design", "generate-design", "get-design-generation-job"]
+visibility = ["commercial"]
+
+[server]
+name = "com.canva.mcp/canva"
+version = "1.0.0"
+display_name = "Canva"
+transport_url = "https://mcp.canva.com/mcp"
+
+[registry]
+uuid = "eb9240f2-e1c1-43c1-828f-0fda40c22e4c"
+rank = 4
+author_name = "Canva"
+author_url = "https://canva.com"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:33:28 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.canva.com/mcp"

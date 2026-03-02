@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.figma"
+slug = "figma"
+name = "Figma"
+description = "Generate diagrams and better code from Figma context"
+documentation_url = "https://help.figma.com/hc/en-us/articles/32132100833559"
+directory_url = "https://claude.ai/directory/c758d038-d8eb-4421-b426-9dd68dc7f84a"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["design"]
+tool_names = ["generate_diagram", "get_design_context", "get_screenshot", "get_metadata", "create_design_system_rules", "get_variable_defs", "get_code_connect_map", "get_figjam", "whoami"]
+visibility = ["commercial"]
+
+[server]
+name = "com.figma.mcp/mcp"
+version = "1.0.3"
+display_name = "Figma"
+transport_url = "https://mcp.figma.com/mcp"
+
+[registry]
+uuid = "c758d038-d8eb-4421-b426-9dd68dc7f84a"
+rank = 3
+author_name = "Figma"
+author_url = "https://www.figma.com"
+published_on = "Fri Jan 16 2026 19:30:54 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:30:54 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.figma.com/mcp"

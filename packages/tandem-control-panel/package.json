@@ -15,7 +15,8 @@
     "test:smoke": "node --test tests/smoke.test.mjs",
     "init:env": "node bin/init-env.js",
     "prepublishOnly": "npm run build",
-    "start": "node bin/setup.js"
+    "start": "node bin/setup.js",
+    "mcp:catalog:refresh": "node ../../scripts/generate-mcp-catalog.mjs"
   },
   "files": [
     "bin",

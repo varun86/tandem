@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.sentry"
+slug = "sentry"
+name = "Sentry"
+description = "Search, query, and debug errors intelligently"
+documentation_url = "https://docs.sentry.io/product/sentry-mcp/"
+directory_url = "http://claude.ai/directory/46d6322a-5f75-4822-b739-f49261805e9c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude-api", "claude", "claude-code"]
+use_cases = ["code"]
+tool_names = ["whoami", "find_organizations", "find_teams", "find_projects", "find_issues", "find_releases", "find_tags", "get_issue_details", "get_event_attachment", "update_issue", "find_errors", "find_transactions", "create_team", "create_project", "update_project", "create_dsn", "find_dsns", "analyze_issue_with_seer", "search_docs", "get_doc"]
+visibility = ["commercial"]
+
+[server]
+name = "dev.sentry.mcp/sentry"
+version = "1.0.0"
+display_name = "Sentry"
+transport_url = "https://mcp.sentry.dev/mcp"
+
+[registry]
+uuid = "46d6322a-5f75-4822-b739-f49261805e9c"
+rank = 15
+author_name = "Sentry.io"
+author_url = "https://sentry.io"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:32:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.sentry.dev/mcp"

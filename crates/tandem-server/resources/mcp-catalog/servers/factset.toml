@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.factset"
+slug = "factset"
+name = "FactSet AI-Ready Data"
+description = "Access institutional-quality financial data and analytics"
+documentation_url = "https://developer.factset.com/mcp/factset-ai-ready-data-mcp"
+directory_url = "https://claude.ai/directory/f2da5b67-41bc-4ce9-8eb8-f18ab09bde5a"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["financial-services"]
+tool_names = ["FactSet_CalendarEvents", "FactSet_EntityReference", "FactSet_EstimatesConsensus", "FactSet_Fundamentals", "FactSet_GeoRev", "FactSet_GlobalPrices", "FactSet_MergersAcquisitions", "FactSet_Metrics", "FactSet_Ownership", "FactSet_People", "FactSet_RBICS", "FactSet_SupplyChain"]
+visibility = ["commercial"]
+
+[server]
+name = "com.factset/mcp"
+version = "1.0.0"
+display_name = "FactSet AI-Ready Data"
+transport_url = "https://mcp.factset.com/content/v1"
+
+[registry]
+uuid = "f2da5b67-41bc-4ce9-8eb8-f18ab09bde5a"
+rank = 61
+author_name = "FactSet Research Systems"
+author_url = "https://www.factset.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.factset.com/content/v1"

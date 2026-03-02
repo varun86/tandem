@@ -58,8 +58,12 @@ use tandem_wire::{
 use crate::ResourceStoreError;
 use crate::{
     agent_teams::{emit_spawn_approved, emit_spawn_denied, emit_spawn_requested},
-    capability_resolver::{CapabilityBindingsFile, CapabilityResolveInput},
-    evaluate_routine_execution_policy,
+    capability_resolver::{
+        classify_missing_required, providers_for_capability, CapabilityBindingsFile,
+        CapabilityBlockingIssue, CapabilityReadinessInput, CapabilityReadinessOutput,
+        CapabilityResolveInput,
+    },
+    evaluate_routine_execution_policy, mcp_catalog,
     pack_manager::{PackExportRequest, PackInstallRequest, PackUninstallRequest},
     ActiveRun, AppState, AutomationAgentMcpPolicy, AutomationAgentProfile,
     AutomationAgentToolPolicy, AutomationExecutionPolicy, AutomationFlowSpec, AutomationRunStatus,
@@ -1444,6 +1448,214 @@ async fn capabilities_resolve(
     Ok(Json(json!({ "resolution": result })).into_response())
 }
 
+async fn capabilities_readiness(
+    State(state): State<AppState>,
+    Json(input): Json<CapabilityReadinessInput>,
+) -> Result<Response, StatusCode> {
+    let discovered = state
+        .capability_resolver
+        .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
+        .await;
+    let resolve_input = CapabilityResolveInput {
+        workflow_id: input.workflow_id.clone(),
+        required_capabilities: input.required_capabilities.clone(),
+        optional_capabilities: input.optional_capabilities.clone(),
+        provider_preference: input.provider_preference.clone(),
+        available_tools: input.available_tools.clone(),
+    };
+    let result = state
+        .capability_resolver
+        .resolve(resolve_input, discovered)
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability readiness resolve failed: {}", err);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let bindings = state
+        .capability_resolver
+        .list_bindings()
+        .await
+        .unwrap_or_else(|_| CapabilityBindingsFile::default());
+    let (missing_required_capabilities, unbound_capabilities) =
+        classify_missing_required(&bindings, &result.missing_required);
+
+    let mcp_servers = state.mcp.list().await;
+    let enabled_servers = mcp_servers
+        .values()
+        .filter(|server| server.enabled)
+        .collect::<Vec<_>>();
+    let connected_servers = enabled_servers
+        .iter()
+        .filter(|server| server.connected)
+        .map(|server| server.name.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    let mut required_providers = unbound_capabilities
+        .iter()
+        .flat_map(|capability_id| providers_for_capability(&bindings, capability_id))
+        .collect::<Vec<_>>();
+    required_providers.sort();
+    required_providers.dedup();
+
+    let mut missing_servers = Vec::new();
+    let mut disconnected_servers = Vec::new();
+    for provider in &required_providers {
+        match provider.as_str() {
+            "custom" => {}
+            "mcp" => {
+                if enabled_servers.is_empty() {
+                    missing_servers.push(provider.clone());
+                } else if connected_servers.is_empty() {
+                    disconnected_servers.push(provider.clone());
+                }
+            }
+            name => {
+                let any_enabled = enabled_servers
+                    .iter()
+                    .any(|server| server.name.eq_ignore_ascii_case(name));
+                if !any_enabled {
+                    missing_servers.push(provider.clone());
+                    continue;
+                }
+                let any_connected = connected_servers.contains(name);
+                if !any_connected {
+                    disconnected_servers.push(provider.clone());
+                }
+            }
+        }
+    }
+    missing_servers.sort();
+    missing_servers.dedup();
+    disconnected_servers.sort();
+    disconnected_servers.dedup();
+
+    let mut auth_pending_tools = mcp_servers
+        .values()
+        .filter(|server| server.connected)
+        .flat_map(|server| {
+            server.pending_auth_by_tool.keys().map(move |tool| {
+                format!(
+                    "mcp.{}.{}",
+                    mcp_namespace_segment(&server.name),
+                    mcp_namespace_segment(tool)
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    auth_pending_tools.sort();
+    auth_pending_tools.dedup();
+
+    let missing_secret_refs = Vec::<String>::new();
+    let mut blocking_issues = Vec::<CapabilityBlockingIssue>::new();
+    if !missing_required_capabilities.is_empty() {
+        blocking_issues.push(CapabilityBlockingIssue {
+            code: "missing_required_capabilities".to_string(),
+            message: "Some required capabilities do not have any bindings.".to_string(),
+            capability_ids: missing_required_capabilities.clone(),
+            providers: Vec::new(),
+            tools: Vec::new(),
+        });
+    }
+    if !unbound_capabilities.is_empty() {
+        blocking_issues.push(CapabilityBlockingIssue {
+            code: "unbound_capabilities".to_string(),
+            message: "Some required capabilities have bindings, but no available runtime tools."
+                .to_string(),
+            capability_ids: unbound_capabilities.clone(),
+            providers: required_providers.clone(),
+            tools: Vec::new(),
+        });
+    }
+    if !missing_servers.is_empty() {
+        blocking_issues.push(CapabilityBlockingIssue {
+            code: "missing_mcp_servers".to_string(),
+            message: "Required provider servers are not configured.".to_string(),
+            capability_ids: Vec::new(),
+            providers: missing_servers.clone(),
+            tools: Vec::new(),
+        });
+    }
+    if !disconnected_servers.is_empty() {
+        blocking_issues.push(CapabilityBlockingIssue {
+            code: "disconnected_mcp_servers".to_string(),
+            message: "Required provider servers are configured but disconnected.".to_string(),
+            capability_ids: Vec::new(),
+            providers: disconnected_servers.clone(),
+            tools: Vec::new(),
+        });
+    }
+    if !auth_pending_tools.is_empty() {
+        blocking_issues.push(CapabilityBlockingIssue {
+            code: "auth_pending_tools".to_string(),
+            message: "At least one MCP tool still requires authorization.".to_string(),
+            capability_ids: Vec::new(),
+            providers: Vec::new(),
+            tools: auth_pending_tools.clone(),
+        });
+    }
+
+    let mut recommendations = Vec::<String>::new();
+    if !missing_required_capabilities.is_empty() {
+        recommendations.push(
+            "Add capability bindings for each missing required capability in /capabilities/bindings."
+                .to_string(),
+        );
+    }
+    if !unbound_capabilities.is_empty() {
+        recommendations.push(
+            "Connect/refresh MCP servers so required capability bindings match discovered tools."
+                .to_string(),
+        );
+    }
+    if !missing_servers.is_empty() {
+        recommendations.push("Configure missing MCP servers in /mcp and reconnect.".to_string());
+    }
+    if !disconnected_servers.is_empty() {
+        recommendations.push("Connect and refresh disconnected MCP servers.".to_string());
+    }
+    if !auth_pending_tools.is_empty() {
+        recommendations.push(
+            "Complete MCP authorization flow for pending tools, then refresh server tools."
+                .to_string(),
+        );
+    }
+
+    let runnable = blocking_issues.is_empty() || input.allow_unbound;
+    let output = CapabilityReadinessOutput {
+        workflow_id: input
+            .workflow_id
+            .clone()
+            .unwrap_or_else(|| "unknown_workflow".to_string()),
+        runnable,
+        resolved: result.resolved,
+        missing_required_capabilities,
+        unbound_capabilities,
+        missing_optional_capabilities: result.missing_optional,
+        missing_servers,
+        disconnected_servers,
+        auth_pending_tools,
+        missing_secret_refs,
+        considered_bindings: result.considered_bindings,
+        recommendations,
+        blocking_issues,
+    };
+    let status = if output.runnable {
+        StatusCode::OK
+    } else {
+        StatusCode::CONFLICT
+    };
+    state.event_bus.publish(EngineEvent::new(
+        "capabilities.readiness.evaluated",
+        json!({
+            "workflow_id": output.workflow_id,
+            "runnable": output.runnable,
+            "blocking_issue_count": output.blocking_issues.len(),
+        }),
+    ));
+    Ok((status, Json(json!({ "readiness": output }))).into_response())
+}
+
 async fn presets_index(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
     let index = state.preset_registry.index().await.map_err(|err| {
         tracing::warn!("presets index failed: {}", err);
@@ -1724,6 +1936,8 @@ fn app_router(state: AppState) -> Router {
         .route("/mcp/{name}/auth", post(auth_mcp).delete(delete_auth_mcp))
         .route("/mcp/{name}/auth/callback", post(callback_mcp))
         .route("/mcp/{name}/auth/authenticate", post(authenticate_mcp))
+        .route("/mcp/catalog", get(mcp_catalog_index))
+        .route("/mcp/catalog/{slug}/toml", get(mcp_catalog_toml))
         .route("/mcp/tools", get(mcp_tools))
         .route("/mcp/resources", get(mcp_resources))
         .route("/tool/ids", get(tool_ids))
@@ -1790,6 +2004,7 @@ fn app_router(state: AppState) -> Router {
         )
         .route("/capabilities/discovery", get(capabilities_discovery))
         .route("/capabilities/resolve", post(capabilities_resolve))
+        .route("/capabilities/readiness", post(capabilities_readiness))
         .route("/presets/index", get(presets_index))
         .route("/presets/compose/preview", post(presets_compose_preview))
         .route("/presets/fork", post(presets_fork))
@@ -4754,6 +4969,22 @@ async fn authenticate_mcp(Path(name): Path<String>) -> Json<Value> {
 }
 async fn delete_auth_mcp(Path(name): Path<String>) -> Json<Value> {
     Json(json!({"ok": true, "name": name}))
+}
+async fn mcp_catalog_index() -> Result<Json<Value>, StatusCode> {
+    if let Some(index) = mcp_catalog::index() {
+        return Ok(Json(index.clone()));
+    }
+    Err(StatusCode::SERVICE_UNAVAILABLE)
+}
+async fn mcp_catalog_toml(Path(slug): Path<String>) -> Result<Response, StatusCode> {
+    if let Some(toml) = mcp_catalog::toml_for_slug(&slug) {
+        return Ok((
+            [(header::CONTENT_TYPE, "application/toml; charset=utf-8")],
+            toml,
+        )
+            .into_response());
+    }
+    Err(StatusCode::NOT_FOUND)
 }
 async fn mcp_tools(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.mcp.list_tools().await))
@@ -11056,6 +11287,8 @@ async fn openapi_doc() -> Json<Value> {
             "/provider":{"get":{"summary":"List providers"}},
             "/session/{id}/fork":{"post":{"summary":"Fork a session"}},
             "/worktree":{"get":{"summary":"List worktrees"},"post":{"summary":"Create worktree"},"delete":{"summary":"Delete worktree"}},
+            "/mcp/catalog":{"get":{"summary":"List embedded MCP remote-pack catalog"}},
+            "/mcp/catalog/{slug}/toml":{"get":{"summary":"Get embedded MCP remote-pack TOML by slug"}},
             "/mcp/resources":{"get":{"summary":"List MCP resources"}},
             "/tool":{"get":{"summary":"List tools"}},
             "/skills":{"get":{"summary":"List installed skills"},"post":{"summary":"Import skill from content or file/zip"}},
@@ -11082,6 +11315,7 @@ async fn openapi_doc() -> Json<Value> {
             "/capabilities/bindings":{"get":{"summary":"List capability bindings"},"put":{"summary":"Replace capability bindings file"}},
             "/capabilities/discovery":{"get":{"summary":"Discover available provider tools for capability resolution"}},
             "/capabilities/resolve":{"post":{"summary":"Resolve required capabilities to provider tools based on bindings and preference"}},
+            "/capabilities/readiness":{"post":{"summary":"Evaluate capability readiness and return actionable blocking issues"}},
             "/presets/index":{"get":{"summary":"List layered preset registry index (builtins, packs, overrides)"}},
             "/presets/compose/preview":{"post":{"summary":"Deterministically compose preset prompt fragments (core->domain->style->safety)"}},
             "/presets/fork":{"post":{"summary":"Fork builtin/pack preset file into project overrides"}},
@@ -11786,6 +12020,43 @@ mod tests {
             payload.get("workflow_id").and_then(|v| v.as_str()),
             Some("wf-pr")
         );
+    }
+
+    #[tokio::test]
+    async fn capabilities_readiness_returns_blocking_issues_when_unbound() {
+        let state = test_state().await;
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/capabilities/readiness")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "workflow_id": "wf-readiness",
+                    "required_capabilities": ["github.create_pull_request"],
+                    "provider_preference": ["composio", "arcade", "mcp"],
+                    "available_tools": []
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let readiness = payload.get("readiness").cloned().unwrap_or(Value::Null);
+        assert_eq!(
+            readiness.get("runnable").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(readiness
+            .get("unbound_capabilities")
+            .and_then(|v| v.as_array())
+            .is_some_and(|rows| !rows.is_empty()));
+        assert!(readiness
+            .get("blocking_issues")
+            .and_then(|v| v.as_array())
+            .is_some_and(|rows| !rows.is_empty()));
     }
 
     #[tokio::test]

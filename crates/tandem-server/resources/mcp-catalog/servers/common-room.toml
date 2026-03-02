@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.common-room"
+slug = "common-room"
+name = "Common Room"
+description = "Ask questions about your contacts and accounts"
+documentation_url = "https://www.commonroom.io/docs/signals/mcp/"
+directory_url = "https://claude.ai/directory/e56221b4-925f-48bb-9176-6cd6e8fae3c1"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["commonroom_get_catalog", "commonroom_list_objects", "commonroom_submit_feedback"]
+visibility = ["commercial"]
+
+[server]
+name = "io.commonroom/commonroom"
+version = "1.0.0"
+display_name = "Common Room"
+transport_url = "https://mcp.commonroom.io/mcp"
+
+[registry]
+uuid = "e56221b4-925f-48bb-9176-6cd6e8fae3c1"
+rank = 130
+author_name = "Common Room"
+author_url = "https://commonroom.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.commonroom.io/mcp"

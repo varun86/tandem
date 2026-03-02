@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.box"
+slug = "box"
+name = "Box"
+description = "Search, access and get insights on your Box content"
+documentation_url = "https://developer.box.com/guides/box-mcp"
+directory_url = "https://claude.ai/directory/a5380429-c773-4180-b642-301418240c8c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["data"]
+tool_names = ["who_am_i", "search_folders_by_name", "list_folder_content_by_folder_id", "search_files_keyword", "search_files_metadata", "ai_qa_single_file", "ai_qa_multi_file", "ai_qa_hub", "ai_extract_freeform", "ai_extract_structured", "get_file_content", "upload_file", "upload_file_version", "create_folder", "list_tasks", "list_hubs", "get_hub_details", "get_hub_items", "get_file_details", "get_folder_details"]
+visibility = ["commercial"]
+
+[server]
+name = "com.box.mcp/box"
+version = "1.0.0"
+display_name = "Box"
+transport_url = "https://mcp.box.com"
+
+[registry]
+uuid = "a5380429-c773-4180-b642-301418240c8c"
+rank = 13
+author_name = "Box"
+author_url = "https://www.box.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.box.com"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.process-street"
+slug = "process-street"
+name = "Process Street"
+description = "Explore and update your Process Street data"
+documentation_url = "https://www.process.st/help/docs/mcp-server/"
+directory_url = "https://claude.ai/directory/bc7e0573-b43a-4f38-bb11-bd167110a895"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["productivity"]
+tool_names = ["assignTask", "assignWorkflowRun", "createDataSetRecord", "createWorkflowRun", "deleteDataSetRecord", "deleteWorkflowRun", "getDataSetRecord", "getTask", "getWorkflowRun", "listApprovals", "listDataSetRecords", "listDataSets", "listFormFieldOptions", "listFormFieldValues", "listFormFieldValuesByTask", "listFormFields", "listTaskAssignees", "listTasks", "listTasksByWorkflowRun", "listUsers", "listWorkflowRunAssignees", "listWorkflowRuns", "listWorkflowTasksByWorkflow", "listWorkflows", "unassignTask", "unassignWorkflowRun", "undeleteWorkflowRun", "updateDataSetRecord", "updateMultipleFormFieldValues", "updateTask", "updateWorkflowRun", "upsertApproval"]
+visibility = ["commercial"]
+
+[server]
+name = "st.process/mcp"
+version = "1.0.0"
+display_name = "Process Street"
+transport_url = "https://mcp.process.st"
+
+[registry]
+uuid = "bc7e0573-b43a-4f38-bb11-bd167110a895"
+rank = 159
+author_name = "Process Street"
+author_url = "https://www.process.st"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.process.st"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "curated-mcp-overrides"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.notion"
+slug = "notion"
+name = "Notion (Official)"
+description = "Official Notion remote MCP server for pages, databases, and workspace content."
+documentation_url = "https://developers.notion.com/docs/mcp"
+directory_url = "https://notion.com"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code", "codex"]
+use_cases = ["productivity", "notes", "knowledge-base"]
+tool_names = []
+visibility = ["curated"]
+
+[server]
+name = "com.notion/mcp"
+version = ""
+display_name = "Notion (Official)"
+transport_url = "https://mcp.notion.com/mcp"
+
+[registry]
+uuid = "curated:notion-remote"
+rank = 0
+author_name = "Notion"
+author_url = "https://notion.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.notion.com/mcp"

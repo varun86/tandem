@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.lunarcrush"
+slug = "lunarcrush"
+name = "LunarCrush"
+description = "Add real-time social media data to your searches"
+documentation_url = "https://lunarcrush.com/developers/api/ai"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["List", "Cryptocurrencies", "Stocks", "Topic", "Creator", "Post", "Topic_Time_Series", "Topic_Posts", "Search", "Fetch", "Authentication"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.lunarcrush/lunarcrush"
+version = "1.0.0"
+display_name = "LunarCrush"
+transport_url = "https://lunarcrush.ai/mcp"
+
+[registry]
+uuid = "837cceff-9820-4510-823f-9bdc5ef21f3a"
+rank = 110
+author_name = "LunarCrush"
+author_url = "https://lunarcrush.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://lunarcrush.ai/mcp"

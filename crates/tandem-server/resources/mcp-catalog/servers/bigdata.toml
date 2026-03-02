@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.bigdata"
+slug = "bigdata"
+name = "Bigdata.com"
+description = "Access real-time financial data"
+documentation_url = "https://docs.bigdata.com/mcp-reference"
+directory_url = "https://claude.ai/directory/e463df16-b3d7-4bb9-953d-b652a073c764"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["bigdata_events_calendar", "find_companies", "bigdata_search", "bigdata_tearsheet"]
+visibility = ["commercial"]
+
+[server]
+name = "com.ravenpack.bigdata/bigdata"
+version = "1.0.0"
+display_name = "Bigdata.com"
+transport_url = "https://mcp.bigdata.com/"
+
+[registry]
+uuid = "e463df16-b3d7-4bb9-953d-b652a073c764"
+rank = 108
+author_name = "RavenPack"
+author_url = "https://www.ravenpack.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.bigdata.com/"

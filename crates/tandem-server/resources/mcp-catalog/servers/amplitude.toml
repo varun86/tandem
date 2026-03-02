@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.amplitude"
+slug = "amplitude"
+name = "Amplitude"
+description = "Search, access, and get insights on your Amplitude data"
+documentation_url = "https://amplitude.com/docs/analytics/amplitude-mcp"
+directory_url = "https://claude.ai/directory/8e40fa13-4654-4387-bbad-12b8ecc81351"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["get_charts", "get_context", "get_dashboard", "get_experiments", "get_notebook", "query_dataset", "query_charts", "query_metric", "query_experiment", "search", "get_events", "get_event_properties", "get_user_properties", "get_flags"]
+visibility = ["commercial"]
+
+[server]
+name = "com.amplitude/mcp-server"
+version = "1.0.0"
+display_name = "Amplitude"
+transport_url = "https://mcp.amplitude.com/mcp"
+
+[registry]
+uuid = "8e40fa13-4654-4387-bbad-12b8ecc81351"
+rank = 28
+author_name = "Amplitude"
+author_url = "https://amplitude.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.amplitude.com/mcp"

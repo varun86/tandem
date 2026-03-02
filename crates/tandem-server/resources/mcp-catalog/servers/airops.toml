@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.airops"
+slug = "airops"
+name = "AirOps"
+description = "Craft content that wins AI search"
+documentation_url = "https://docs.airops.com/mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_workspaces", "list_brand_kits", "get_brand_kit", "list_brand_kit_competitors", "list_personas", "list_topics", "list_aeo_prompts", "get_prompt_answers", "query_analytics", "list_pages", "get_page_details", "get_page_prompts"]
+visibility = ["commercial"]
+
+[server]
+name = "com.airops.app/airops"
+version = "1.0.0"
+display_name = "AirOps"
+transport_url = "https://app.airops.com/mcp"
+
+[registry]
+uuid = "3d915617-ebcc-489f-b603-57ec21f7d1d0"
+rank = 123
+author_name = "AirOps"
+author_url = "https://www.airops.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://app.airops.com/mcp"

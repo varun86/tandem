@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.play-sheet-music"
+slug = "play-sheet-music"
+name = "Play Sheet Music"
+description = "Ask Claude to generate and play some sheet music for you with a visual component"
+documentation_url = "https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/sheet-music-server"
+directory_url = "https://claude.ai/directory/96a2cde3-0340-43e9-b293-055f293b346d"
+requires_auth = true
+requires_setup = true
+works_with = ["claude"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "io.modelcontextprotocol/server-sheet-music"
+version = "1.0.0"
+display_name = "Play Sheet Music"
+transport_url = "https://example-server.modelcontextprotocol.io/sheet-music/mcp"
+
+[registry]
+uuid = "96a2cde3-0340-43e9-b293-055f293b346d"
+rank = 50
+author_name = "Model Context Protocol Community"
+author_url = "https://modelcontextprotocol.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://example-server.modelcontextprotocol.io/sheet-music/mcp"

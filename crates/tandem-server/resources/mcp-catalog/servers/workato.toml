@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.workato"
+slug = "workato"
+name = "Workato"
+description = "Automate workflows and connect your business apps"
+documentation_url = "https://docs.workato.com/en/mcp.html"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "com.workato.www/workato"
+version = "1.0.0"
+display_name = "Workato"
+transport_url = "{url}"
+
+[registry]
+uuid = "7c57d0b0-7fe0-4ca9-9ead-932fcb929e57"
+rank = 114
+author_name = "Workato"
+author_url = "https://www.workato.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

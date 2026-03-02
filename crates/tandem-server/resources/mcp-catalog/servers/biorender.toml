@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.biorender"
+slug = "biorender"
+name = "BioRender"
+description = "Search for and use scientific templates and icons"
+documentation_url = "https://help.biorender.com/hc/en-gb/articles/30870978672157-How-to-use-the-BioRender-MCP-connector"
+directory_url = "https://claude.ai/directory/81cc5080-a204-4aa1-a694-fa868a3c8720"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["search-icons", "search-templates"]
+visibility = ["commercial"]
+
+[server]
+name = "com.biorender.services.mcp/biorender"
+version = "1.0.0"
+display_name = "BioRender"
+transport_url = "https://mcp.services.biorender.com/mcp"
+
+[registry]
+uuid = "81cc5080-a204-4aa1-a694-fa868a3c8720"
+rank = 66
+author_name = "BioRender"
+author_url = "https://biorender.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.services.biorender.com/mcp"

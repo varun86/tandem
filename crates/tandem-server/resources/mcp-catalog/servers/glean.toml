@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.glean"
+slug = "glean"
+name = "Glean"
+description = "Bring enterprise context to Claude and your AI tools"
+documentation_url = "https://docs.glean.com/administration/platform/mcp/about"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search", "code_search", "employee_search", "chat", "gmail_search", "outlook_search", "meeting_lookup", "read_document"]
+visibility = ["commercial"]
+
+[server]
+name = "com.glean/glean"
+version = "1.0.0"
+display_name = "Glean"
+transport_url = "{url}"
+
+[registry]
+uuid = "784c4da3-8956-462f-96c1-440c6a190dcc"
+rank = 59
+author_name = "glean"
+author_url = "https://glean.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

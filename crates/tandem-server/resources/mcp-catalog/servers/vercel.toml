@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.vercel"
+slug = "vercel"
+name = "Vercel"
+description = "Analyze, debug, and manage projects and deployments"
+documentation_url = "https://vercel.com/docs/mcp/vercel-mcp"
+directory_url = "https://claude.ai/directory/7eb42afe-0087-4493-a105-da2b021d5c03"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["code"]
+tool_names = ["search_vercel_documentation", "list_projects", "get_project", "list_deployments", "get_deployment", "get_deployment_events", "list_teams"]
+visibility = ["commercial"]
+
+[server]
+name = "com.vercel/vercel-mcp"
+version = "0.0.3"
+display_name = "Vercel"
+transport_url = "https://mcp.vercel.com/"
+
+[registry]
+uuid = "7eb42afe-0087-4493-a105-da2b021d5c03"
+rank = 14
+author_name = "Vercel"
+author_url = "https://vercel.com/"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:32:02 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.vercel.com/"

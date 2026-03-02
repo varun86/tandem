@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.egnyte"
+slug = "egnyte"
+name = "Egnyte"
+description = "Securely access and analyze Egnyte content"
+documentation_url = "https://developers.egnyte.com/docs/Remote_MCP_Server"
+directory_url = "https://claude.ai/directory/5b938bac-8286-4844-bc51-d303f7c6cbde"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["search", "advanced_search", "fetch", "ask_document", "summarize_document", "list_filesystem_by_path", "list_filesystem_by_id", "download_file_by_path", "download_file_by_id", "ask_copilot", "ask_knowledge_base", "list_knowledge_bases", "get_folder_stats", "search_projects_by_folder", "get_project_details", "list_projects", "get_workflow_details", "list_workflows", "list_workflow_tasks", "get_comment", "list_comments", "get_link_details", "list_links"]
+visibility = ["commercial"]
+
+[server]
+name = "com.egnyte/mcp-server"
+version = "1.0.0"
+display_name = "Egnyte"
+transport_url = "https://mcp-server.egnyte.com/mcp"
+
+[registry]
+uuid = "5b938bac-8286-4844-bc51-d303f7c6cbde"
+rank = 104
+author_name = "Egnyte, Inc."
+author_url = "https://www.egnyte.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp-server.egnyte.com/mcp"

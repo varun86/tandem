@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.stripe"
+slug = "stripe"
+name = "Stripe"
+description = "Payment processing and financial infrastructure tools"
+documentation_url = "https://docs.stripe.com/mcp"
+directory_url = "https://claude.ai/directory/de127013-63f1-43d0-8dd2-b6cb5b4e5d1b"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["search_documentation", "get_stripe_account_info", "create_customer", "list_customers", "create_product", "list_products", "create_price", "list_prices", "create_payment_link", "create_invoice", "list_invoices", "create_invoice_item", "finalize_invoice", "retrieve_balance", "create_refund", "list_payment_intents", "list_subscriptions", "update_subscription", "cancel_subscription", "list_coupons", "create_coupon", "list_disputes", "update_dispute"]
+visibility = ["commercial"]
+
+[server]
+name = "com.stripe/mcp"
+version = "0.2.4"
+display_name = "Stripe"
+transport_url = "https://mcp.stripe.com"
+
+[registry]
+uuid = "de127013-63f1-43d0-8dd2-b6cb5b4e5d1b"
+rank = 24
+author_name = "Stripe"
+author_url = "https://stripe.com"
+published_on = "Fri Jan 16 2026 19:33:48 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Fri Jan 16 2026 19:31:48 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.stripe.com"

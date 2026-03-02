@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.lilt"
+slug = "lilt"
+name = "LILT"
+description = "High-quality translation with human verification"
+documentation_url = "https://support.lilt.com/kb/LILT-mcp"
+directory_url = "https://claude.ai/directory/88245f33-e3a7-468f-ae27-3f118bef198a"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["translate_text", "translate_files_with_verification", "get_credit_balance_information", "check_job_status", "download_job"]
+visibility = ["commercial"]
+
+[server]
+name = "com.lilt/mcp"
+version = "1.0.0"
+display_name = "LILT"
+transport_url = "https://mcp.lilt.com/mcp"
+
+[registry]
+uuid = "88245f33-e3a7-468f-ae27-3f118bef198a"
+rank = 152
+author_name = "LILT"
+author_url = "https://lilt.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.lilt.com/mcp"

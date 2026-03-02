@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.razorpay"
+slug = "razorpay"
+name = "Razorpay"
+description = "Turn Claude into your Razorpay Dashboard Assistant"
+documentation_url = "https://razorpay.com/docs/mcp-server/?preferred-country=IN"
+directory_url = "https://claude.ai/directory/c4259182-2a73-4a5f-91ab-0867a3eade9d"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["productivity"]
+tool_names = ["fetch_payment", "fetch_all_payments", "fetch_payment_card_details", "fetch_order", "fetch_all_orders", "fetch_order_payments", "fetch_payment_link", "fetch_all_payment_links", "fetch_qr_code", "fetch_all_qr_codes", "fetch_qr_codes_by_customer_id", "fetch_qr_codes_by_payment_id", "fetch_payments_for_qr_code", "fetch_refund", "fetch_all_refunds", "fetch_multiple_refunds_for_payment", "fetch_specific_refund_for_payment", "fetch_settlement_with_id", "fetch_all_settlements", "fetch_instant_settlement_with_id", "fetch_all_instant_settlements", "fetch_settlement_recon_details", "fetch_payout_with_id", "fetch_all_payouts", "fetch_tokens"]
+visibility = ["commercial"]
+
+[server]
+name = "com.razorpay/razorpay"
+version = "1.0.0"
+display_name = "Razorpay"
+transport_url = "https://mcp.razorpay.com/mcp"
+
+[registry]
+uuid = "c4259182-2a73-4a5f-91ab-0867a3eade9d"
+rank = 150
+author_name = "Razorpay Software Private Limited"
+author_url = "https://razorpay.com/about/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.razorpay.com/mcp"

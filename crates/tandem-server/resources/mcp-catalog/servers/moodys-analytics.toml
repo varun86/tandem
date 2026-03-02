@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.moodys-analytics"
+slug = "moodys-analytics"
+name = "Moody's"
+description = "Risk insights, analytics, and decision intelligence"
+documentation_url = "https://www.moodys.com/web/en/us/genai/model-context-protocol.html"
+directory_url = "https://claude.ai/directory/83a7523b-d6c5-45f8-89de-90a2998bae49"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["findEntity", "getEntityPeers", "getEntityCreditOpinionSummary", "getEntityCreditUpgradeDowngradeFactors", "getEntitySectorOutlook", "searchAllDocuments", "getEntityCountryProfile", "searchEntityEarningsCall", "getEntityRatings", "searchEntityDocuments", "getEntityCreditOpinionOutlook", "getEntitySwot", "getEntityEsg", "getEntityScorecard", "searchNews"]
+visibility = ["commercial"]
+
+[server]
+name = "com.moodys.api/moody-s"
+version = "1.0.0"
+display_name = "Moody's"
+transport_url = "https://api.moodys.com/genai-ready-data/m1/mcp"
+
+[registry]
+uuid = "83a7523b-d6c5-45f8-89de-90a2998bae49"
+rank = 78
+author_name = "Moody's Analytics"
+author_url = "https://moodys.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.moodys.com/genai-ready-data/m1/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.biorxiv"
+slug = "biorxiv"
+name = "bioRxiv"
+description = "Access bioRxiv and medRxiv preprint data"
+documentation_url = "https://docs.mcp.deepsense.ai/guides/biorxiv.html"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["search_biorxiv_publications", "search_by_funder", "get_categories", "get_preprint", "search_published_articles", "search_publisher_articles", "search_preprints", "get_content_statistics"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.deepsense.mcp/biorxiv"
+version = "1.0.0"
+display_name = "bioRxiv"
+transport_url = "https://mcp.deepsense.ai/biorxiv/mcp"
+
+[registry]
+uuid = "7f750eb6-c3cb-47d7-9269-d35c43fe9925"
+rank = 43
+author_name = "deepsense.ai"
+author_url = "https://deepsense.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.deepsense.ai/biorxiv/mcp"

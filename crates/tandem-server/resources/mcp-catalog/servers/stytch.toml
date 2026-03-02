@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.stytch"
+slug = "stytch"
+name = "Stytch"
+description = "Manage your Stytch Project"
+documentation_url = "https://stytch.com/docs/workspace-management/stytch-mcp"
+directory_url = "https://claude.ai/directory/b873d3db-0781-4a3d-9245-9c6213e6d785"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["code"]
+tool_names = ["createProject", "listProjects", "createRedirectURL", "getAllRedirectURLs", "updateRedirectURL", "deleteRedirectURL", "createPublicToken", "getAllPublicTokens", "deletePublicToken", "createSecret", "deleteSecret", "createEmailTemplate", "getAllEmailTemplates", "deleteEmailTemplate", "updateEmailTemplate", "getPasswordStrengthConfig", "setPasswordStrengthConfig", "getConsumerSDKConfig", "getB2BSDKConfig", "updateConsumerSDKConfig", "updateB2BSDKConfig"]
+visibility = ["commercial"]
+
+[server]
+name = "dev.stytch.mcp/stytch"
+version = "1.0.0"
+display_name = "Stytch"
+transport_url = "https://mcp.stytch.dev/mcp"
+
+[registry]
+uuid = "b873d3db-0781-4a3d-9245-9c6213e6d785"
+rank = 141
+author_name = "Stytch"
+author_url = "https://stytch.com/"
+published_on = "Tue Jan 13 2026 20:19:08 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Tue Jan 13 2026 18:42:54 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.stytch.dev/mcp"

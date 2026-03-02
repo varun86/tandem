@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.benchling"
+slug = "benchling"
+name = "Benchling"
+description = "Connect to R&D data, source experiments, and notebooks"
+documentation_url = "https://help.benchling.com/hc/en-us/articles/40342713479437-Benchling-MCP"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["benchling_ask", "benchling_deep_research"]
+visibility = ["commercial"]
+
+[server]
+name = "com.benchling/benchling"
+version = "1.0.0"
+display_name = "Benchling"
+transport_url = "{url}"
+
+[registry]
+uuid = "b69522d1-0a10-415a-898b-4e4d706c9c87"
+rank = 155
+author_name = "Benchling"
+author_url = "https://benchling.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

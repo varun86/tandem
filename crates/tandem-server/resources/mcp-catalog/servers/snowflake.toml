@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.snowflake"
+slug = "snowflake"
+name = "Snowflake"
+description = "Retrieve both structured and unstructured data"
+documentation_url = "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["Cortex Analyst for structured data", "Cortex Search for unstructured data"]
+visibility = ["commercial"]
+
+[server]
+name = "com.snowflake/snowflake"
+version = "1.0.0"
+display_name = "Snowflake"
+transport_url = "{url}"
+
+[registry]
+uuid = "ee49809c-50e1-4b24-bc17-17ce8887bfdf"
+rank = 46
+author_name = "Snowflake"
+author_url = "https://snowflake.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.kiwi-com"
+slug = "kiwi-com"
+name = "Kiwi.com"
+description = "Search flights in Claude"
+documentation_url = "https://mcp-install-instructions.alpic.cloud/servers/kiwi-com-flight-search"
+directory_url = "https://claude.ai/directory/01c311c4-53cb-452a-90a8-1d524c9b97d6"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = []
+tool_names = ["search-flight"]
+visibility = ["commercial"]
+
+[server]
+name = "com.kiwi.mcp/kiwi-com"
+version = "1.0.0"
+display_name = "Kiwi.com"
+transport_url = "https://mcp.kiwi.com"
+
+[registry]
+uuid = "01c311c4-53cb-452a-90a8-1d524c9b97d6"
+rank = 60
+author_name = "Kiwi.com"
+author_url = "https://kiwi.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.kiwi.com"

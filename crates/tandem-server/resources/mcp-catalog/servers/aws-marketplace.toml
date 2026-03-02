@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.aws-marketplace"
+slug = "aws-marketplace"
+name = "AWS Marketplace"
+description = "Discover, evaluate, and buy solutions for the cloud"
+documentation_url = "https://docs.aws.amazon.com/marketplace/latest/APIReference/marketplace-mcp-server.html"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["ask_aws_marketplace", "generate_aws_marketplace_file_upload_url", "get_aws_marketplace_uploaded_files", "delete_aws_marketplace_uploaded_file", "get_aws_marketplace_recommendations_report", "get_aws_marketplace_comparisons_report", "get_aws_marketplace_evaluation_report", "delete_aws_marketplace_conversation", "get_aws_marketplace_solution", "get_aws_marketplace_related_solutions", "search_aws_marketplace_solutions"]
+visibility = ["commercial"]
+
+[server]
+name = "aws.api.us-east-1.marketplace-mcp/aws-marketplace"
+version = "1.0.0"
+display_name = "AWS Marketplace"
+transport_url = "https://marketplace-mcp.us-east-1.api.aws/mcp"
+
+[registry]
+uuid = "2ed43e1e-f547-48a3-85cc-b9baa412d06b"
+rank = 62
+author_name = "AWS Marketplace"
+author_url = "https://aws.amazon.com/marketplace"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://marketplace-mcp.us-east-1.api.aws/mcp"

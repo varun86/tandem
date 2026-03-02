@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.godaddy"
+slug = "godaddy"
+name = "GoDaddy"
+description = "Search domains and check availability"
+documentation_url = "https://developer.godaddy.com/mcp"
+directory_url = "https://claude.ai/directory/a1d0551d-c567-4975-91fc-7ced9e819421"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["check_domain", "suggest_domains"]
+visibility = ["commercial"]
+
+[server]
+name = "com.godaddy.api/godaddy"
+version = "1.0.0"
+display_name = "GoDaddy"
+transport_url = "https://api.godaddy.com/v1/domains/mcp"
+
+[registry]
+uuid = "a1d0551d-c567-4975-91fc-7ced9e819421"
+rank = 47
+author_name = "GoDaddy"
+author_url = "https://www.godaddy.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.godaddy.com/v1/domains/mcp"

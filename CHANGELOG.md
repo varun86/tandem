@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Engine-embedded MCP remote pack catalog**:
+  - added generated MCP catalog assets under `crates/tandem-server/resources/mcp-catalog/` (index + per-server TOML manifests)
+  - added MCP catalog module integration in server runtime (`mcp_catalog`)
+  - added MCP catalog HTTP routes:
+    - `GET /mcp/catalog`
+    - `GET /mcp/catalog/{slug}/toml`
+  - added generator script `scripts/generate-mcp-catalog.mjs` and control-panel convenience script `npm run mcp:catalog:refresh`
+  - added curated official remote overrides for:
+    - `github` (`https://api.githubcopilot.com/mcp/`)
+    - `jira` (`https://mcp.atlassian.com/v1/mcp`)
+    - `notion` (`https://mcp.notion.com/mcp`)
+  - removed Docker-first default for GitHub MCP in curated catalog flows; default now uses official remote endpoint
+- **Capability readiness preflight APIs (engine + SDK/UI)**:
+  - added readiness request/response contracts in capability resolver (`CapabilityReadinessInput`, `CapabilityReadinessOutput`, blocking issues)
+  - added readiness route:
+    - `POST /capabilities/readiness`
+  - readiness now classifies fail-closed blockers including:
+    - missing required capability bindings
+    - unbound required capabilities
+    - missing/disconnected required MCP servers
+    - auth-pending MCP tools
+  - added TypeScript SDK support:
+    - `client.capabilities.readiness(...)`
+    - exported readiness input/output types in public package surface
+  - added desktop-side command/wrapper support:
+    - Tauri command `capability_readiness`
+    - frontend wrapper `capabilityReadiness(...)`
 - **Marketplace pack specification set** under `specs/packs/`:
   - `MARKETPLACE_PACK_REQUIREMENTS.md`
   - `PUBLISHING_AND_TRUST.md`
@@ -133,6 +160,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - moved `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar navigation into a Settings-centric information architecture
   - added `Settings` tabbed sections (`General`, `Packs`, `Channels`, `MCP`, `Files`) so integration/asset management stays on the settings surface
   - added in-view migration prompts from Automations and legacy surfaces to direct users into Settings
+- **Control panel MCP catalog and readiness surfaces (`packages/tandem-control-panel`)**:
+  - MCP view now fetches and renders embedded catalog entries from `/api/engine/mcp/catalog`
+  - added searchable “Remote MCP Packs” UI with pack apply actions and TOML open links
+  - added readiness-check UI in MCP settings that calls `/capabilities/readiness`
+  - Pack builders now enforce readiness preflight before saving agent/automation overrides
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

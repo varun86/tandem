@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.docusign"
+slug = "docusign"
+name = "Docusign"
+description = "Intelligent, secure contract management by Docusign"
+documentation_url = "https://developers.docusign.com/tools/mcp-server/"
+directory_url = "https://claude.ai/directory/a876b642-2b05-4808-a565-deeb271802fd"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["productivity"]
+tool_names = ["getUserInfo", "getAllAgreements", "getAgreementDetails", "getWorkflowTriggerRequirements", "getWorkflowsList", "triggerWorkflow", "getWorkflowInstancesList", "getWorkflowInstance", "pauseNewWorkflowInstances", "resumeWorkflow", "cancelWorkflowInstance", "getEnvelopes", "getEnvelope", "createEnvelope", "updateEnvelope", "listRecipients", "getTemplates", "getUser", "getUsers", "getAccount"]
+visibility = ["commercial"]
+
+[server]
+name = "com.docusign/mcp"
+version = "1.0.0"
+display_name = "Docusign"
+transport_url = "https://mcp.docusign.com/mcp"
+
+[registry]
+uuid = "a876b642-2b05-4808-a565-deeb271802fd"
+rank = 82
+author_name = "Docusign"
+author_url = "https://www.docusign.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.docusign.com/mcp"

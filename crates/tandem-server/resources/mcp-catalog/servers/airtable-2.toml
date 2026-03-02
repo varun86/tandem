@@ -1,0 +1,31 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.airtable-2"
+slug = "airtable-2"
+name = "Airtable"
+description = "Read and write Airtable databases"
+documentation_url = "https://github.com/domdomegg/airtable-mcp-server"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude-desktop", "claude-code"]
+use_cases = []
+tool_names = []
+visibility = ["commercial"]
+
+[server]
+name = "io.github.domdomegg/airtable-mcp-server"
+version = "1.9.6"
+display_name = "Airtable"
+transport_url = ""
+
+[registry]
+uuid = "65d61b4e-9aeb-4336-8369-257455ae36ec"
+rank = 166
+author_name = "Adam Jones"
+author_url = "https://github.com/domdomegg"
+published_on = ""
+updated_on = ""

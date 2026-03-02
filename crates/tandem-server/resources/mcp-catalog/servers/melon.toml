@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.melon"
+slug = "melon"
+name = "Melon"
+description = "Browse music charts & your personalized music picks"
+documentation_url = "https://tech.kakaoent.com/ai/using-melon-mcp-server-en/"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["chart_get", "detail_get_playlist_songs", "detail_get_content", "detail_get_artist_songs", "detail_get_artist_albums", "detail_get_musicstory", "detail_get_content_detail_url", "genre_get_main_genres", "genre_get_sub_genres", "genre_get_content", "mymusic_get_recent_content", "mymusic_get_playlists", "mymusic_get_most_listened_songs", "mymusic_get_liked_list", "mymusic_get_fan_artists_with_temperature", "mymusic_get_my_fan_artist_temperature_history", "newest_get_content", "player_play_content", "playlist_get_recommended", "search_content", "search_get_suggestions", "search_musicstories", "recomm_dj_mallang_songs", "recomm_similar_songs", "report_streaming_card", "report_streaming_total"]
+visibility = ["commercial"]
+
+[server]
+name = "com.melon.mcp/melon"
+version = "1.0.0"
+display_name = "Melon"
+transport_url = "https://mcp.melon.com/mcp/"
+
+[registry]
+uuid = "02224ef2-6652-422e-9a70-fa93f699ab8f"
+rank = 133
+author_name = "Kakao Entertainment"
+author_url = "https://newsroom.kakaoent.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.melon.com/mcp/"

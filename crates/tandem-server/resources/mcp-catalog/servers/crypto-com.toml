@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.crypto-com"
+slug = "crypto-com"
+name = "Crypto.com"
+description = "Real time prices, orders, charts, and more for crypto"
+documentation_url = "https://mcp.crypto.com/docs"
+directory_url = "https://claude.ai/directory/7248e592-d083-435e-9617-aebab348fe30"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_trades", "get_mark_price", "get_instruments", "get_instrument", "get_index_price", "Get_candlestick", "Get_tickers", "Get_ticker", "Get_book"]
+visibility = ["commercial"]
+
+[server]
+name = "com.crypto.mcp/crypto-com"
+version = "1.0.0"
+display_name = "Crypto.com"
+transport_url = "https://mcp.crypto.com/market-data/mcp"
+
+[registry]
+uuid = "7248e592-d083-435e-9617-aebab348fe30"
+rank = 67
+author_name = "Crypto.com"
+author_url = "https://crypto.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.crypto.com/market-data/mcp"

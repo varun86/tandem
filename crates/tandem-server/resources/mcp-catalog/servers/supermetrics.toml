@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.supermetrics"
+slug = "supermetrics"
+name = "Supermetrics"
+description = "Analyze marketing performance across 200+ platforms"
+documentation_url = "https://mcp.supermetrics.com/docs"
+directory_url = "https://claude.ai/directory/cc599e7b-8c59-4e89-9bf0-36d47bb9ec80"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["data"]
+tool_names = ["data_source_discovery", "accounts_discovery", "field_discovery", "data_query", "get_async_query_results", "get_today"]
+visibility = ["commercial"]
+
+[server]
+name = "com.supermetrics/supermetrics"
+version = "1.0.0"
+display_name = "Supermetrics"
+transport_url = "https://mcp.supermetrics.com/mcp"
+
+[registry]
+uuid = "cc599e7b-8c59-4e89-9bf0-36d47bb9ec80"
+rank = 117
+author_name = "Supermetrics"
+author_url = "https://supermetrics.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.supermetrics.com/mcp"

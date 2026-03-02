@@ -12,6 +12,8 @@ import {
   mcpListTools,
   mcpRefresh,
   mcpSetEnabled,
+  capabilityReadiness,
+  type CapabilityReadinessResult,
   type McpRemoteTool,
   type McpServerRecord,
   opencodeAddMcpServer,
@@ -74,6 +76,9 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
   const [runtimeBusyServer, setRuntimeBusyServer] = useState<string | null>(null);
   const [runtimeServers, setRuntimeServers] = useState<McpServerRecord[]>([]);
   const [runtimeTools, setRuntimeTools] = useState<McpRemoteTool[]>([]);
+  const [readinessRequired, setReadinessRequired] = useState("");
+  const [readinessResult, setReadinessResult] = useState<CapabilityReadinessResult | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
 
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, OpencodeMcpTestResult>>({});
@@ -292,6 +297,31 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
     }
   };
 
+  const runReadinessCheck = async () => {
+    const required = readinessRequired
+      .split(",")
+      .map((row) => row.trim())
+      .filter(Boolean);
+    if (!required.length) {
+      setError("Enter at least one required capability ID.");
+      return;
+    }
+    setReadinessLoading(true);
+    try {
+      setError(null);
+      const payload = await capabilityReadiness({
+        workflow_id: "desktop-mcp-readiness",
+        required_capabilities: required,
+      });
+      setReadinessResult(payload?.readiness ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to evaluate capability readiness");
+      setReadinessResult(null);
+    } finally {
+      setReadinessLoading(false);
+    }
+  };
+
   const test = async (name: string) => {
     setTestingName(name);
     try {
@@ -444,6 +474,30 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
               })}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Capability Readiness</CardTitle>
+          <CardDescription>
+            Fail-closed preflight for required capability IDs before creating or running automation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              value={readinessRequired}
+              onChange={(e) => setReadinessRequired(e.target.value)}
+              placeholder="github.list_issues, github.create_pull_request"
+            />
+            <Button onClick={runReadinessCheck} disabled={readinessLoading}>
+              {readinessLoading ? "Checking..." : "Check"}
+            </Button>
+          </div>
+          <pre className="rounded-lg border border-border bg-surface-elevated p-3 text-xs text-text-muted overflow-auto max-h-72">
+            {readinessResult ? JSON.stringify(readinessResult, null, 2) : "No readiness check yet."}
+          </pre>
         </CardContent>
       </Card>
 

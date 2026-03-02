@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.s-p-global"
+slug = "s-p-global"
+name = "S&P Global"
+description = "Query a range of S&P Global datasets"
+documentation_url = "https://docs.kensho.com/llmreadyapi/mcp"
+directory_url = "https://claude.ai/directory/d965405c-3467-4046-b5b3-e8fb8ed235eb"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["get_latest", "get_n_quarters_ago", "get_business_relationship_from_identifiers", "get_capitalization_from_identifiers", "get_info_from_identifiers", "get_company_other_names_from_identifiers", "get_company_summary_from_identifiers", "get_company_description_from_identifiers", "get_competitors_from_identifiers", "get_next_earnings_from_identifiers", "get_cusip_from_identifiers", "get_isin_from_identifiers", "get_earnings_from_identifiers", "get_latest_earnings_from_identifiers", "get_transcript_from_key_dev_id", "get_financial_line_item_from_identifiers", "get_prices_from_identifiers", "get_segments_from_identifiers", "get_financial_statement_from_identifiers", "get_advisors_for_company_in_transactions", "get_merger_info_from_transaction_id", "get_mergers_from_identifiers"]
+visibility = ["commercial"]
+
+[server]
+name = "com.kensho.kfinance/s-p-global"
+version = "1.0.0"
+display_name = "S&P Global"
+transport_url = "https://kfinance.kensho.com/integrations/mcp"
+
+[registry]
+uuid = "d965405c-3467-4046-b5b3-e8fb8ed235eb"
+rank = 32
+author_name = "S&P Global"
+author_url = "https://www.spglobal.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://kfinance.kensho.com/integrations/mcp"

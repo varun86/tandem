@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.mermaid-chart"
+slug = "mermaid-chart"
+name = "Mermaid Chart"
+description = "Validates & renders Mermaid diagrams as PNG images"
+documentation_url = "https://docs.mermaidchart.com/ai/mcp-server"
+directory_url = "https://claude.ai/directory/de1df83d-e8f5-4498-a1e7-246cb9df999f"
+requires_auth = false
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["design"]
+tool_names = ["validate_and_render_mermaid_diagram"]
+visibility = ["commercial"]
+
+[server]
+name = "com.mermaidchart/mermaid-mcp"
+version = "1.0.0"
+display_name = "Mermaid Chart"
+transport_url = "https://chatgpt.mermaid.ai/anthropic/mcp"
+
+[registry]
+uuid = "de1df83d-e8f5-4498-a1e7-246cb9df999f"
+rank = 44
+author_name = "Mermaid Chart Inc"
+author_url = "https://www.mermaidchart.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://chatgpt.mermaid.ai/anthropic/mcp"

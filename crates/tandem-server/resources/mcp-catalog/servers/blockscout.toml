@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.blockscout"
+slug = "blockscout"
+name = "Blockscout"
+description = "Access and analyze blockchain data"
+documentation_url = "https://github.com/blockscout/mcp-server"
+directory_url = ""
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["__unlock_blockchain_analysis__", "get_chains_list", "get_address_by_ens_name", "get_contract_abi", "get_address_info", "get_tokens_by_address", "get_latest_block", "get_transactions_by_address", "get_token_transfers_by_address", "transaction_summary", "nft_tokens_by_address", "get_block_info", "get_transaction_info", "get_transaction_logs", "read_contract"]
+visibility = ["commercial"]
+
+[server]
+name = "com.blockscout/mcp-server"
+version = "0.12.0"
+display_name = "Blockscout"
+transport_url = "https://mcp.blockscout.com/mcp"
+
+[registry]
+uuid = "48425fdb-37c1-408d-9606-30e16847b6a8"
+rank = 131
+author_name = "Blockscout"
+author_url = "https://www.blockscout.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.blockscout.com/mcp"

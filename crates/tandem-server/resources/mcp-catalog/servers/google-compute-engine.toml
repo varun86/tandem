@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.google-compute-engine"
+slug = "google-compute-engine"
+name = "Google Compute Engine"
+description = "MCP server for Google Compute Engine"
+documentation_url = "https://cloud.google.com/docs"
+directory_url = "https://claude.ai/directory/3afecfe4-46be-4f31-9050-9b8a67909028"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["code"]
+tool_names = ["create_instance", "delete_instance", "start_instance", "stop_instance", "reset_instance", "get_instance_basic_info", "set_instance_machine_type", "list_instance_attached_disks", "list_instances", "get_instance_group_manager_basic_info", "list_instance_group_managers", "list_managed_instances", "list_instance_templates", "get_instance_template_basic_info", "get_instance_template_properties", "get_disk_basic_info", "get_disk_performance_config", "list_disks", "list_accelerator_types", "list_machine_types", "list_images", "get_zone_operation", "get_reservation_basic_info", "get_reservation_details", "list_reservations", "list_commitments", "get_commitment_basic_info", "list_commitment_reservations", "list_snapshots"]
+visibility = ["commercial"]
+
+[server]
+name = "com.google.cloud/compute-engine"
+version = "1.0.0"
+display_name = "Google Compute Engine"
+transport_url = "https://compute.googleapis.com/mcp"
+
+[registry]
+uuid = "3afecfe4-46be-4f31-9050-9b8a67909028"
+rank = 145
+author_name = "Google"
+author_url = "https://cloud.google.com/products/compute"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://compute.googleapis.com/mcp"

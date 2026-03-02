@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.airtable"
+slug = "airtable"
+name = "Airtable"
+description = "Bring your structured data to Claude"
+documentation_url = "https://support.airtable.com/docs/using-the-airtable-mcp-server"
+directory_url = "https://claude.ai/directory/cb504fab-e494-490f-bff8-bb3ab23a2209"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["data"]
+tool_names = ["create_records_for_table", "get_table_schema", "list_bases", "list_records_for_table", "list_tables_for_base", "ping", "search_bases", "update_records_for_table"]
+visibility = ["commercial"]
+
+[server]
+name = "com.airtable/mcp"
+version = "1.0.0"
+display_name = "Airtable"
+transport_url = "https://mcp.airtable.com/mcp"
+
+[registry]
+uuid = "cb504fab-e494-490f-bff8-bb3ab23a2209"
+rank = 103
+author_name = "Airtable"
+author_url = "https://airtable.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.airtable.com/mcp"

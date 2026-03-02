@@ -39,6 +39,7 @@ use tandem_tools::ToolRegistry;
 mod agent_teams;
 mod capability_resolver;
 mod http;
+mod mcp_catalog;
 mod pack_manager;
 mod preset_composer;
 mod preset_registry;

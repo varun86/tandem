@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.wyndham-hotels"
+slug = "wyndham-hotels"
+name = "Wyndham Hotels and Resorts"
+description = "Discover the right Wyndham Hotel for you, faster"
+documentation_url = "https://www.wyndhamhotels.com/mcp-doc"
+directory_url = "https://claude.ai/directory/3f8511ea-9906-414b-9b0a-34fcbd1f5587"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search-wyndham-hotels", "get-wyndham-hotel-details"]
+visibility = ["commercial"]
+
+[server]
+name = "com.wyndhamhotels/mcp"
+version = "1.0.0"
+display_name = "Wyndham Hotels and Resorts"
+transport_url = "https://mcp.wyndhamhotels.com/claude/mcp"
+
+[registry]
+uuid = "3f8511ea-9906-414b-9b0a-34fcbd1f5587"
+rank = 154
+author_name = "Wyndham Hotels and Resorts"
+author_url = "https://www.wyndhamhotels.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.wyndhamhotels.com/claude/mcp"

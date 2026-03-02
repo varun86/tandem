@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.intapp-celeste"
+slug = "intapp-celeste"
+name = "Intapp Celeste"
+description = "Securely, compliantly access Intapp Celeste products"
+documentation_url = "https://www.intapp.com/mcp-documentation/"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["dc_list_objects", "dc_list_fields", "dc_find_records", "dc_entry", "dc_lookup", "dc_aggregate", "dc_check_duplicates", "dc_create_record", "dc_update_record", "dc_query", "search_companies", "get_company_by_intapp_id", "search", "get_contents", "find_similar", "answer", "research"]
+visibility = ["commercial"]
+
+[server]
+name = "com.intapp.my/celeste"
+version = "1.0.0"
+display_name = "Intapp Celeste"
+transport_url = "{url}"
+
+[registry]
+uuid = "dd9a36b4-e356-4ca5-a771-d979e8a898c6"
+rank = 160
+author_name = "Intapp Celeste"
+author_url = "https://intapp.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

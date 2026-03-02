@@ -91,6 +91,33 @@ function normalizeTools(raw) {
     .filter(Boolean);
 }
 
+function normalizeCatalog(raw) {
+  const catalog = raw && typeof raw === "object" ? raw : {};
+  const list = Array.isArray(catalog.servers) ? catalog.servers : [];
+  return {
+    generatedAt: String(catalog.generated_at || "").trim(),
+    count: Number.isFinite(Number(catalog.count)) ? Number(catalog.count) : list.length,
+    servers: list
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        return {
+          slug: String(row.slug || "").trim(),
+          name: String(row.name || row.slug || "").trim(),
+          description: String(row.description || "").trim(),
+          transportUrl: String(row.transport_url || "").trim(),
+          serverConfigName: String(row.server_config_name || row.slug || "").trim(),
+          documentationUrl: String(row.documentation_url || "").trim(),
+          directoryUrl: String(row.directory_url || "").trim(),
+          toolCount: Number.isFinite(Number(row.tool_count)) ? Number(row.tool_count) : 0,
+          requiresAuth: row.requires_auth !== false,
+          requiresSetup: !!row.requires_setup,
+        };
+      })
+      .filter((row) => row && row.slug && row.transportUrl)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
 function authPreview(authMode, token, customHeader, transport) {
   const hasToken = !!String(token || "").trim();
   if (!hasToken || authMode === "none") return "No auth header will be sent.";
@@ -131,13 +158,20 @@ function buildHeaders({ authMode, token, customHeader, transport }) {
 export async function renderMcp(ctx) {
   const { state, byId, api, toast, escapeHtml, setRoute } = ctx;
   const embeddedInSettings = ctx?.embeddedInSettings === true;
-  const [serversRaw, toolsRaw] = await Promise.all([
+  const [serversRaw, toolsRaw, catalogRaw] = await Promise.all([
     state.client.mcp.list().catch(() => ({})),
     state.client.mcp.listTools().catch(() => []),
+    api("/api/engine/mcp/catalog", { method: "GET" }).catch(() => null),
   ]);
 
   const servers = normalizeServers(serversRaw);
   const toolIds = normalizeTools(toolsRaw);
+  const catalog = normalizeCatalog(catalogRaw?.catalog || null);
+  const parseCsv = (value) =>
+    String(value || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
 
   const movedCard = embeddedInSettings
     ? ""
@@ -201,6 +235,31 @@ export async function renderMcp(ctx) {
         <div class="tcp-card">
           <h3 class="tcp-title mb-3">Discovered MCP Tools (${toolIds.length})</h3>
           <pre class="tcp-code max-h-[320px] overflow-auto">${escapeHtml(toolIds.slice(0, 350).join("\n")) || "No tools discovered yet. Connect a server first."}</pre>
+        </div>
+
+        <div class="tcp-card">
+          <h3 class="tcp-title mb-2">Capability Readiness Check</h3>
+          <p class="tcp-subtle mb-3">Validate required capability IDs before creating or running automation templates.</p>
+          <div class="grid gap-2 md:grid-cols-[1fr_auto]">
+            <input id="mcp-readiness-required" class="tcp-input" placeholder="required capabilities csv (e.g. github.list_issues,github.create_pull_request)" />
+            <button id="mcp-readiness-check" class="tcp-btn"><i data-lucide="shield-check"></i> Check</button>
+          </div>
+          <pre id="mcp-readiness-result" class="tcp-code mt-3 max-h-[260px] overflow-auto">No readiness check yet.</pre>
+        </div>
+
+        <div class="tcp-card">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 class="tcp-title">Remote MCP Packs (${catalog.count})</h3>
+            <span class="tcp-subtle text-xs">${escapeHtml(
+              catalog.generatedAt ? `generated ${catalog.generatedAt}` : "catalog unavailable"
+            )}</span>
+          </div>
+          <p class="tcp-subtle mb-3">Anthropic remote MCP examples exported as per-server TOML packs. Use Apply to prefill transport/name.</p>
+          <div class="mb-3 grid gap-2 md:grid-cols-[1fr_auto]">
+            <input id="mcp-catalog-search" class="tcp-input" placeholder="Search pack name, slug, or URL" />
+            <button id="mcp-catalog-refresh" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
+          </div>
+          <div id="mcp-catalog-list" class="grid gap-2"></div>
         </div>
       </div>
     </div>
@@ -285,6 +344,105 @@ export async function renderMcp(ctx) {
   byId("mcp-refresh-all").addEventListener("click", () => {
     renderMcp(ctx);
   });
+
+  byId("mcp-readiness-check")?.addEventListener("click", async () => {
+    try {
+      const required = parseCsv(byId("mcp-readiness-required")?.value);
+      if (!required.length) {
+        toast("err", "Enter at least one required capability.");
+        return;
+      }
+      const payload = state.client?.capabilities?.readiness
+        ? await state.client.capabilities.readiness({
+            workflow_id: "control-panel-readiness",
+            required_capabilities: required,
+          })
+        : await api("/api/engine/capabilities/readiness", {
+            method: "POST",
+            body: JSON.stringify({
+              workflow_id: "control-panel-readiness",
+              required_capabilities: required,
+            }),
+          });
+      byId("mcp-readiness-result").textContent = JSON.stringify(payload?.readiness || payload, null, 2);
+      const runnable = !!(payload?.readiness || payload)?.runnable;
+      toast("ok", runnable ? "Ready" : "Not ready");
+    } catch (e) {
+      toast("err", e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  const catalogListEl = byId("mcp-catalog-list");
+  const catalogSearchEl = byId("mcp-catalog-search");
+  const catalogRefreshEl = byId("mcp-catalog-refresh");
+  const renderCatalog = () => {
+    const query = String(catalogSearchEl?.value || "")
+      .trim()
+      .toLowerCase();
+    const visible = catalog.servers
+      .filter((row) => {
+        if (!query) return true;
+        return (
+          row.name.toLowerCase().includes(query) ||
+          row.slug.toLowerCase().includes(query) ||
+          row.transportUrl.toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 80);
+
+    if (!visible.length) {
+      catalogListEl.innerHTML = '<p class="tcp-subtle">No catalog entries match your search.</p>';
+      return;
+    }
+
+    catalogListEl.innerHTML = visible
+      .map(
+        (row) => `
+        <div class="tcp-list-item grid gap-2">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold">${escapeHtml(row.name)}</div>
+              <div class="tcp-subtle text-xs">${escapeHtml(row.slug)}${row.requiresSetup ? " · setup required" : ""}</div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="tcp-badge-info">Tools: ${row.toolCount}</span>
+              <span class="${row.requiresAuth ? "tcp-badge-warn" : "tcp-badge-ok"}">${row.requiresAuth ? "Auth" : "Authless"}</span>
+            </div>
+          </div>
+          <div class="tcp-subtle text-xs break-all">${escapeHtml(row.transportUrl)}</div>
+          ${row.description ? `<div class="text-xs text-slate-200">${escapeHtml(row.description)}</div>` : ""}
+          <div class="flex flex-wrap gap-2">
+            <button class="tcp-btn" data-catalog-apply="${escapeHtml(row.slug)}">Apply</button>
+            <a class="tcp-btn" href="/api/engine/mcp/catalog/${encodeURIComponent(row.slug)}/toml" target="_blank" rel="noreferrer">Open TOML</a>
+            ${
+              row.documentationUrl
+                ? `<a class="tcp-btn" href="${escapeHtml(row.documentationUrl)}" target="_blank" rel="noreferrer">Docs</a>`
+                : ""
+            }
+          </div>
+        </div>
+      `
+      )
+      .join("");
+
+    catalogListEl.querySelectorAll("[data-catalog-apply]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const slug = String(button.getAttribute("data-catalog-apply") || "").trim();
+        const picked = catalog.servers.find((row) => row.slug === slug);
+        if (!picked) return;
+        nameEl.value = normalizeName(picked.serverConfigName || picked.slug || picked.name);
+        transportEl.value = picked.transportUrl;
+        maybeInferName();
+        refreshAuthUi();
+        toast("ok", `Loaded pack ${picked.name}. Add + Connect when ready.`);
+      });
+    });
+  };
+  catalogSearchEl?.addEventListener("input", renderCatalog);
+  catalogRefreshEl?.addEventListener("click", () => {
+    renderMcp(ctx);
+  });
+  renderCatalog();
 
   const listEl = byId("mcp-servers");
   listEl.innerHTML =

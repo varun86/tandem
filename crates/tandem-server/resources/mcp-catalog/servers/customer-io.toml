@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.customer-io"
+slug = "customer-io"
+name = "Customer.io"
+description = "Explore customer data and generate insights via Claude"
+documentation_url = "https://docs.customer.io/ai/mcp-server/"
+directory_url = "https://claude.ai/directory/e46d22da-f472-465a-ae46-52f6ac61a97f"
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["create", "get", "list", "list_workspaces", "sdk_setup", "search"]
+visibility = ["commercial"]
+
+[server]
+name = "io.customer/mcp"
+version = "1.0.0"
+display_name = "Customer.io"
+transport_url = "{url}"
+
+[registry]
+uuid = "e46d22da-f472-465a-ae46-52f6ac61a97f"
+rank = 118
+author_name = "Customer.io"
+author_url = "https://customer.io/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

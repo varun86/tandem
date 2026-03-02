@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.netlify"
+slug = "netlify"
+name = "Netlify"
+description = "Create, deploy, manage, and secure websites on Netlify."
+documentation_url = "https://docs.netlify.com/build/build-with-ai/netlify-mcp-server/"
+directory_url = "https://claude.ai/directory/816d73d2-2c34-4ad5-a1a3-c119c719e3af"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["code"]
+tool_names = ["netlify-coding-rules", "netlify-user-services", "netlify-deploy-services", "netlify-team-services", "netlify-project-services", "netlify-extension-services"]
+visibility = ["commercial"]
+
+[server]
+name = "app.netlify.netlify-mcp/netlify"
+version = "1.0.0"
+display_name = "Netlify"
+transport_url = "https://netlify-mcp.netlify.app/mcp"
+
+[registry]
+uuid = "816d73d2-2c34-4ad5-a1a3-c119c719e3af"
+rank = 42
+author_name = "Netlify"
+author_url = "https://www.netlify.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://netlify-mcp.netlify.app/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.consensus"
+slug = "consensus"
+name = "Consensus"
+description = "Explore scientific research"
+documentation_url = "https://docs.consensus.app/docs/mcp"
+directory_url = "https://claude.ai/directory/65247229-f0c7-49df-9044-fcbb8b3894c6"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["data"]
+tool_names = ["search"]
+visibility = ["commercial"]
+
+[server]
+name = "com.consensus.app/consensus"
+version = "1.0.0"
+display_name = "Consensus"
+transport_url = "https://mcp.consensus.app/mcp"
+
+[registry]
+uuid = "65247229-f0c7-49df-9044-fcbb8b3894c6"
+rank = 88
+author_name = "Consensus"
+author_url = "https://consensus.app/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.consensus.app/mcp"

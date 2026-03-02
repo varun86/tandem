@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.port-io"
+slug = "port-io"
+name = "Port IO"
+description = "Search your context lake and safely run actions"
+documentation_url = "https://docs.port.io/ai-interfaces/port-mcp-server/overview-and-installation"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_blueprints", "list_entities", "list_scorecards", "list_actions", "run_action", "search_port_knowledge_sources", "load_skill", "upsert_blueprint", "upsert_entity", "upsert_scorecard", "upsert_action", "list_integrations"]
+visibility = ["commercial"]
+
+[server]
+name = "io.port/Port"
+version = "1.0.2"
+display_name = "Port IO"
+transport_url = "{url}"
+
+[registry]
+uuid = "8f5edd1c-c876-465e-a5b9-cc8e6d27dcb7"
+rank = 144
+author_name = "Port IO"
+author_url = "https://www.port.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

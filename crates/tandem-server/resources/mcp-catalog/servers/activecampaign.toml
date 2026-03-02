@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.activecampaign"
+slug = "activecampaign"
+name = "ActiveCampaign"
+description = "Autonomous marketing to transform how you work"
+documentation_url = "https://developers.activecampaign.com/page/mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_contacts", "get_contact", "create_or_update_contact", "list_tags", "get_tag", "create_contact_tag", "add_tag_to_contact", "list_lists", "get_list", "create_list", "update_list", "add_contact_to_list", "list_contact_custom_fields", "get_contact_custom_field", "create_contact_custom_field", "create_field_options", "create_contact_field_relationship", "list_contact_field_values", "get_contact_field_value", "create_contact_field_value", "update_contact_field_value", "list_email_activities", "list_campaigns", "get_campaign", "get_campaign_links", "list_automations", "list_contact_automations", "get_contact_automation", "add_contact_to_automation", "remove_contact_from_automation", "list_groups", "create_list_group_permission"]
+visibility = ["commercial"]
+
+[server]
+name = "com.activecampaign/activecampaign"
+version = "1.0.0"
+display_name = "ActiveCampaign"
+transport_url = "{url}"
+
+[registry]
+uuid = "adf5273a-9e9f-414c-a213-2b64a4aa36ae"
+rank = 126
+author_name = "ActiveCampaign"
+author_url = "https://activecampaign.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

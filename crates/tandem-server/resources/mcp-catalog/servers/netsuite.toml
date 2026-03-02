@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.netsuite"
+slug = "netsuite"
+name = "NetSuite"
+description = "Connect Claude to NetSuite data for analysis & insights"
+documentation_url = "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/article_7200233106.html"
+directory_url = ""
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["ns_createRecord", "ns_getRecord", "ns_getRecordTypeMetadata", "ns_updateRecord", "ns_getSubsidiaries", "ns_listAllReports", "ns_runReport", "ns_listSavedSearches", "ns_runSavedSearch", "ns_runCustomSuiteQL"]
+visibility = ["commercial"]
+
+[server]
+name = "com.netsuite.www/netsuite"
+version = "1.0.0"
+display_name = "NetSuite"
+transport_url = "{url}"
+
+[registry]
+uuid = "d7733f53-723c-477a-a87b-41926580ef7d"
+rank = 39
+author_name = "Oracle NetSuite"
+author_url = "https://www.netsuite.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

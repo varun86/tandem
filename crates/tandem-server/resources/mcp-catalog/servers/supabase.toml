@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.supabase"
+slug = "supabase"
+name = "Supabase"
+description = "Manage databases, authentication, and storage"
+documentation_url = "https://supabase.com/docs/guides/getting-started/mcp"
+directory_url = "https://claude.ai/directory/11ca66fc-1e98-49d5-ab9b-7cb4672a8f10"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_organizations", "get_organization", "list_projects", "get_project", "get_cost", "confirm_cost", "create_project", "pause_project", "restore_project", "create_branch", "list_branches", "delete_branch", "merge_branch", "reset_branch", "rebase_branch", "list_tables", "list_extensions", "list_migrations", "apply_migration", "execute_sql", "get_logs", "get_advisors", "get_project_url", "get_publishable_keys", "generate_typescript_types", "search_docs", "list_storage_buckets", "get_storage_config", "update_storage_config", "list_edge_functions", "get_edge_function", "deploy_edge_function"]
+visibility = ["commercial"]
+
+[server]
+name = "com.supabase/mcp"
+version = "0.6.2"
+display_name = "Supabase"
+transport_url = "https://mcp.supabase.com/mcp"
+
+[registry]
+uuid = "11ca66fc-1e98-49d5-ab9b-7cb4672a8f10"
+rank = 25
+author_name = "Supabase"
+author_url = "https://supabase.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.supabase.com/mcp"

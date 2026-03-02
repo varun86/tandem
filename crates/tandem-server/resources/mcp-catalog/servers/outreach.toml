@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.outreach"
+slug = "outreach"
+name = "Outreach"
+description = "Unleash your team's best performance with Outreach AI"
+documentation_url = "https://support.outreach.io/hc/en-us/articles/46370115253403-Outreach-MCP-Server"
+directory_url = "https://claude.ai/directory/7b2bdb34-e318-4d50-893f-330a8e41d78c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["fetch_kaia_meetings", "emails_search", "sequence_search_by_name", "prospect_get_by_id", "prospect_search_by_name", "prospect_search_by_ext_id", "account_get_by_id", "account_search_by_name", "account_search_by_ext_id", "opportunity_get_by_id", "opportunity_search_by_name", "opportunity_search_by_ext_id", "user_get_by_id", "user_search_by_nam", "user_search_by_ext_id"]
+visibility = ["commercial"]
+
+[server]
+name = "io.outreach/mcp"
+version = "1.0.0"
+display_name = "Outreach"
+transport_url = "https://api.outreach.io/mcp/"
+
+[registry]
+uuid = "7b2bdb34-e318-4d50-893f-330a8e41d78c"
+rank = 124
+author_name = "Outreach"
+author_url = "https://outreach.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.outreach.io/mcp/"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.campfire"
+slug = "campfire"
+name = "Campfire"
+description = "Search, analyze, and export Campfire data"
+documentation_url = "https://docs.campfire.ai/guides/ai-integration#what-is-mcp"
+directory_url = "https://claude.ai/directory/ccafdad0-bc2b-46fe-b10b-f193d9baa64a"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["financial-services"]
+tool_names = ["get_accounts", "get_aging", "get_budgets", "get_contracts", "get_departments", "get_entities", "get_tags", "get_transactions", "get_vendors", "balance_sheet", "cash_flow_statement", "income_statement"]
+visibility = ["commercial"]
+
+[server]
+name = "com.meetcampfire.api/mcp"
+version = "1.0.0"
+display_name = "Campfire"
+transport_url = "https://api.meetcampfire.com/mcp"
+
+[registry]
+uuid = "ccafdad0-bc2b-46fe-b10b-f193d9baa64a"
+rank = 148
+author_name = "Campfire"
+author_url = "https://campfire.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.meetcampfire.com/mcp"

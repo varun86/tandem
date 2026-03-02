@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.pdf-viewer"
+slug = "pdf-viewer"
+name = "PDF Viewer"
+description = "Demo PDF viewer that renders PDFs from allowed URLs like arxiv.org"
+documentation_url = "https://github.com/modelcontextprotocol/ext-apps/blob/main/examples/pdf-server/README.md"
+directory_url = "https://claude.ai/directory/a6f1af7d-e85f-4775-bbfb-da7a8eb990db"
+requires_auth = true
+requires_setup = true
+works_with = ["claude"]
+use_cases = []
+tool_names = ["display_pdf"]
+visibility = ["commercial"]
+
+[server]
+name = "io.modelcontextprotocol/server-pdf"
+version = "1.0.0"
+display_name = "PDF Viewer"
+transport_url = "https://example-server.modelcontextprotocol.io/pdf/mcp"
+
+[registry]
+uuid = "a6f1af7d-e85f-4775-bbfb-da7a8eb990db"
+rank = 69
+author_name = "Model Context Protocol Community"
+author_url = "https://modelcontextprotocol.io"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://example-server.modelcontextprotocol.io/pdf/mcp"

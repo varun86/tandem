@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.close"
+slug = "close"
+name = "Close"
+description = "Connect Claude to Close CRM to securely access and act on your sales data"
+documentation_url = "https://help.close.com/v1/docs/en/mcp-server"
+directory_url = "https://claude.ai/directory/3e12bb5c-11e5-409c-8e73-64d4b625b498"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["sales-and-marketing"]
+tool_names = ["mcp.read", "activity_search", "fetch_contact", "fetch_email_template", "fetch_lead_smart_view", "fetch_lead_status", "fetch_lead", "fetch_opportunity_status", "fetch_opportunity", "fetch_pipeline_and_opportunity_statuses", "fetch_sms_template", "find_email_templates", "find_lead_smart_views", "find_lead_statuses", "find_opportunities", "find_pipelines_and_opportunity_statuses", "find_scheduling_links", "find_sms_templates", "find_workflows", "lead_search", "org_info", "org_users", "paginate_search", "perform_search", "mcp.write_safe", "create_address", "create_contact", "create_email_template", "create_lead_status", "create_lead", "create_opportunity_status_tool", "create_opportunity", "create_pipeline", "create_sms_template", "create_workflow", "mcp.write_destructive", "delete_address", "delete_contact", "delete_email_template", "delete_lead_smart_view", "delete_lead_status", "delete_lead", "delete_opportunity_status_tool", "delete_opportunity", "delete_pipeline", "delete_sms_template", "update_contact", "update_email_template", "update_lead_smart_view", "update_lead_status", "update_lead", "update_opportunity_status_tool", "update_opportunity", "update_pipeline", "update_sms_template"]
+visibility = ["commercial"]
+
+[server]
+name = "com.close/close-mcp"
+version = "1.0.1"
+display_name = "Close"
+transport_url = "https://mcp.close.com/mcp"
+
+[registry]
+uuid = "3e12bb5c-11e5-409c-8e73-64d4b625b498"
+rank = 111
+author_name = "Close"
+author_url = "https://www.close.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.close.com/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.aura"
+slug = "aura"
+name = "Aura"
+description = "Company intelligence & workforce analytics"
+documentation_url = "https://docs.getaura.ai/"
+directory_url = "https://claude.ai/directory/d5415d15-420c-45ee-a45c-2dc56d4ccad6"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["data"]
+tool_names = ["find_companies", "get_company_subsidiaries", "get_monthly_headcount", "analyze_employee_growth", "breakdown_by_job_function", "analyze_seniority_levels"]
+visibility = ["commercial"]
+
+[server]
+name = "com.auraintelligence.mcp/aura"
+version = "1.0.0"
+display_name = "Aura"
+transport_url = "https://mcp.auraintelligence.com/mcp"
+
+[registry]
+uuid = "d5415d15-420c-45ee-a45c-2dc56d4ccad6"
+rank = 132
+author_name = "Aura Intelligence"
+author_url = "https://www.getaura.ai/"
+published_on = "Tue Jan 13 2026 20:19:08 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Tue Jan 13 2026 18:42:45 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.auraintelligence.com/mcp"

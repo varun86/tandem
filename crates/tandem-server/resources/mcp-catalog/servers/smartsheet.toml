@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.smartsheet"
+slug = "smartsheet"
+name = "Smartsheet"
+description = "Analyze and manage Smartsheet data with Claude"
+documentation_url = "https://help.smartsheet.com/articles/2483663-use-smartsheet-connector-claude"
+directory_url = "https://claude.ai/directory/688b7b3f-efc4-45a6-83af-d2760ef9e96f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search", "list_workspaces", "get_sheet_summary", "create_sheet_in_workspace", "add_rows", "update_rows", "delete_rows", "get_columns", "add_columns", "update_column", "delete_column"]
+visibility = ["commercial"]
+
+[server]
+name = "com.smartsheet/mcp"
+version = "1.0.0"
+display_name = "Smartsheet"
+transport_url = "https://mcp.smartsheet.com"
+
+[registry]
+uuid = "688b7b3f-efc4-45a6-83af-d2760ef9e96f"
+rank = 64
+author_name = "Smartsheet Inc."
+author_url = "https://www.smartsheet.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.smartsheet.com"

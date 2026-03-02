@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "curated-mcp-overrides"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.github"
+slug = "github"
+name = "GitHub (Official)"
+description = "Official GitHub MCP server (remote). Access repositories, issues, pull requests, actions, and workflows."
+documentation_url = "https://github.com/github/github-mcp-server"
+directory_url = "https://github.com/github/github-mcp-server"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code", "codex"]
+use_cases = ["devtools", "github", "repositories"]
+tool_names = []
+visibility = ["curated"]
+
+[server]
+name = "github/github-mcp-server"
+version = ""
+display_name = "GitHub (Official)"
+transport_url = "https://api.githubcopilot.com/mcp/"
+
+[registry]
+uuid = "curated:github-remote"
+rank = 0
+author_name = "GitHub"
+author_url = "https://github.com/github"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.githubcopilot.com/mcp/"

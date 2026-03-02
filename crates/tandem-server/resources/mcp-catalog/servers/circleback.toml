@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.circleback"
+slug = "circleback"
+name = "Circleback"
+description = "Search and access context from meetings"
+documentation_url = "https://circleback.ai/docs/mcp"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["communication", "productivity"]
+tool_names = ["SearchMeetings", "SearchTranscripts", "GetTranscriptsForMeetings", "ReadMeetings", "FindProfiles", "FindDomains", "SearchCalendarEvents", "SearchEmails", "SearchSupportArticles"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.circleback.app/circleback"
+version = "1.0.0"
+display_name = "Circleback"
+transport_url = "https://app.circleback.ai/api/mcp"
+
+[registry]
+uuid = "91c3f3e4-8c61-4f73-b912-96d035f69f24"
+rank = 89
+author_name = "Circleback"
+author_url = "https://circleback.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://app.circleback.ai/api/mcp"

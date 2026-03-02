@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.planetscale"
+slug = "planetscale"
+name = "PlanetScale"
+description = "Authenticated access to your Postgres and MySQL DB's"
+documentation_url = "https://planetscale.com/docs/connect/mcp"
+directory_url = "https://claude.ai/directory/97efeba5-ffd8-4b9c-a1d9-35978d0fdb9f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-code", "claude-desktop"]
+use_cases = ["code"]
+tool_names = ["planetscale_list_organizations", "planetscale_list_databases", "planetscale_list_branches", "planetscale_get_organization", "planetscale_get_database", "planetscale_get_branch", "planetscale_get_branch_schema", "planetscale_execute_read_query", "planetscale_execute_write_query", "planetscale_get_insights", "planetscale_list_regions_for_organization", "planetscale_list_cluster_size_skus", "planetscale_list_invoices", "planetscale_get_invoice_line_items", "planetscale_search_documentation"]
+visibility = ["commercial"]
+
+[server]
+name = "dev.pscale.mcp/planetscale"
+version = "1.0.0"
+display_name = "PlanetScale"
+transport_url = "https://mcp.pscale.dev/mcp/planetscale"
+
+[registry]
+uuid = "97efeba5-ffd8-4b9c-a1d9-35978d0fdb9f"
+rank = 153
+author_name = "PlanetScale"
+author_url = "https://planetscale.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.pscale.dev/mcp/planetscale"

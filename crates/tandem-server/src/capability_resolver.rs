@@ -64,6 +64,22 @@ pub struct CapabilityResolveInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityReadinessInput {
+    #[serde(default)]
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
+    #[serde(default)]
+    pub optional_capabilities: Vec<String>,
+    #[serde(default)]
+    pub provider_preference: Vec<String>,
+    #[serde(default)]
+    pub available_tools: Vec<CapabilityToolAvailability>,
+    #[serde(default)]
+    pub allow_unbound: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityResolution {
     pub capability_id: String,
     pub provider: String,
@@ -81,6 +97,45 @@ pub struct CapabilityResolveOutput {
     pub missing_optional: Vec<String>,
     #[serde(default)]
     pub considered_bindings: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityBlockingIssue {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub capability_ids: Vec<String>,
+    #[serde(default)]
+    pub providers: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityReadinessOutput {
+    pub workflow_id: String,
+    pub runnable: bool,
+    #[serde(default)]
+    pub resolved: Vec<CapabilityResolution>,
+    #[serde(default)]
+    pub missing_required_capabilities: Vec<String>,
+    #[serde(default)]
+    pub unbound_capabilities: Vec<String>,
+    #[serde(default)]
+    pub missing_optional_capabilities: Vec<String>,
+    #[serde(default)]
+    pub missing_servers: Vec<String>,
+    #[serde(default)]
+    pub disconnected_servers: Vec<String>,
+    #[serde(default)]
+    pub auth_pending_tools: Vec<String>,
+    #[serde(default)]
+    pub missing_secret_refs: Vec<String>,
+    pub considered_bindings: usize,
+    #[serde(default)]
+    pub recommendations: Vec<String>,
+    #[serde(default)]
+    pub blocking_issues: Vec<CapabilityBlockingIssue>,
 }
 
 #[derive(Clone)]
@@ -294,6 +349,45 @@ fn group_bindings(
             .push((idx, binding));
     }
     map
+}
+
+pub fn classify_missing_required(
+    bindings: &CapabilityBindingsFile,
+    missing_required: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut missing_capabilities = Vec::new();
+    let mut unbound_capabilities = Vec::new();
+    for capability_id in missing_required {
+        if bindings
+            .bindings
+            .iter()
+            .any(|binding| binding.capability_id == *capability_id)
+        {
+            unbound_capabilities.push(capability_id.clone());
+        } else {
+            missing_capabilities.push(capability_id.clone());
+        }
+    }
+    missing_capabilities.sort();
+    missing_capabilities.dedup();
+    unbound_capabilities.sort();
+    unbound_capabilities.dedup();
+    (missing_capabilities, unbound_capabilities)
+}
+
+pub fn providers_for_capability(
+    bindings: &CapabilityBindingsFile,
+    capability_id: &str,
+) -> Vec<String> {
+    let mut providers = bindings
+        .bindings
+        .iter()
+        .filter(|binding| binding.capability_id == capability_id)
+        .map(|binding| binding.provider.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    providers.sort();
+    providers.dedup();
+    providers
 }
 
 fn provider_from_tool_name(tool_name: &str) -> String {

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.scholar-gateway"
+slug = "scholar-gateway"
+name = "Scholar Gateway"
+description = "Enhance responses with scholarly research and citations"
+documentation_url = "https://docs.scholargateway.ai"
+directory_url = "https://claude.ai/directory/ff091334-0f12-4d0e-a973-c00467dd3818"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["Semantic Search"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.scholargateway.connector/scholar-gateway"
+version = "1.0.0"
+display_name = "Scholar Gateway"
+transport_url = "https://connector.scholargateway.ai/mcp"
+
+[registry]
+uuid = "ff091334-0f12-4d0e-a973-c00467dd3818"
+rank = 33
+author_name = "John Wiley & Sons Inc."
+author_url = "https://www.wiley.com/"
+published_on = "Sat Jan 17 2026 02:21:02 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Sat Jan 17 2026 02:21:02 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://connector.scholargateway.ai/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.dremio-cloud"
+slug = "dremio-cloud"
+name = "Dremio Cloud"
+description = "Analyze and get insights from your lakehouse data"
+documentation_url = "https://docs.dremio.com/cloud/sonar/mcp-server/"
+directory_url = "https://claude.ai/directory/ed26cc20-7ac4-465b-8e99-1093d76a1730"
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-api"]
+use_cases = ["data"]
+tool_names = ["GetFailedJobDetails", "BuildUsageReport", "GetRelevantMetrics", "RunSqlQuery", "GetSchemaOfTable", "GetTableOrViewLineage", "SemanticSearch"]
+visibility = ["commercial"]
+
+[server]
+name = "com.dremio.cloud/mcp"
+version = "1.0.0"
+display_name = "Dremio Cloud"
+transport_url = "{url}"
+
+[registry]
+uuid = "ed26cc20-7ac4-465b-8e99-1093d76a1730"
+rank = 161
+author_name = "Dremio, Inc"
+author_url = "https://www.dremio.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

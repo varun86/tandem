@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.cloudinary"
+slug = "cloudinary"
+name = "Cloudinary"
+description = "Manage, transform and deliver your images & videos"
+documentation_url = "https://cloudinary.com/documentation/cloudinary_llm_mcp#available_mcp_servers"
+directory_url = "https://claude.ai/directory/c93e842b-830f-4b4a-bbd1-6e3af0199a8f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["data", "code"]
+tool_names = ["upload-asset", "asset-public_id-rename", "download-asset", "generate-archive", "download-asset-backup", "delete-asset", "list-images", "list-videos", "list-files", "get-asset-details", "asset-update", "list-tags", "delete-derived-assets", "get-usage-details", "create-asset-relations", "delete-asset-relations", "move-folder", "create-folder", "delete-folder", "search-folders", "search-assets", "visual-search-assets"]
+visibility = ["commercial"]
+
+[server]
+name = "com.cloudinary.mcp.asset-management/cloudinary"
+version = "1.0.0"
+display_name = "Cloudinary"
+transport_url = "https://asset-management.mcp.cloudinary.com/sse"
+
+[registry]
+uuid = "c93e842b-830f-4b4a-bbd1-6e3af0199a8f"
+rank = 106
+author_name = "Cloudinary"
+author_url = "https://cloudinary.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "sse"
+url = "https://asset-management.mcp.cloudinary.com/sse"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.linear"
+slug = "linear"
+name = "Linear"
+description = "Manage issues, projects & team workflows in Linear"
+documentation_url = "https://linear.app/docs/mcp"
+directory_url = "http://claude.ai/directory/fa50c30c-9f62-4f94-b851-217868185db6"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["productivity"]
+tool_names = ["list_comments", "create_comment", "list_cycles", "get_document", "list_documents", "get_issue", "list_issues", "create_issue", "update_issue", "list_issue_statuses", "get_issue_status", "list_my_issues", "list_issue_labels", "list_projects", "get_project", "create_project", "update_project", "list_teams", "get_team", "list_users", "get_user", "search_documentation"]
+visibility = ["commercial"]
+
+[server]
+name = "app.linear/linear"
+version = "1.0.0"
+display_name = "Linear"
+transport_url = "https://mcp.linear.app/mcp"
+
+[registry]
+uuid = "fa50c30c-9f62-4f94-b851-217868185db6"
+rank = 9
+author_name = "Linear (Linear Orbit, Inc.)"
+author_url = "https://linear.app"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:16 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.linear.app/mcp"

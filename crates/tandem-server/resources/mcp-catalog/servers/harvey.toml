@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.harvey"
+slug = "harvey"
+name = "Harvey"
+description = "Answer legal queries, search vaults, and research"
+documentation_url = "https://developers.harvey.ai/guides/harvey_mcp"
+directory_url = "https://claude.ai/directory/a428b976-7973-467f-9588-6b72643af755"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["productivity"]
+tool_names = ["Ask Harvey", "Ask Harvey About Vault Project", "Ask Harvey With Knowledge Source", "List Vault Projects", "List Knowledge Sources"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.harvey/mcp"
+version = "1.0.0"
+display_name = "Harvey"
+transport_url = "https://api.harvey.ai/hosted_mcp/mcp"
+
+[registry]
+uuid = "a428b976-7973-467f-9588-6b72643af755"
+rank = 128
+author_name = "Harvey"
+author_url = "https://www.harvey.ai/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.harvey.ai/hosted_mcp/mcp"

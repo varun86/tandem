@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.plaid"
+slug = "plaid"
+name = "Plaid Developer Tools"
+description = "Monitor, debug, and optimize your Plaid integration"
+documentation_url = "https://plaid.com/docs/resources/mcp/"
+directory_url = "http://claude.ai/directory/bacac1ad-ccb1-401e-a5d7-915da9742dce"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["financial-services"]
+tool_names = ["plaid_debug_item", "plaid_get_link_analytics", "plaid_get_usages", "plaid_list_teams"]
+visibility = ["commercial"]
+
+[server]
+name = "com.plaid.dashboard.api/plaid-developer-tools"
+version = "1.0.0"
+display_name = "Plaid Developer Tools"
+transport_url = "https://api.dashboard.plaid.com/mcp/sse"
+
+[registry]
+uuid = "bacac1ad-ccb1-401e-a5d7-915da9742dce"
+rank = 94
+author_name = "Plaid"
+author_url = "https://plaid.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "sse"
+url = "https://api.dashboard.plaid.com/mcp/sse"

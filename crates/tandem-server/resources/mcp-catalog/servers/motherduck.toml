@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.motherduck"
+slug = "motherduck"
+name = "MotherDuck"
+description = "Analyze your data with natural language"
+documentation_url = "https://motherduck.com/docs/sql-reference/mcp/"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["data"]
+tool_names = ["list_databases", "list_shares", "list_tables", "list_columns", "search_catalog", "query", "ask_docs_question"]
+visibility = ["commercial"]
+
+[server]
+name = "com.motherduck.api/motherduck"
+version = "1.0.0"
+display_name = "MotherDuck"
+transport_url = "https://api.motherduck.com/mcp"
+
+[registry]
+uuid = "0929a5c7-38ce-40ab-8aad-af9ce34553c7"
+rank = 119
+author_name = "MotherDuck Corporation"
+author_url = "https://motherduck.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.motherduck.com/mcp"

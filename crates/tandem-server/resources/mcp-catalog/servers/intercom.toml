@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.intercom"
+slug = "intercom"
+name = "Intercom"
+description = "Access to Intercom data for better customer insights"
+documentation_url = "https://developers.intercom.com/docs/guides/mcp"
+directory_url = "http://claude.ai/directory/b2def8dc-ae47-4d46-877a-19b6a6ebb771"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["communication"]
+tool_names = ["search", "fetch", "search_conversations", "get_conversation", "search_contacts", "get_contact"]
+visibility = ["commercial"]
+
+[server]
+name = "com.intercom.mcp/intercom"
+version = "1.0.0"
+display_name = "Intercom"
+transport_url = "https://mcp.intercom.com/mcp"
+
+[registry]
+uuid = "b2def8dc-ae47-4d46-877a-19b6a6ebb771"
+rank = 12
+author_name = "Intercom"
+author_url = "https://intercom.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:14 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.intercom.com/mcp"

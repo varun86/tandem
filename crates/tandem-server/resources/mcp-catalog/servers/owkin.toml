@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.owkin"
+slug = "owkin"
+name = "Owkin"
+description = "Interact with AI agents built for biology"
+documentation_url = "https://docs.owkin.com/mcp-tools-documentation/introduction"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["list_cell_types", "list_cohorts", "features_description", "filter_slides", "get_histomics", "display_slide_thumbnail", "survival_analysis", "histoplus_help", "download_histomics"]
+visibility = ["commercial"]
+
+[server]
+name = "com.owkin.k.mcp/owkin"
+version = "1.0.0"
+display_name = "Owkin"
+transport_url = "https://mcp.k.owkin.com/mcp"
+
+[registry]
+uuid = "bd022b03-2829-47df-b07f-b50c3541c932"
+rank = 135
+author_name = "Owkin"
+author_url = "https://www.owkin.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.k.owkin.com/mcp"

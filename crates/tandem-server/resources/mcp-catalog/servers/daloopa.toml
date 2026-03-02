@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.daloopa"
+slug = "daloopa"
+name = "Daloopa"
+description = "Financial fundamental data and KPIs with hyperlinks"
+documentation_url = "https://docs.daloopa.com/docs/daloopa-mcp#/"
+directory_url = "https://claude.ai/directory/67e0ebd7-f7c3-4917-b8f9-dc8c8cdcce13"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["discover_companies", "discover_company_series", "get_company_fundamentals"]
+visibility = ["commercial"]
+
+[server]
+name = "com.daloopa.mcp/daloopa"
+version = "1.0.0"
+display_name = "Daloopa"
+transport_url = "https://mcp.daloopa.com/server/mcp"
+
+[registry]
+uuid = "67e0ebd7-f7c3-4917-b8f9-dc8c8cdcce13"
+rank = 81
+author_name = "Daloopa"
+author_url = "https://daloopa.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.daloopa.com/server/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.candid"
+slug = "candid"
+name = "Candid"
+description = "Research nonprofits and funders using Candid's data"
+documentation_url = "https://support.claude.com/en/articles/12923235-using-the-candid-connector-in-claude"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["knowledge_resources", "identify_mentioned_organizations", "search_organizations", "taxonomy_terms", "identify_locations", "current_date"]
+visibility = ["commercial"]
+
+[server]
+name = "org.candid.mcp/candid"
+version = "1.0.0"
+display_name = "Candid"
+transport_url = "https://mcp.candid.org/mcp"
+
+[registry]
+uuid = "875faf93-08c4-469c-980f-6f79f70f10d3"
+rank = 107
+author_name = "Candid"
+author_url = "https://candid.org/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.candid.org/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.ahrefs"
+slug = "ahrefs"
+name = "Ahrefs"
+description = "SEO & AI search analytics"
+documentation_url = "https://docs.ahrefs.com/docs/mcp/reference/introduction"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["batch-analysis", "brand-radar-ai-responses", "brand-radar-cited-domains", "brand-radar-cited-pages", "brand-radar-impressions-history", "brand-radar-impressions-overview", "brand-radar-mentions-history", "brand-radar-mentions-overview", "brand-radar-sov-history", "brand-radar-sov-overview", "doc", "keywords-explorer-matching-terms", "keywords-explorer-overview", "keywords-explorer-related-terms", "keywords-explorer-search-suggestions", "keywords-explorer-volume-by-country", "keywords-explorer-volume-history", "management-keyword-list-keywords", "management-locations", "management-project-competitors", "management-project-keywords", "management-projects", "public-crawler-ip-ranges", "public-crawler-ips", "rank-tracker-competitors-overview", "rank-tracker-competitors-pages", "rank-tracker-competitors-stats", "rank-tracker-overview", "rank-tracker-serp-overview", "serp-overview", "site-audit-issues", "site-audit-page-content", "site-audit-page-explorer", "site-audit-projects", "site-explorer-all-backlinks", "site-explorer-anchors", "site-explorer-backlinks-stats", "site-explorer-best-by-external-links", "site-explorer-best-by-internal-links", "site-explorer-broken-backlinks", "site-explorer-domain-rating", "site-explorer-domain-rating-history", "site-explorer-keywords-history", "site-explorer-linked-anchors-external", "site-explorer-linked-anchors-internal", "site-explorer-linked-domains", "site-explorer-metrics", "site-explorer-metrics-by-country", "site-explorer-metrics-history", "site-explorer-organic-competitors", "site-explorer-organic-keywords", "site-explorer-outlinks-stats", "site-explorer-pages-by-traffic", "site-explorer-pages-history", "site-explorer-paid-pages", "site-explorer-refdomains-history", "site-explorer-referring-domains", "site-explorer-top-pages", "site-explorer-total-search-volume-history", "site-explorer-url-rating-history", "subscription-info-limits-and-usage"]
+visibility = ["commercial"]
+
+[server]
+name = "com.ahrefs.api/ahrefs"
+version = "1.0.0"
+display_name = "Ahrefs"
+transport_url = "https://api.ahrefs.com/mcp/mcp"
+
+[registry]
+uuid = "098cb32a-ba21-4770-97dd-78bb54655419"
+rank = 36
+author_name = "Ahrefs Pte. Ltd."
+author_url = "https://ahrefs.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.ahrefs.com/mcp/mcp"

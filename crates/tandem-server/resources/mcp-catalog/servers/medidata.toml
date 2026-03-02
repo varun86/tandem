@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.medidata"
+slug = "medidata"
+name = "Medidata"
+description = "Clinical trial software and site ranking tools"
+documentation_url = "https://learn.medidata.com/en-US/bundle/mcp-server-documentation/page/medidata_mcp_server_documentation.html"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["search_support_documentation", "get_ranked_sites", "get_supported_disease_areas"]
+visibility = ["commercial"]
+
+[server]
+name = "com.imedidata.mcp/medidata"
+version = "1.0.0"
+display_name = "Medidata"
+transport_url = "https://mcp.imedidata.com/mcp"
+
+[registry]
+uuid = "2011b8ca-e6e5-4eed-b954-2249e521a3a9"
+rank = 138
+author_name = "Medidata Solutions"
+author_url = "https://medidata.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.imedidata.com/mcp"

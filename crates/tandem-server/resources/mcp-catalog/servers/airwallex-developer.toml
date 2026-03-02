@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.airwallex-developer"
+slug = "airwallex-developer"
+name = "Airwallex Developer"
+description = "Integrate with the Airwallex Platform using Claude"
+documentation_url = "https://www.airwallex.com/docs/developer-tools/ai/developer-mcp"
+directory_url = "https://claude.ai/directory/f9e2f745-d688-42a7-8c79-98fe7990dc03"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["financial-services"]
+tool_names = ["create_transfer", "list_transfers", "simulate_transfer_result", "list_beneficiaries", "get_fx_quote", "list_global_accounts", "get_balances", "simulate_create_deposit", "create_payment_link", "list_payment_links", "search_public_docs", "read_integration_best_practices"]
+visibility = ["commercial"]
+
+[server]
+name = "com.airwallex/developer-mcp"
+version = "1.0.0"
+display_name = "Airwallex Developer"
+transport_url = "https://mcp-demo.airwallex.com/developer"
+
+[registry]
+uuid = "f9e2f745-d688-42a7-8c79-98fe7990dc03"
+rank = 163
+author_name = "Airwallex"
+author_url = "https://www.airwallex.com/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp-demo.airwallex.com/developer"

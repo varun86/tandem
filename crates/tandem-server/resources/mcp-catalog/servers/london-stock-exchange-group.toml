@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.london-stock-exchange-group"
+slug = "london-stock-exchange-group"
+name = "LSEG"
+description = "Access best in class data & analytics across a broad spectrum of asset classes."
+documentation_url = "https://www.lseg.com/en/solutions/ai-finance-solutions/anthropic"
+directory_url = "https://claude.ai/directory/5f26bc32-8582-4df7-ab88-19c507f8505b"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api"]
+use_cases = ["financial-services"]
+tool_names = ["fx_spot_price", "fx_forward_price", "bond_price", "bond_future_price", "option_value", "ir_swap", "interest_rate_curve", "credit_curve", "inflation_curve", "fx_forward_curve", "qa_ibes_consensus", "qa_macroeconomic", "qa_company_fundamentals", "fx_vol_surface", "equity_vol_surface", "insight_headlines", "tscc_historical_pricing_summaries", "fixed_income_bond_reference", "fixed_income_risk_analytics", "yieldbook_scenario_calculation"]
+visibility = ["commercial"]
+
+[server]
+name = "com.lseg.analytics.api/lseg"
+version = "1.0.0"
+display_name = "LSEG"
+transport_url = "https://api.analytics.lseg.com/lfa/mcp/server-cl"
+
+[registry]
+uuid = "5f26bc32-8582-4df7-ab88-19c507f8505b"
+rank = 112
+author_name = "LSEG"
+author_url = "https://www.lseg.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:13 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://api.analytics.lseg.com/lfa/mcp/server-cl"

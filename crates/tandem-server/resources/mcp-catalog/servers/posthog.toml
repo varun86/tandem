@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.posthog"
+slug = "posthog"
+name = "PostHog"
+description = "Query, analyze, and manage your PostHog insights"
+documentation_url = "https://posthog.com/docs/model-context-protocol"
+directory_url = "https://claude.ai/directory/50688846-553c-4a12-bc21-df94d2173734"
+requires_auth = true
+requires_setup = true
+works_with = ["claude", "claude-code"]
+use_cases = ["code"]
+tool_names = ["query-run", "query-generate-hogql-from-question", "insight-create-from-query", "insight-get", "insights-get-all", "insight-update", "insight-delete", "insight-query", "dashboard-create", "dashboard-get", "dashboards-get-all", "dashboard-update", "dashboard-delete", "dashboard-reorder-tiles", "add-insight-to-dashboard", "create-feature-flag", "feature-flag-get-definition", "feature-flag-get-all", "update-feature-flag", "delete-feature-flag", "experiment-create", "experiment-get", "experiment-get-all", "experiment-results-get", "experiment-update", "experiment-delete", "survey-create", "survey-get", "surveys-get-all", "survey-update", "survey-delete", "survey-stats", "surveys-global-stats", "action-create", "action-get", "actions-get-all", "action-update", "action-delete", "list-errors", "error-details", "logs-query", "logs-list-attributes", "logs-list-attribute-values", "event-definitions-list", "event-definition-update", "properties-list", "get-llm-total-costs-for-project", "execute-sql", "read-data-schema", "read-data-warehouse-schema", "organizations-get", "organization-details-get", "switch-organization", "projects-get", "switch-project", "entity-search", "docs-search"]
+visibility = ["commercial"]
+
+[server]
+name = "io.github.PostHog/mcp"
+version = "1.0.0"
+display_name = "PostHog"
+transport_url = "{url}"
+
+[registry]
+uuid = "50688846-553c-4a12-bc21-df94d2173734"
+rank = 98
+author_name = "PostHog"
+author_url = "https://posthog.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "{url}"

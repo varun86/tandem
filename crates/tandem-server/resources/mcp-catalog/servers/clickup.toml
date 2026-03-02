@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.clickup"
+slug = "clickup"
+name = "ClickUp"
+description = "Project management & collaboration for teams & agents"
+documentation_url = "https://help.clickup.com/hc/en-us/articles/33335772678423-What-is-ClickUp-MCP"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["clickup_search", "clickup_get_workspace_hierarchy", "clickup_create_task", "clickup_get_task", "clickup_update_task", "clickup_get_task_comments", "clickup_create_task_comment", "clickup_attach_task_file", "clickup_create_bulk_tasks", "clickup_update_bulk_tasks", "clickup_get_workspace_tasks", "clickup_get_task_time_entries", "clickup_start_time_tracking", "clickup_stop_time_tracking", "clickup_add_time_entry", "clickup_get_current_time_entry", "clickup_create_list", "clickup_create_list_in_folder", "clickup_get_list", "clickup_update_list", "clickup_create_folder", "clickup_get_folder", "clickup_update_folder", "clickup_add_tag_to_task", "clickup_remove_tag_from_task", "clickup_get_workspace_members", "clickup_find_member_by_name", "clickup_resolve_assignees", "clickup_get_chat_channels", "clickup_send_chat_message", "clickup_create_document", "clickup_list_document_pages", "clickup_get_document_pages", "clickup_create_document_page", "clickup_update_document_page"]
+visibility = ["commercial"]
+
+[server]
+name = "com.clickup.mcp/clickup"
+version = "1.0.0"
+display_name = "ClickUp"
+transport_url = "https://mcp.clickup.com/mcp"
+
+[registry]
+uuid = "aa5a2bca-4004-49ea-bc2b-978162587a3a"
+rank = 23
+author_name = "ClickUp"
+author_url = "https://clickup.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.clickup.com/mcp"

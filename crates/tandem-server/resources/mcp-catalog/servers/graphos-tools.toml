@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.graphos-tools"
+slug = "graphos-tools"
+name = "GraphOS MCP Tools"
+description = "Search Apollo docs, specs, and best practices"
+documentation_url = "https://www.apollographql.com/docs/graphos/platform/graphos-mcp-tools"
+directory_url = "https://claude.ai/directory/b97d991c-e50a-4345-8aa8-8e42ec8e99bc"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-code"]
+use_cases = ["code"]
+tool_names = ["ApolloDocsSearch", "ApolloDocsRead", "ApolloConnectorsSpec"]
+visibility = ["commercial"]
+
+[server]
+name = "io.apollographql.mcp/graphos-tools"
+version = "1.0.0"
+display_name = "GraphOS MCP Tools"
+transport_url = "https://mcp.apollographql.com"
+
+[registry]
+uuid = "b97d991c-e50a-4345-8aa8-8e42ec8e99bc"
+rank = 157
+author_name = "Apollo GraphQL"
+author_url = "https://www.apollographql.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.apollographql.com"

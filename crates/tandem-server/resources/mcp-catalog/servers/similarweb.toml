@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.similarweb"
+slug = "similarweb"
+name = "Similarweb"
+description = "Real time web, mobile app, and market data."
+documentation_url = "https://docs.similarweb.com/api-v5/mcp/mcp-setup"
+directory_url = "https://claude.ai/directory/80862d08-1022-4d86-816d-ee9b500d6b90"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get-websites-traffic-and-engagement", "get-websites-traffic-sources", "get-websites-website-rank", "get-website-content-subdomains-agg", "get-websites-similar-sites-agg", "get-websites-referrals-agg", "get-websites-audience-interests-agg", "get-websites-audience-overlap-agg", "get-websites-deduplicated-audience", "get-pages-leading-folders-agg", "get-pages-popular-pages-agg", "get-websites-ppc-spend", "get-segments-traffic-and-engagement", "get-segments-traffic-sources", "get-website-analysis-ad-networks-agg", "get-websites-geography-agg", "get-website-content-technologies-agg", "get-websites-demographics-agg", "get-websites-traffic-by-demographics-agg", "get-websites-top-sites-by-category-agg", "get-app-engagement-installs-penetration", "get-app-app-store-rank"]
+visibility = ["commercial"]
+
+[server]
+name = "com.similarweb.mcp/similarweb"
+version = "1.0.0"
+display_name = "Similarweb"
+transport_url = "https://mcp.similarweb.com"
+
+[registry]
+uuid = "80862d08-1022-4d86-816d-ee9b500d6b90"
+rank = 83
+author_name = "Similarweb"
+author_url = "https://similarweb.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.similarweb.com"

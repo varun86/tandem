@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.microsoft-learn"
+slug = "microsoft-learn"
+name = "Microsoft Learn"
+description = "Search trusted Microsoft docs to power your development"
+documentation_url = "https://learn.microsoft.com/en-us/training/support/mcp"
+directory_url = "https://claude.ai/directory/89a7ddf5-2a6b-410c-be11-aa0e1a1b35a6"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["code"]
+tool_names = ["microsoft_docs_search", "microsoft_docs_fetch", "microsoft_code_sample_search"]
+visibility = ["commercial"]
+
+[server]
+name = "com.microsoft/microsoft-learn-mcp"
+version = "1.0.0"
+display_name = "Microsoft Learn"
+transport_url = "https://learn.microsoft.com/api/mcp"
+
+[registry]
+uuid = "89a7ddf5-2a6b-410c-be11-aa0e1a1b35a6"
+rank = 37
+author_name = "Microsoft"
+author_url = "https://learn.microsoft.com/en-us/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://learn.microsoft.com/api/mcp"

@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.klaviyo"
+slug = "klaviyo"
+name = "Klaviyo"
+description = "Report, strategize & create with real-time Klaviyo data"
+documentation_url = "https://developers.klaviyo.com/en/docs/klaviyo_mcp_server"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_account_details", "get_campaigns", "get_campaign", "create_campaign", "assign_template_to_campaign_message", "get_catalog_items", "get_events", "get_metrics", "get_metric", "get_flows", "get_flow", "get_lists", "get_list", "get_segments", "get_segment", "upload_image_from_url", "get_profiles", "get_profile", "create_profile", "update_profile", "subscribe_profile_to_marketing", "unsubscribe_profile_from_marketing", "get_campaign_report", "get_flow_report", "create_email_template", "get_email_template"]
+visibility = ["commercial"]
+
+[server]
+name = "com.klaviyo.mcp/klaviyo"
+version = "1.0.0"
+display_name = "Klaviyo"
+transport_url = "https://mcp.klaviyo.com/mcp"
+
+[registry]
+uuid = "b1a89151-dc5f-4d75-baa7-9da291b81a0c"
+rank = 71
+author_name = "Klaviyo"
+author_url = "https://klaviyo.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.klaviyo.com/mcp"

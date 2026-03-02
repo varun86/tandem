@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.slack"
+slug = "slack"
+name = "Slack"
+description = "Send messages, create canvases, and fetch Slack data"
+documentation_url = "https://docs.slack.dev/ai/mcp-server"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["slack_send_message", "slack_search_public_and_private", "slack_search_users", "slack_search_channels", "slack_search_public", "slack_read_channel", "slack_read_thread", "slack_create_canvas", "slack_update_canvas", "slack_read_canvas", "slack_read_user_profile"]
+visibility = ["commercial"]
+
+[server]
+name = "com.slack.mcp/slack"
+version = "1.0.0"
+display_name = "Slack"
+transport_url = "https://mcp.slack.com/mcp"
+
+[registry]
+uuid = "597f662f-36de-437e-836e-5a81013cbfbe"
+rank = 5
+author_name = "Slack"
+author_url = "https://slack.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.slack.com/mcp"

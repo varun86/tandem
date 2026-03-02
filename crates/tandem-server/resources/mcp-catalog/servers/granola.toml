@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.granola"
+slug = "granola"
+name = "Granola"
+description = "The AI notepad for meetings"
+documentation_url = "https://help.granola.ai/article/granola-mcp#set-up-guide"
+directory_url = "https://claude.ai/directory/4d608ca4-1664-4ddd-be1c-c88c0ea2ec7e"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["query_granola", "list_meetings", "get_meetings", "get_meeting_transcript"]
+visibility = ["commercial"]
+
+[server]
+name = "ai.granola.mcp/granola"
+version = "1.0.0"
+display_name = "Granola"
+transport_url = "https://mcp.granola.ai/mcp"
+
+[registry]
+uuid = "4d608ca4-1664-4ddd-be1c-c88c0ea2ec7e"
+rank = 16
+author_name = "Granola"
+author_url = "https://www.granola.ai"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.granola.ai/mcp"

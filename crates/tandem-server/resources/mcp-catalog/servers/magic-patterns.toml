@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.magic-patterns"
+slug = "magic-patterns"
+name = "Magic Patterns"
+description = "Discuss and iterate on Magic Patterns designs"
+documentation_url = "https://www.magicpatterns.com/docs/documentation/features/mcp-server/overview"
+directory_url = "https://claude.ai/directory/088e0355-cb01-44fa-ba0b-23525fde8d5a"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_design", "read_files", "update_design"]
+visibility = ["commercial"]
+
+[server]
+name = "com.magicpatterns.mcp/magic-patterns"
+version = "1.0.0"
+display_name = "Magic Patterns"
+transport_url = "https://mcp.magicpatterns.com/mcp"
+
+[registry]
+uuid = "088e0355-cb01-44fa-ba0b-23525fde8d5a"
+rank = 129
+author_name = "Magic Patterns"
+author_url = "https://www.magicpatterns.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.magicpatterns.com/mcp"

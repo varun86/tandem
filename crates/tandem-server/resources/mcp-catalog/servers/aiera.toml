@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.aiera"
+slug = "aiera"
+name = "Aiera"
+description = "Live events, filings, company publications, and more"
+documentation_url = "https://rest.aiera.com/docs/mcp"
+directory_url = "https://claude.ai/directory/4ef6cb78-9212-4b0e-b067-bb30e4d27a6f"
+requires_auth = true
+requires_setup = false
+works_with = ["claude"]
+use_cases = ["financial-services"]
+tool_names = ["get_available_indexes", "get_index_constituents", "get_sectors_and_subsectors", "find_events", "get_event", "get_upcoming_events", "find_equities", "get_equity_summaries", "find_filings", "get_filing", "get_available_watchlists", "get_watchlist_constituents", "find_company_docs", "get_company_doc", "get_company_doc_categories", "get_company_doc_keywords", "find_third_bridge_events", "get_third_bridge_event"]
+visibility = ["commercial"]
+
+[server]
+name = "com.aiera.mcp-pub/aiera"
+version = "1.0.0"
+display_name = "Aiera"
+transport_url = "https://mcp-pub.aiera.com/"
+
+[registry]
+uuid = "4ef6cb78-9212-4b0e-b067-bb30e4d27a6f"
+rank = 115
+author_name = "Aiera"
+author_url = "https://www.aiera.com"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:17 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp-pub.aiera.com/"

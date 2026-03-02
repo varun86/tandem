@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.pubmed"
+slug = "pubmed"
+name = "PubMed"
+description = "Search biomedical literature from PubMed"
+documentation_url = "https://support.claude.com/en/"
+directory_url = "https://claude.ai/directory/81cc5080-a204-4aa1-a694-fa868a3c8721"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["search_articles", "get_article_metadata", "find_related_articles", "lookup_article_by_citation", "convert_article_ids", "get_full_text_article", "get_copyright_status"]
+visibility = ["commercial"]
+
+[server]
+name = "com.claude.mcp.pubmed/pubmed"
+version = "1.0.0"
+display_name = "PubMed"
+transport_url = "https://pubmed.mcp.claude.com/mcp"
+
+[registry]
+uuid = "81cc5080-a204-4aa1-a694-fa868a3c8721"
+rank = 19
+author_name = "Anthropic"
+author_url = "https://www.anthropic.com/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:17 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://pubmed.mcp.claude.com/mcp"

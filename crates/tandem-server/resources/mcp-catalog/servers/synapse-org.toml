@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.synapse-org"
+slug = "synapse-org"
+name = "Synapse.org"
+description = "Search and metadata tools for Synapse scientific data"
+documentation_url = "https://github.com/susheel/synapse-mcp?tab=readme-ov-file#synapse-mcp-server"
+directory_url = "https://claude.ai/directory/81cc5080-a204-4aa1-a694-fa868a3c8719"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = ["life-sciences"]
+tool_names = ["get_entity", "get_entity_annotations", "get_entity_provenance", "get_entity_children", "search_synapse"]
+visibility = ["commercial"]
+
+[server]
+name = "org.synapse.mcp/synapse-org"
+version = "1.0.0"
+display_name = "Synapse.org"
+transport_url = "https://mcp.synapse.org/mcp"
+
+[registry]
+uuid = "81cc5080-a204-4aa1-a694-fa868a3c8719"
+rank = 72
+author_name = "Sage Bionetworks"
+author_url = "https://sagebionetworks.org/"
+published_on = "Mon Jan 12 2026 16:21:41 GMT+0000 (Coordinated Universal Time)"
+updated_on = "Mon Jan 12 2026 16:20:15 GMT+0000 (Coordinated Universal Time)"
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.synapse.org/mcp"

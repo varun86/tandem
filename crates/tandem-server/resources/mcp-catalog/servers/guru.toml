@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.guru"
+slug = "guru"
+name = "Guru"
+description = "Search and interact with your company knowledge"
+documentation_url = "https://help.getguru.com/docs/connecting-gurus-mcp-server"
+directory_url = ""
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["answer_generation", "create_draft", "search_documents", "update_card", "list_knowledge_agents", "get_card_by_id"]
+visibility = ["commercial"]
+
+[server]
+name = "com.getguru/mcp-server"
+version = "1.0.2"
+display_name = "Guru"
+transport_url = "https://mcp.api.getguru.com/mcp"
+
+[registry]
+uuid = "6d13e7f5-f465-498c-b7c9-b99c4bc74719"
+rank = 76
+author_name = "Guru"
+author_url = "https://www.getguru.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.api.getguru.com/mcp"

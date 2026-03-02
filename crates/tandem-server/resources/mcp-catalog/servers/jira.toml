@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "curated-mcp-overrides"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.jira"
+slug = "jira"
+name = "Jira (Atlassian Official)"
+description = "Official Atlassian remote MCP server for Jira and Confluence access."
+documentation_url = "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/setting-up-ides/"
+directory_url = "https://github.com/atlassian/atlassian-mcp-server"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code", "codex"]
+use_cases = ["devtools", "jira", "atlassian", "project-management"]
+tool_names = []
+visibility = ["curated"]
+
+[server]
+name = "atlassian/atlassian-mcp-server"
+version = ""
+display_name = "Jira (Atlassian Official)"
+transport_url = "https://mcp.atlassian.com/v1/mcp"
+
+[registry]
+uuid = "curated:jira-remote"
+rank = 0
+author_name = "Atlassian"
+author_url = "https://www.atlassian.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.atlassian.com/v1/mcp"

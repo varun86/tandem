@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-03-02T23:03:19.833Z"
+source = "anthropic-mcp-registry"
+catalog_version = "latest"
+catalog_visibility = "commercial"
+pack_id = "mcp.remote.lumin"
+slug = "lumin"
+name = "Lumin"
+description = "Manage documents, send signature requests, and convert Markdown to PDF"
+documentation_url = "https://github.com/luminpdf/lumin-mcp-server"
+directory_url = "https://claude.ai/directory/b04d70ca-c220-4d15-b7c9-e2eb6ace0a2c"
+requires_auth = true
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code"]
+use_cases = []
+tool_names = ["get_lumin_user_information", "get_signature_request_on_lumin_by_id", "cancel_signature_request_on_lumin_by_id", "send_signature_request_on_lumin", "upload_file_to_lumin", "get_workspace_list_of_user_on_lumin", "lumin_markdown2pdf"]
+visibility = ["commercial"]
+
+[server]
+name = "com.luminpdf/lumin"
+version = "1.0.0"
+display_name = "Lumin"
+transport_url = "https://mcp.luminpdf.com/mcp"
+
+[registry]
+uuid = "b04d70ca-c220-4d15-b7c9-e2eb6ace0a2c"
+rank = 149
+author_name = "Lumin PDF"
+author_url = "https://www.luminpdf.com"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://mcp.luminpdf.com/mcp"

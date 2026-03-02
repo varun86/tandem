@@ -4,6 +4,35 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.0 (Unreleased)
 
+- MCP catalog moved into engine and exposed to frontends
+  - Added engine-managed embedded catalog endpoints:
+    - `GET /mcp/catalog`
+    - `GET /mcp/catalog/{slug}/toml`
+  - Added generated catalog assets under `crates/tandem-server/resources/mcp-catalog` (index + per-server TOML manifests).
+  - Added catalog generator tooling at `scripts/generate-mcp-catalog.mjs` plus control-panel refresh script `npm run mcp:catalog:refresh`.
+  - Catalog now includes curated official remote MCP entries for:
+    - GitHub: `https://api.githubcopilot.com/mcp/`
+    - Jira (Atlassian): `https://mcp.atlassian.com/v1/mcp`
+    - Notion: `https://mcp.notion.com/mcp`
+  - Default curated GitHub pack no longer assumes Docker; it points to the official remote endpoint.
+
+- MCP capability readiness preflight (fail-closed)
+  - Added `POST /capabilities/readiness` for pre-run validation of required capability IDs.
+  - Readiness output now reports blocking issues for:
+    - missing capability bindings
+    - unbound required capabilities
+    - missing/disconnected required MCP servers
+    - auth-pending MCP tools
+  - Added SDK/UI surface parity:
+    - TypeScript SDK: `client.capabilities.readiness(...)`
+    - Tauri command and frontend wrapper: `capability_readiness` / `capabilityReadiness(...)`
+    - Control-panel MCP and Pack builder flows now call readiness before key save/run paths.
+
+- Control panel MCP UX now includes searchable remote pack catalog
+  - MCP settings page now displays searchable “Remote MCP Packs” sourced from engine catalog.
+  - Added quick actions to apply pack transport/name and open generated TOML.
+  - Added MCP-side readiness check UI with structured result rendering.
+
 - Engine provider auth persistence + status API overhaul
   - Provider keys set via `PUT /auth/{provider}` are now durable across engine restarts.
   - Added engine-wide provider auth persistence in `tandem-core` with keychain-first storage and secure file fallback.
