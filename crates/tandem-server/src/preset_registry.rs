@@ -22,6 +22,10 @@ pub struct PresetRecord {
     pub path: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub publisher: Option<String>,
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -309,15 +313,17 @@ fn collect_presets_into(
         if ext != "yaml" && ext != "yml" && ext != "json" {
             continue;
         }
-        let (id, version, tags) = read_preset_metadata(&path)?;
+        let meta = read_preset_metadata(&path)?;
         out.push(PresetRecord {
-            id,
-            version,
+            id: meta.id,
+            version: meta.version,
             kind: kind.to_string(),
             layer: layer.to_string(),
             pack: pack.clone(),
             path: path.to_string_lossy().to_string(),
-            tags,
+            tags: meta.tags,
+            publisher: meta.publisher,
+            required_capabilities: meta.required_capabilities,
         });
     }
     Ok(())
@@ -332,7 +338,16 @@ fn kind_dir_name(kind: &str) -> anyhow::Result<&'static str> {
     }
 }
 
-fn read_preset_metadata(path: &Path) -> anyhow::Result<(String, String, Vec<String>)> {
+#[derive(Debug, Clone, Default)]
+struct PresetMetadata {
+    id: String,
+    version: String,
+    tags: Vec<String>,
+    publisher: Option<String>,
+    required_capabilities: Vec<String>,
+}
+
+fn read_preset_metadata(path: &Path) -> anyhow::Result<PresetMetadata> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let ext = path
         .extension()
@@ -369,7 +384,42 @@ fn read_preset_metadata(path: &Path) -> anyhow::Result<(String, String, Vec<Stri
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    Ok((id, version, tags))
+    let publisher = value
+        .get("publisher")
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                return Some(s.to_string());
+            }
+            if let Some(obj) = v.as_object() {
+                return obj
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    });
+            }
+            None
+        })
+        .filter(|v| !v.trim().is_empty());
+    let required_capabilities = value
+        .pointer("/capabilities/required")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(PresetMetadata {
+        id,
+        version,
+        tags,
+        publisher,
+        required_capabilities,
+    })
 }
 
 fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
@@ -457,7 +507,7 @@ mod tests {
             .expect("mkdir packs");
         std::fs::write(
             runtime_root.join("presets/builtins/skill_modules/git.yaml"),
-            "id: git.core\nversion: 1.0.0\ntags: [git]\n",
+            "id: git.core\nversion: 1.0.0\ntags: [git]\npublisher: tandem\ncapabilities:\n  required:\n    - github.create_pull_request\n",
         )
         .expect("write");
         std::fs::write(
@@ -482,6 +532,11 @@ mod tests {
         assert_eq!(
             index.automation_presets[0].pack.as_deref(),
             Some("sample-pack@1.0.0")
+        );
+        assert_eq!(index.skill_modules[0].publisher.as_deref(), Some("tandem"));
+        assert_eq!(
+            index.skill_modules[0].required_capabilities,
+            vec!["github.create_pull_request".to_string()]
         );
         let _ = std::fs::remove_dir_all(root);
     }

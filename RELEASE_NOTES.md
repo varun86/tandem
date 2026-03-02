@@ -86,6 +86,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added project override export API:
     - `POST /presets/export_overrides`
     - bundles project override presets into a portable zip with root `tandempack.yaml`
+  - Preset index records now include parsed `publisher` and `required_capabilities` metadata for UI filtering.
 
 - PackManager runtime/API implementation (first tranche)
   - Added initial server PackManager endpoints:
@@ -194,6 +195,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - provider-specific dependency count
     - routines declared/enabled summary
   - Pack update actions now surface `reapproval_required` warnings when update permission scope expands.
+  - Added Skill Module Library in the Packs view:
+    - data source: `/presets/index`
+    - filters: text/id/tag/layer, publisher, required capability
 
 - Control Panel pack event cards + actions
   - Added `pack.*` event-specific cards in `Live Feed` with direct actions:

@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /presets/capability_summary` (required dominates optional across agent + task scopes)
   - added export route for composed project overrides:
     - `POST /presets/export_overrides` (generates portable tandempack zip with marker manifest)
+  - preset index metadata now includes parsed `publisher` and `required_capabilities` for library filtering
 - **Initial PackManager runtime/API implementation (server)**:
   - added pack routes:
     - `GET /packs`
@@ -108,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added pack install flows for URL/server-path sources from within control panel
   - added inspect-time trust/risk summary card in Pack Library (verification badge, signature state, capability/routine summary, provider-specific dependency count)
   - added update warning UX that surfaces `reapproval_required` on update checks/apply calls
+  - added Skill Module Library section powered by `/presets/index` with text/publisher/required-capability filters
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

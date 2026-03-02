@@ -52,7 +52,7 @@ Owner: Core Runtime + Product Architecture
 
 - [ ] UI parity (Desktop + Control Panel)
   - [x] Pack Library view: install/inspect/uninstall/export/trust status
-  - [ ] Skill Module library with capability + publisher filters
+  - [x] Skill Module library with capability + publisher filters
   - [ ] Agent Preset builder with prompt preview + capability summary
   - [ ] Automation Preset builder with step-agent binding swaps
   - [x] Upgrade flow with permissions diff + re-approval (stub-backed API/UI signaling)

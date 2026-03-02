@@ -1,5 +1,5 @@
 export async function renderPacks(ctx) {
-  const { byId, state, toast, renderIcons, escapeHtml } = ctx;
+  const { byId, state, toast, renderIcons, escapeHtml, api } = ctx;
   const trustBadgeClass = (badge) => {
     const value = String(badge || "").toLowerCase();
     if (value === "official") return "tcp-badge-info";
@@ -25,11 +25,85 @@ export async function renderPacks(ctx) {
       <pre id="packs-meta" class="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300 hidden"></pre>
     </div>
     <div id="packs-list" class="grid gap-3"></div>
+    <div class="tcp-card mt-4">
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h3 class="tcp-title">Skill Module Library</h3>
+        <button id="presets-refresh-btn" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
+      </div>
+      <div class="grid gap-2 md:grid-cols-3">
+        <input id="presets-filter-text" class="tcp-input" placeholder="Filter by id/tag/layer" />
+        <input id="presets-filter-publisher" class="tcp-input" placeholder="Publisher filter" />
+        <input id="presets-filter-capability" class="tcp-input" placeholder="Required capability filter" />
+      </div>
+      <div id="presets-skill-list" class="mt-3 grid gap-2"></div>
+    </div>
   `;
 
   const packsListEl = byId("packs-list");
   const metaEl = byId("packs-meta");
   const summaryEl = byId("packs-inspect-summary");
+  const skillsHostEl = byId("presets-skill-list");
+  let presetIndex = null;
+
+  const renderSkills = () => {
+    const skills = Array.isArray(presetIndex?.skill_modules) ? presetIndex.skill_modules : [];
+    const qText = String(byId("presets-filter-text")?.value || "").trim().toLowerCase();
+    const qPub = String(byId("presets-filter-publisher")?.value || "")
+      .trim()
+      .toLowerCase();
+    const qCap = String(byId("presets-filter-capability")?.value || "")
+      .trim()
+      .toLowerCase();
+    const filtered = skills.filter((row) => {
+      const id = String(row?.id || "").toLowerCase();
+      const layer = String(row?.layer || "").toLowerCase();
+      const tags = Array.isArray(row?.tags)
+        ? row.tags.map((t) => String(t || "").toLowerCase())
+        : [];
+      const publisher = String(row?.publisher || "").toLowerCase();
+      const caps = Array.isArray(row?.required_capabilities)
+        ? row.required_capabilities.map((c) => String(c || "").toLowerCase())
+        : [];
+      const hayText = [id, layer, ...tags].join(" ");
+      if (qText && !hayText.includes(qText)) return false;
+      if (qPub && !publisher.includes(qPub)) return false;
+      if (qCap && !caps.some((c) => c.includes(qCap))) return false;
+      return true;
+    });
+    if (!filtered.length) {
+      skillsHostEl.innerHTML = '<p class="tcp-subtle">No skill modules found.</p>';
+      return;
+    }
+    skillsHostEl.innerHTML = filtered
+      .map((row) => {
+        const caps = Array.isArray(row?.required_capabilities) ? row.required_capabilities : [];
+        const tags = Array.isArray(row?.tags) ? row.tags : [];
+        return `
+          <article class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+            <div class="flex items-center justify-between gap-2">
+              <strong>${escapeHtml(String(row?.id || "unknown"))}</strong>
+              <span class="tcp-subtle text-xs">${escapeHtml(String(row?.layer || "unknown"))}</span>
+            </div>
+            <div class="mt-1 text-xs text-slate-400">publisher: ${escapeHtml(String(row?.publisher || "unknown"))}</div>
+            <div class="mt-1 text-xs text-slate-400">required capabilities: ${escapeHtml(String(caps.length))}</div>
+            <div class="mt-1 text-xs text-slate-500">${escapeHtml(tags.join(", ") || "no tags")}</div>
+          </article>
+        `;
+      })
+      .join("");
+  };
+
+  const loadPresetIndex = async () => {
+    try {
+      const payload = await api("/api/presets/index");
+      presetIndex = payload?.index || { skill_modules: [] };
+      renderSkills();
+    } catch (e) {
+      presetIndex = { skill_modules: [] };
+      renderSkills();
+      toast("err", `Preset index load failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   const setInspectSummary = (inspection) => {
     if (!summaryEl) return;
@@ -203,6 +277,10 @@ export async function renderPacks(ctx) {
   };
 
   byId("packs-refresh-btn")?.addEventListener("click", () => void loadPacks());
+  byId("presets-refresh-btn")?.addEventListener("click", () => void loadPresetIndex());
+  byId("presets-filter-text")?.addEventListener("input", renderSkills);
+  byId("presets-filter-publisher")?.addEventListener("input", renderSkills);
+  byId("presets-filter-capability")?.addEventListener("input", renderSkills);
   byId("packs-cap-discovery-btn")?.addEventListener("click", async () => {
     try {
       const discovery = await state.client.capabilities.discovery();
@@ -238,4 +316,5 @@ export async function renderPacks(ctx) {
   });
 
   await loadPacks();
+  await loadPresetIndex();
 }
