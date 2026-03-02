@@ -240,6 +240,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Fixed Settings tab icon disappearance on section switches by rehydrating icons at full Settings view scope (not only inner subview scope).
   - Updated Chat surface styling to shared theme tokens (removed hardcoded `zinc/slate` color islands in chat rails/messages/composer and dynamic chat cards), so changing theme in Settings now applies across chat UI as expected.
   - Improved Porcelain light-theme readability by darkening text/border token values and applying markdown light-mode contrast overrides for clearer chat and formatted content.
+  - Updated Automations page theme fidelity:
+    - wrapped automations UI in a scoped theme surface
+    - remapped residual `slate/zinc` utility classes to shared tokens
+    - converted automations tab chips and wizard step chips to token-based colors
 
 - Internal execution tracking
   - Added implementation Kanban board:

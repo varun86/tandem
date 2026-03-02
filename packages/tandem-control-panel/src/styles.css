@@ -1122,9 +1122,9 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .agents-tab-btn {
-  border: 1px solid rgba(71, 85, 105, 0.72);
-  background: rgba(15, 23, 42, 0.55);
-  color: rgb(203 213 225);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
+  color: var(--color-text-muted);
   border-radius: 9999px;
   font-size: 0.78rem;
   line-height: 1;
@@ -1133,14 +1133,18 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .agents-tab-btn:hover {
-  border-color: rgba(148, 163, 184, 0.75);
-  color: rgb(241 245 249);
+  border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
+  color: var(--color-text);
 }
 
 .agents-tab-btn.active {
-  border-color: rgba(203, 213, 225, 0.85);
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.45), rgba(30, 41, 59, 0.78));
-  color: rgb(248 250 252);
+  border-color: color-mix(in srgb, var(--color-primary) 46%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-primary) 24%, var(--color-surface-elevated) 76%),
+    color-mix(in srgb, var(--color-surface) 88%, #000 12%)
+  );
+  color: var(--color-text);
 }
 
 .agents-steps {
@@ -1150,18 +1154,69 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 }
 
 .agents-step-chip {
-  border: 1px solid rgba(71, 85, 105, 0.75);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
   border-radius: 9999px;
   padding: 0.28rem 0.65rem;
   font-size: 0.72rem;
-  color: rgb(148 163 184);
-  background: rgba(15, 23, 42, 0.5);
+  color: var(--color-text-subtle);
+  background: color-mix(in srgb, var(--color-surface-elevated) 80%, #000 20%);
 }
 
 .agents-step-chip.active {
-  border-color: rgba(203, 213, 225, 0.82);
-  color: rgb(241 245 249);
-  background: rgba(51, 65, 85, 0.72);
+  border-color: color-mix(in srgb, var(--color-primary) 46%, transparent);
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-surface-elevated) 72%, var(--color-primary) 10%);
+}
+
+.agents-theme .text-slate-500,
+.agents-theme .text-zinc-500 {
+  color: var(--color-text-subtle) !important;
+}
+
+.agents-theme .text-slate-400,
+.agents-theme .text-zinc-400 {
+  color: var(--color-text-muted) !important;
+}
+
+.agents-theme .text-slate-300,
+.agents-theme .text-zinc-300 {
+  color: var(--color-text-muted) !important;
+}
+
+.agents-theme .text-slate-200,
+.agents-theme .text-zinc-200 {
+  color: var(--color-text) !important;
+}
+
+.agents-theme .border-slate-700\/60,
+.agents-theme .border-slate-700\/70,
+.agents-theme .border-zinc-800,
+.agents-theme .border-zinc-800\/80,
+.agents-theme .border-zinc-800\/90,
+.agents-theme .border-zinc-700 {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 90%, transparent) !important;
+}
+
+.agents-theme .border-slate-300\/80,
+.agents-theme .border-zinc-500\/55 {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, transparent) !important;
+}
+
+.agents-theme .bg-slate-900\/30,
+.agents-theme .bg-slate-900\/35,
+.agents-theme .bg-zinc-900\/65,
+.agents-theme .bg-zinc-900\/80,
+.agents-theme .bg-zinc-900\/90,
+.agents-theme .bg-zinc-950\/55,
+.agents-theme .bg-zinc-950\/70,
+.agents-theme .bg-zinc-950\/80,
+.agents-theme .bg-zinc-950\/90,
+.agents-theme .bg-zinc-950\/95 {
+  background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%) !important;
+}
+
+.agents-theme .accent-slate-400 {
+  accent-color: var(--color-primary) !important;
 }
 
 .tcp-settings-tabs {

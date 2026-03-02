@@ -532,6 +532,7 @@ export async function renderAgents(ctx) {
       : ["Choose flow", "Configure agents", "Run + monitor"];
 
   byId("view").innerHTML = `
+    <div class="agents-theme grid gap-4">
     <div class="tcp-card" data-agents-panel="header">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -819,6 +820,7 @@ export async function renderAgents(ctx) {
       <div id="run-inspector" class="tcp-list">
         <p class="tcp-subtle">Pick any recent run and click Details to inspect status, full detail, and artifacts.</p>
       </div>
+    </div>
     </div>
   `;
 
