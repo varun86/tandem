@@ -142,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Control panel packs runtime compatibility**: `Packs` view now falls back to direct engine endpoints when `state.client.packs`/`state.client.capabilities` namespaces are unavailable, preventing `Cannot read properties of undefined (reading 'list')` failures.
+- **Settings tab UX**: Replaced generic button-like Settings section controls with dedicated tab styles (tab rail + active state) for clearer information hierarchy and better visual quality.
 
 ## [0.3.28] - 2026-03-01
 

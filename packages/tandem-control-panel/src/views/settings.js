@@ -35,12 +35,13 @@ export async function renderSettings(ctx) {
         <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sliders-horizontal"></i> Settings</h3>
         <span class="tcp-badge-info">Unified Surface</span>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <button class="tcp-btn ${activeTab === "general" ? "border-slate-300/90" : ""}" data-settings-tab="general"><i data-lucide="settings-2"></i> General</button>
-        <button class="tcp-btn ${activeTab === "packs" ? "border-slate-300/90" : ""}" data-settings-tab="packs"><i data-lucide="package"></i> Packs</button>
-        <button class="tcp-btn ${activeTab === "channels" ? "border-slate-300/90" : ""}" data-settings-tab="channels"><i data-lucide="message-circle"></i> Channels</button>
-        <button class="tcp-btn ${activeTab === "mcp" ? "border-slate-300/90" : ""}" data-settings-tab="mcp"><i data-lucide="link"></i> MCP</button>
-        <button class="tcp-btn ${activeTab === "files" ? "border-slate-300/90" : ""}" data-settings-tab="files"><i data-lucide="folder-open"></i> Files</button>
+      <p class="tcp-subtle mb-3">Configure platform behavior, integrations, and assets without leaving Settings.</p>
+      <div class="tcp-settings-tabs" role="tablist" aria-label="Settings sections">
+        <button class="tcp-settings-tab ${activeTab === "general" ? "active" : ""}" data-settings-tab="general" role="tab" aria-selected="${activeTab === "general"}"><i data-lucide="settings-2"></i> General</button>
+        <button class="tcp-settings-tab ${activeTab === "packs" ? "active" : ""}" data-settings-tab="packs" role="tab" aria-selected="${activeTab === "packs"}"><i data-lucide="package"></i> Packs</button>
+        <button class="tcp-settings-tab ${activeTab === "channels" ? "active" : ""}" data-settings-tab="channels" role="tab" aria-selected="${activeTab === "channels"}"><i data-lucide="message-circle"></i> Channels</button>
+        <button class="tcp-settings-tab ${activeTab === "mcp" ? "active" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}"><i data-lucide="link"></i> MCP</button>
+        <button class="tcp-settings-tab ${activeTab === "files" ? "active" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}"><i data-lucide="folder-open"></i> Files</button>
       </div>
     </div>
     <div id="settings-tab-content" class="grid gap-4"></div>
