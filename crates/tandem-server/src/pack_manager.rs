@@ -24,6 +24,8 @@ const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PATH_DEPTH: usize = 24;
 const MAX_ENTRY_COMPRESSION_RATIO: u64 = 200;
 const MAX_ARCHIVE_COMPRESSION_RATIO: u64 = 200;
+const SECRET_SCAN_MAX_FILE_BYTES: u64 = 512 * 1024;
+const SECRET_SCAN_PATTERNS: &[&str] = &["sk-", "sk_live_", "ghp_", "xoxb-", "xoxp-", "AKIA"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackManifest {
@@ -202,6 +204,21 @@ impl PackManager {
         let stage_unpacked = stage_root.join("unpacked");
         tokio::fs::create_dir_all(&stage_unpacked).await?;
         safe_extract_zip(&source_file, &stage_unpacked)?;
+        let secret_hits = scan_embedded_secrets(&stage_unpacked)?;
+        let strict_secret_scan = std::env::var("TANDEM_PACK_SECRET_SCAN_STRICT")
+            .map(|v| {
+                let n = v.to_ascii_lowercase();
+                n == "1" || n == "true" || n == "yes" || n == "on"
+            })
+            .unwrap_or(false);
+        if strict_secret_scan && !secret_hits.is_empty() {
+            let _ = tokio::fs::remove_dir_all(&stage_root).await;
+            return Err(anyhow!(
+                "embedded_secret_detected: {} potential secret(s) found (first: {})",
+                secret_hits.len(),
+                secret_hits[0]
+            ));
+        }
 
         let install_parent = self.root.join(&manifest.name);
         let install_target = install_parent.join(&manifest.version);
@@ -637,6 +654,55 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn scan_embedded_secrets(root: &Path) -> anyhow::Result<Vec<String>> {
+    let mut findings = Vec::new();
+    for path in walk_files(root)? {
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path.as_path())
+            .to_string_lossy()
+            .to_string();
+        let rel_lower = rel.to_ascii_lowercase();
+        if rel_lower.contains(".example") || rel_lower.ends_with("secrets.example.env") {
+            continue;
+        }
+        let meta = std::fs::metadata(&path)?;
+        if meta.len() == 0 || meta.len() > SECRET_SCAN_MAX_FILE_BYTES {
+            continue;
+        }
+        let bytes = std::fs::read(&path)?;
+        if bytes.contains(&0) {
+            continue;
+        }
+        let content = String::from_utf8_lossy(&bytes);
+        for needle in SECRET_SCAN_PATTERNS {
+            if content.contains(needle) {
+                findings.push(format!("{rel}:{needle}"));
+                break;
+            }
+        }
+    }
+    Ok(findings)
+}
+
+fn walk_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                stack.push(path);
+            } else if ty.is_file() {
+                out.push(path);
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn inspect_trust(manifest: &Value, install_path: &str) -> Value {
     let signature_path = PathBuf::from(install_path).join("tandempack.sig");
     let signature = if signature_path.exists() {
@@ -939,6 +1005,21 @@ mod tests {
             inspection.trust.get("signature").and_then(|v| v.as_str()),
             Some("unsigned")
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_embedded_secrets_finds_real_and_ignores_examples() {
+        let root = std::env::temp_dir().join(format!("tandem-pack-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let real = root.join("resources").join("token.txt");
+        std::fs::create_dir_all(real.parent().expect("parent")).expect("mkdir resources");
+        std::fs::write(&real, "token=ghp_example_not_real_but_pattern").expect("write real");
+        let example = root.join("secrets.example.env");
+        std::fs::write(&example, "API_KEY=sk-live-example").expect("write example");
+        let findings = scan_embedded_secrets(&root).expect("scan");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].contains("resources/token.txt"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - pack inspect trust/risk summary now derives from installed content (`tandempack.sig` presence, publisher verification fields, capability/routine risk counts)
   - pack inspect now emits normalized verification badge tiers (`unverified`, `verified`, `official`) in API trust payload
   - pack inspect now includes a structured `permission_sheet` payload (required/optional capabilities, provider-specific dependencies, routine declarations, and risk level) for install UX
+  - optional local secret scanning hook added during install (`TANDEM_PACK_SECRET_SCAN_STRICT`) with explicit `embedded_secret_detected` rejection on matches
 - **Initial capability resolver runtime/API implementation (server)**:
   - added capability routes:
     - `GET /capabilities/bindings`

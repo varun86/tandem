@@ -55,7 +55,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Parse and expose `tandempack.sig` status in inspect endpoint
   - [x] Verification badges (`unverified`, `verified`, `official`) in API payloads
   - [x] Permission/risk sheet generation API for pre-install UX (`pack.inspect.permission_sheet`)
-  - [ ] Secret scanning hooks and reject reason taxonomy integration
+  - [x] Secret scanning hooks integrated (`TANDEM_PACK_SECRET_SCAN_STRICT` for local strict reject)
 
 ## Done
 

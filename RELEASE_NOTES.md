@@ -99,6 +99,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - provider-specific dependency list
     - routine declaration list + enabled state
     - derived risk level (`standard` or `elevated`)
+  - Added optional local secret-scanning enforcement in install flow:
+    - scanner checks extracted text files for common high-risk token patterns
+    - examples/placeholders (e.g. `secrets.example.env`, `.example`) are ignored
+    - strict reject mode enabled with `TANDEM_PACK_SECRET_SCAN_STRICT=1`
 
 - Capability Resolver runtime/API implementation (first tranche)
   - Added capability endpoints:
