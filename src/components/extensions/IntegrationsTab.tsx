@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import {
   mcpConnect,
+  mcpCatalog,
   mcpDisconnect,
   mcpListServers,
   mcpListTools,
@@ -14,6 +15,8 @@ import {
   mcpSetEnabled,
   capabilityReadiness,
   type CapabilityReadinessResult,
+  type McpCatalogEntry,
+  type McpCatalogResult,
   type McpRemoteTool,
   type McpServerRecord,
   opencodeAddMcpServer,
@@ -64,6 +67,41 @@ const POPULAR_REMOTE_PRESETS: RemotePreset[] = [
   },
 ];
 
+type CatalogRow = {
+  slug: string;
+  name: string;
+  description: string;
+  transportUrl: string;
+  serverConfigName: string;
+  documentationUrl: string;
+  toolCount: number;
+  requiresAuth: boolean;
+  requiresSetup: boolean;
+};
+
+function normalizeCatalog(raw: McpCatalogResult | null | undefined): CatalogRow[] {
+  const rows = Array.isArray(raw?.servers) ? raw?.servers : [];
+  return rows
+    .map((entry: McpCatalogEntry | null | undefined) => {
+      const slug = String(entry?.slug || "").trim();
+      const transportUrl = String(entry?.transport_url || "").trim();
+      if (!slug || !transportUrl) return null;
+      return {
+        slug,
+        name: String(entry?.name || slug).trim(),
+        description: String(entry?.description || "").trim(),
+        transportUrl,
+        serverConfigName: String(entry?.server_config_name || slug).trim(),
+        documentationUrl: String(entry?.documentation_url || "").trim(),
+        toolCount: Number.isFinite(Number(entry?.tool_count)) ? Number(entry?.tool_count) : 0,
+        requiresAuth: entry?.requires_auth !== false,
+        requiresSetup: entry?.requires_setup === true,
+      };
+    })
+    .filter((entry): entry is CatalogRow => !!entry)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
   const hasWorkspace = !!workspacePath;
   const [scope, setScope] = useState<OpenCodeConfigScope>(hasWorkspace ? "project" : "global");
@@ -76,6 +114,10 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
   const [runtimeBusyServer, setRuntimeBusyServer] = useState<string | null>(null);
   const [runtimeServers, setRuntimeServers] = useState<McpServerRecord[]>([]);
   const [runtimeTools, setRuntimeTools] = useState<McpRemoteTool[]>([]);
+  const [catalogRows, setCatalogRows] = useState<CatalogRow[]>([]);
+  const [catalogGeneratedAt, setCatalogGeneratedAt] = useState<string>("");
+  const [catalogSearch, setCatalogSearch] = useState<string>("");
+  const [catalogLoading, setCatalogLoading] = useState<boolean>(true);
   const [readinessRequired, setReadinessRequired] = useState("");
   const [readinessResult, setReadinessResult] = useState<CapabilityReadinessResult | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(false);
@@ -126,9 +168,26 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
     }
   };
 
+  const refreshCatalog = async () => {
+    setCatalogLoading(true);
+    try {
+      const payload = await mcpCatalog();
+      const catalog = payload?.catalog ?? null;
+      setCatalogRows(normalizeCatalog(catalog));
+      setCatalogGeneratedAt(String(catalog?.generated_at || "").trim());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load MCP catalog");
+      setCatalogRows([]);
+      setCatalogGeneratedAt("");
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
   useEffect(() => {
     refresh().catch(console.error);
     refreshRuntime().catch(console.error);
+    refreshCatalog().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, workspacePath]);
 
@@ -344,6 +403,20 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
   const statusFor = useMemo(() => {
     return (name: string) => testResults[name] ?? null;
   }, [testResults]);
+
+  const visibleCatalogRows = useMemo(() => {
+    const query = catalogSearch.trim().toLowerCase();
+    if (!query) return catalogRows.slice(0, 80);
+    return catalogRows
+      .filter((row) => {
+        return (
+          row.name.toLowerCase().includes(query) ||
+          row.slug.toLowerCase().includes(query) ||
+          row.transportUrl.toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 80);
+  }, [catalogRows, catalogSearch]);
 
   return (
     <div className="space-y-6">
@@ -690,6 +763,100 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
               </Button>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Remote MCP catalog</CardTitle>
+          <CardDescription>
+            Search official/curated remote MCP packs and apply one to the Add Remote form.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Input
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              placeholder="Search by name, slug, or URL"
+            />
+            <Button size="sm" variant="ghost" onClick={refreshCatalog} disabled={catalogLoading}>
+              {catalogLoading ? "Loading..." : "Refresh"}
+            </Button>
+          </div>
+          <p className="text-xs text-text-subtle">
+            {catalogGeneratedAt
+              ? `Generated ${catalogGeneratedAt}`
+              : "Catalog timestamp unavailable"}
+          </p>
+          {catalogLoading ? (
+            <div className="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-text-muted">
+              Loading catalog...
+            </div>
+          ) : visibleCatalogRows.length === 0 ? (
+            <div className="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-text-muted">
+              No catalog entries match your search.
+            </div>
+          ) : (
+            <div className="max-h-96 space-y-2 overflow-auto pr-1">
+              {visibleCatalogRows.map((row) => (
+                <div
+                  key={row.slug}
+                  className="rounded-lg border border-border bg-surface-elevated p-3 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-text">{row.name}</p>
+                      <p className="mt-1 truncate text-xs text-text-subtle">{row.slug}</p>
+                      <p className="mt-1 truncate font-mono text-xs text-text-muted">
+                        {row.transportUrl}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary border border-primary/20">
+                        Tools: {row.toolCount}
+                      </span>
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-xs border",
+                          row.requiresAuth
+                            ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                            : "bg-success/10 text-success border-success/20"
+                        )}
+                      >
+                        {row.requiresAuth ? "Auth" : "Authless"}
+                      </span>
+                    </div>
+                  </div>
+                  {row.description && <p className="text-xs text-text-muted">{row.description}</p>}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setRemoteName(row.serverConfigName || row.slug);
+                        setRemoteUrl(row.transportUrl);
+                      }}
+                    >
+                      Apply
+                    </Button>
+                    {row.documentationUrl && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => openUrl(row.documentationUrl)}
+                      >
+                        Docs
+                      </Button>
+                    )}
+                    {row.requiresSetup && (
+                      <span className="text-xs text-yellow-500">Setup required</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

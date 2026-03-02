@@ -29,6 +29,10 @@
   - Added quick actions for pack apply (prefill transport/name) and TOML open.
   - Added MCP settings readiness check UI with structured result display.
   - Pack builder save flows now enforce capability-readiness checks before writing agent/automation overrides.
+- **Desktop (Tauri) MCP searchable catalog view**:
+  - Added Tauri bridge command/wrapper for engine MCP catalog retrieval (`mcp_catalog`).
+  - Extensions/Integrations now includes searchable remote MCP catalog listings.
+  - Added one-click Apply (prefill remote name/URL) and Docs quick-open actions per catalog row.
 
 ---
 

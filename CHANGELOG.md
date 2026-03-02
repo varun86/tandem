@@ -165,6 +165,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added searchable “Remote MCP Packs” UI with pack apply actions and TOML open links
   - added readiness-check UI in MCP settings that calls `/capabilities/readiness`
   - Pack builders now enforce readiness preflight before saving agent/automation overrides
+- **Desktop (Tauri) MCP catalog discoverability**:
+  - added Tauri bridge command + wrapper for engine catalog retrieval (`mcp_catalog`)
+  - Extensions/Integrations tab now includes searchable “Remote MCP catalog” view
+  - catalog entries support one-click Apply to prefill remote name/URL and direct Docs open actions
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

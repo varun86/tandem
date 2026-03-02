@@ -4345,6 +4345,18 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn mcp_catalog(&self) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/mcp/catalog", self.base_url().await?);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to load MCP catalog: {}", e)))?;
+        self.handle_response(response).await
+    }
+
     pub async fn capability_readiness(
         &self,
         request: serde_json::Value,

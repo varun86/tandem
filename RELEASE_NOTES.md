@@ -33,6 +33,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added quick actions to apply pack transport/name and open generated TOML.
   - Added MCP-side readiness check UI with structured result rendering.
 
+- Desktop (Tauri) MCP UX now includes searchable remote catalog
+  - Added Tauri-side `mcp_catalog` command/wrapper to consume engine `GET /mcp/catalog`.
+  - Extensions -> Integrations now includes searchable “Remote MCP catalog” list.
+  - Added “Apply” action to prefill remote server name/URL and “Docs” quick-open links.
+
 - Engine provider auth persistence + status API overhaul
   - Provider keys set via `PUT /auth/{provider}` are now durable across engine restarts.
   - Added engine-wide provider auth persistence in `tandem-core` with keychain-first storage and secure file fallback.

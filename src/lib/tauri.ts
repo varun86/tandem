@@ -935,6 +935,25 @@ export interface CapabilityReadinessResult {
   blocking_issues?: CapabilityReadinessIssue[];
 }
 
+export interface McpCatalogEntry {
+  slug: string;
+  name: string;
+  description?: string;
+  transport_url: string;
+  server_config_name?: string;
+  documentation_url?: string;
+  directory_url?: string;
+  tool_count?: number;
+  requires_auth?: boolean;
+  requires_setup?: boolean;
+}
+
+export interface McpCatalogResult {
+  generated_at?: string;
+  count?: number;
+  servers?: McpCatalogEntry[];
+}
+
 export async function mcpListServers(): Promise<McpServerRecord[]> {
   return invoke("mcp_list_servers");
 }
@@ -961,6 +980,10 @@ export async function mcpRefresh(name: string): Promise<McpActionResponse> {
 
 export async function mcpListTools(): Promise<McpRemoteTool[]> {
   return invoke("mcp_list_tools");
+}
+
+export async function mcpCatalog(): Promise<{ catalog: McpCatalogResult }> {
+  return invoke("mcp_catalog");
 }
 
 export async function capabilityReadiness(

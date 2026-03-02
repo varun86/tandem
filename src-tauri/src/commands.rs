@@ -5734,6 +5734,11 @@ pub async fn mcp_list_tools(state: State<'_, AppState>) -> Result<Vec<McpRemoteT
 }
 
 #[tauri::command]
+pub async fn mcp_catalog(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    state.sidecar.mcp_catalog().await
+}
+
+#[tauri::command]
 pub async fn capability_readiness(
     state: State<'_, AppState>,
     request: serde_json::Value,
