@@ -172,6 +172,7 @@ export async function renderMcp(ctx) {
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean);
+  const configuredServerNames = new Set(servers.map((row) => row.name.toLowerCase()));
 
   const movedCard = embeddedInSettings
     ? ""
@@ -375,6 +376,57 @@ export async function renderMcp(ctx) {
   const catalogListEl = byId("mcp-catalog-list");
   const catalogSearchEl = byId("mcp-catalog-search");
   const catalogRefreshEl = byId("mcp-catalog-refresh");
+  const addCatalogServer = async (picked, connectAfterAdd = false) => {
+    if (!picked) return;
+    const suggestedName = normalizeName(picked.serverConfigName || picked.slug || picked.name);
+    const transport = String(picked.transportUrl || "").trim();
+    const authMode = String(authModeEl.value || "auto");
+    const token = tokenEl.value;
+    const customHeader = customHeaderEl.value;
+
+    if (!transport) {
+      toast("err", "Catalog entry has no transport URL.");
+      return;
+    }
+    if (!parseUrl(transport) && !transport.startsWith("stdio:")) {
+      toast("err", "Catalog transport URL is invalid.");
+      return;
+    }
+
+    if (connectAfterAdd && picked.requiresAuth && !String(token || "").trim()) {
+      nameEl.value = suggestedName;
+      transportEl.value = transport;
+      maybeInferName();
+      refreshAuthUi();
+      toast("err", "This MCP requires auth. Add token/header first, then Add + Connect.");
+      return;
+    }
+
+    try {
+      const headers = buildHeaders({ authMode, token, customHeader, transport });
+      const payload = { name: suggestedName, transport, enabled: true };
+      if (Object.keys(headers).length) payload.headers = headers;
+      await state.client.mcp.add(payload);
+
+      if (connectAfterAdd) {
+        const connectResult = await state.client.mcp.connect(suggestedName);
+        if (!connectResult?.ok) {
+          const snapshot = normalizeServers(await state.client.mcp.list().catch(() => ({})));
+          const failed = snapshot.find((row) => row.name === suggestedName);
+          const detail = failed?.lastError ? ` ${failed.lastError}` : "";
+          throw new Error(`Added "${suggestedName}" but connect failed.${detail}`);
+        }
+        toast("ok", `MCP "${suggestedName}" added and connected.`);
+      } else {
+        toast("ok", `MCP "${suggestedName}" added.`);
+      }
+      await renderMcp(ctx);
+    } catch (e) {
+      toast("err", e instanceof Error ? e.message : String(e));
+      await renderMcp(ctx);
+    }
+  };
+
   const renderCatalog = () => {
     const query = String(catalogSearchEl?.value || "")
       .trim()
@@ -397,7 +449,11 @@ export async function renderMcp(ctx) {
 
     catalogListEl.innerHTML = visible
       .map(
-        (row) => `
+        (row) => {
+          const alreadyConfigured = configuredServerNames.has(
+            String(row.serverConfigName || row.slug || "").toLowerCase()
+          );
+          return `
         <div class="tcp-list-item grid gap-2">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -413,6 +469,8 @@ export async function renderMcp(ctx) {
           ${row.description ? `<div class="text-xs text-slate-200">${escapeHtml(row.description)}</div>` : ""}
           <div class="flex flex-wrap gap-2">
             <button class="tcp-btn" data-catalog-apply="${escapeHtml(row.slug)}">Apply</button>
+            <button class="tcp-btn" data-catalog-add="${escapeHtml(row.slug)}" ${alreadyConfigured ? "disabled" : ""}>${alreadyConfigured ? "Added" : "Add"}</button>
+            <button class="tcp-btn-primary" data-catalog-add-connect="${escapeHtml(row.slug)}" ${alreadyConfigured ? "disabled" : ""}>${alreadyConfigured ? "Added" : "Add + Connect"}</button>
             <a class="tcp-btn" href="/api/engine/mcp/catalog/${encodeURIComponent(row.slug)}/toml" target="_blank" rel="noreferrer">Open TOML</a>
             ${
               row.documentationUrl
@@ -422,6 +480,7 @@ export async function renderMcp(ctx) {
           </div>
         </div>
       `
+        }
       )
       .join("");
 
@@ -435,6 +494,20 @@ export async function renderMcp(ctx) {
         maybeInferName();
         refreshAuthUi();
         toast("ok", `Loaded pack ${picked.name}. Add + Connect when ready.`);
+      });
+    });
+    catalogListEl.querySelectorAll("[data-catalog-add]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const slug = String(button.getAttribute("data-catalog-add") || "").trim();
+        const picked = catalog.servers.find((row) => row.slug === slug);
+        addCatalogServer(picked, false);
+      });
+    });
+    catalogListEl.querySelectorAll("[data-catalog-add-connect]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const slug = String(button.getAttribute("data-catalog-add-connect") || "").trim();
+        const picked = catalog.servers.find((row) => row.slug === slug);
+        addCatalogServer(picked, true);
       });
     });
   };
