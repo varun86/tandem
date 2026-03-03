@@ -5747,6 +5747,42 @@ pub async fn capability_readiness(
 }
 
 #[tauri::command]
+pub async fn pack_builder_preview(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.pack_builder_preview(request).await
+}
+
+#[tauri::command]
+pub async fn pack_builder_apply(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.pack_builder_apply(request).await
+}
+
+#[tauri::command]
+pub async fn pack_builder_cancel(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.pack_builder_cancel(request).await
+}
+
+#[tauri::command]
+pub async fn pack_builder_pending(
+    state: State<'_, AppState>,
+    session_id: String,
+    thread_key: Option<String>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .pack_builder_pending(&session_id, thread_key.as_deref())
+        .await
+}
+
+#[tauri::command]
 pub async fn tool_ids(state: State<'_, AppState>) -> Result<Vec<String>> {
     state.sidecar.tool_ids().await
 }

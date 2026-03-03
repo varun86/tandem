@@ -4375,6 +4375,88 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn pack_builder_preview(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/pack-builder/preview", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to preview pack builder workflow: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn pack_builder_apply(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/pack-builder/apply", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to apply pack builder workflow: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn pack_builder_cancel(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/pack-builder/cancel", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to cancel pack builder workflow: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn pack_builder_pending(
+        &self,
+        session_id: &str,
+        thread_key: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/pack-builder/pending", self.base_url().await?);
+        let mut query: Vec<(&str, &str)> = vec![("session_id", session_id)];
+        if let Some(thread) = thread_key {
+            if !thread.trim().is_empty() {
+                query.push(("thread_key", thread));
+            }
+        }
+        let response = self
+            .http_client
+            .get(&url)
+            .query(&query)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!(
+                    "Failed to query pending pack builder workflow: {}",
+                    e
+                ))
+            })?;
+        self.handle_response(response).await
+    }
+
     pub async fn tool_ids(&self) -> Result<Vec<String>> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/tool/ids", self.base_url().await?);
@@ -7692,5 +7774,114 @@ mod tests {
             .expect("mission_apply_event");
         assert_eq!(result.mission.revision, 1);
         assert_eq!(result.commands.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pack_builder_preview_posts_preview_endpoint() {
+        let base = spawn_single_response_server(
+            "/pack-builder/preview",
+            "200 OK",
+            r#"{"status":"preview_pending","plan_id":"plan_test"}"#,
+        )
+        .await;
+        let manager = SidecarManager::new(SidecarConfig::default());
+        let port = base
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("port");
+        {
+            let mut guard = manager.port.write().await;
+            *guard = Some(port);
+        }
+        let payload = manager
+            .pack_builder_preview(serde_json::json!({"goal":"Create a pack"}))
+            .await
+            .expect("preview");
+        assert_eq!(
+            payload.get("status").and_then(|v| v.as_str()),
+            Some("preview_pending")
+        );
+    }
+
+    #[tokio::test]
+    async fn pack_builder_apply_posts_apply_endpoint() {
+        let base = spawn_single_response_server(
+            "/pack-builder/apply",
+            "200 OK",
+            r#"{"status":"apply_complete","plan_id":"plan_test"}"#,
+        )
+        .await;
+        let manager = SidecarManager::new(SidecarConfig::default());
+        let port = base
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("port");
+        {
+            let mut guard = manager.port.write().await;
+            *guard = Some(port);
+        }
+        let payload = manager
+            .pack_builder_apply(serde_json::json!({"plan_id":"plan_test"}))
+            .await
+            .expect("apply");
+        assert_eq!(
+            payload.get("status").and_then(|v| v.as_str()),
+            Some("apply_complete")
+        );
+    }
+
+    #[tokio::test]
+    async fn pack_builder_cancel_posts_cancel_endpoint() {
+        let base = spawn_single_response_server(
+            "/pack-builder/cancel",
+            "200 OK",
+            r#"{"status":"cancelled","plan_id":"plan_test"}"#,
+        )
+        .await;
+        let manager = SidecarManager::new(SidecarConfig::default());
+        let port = base
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("port");
+        {
+            let mut guard = manager.port.write().await;
+            *guard = Some(port);
+        }
+        let payload = manager
+            .pack_builder_cancel(serde_json::json!({"plan_id":"plan_test"}))
+            .await
+            .expect("cancel");
+        assert_eq!(
+            payload.get("status").and_then(|v| v.as_str()),
+            Some("cancelled")
+        );
+    }
+
+    #[tokio::test]
+    async fn pack_builder_pending_reads_pending_endpoint() {
+        let base = spawn_single_response_server(
+            "/pack-builder/pending?session_id=ses_1&thread_key=desktop",
+            "200 OK",
+            r#"{"status":"ok","plan_id":"plan_test"}"#,
+        )
+        .await;
+        let manager = SidecarManager::new(SidecarConfig::default());
+        let port = base
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("port");
+        {
+            let mut guard = manager.port.write().await;
+            *guard = Some(port);
+        }
+        let payload = manager
+            .pack_builder_pending("ses_1", Some("desktop:ses_1"))
+            .await
+            .expect("pending");
+        assert_eq!(payload.get("status").and_then(|v| v.as_str()), Some("ok"));
     }
 }

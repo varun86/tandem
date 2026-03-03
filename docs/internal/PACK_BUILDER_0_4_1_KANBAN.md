@@ -40,6 +40,10 @@ Owner: Tandem Engine
 - [x] Add duplicate-call guard to prevent repeated `pack_builder` executions in the same run cycle
 - [x] Render Pack Builder preview/apply cards inline in chat thread (not only in side rail)
 - [x] Remove channel auto-preview interception for initial intent (LLM/tool-driven initial pass; deterministic confirm/cancel preserved)
+- [x] Add Tauri-side pack-builder command bridge (`preview`/`apply`/`cancel`/`pending`) via sidecar
+- [x] Add desktop chat inline Pack Builder cards with direct apply/cancel endpoint actions
+- [x] Add Tauri-side regression tests for pack-builder endpoint bridge methods
+- [x] Add pack-builder observability counter events (`preview/apply/success/blocked/cancelled/wrong_plan`) with surface tags
 
 ## Completed
 
@@ -60,3 +64,4 @@ Owner: Tandem Engine
   - `28796f8` (pack-builder session-local confirmation fallback + tests)
   - `1d4f579` (pack-builder API-first parity endpoints + channel/control-panel direct apply path)
   - `6001205` (restore LLM-led chat flow + inline in-thread pack-builder cards + channel interception rollback)
+  - `TBD` (Tauri pack-builder bridge + desktop inline card parity + pack-builder observability counters)

@@ -53,8 +53,12 @@ import {
   getProvidersConfig,
   getIdentityConfig,
   setProvidersConfig,
+  packBuilderApply,
+  packBuilderCancel,
+  packBuilderPending,
   type StreamEvent,
   type StreamEventEnvelopeV2,
+  type PackBuilderWorkflowResponse,
   type QueuedMessage,
   type SidecarState,
   type SidecarStartupHealth,
@@ -339,6 +343,61 @@ function extractQuestionInfoFromPermissionArgs(
     .filter((question): question is QuestionInfo => question !== null);
 }
 
+interface PackBuilderCard {
+  planId: string;
+  workflowId?: string;
+  status: string;
+  goal: string;
+  selectedConnectors: string[];
+  requiredSecrets: string[];
+  nextActions: string[];
+  updatedAt: number;
+}
+
+function extractPackBuilderPayload(input: unknown): PackBuilderWorkflowResponse | null {
+  if (!input || typeof input !== "object") return null;
+  const row = input as Record<string, unknown>;
+  const metadata = row.metadata;
+  const candidate =
+    metadata && typeof metadata === "object"
+      ? (metadata as Record<string, unknown>)
+      : (row as Record<string, unknown>);
+  const status = candidate.status;
+  const planId = candidate.plan_id;
+  if (typeof status !== "string" && typeof planId !== "string") return null;
+  return candidate as unknown as PackBuilderWorkflowResponse;
+}
+
+function normalizePackBuilderCard(payload: PackBuilderWorkflowResponse): PackBuilderCard | null {
+  const planId = String(payload.plan_id || "").trim();
+  if (!planId) return null;
+  const selectedConnectors = Array.isArray(payload.selected_connectors)
+    ? payload.selected_connectors
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.length > 0)
+    : [];
+  const requiredSecrets = Array.isArray(payload.required_secrets)
+    ? payload.required_secrets
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.length > 0)
+    : [];
+  const nextActions = Array.isArray(payload.next_actions)
+    ? payload.next_actions
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.length > 0)
+    : [];
+  return {
+    planId,
+    workflowId: typeof payload.workflow_id === "string" ? payload.workflow_id : undefined,
+    status: String(payload.status || "preview_pending"),
+    goal: String(payload.goal || "Create a useful automation pack"),
+    selectedConnectors,
+    requiredSecrets,
+    nextActions,
+    updatedAt: Date.now(),
+  };
+}
+
 export function Chat({
   workspacePath,
   sessionId: propSessionId,
@@ -453,6 +512,7 @@ export function Chat({
   const [assistantAvatarUrl, setAssistantAvatarUrl] = useState("/tandem-logo.png");
   const [engineReady, setEngineReady] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [packBuilderCards, setPackBuilderCards] = useState<PackBuilderCard[]>([]);
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isGitRepository, setIsGitRepository] = useState(false);
@@ -542,6 +602,68 @@ export function Chat({
   // Backend startup can run an extended 240s path on first-run/import repair.
   // Keep frontend attach wait above that to avoid false reconnect churn.
   const SIDECAR_ATTACH_TIMEOUT_MS = 250_000;
+
+  const threadKeyForSession = useCallback((session: string | null | undefined) => {
+    const sid = String(session || "").trim();
+    return sid ? `desktop:${sid}` : undefined;
+  }, []);
+
+  const upsertPackBuilderCard = useCallback((payload: PackBuilderWorkflowResponse) => {
+    const card = normalizePackBuilderCard(payload);
+    if (!card) return;
+    setPackBuilderCards((prev) => {
+      const idx = prev.findIndex((row) => row.planId === card.planId);
+      if (idx < 0) return [card, ...prev].slice(0, 8);
+      const next = [...prev];
+      next[idx] = {
+        ...next[idx],
+        ...card,
+      };
+      return next;
+    });
+  }, []);
+
+  const runPackBuilderCardAction = useCallback(
+    async (planId: string, action: "apply" | "cancel") => {
+      const session = String(currentSessionIdRef.current || "").trim();
+      const thread = threadKeyForSession(session);
+      let effectivePlanId = String(planId || "").trim();
+      try {
+        if (!effectivePlanId && session) {
+          const pending = await packBuilderPending(session, thread);
+          effectivePlanId = String(pending?.plan_id || "").trim();
+        }
+        if (!effectivePlanId) {
+          throw new Error("No pending Pack Builder plan found for this session.");
+        }
+        let payload: PackBuilderWorkflowResponse;
+        if (action === "cancel") {
+          payload = await packBuilderCancel({
+            plan_id: effectivePlanId,
+            session_id: session || undefined,
+            thread_key: thread,
+          });
+        } else {
+          payload = await packBuilderApply({
+            plan_id: effectivePlanId,
+            session_id: session || undefined,
+            thread_key: thread,
+            approvals: {
+              approve_connector_registration: true,
+              approve_pack_install: true,
+              approve_enable_routines: false,
+            },
+            secret_refs_confirmed: true,
+          });
+        }
+        upsertPackBuilderCard(payload);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setError(`Pack Builder ${action} failed: ${message}`);
+      }
+    },
+    [threadKeyForSession, upsertPackBuilderCard]
+  );
 
   const waitForSidecarRunning = useCallback(
     async (timeoutMs = SIDECAR_ATTACH_TIMEOUT_MS, pollIntervalMs = 500): Promise<boolean> => {
@@ -670,6 +792,7 @@ export function Chat({
   // Clear any queued prompts when switching sessions.
   useEffect(() => {
     setPendingQuestionRequests([]);
+    setPackBuilderCards([]);
     dismissedQuestionRequestIdsRef.current = new Set();
     pendingQuestionToolCallIdsRef.current = new Set();
     pendingQuestionToolMessageIdsRef.current = new Set();
@@ -2031,6 +2154,12 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
             }
             return prev;
           });
+          if ((event.tool || "").toLowerCase() === "pack_builder") {
+            const packPayload = extractPackBuilderPayload(event.result);
+            if (packPayload) {
+              upsertPackBuilderCard(packPayload);
+            }
+          }
           break;
         }
 
@@ -2480,6 +2609,19 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
             break;
           }
 
+          if (event.event_type.startsWith("pack_builder.")) {
+            const data = (event.data || {}) as Record<string, unknown>;
+            const sessionId = String(data.sessionID || "").trim();
+            if (sessionId && currentSessionId && sessionId !== currentSessionId) {
+              break;
+            }
+            const payload = extractPackBuilderPayload(data.metadata || data);
+            if (payload) {
+              upsertPackBuilderCard(payload);
+            }
+            break;
+          }
+
           if (event.event_type === "system.engine_restart_detected") {
             setEngineReady(false);
             setIsGenerating(false);
@@ -2526,6 +2668,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
       finalizePendingToolCalls,
       showStatusBanner,
       scheduleExecutionContractValidation,
+      upsertPackBuilderCard,
     ]
   );
 
@@ -3470,6 +3613,71 @@ ${g.example}
           <button onClick={() => setError(null)} className="ml-auto text-error/70 hover:text-error">
             Ã—
           </button>
+        </div>
+      )}
+
+      {packBuilderCards.length > 0 && (
+        <div className="border-b border-border bg-surface-elevated/40 px-4 py-3">
+          <div className="mx-auto w-full max-w-5xl space-y-2">
+            {packBuilderCards.slice(0, 3).map((card) => {
+              const status = String(card.status || "preview_pending");
+              const blocked =
+                status === "apply_blocked_missing_secrets" || status === "apply_blocked_auth";
+              const actionable = status === "preview_pending" || blocked;
+              return (
+                <div
+                  key={card.planId}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-sm",
+                    status === "apply_complete"
+                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      : blocked
+                        ? "border-amber-500/40 bg-amber-500/10"
+                        : status === "cancelled"
+                          ? "border-zinc-500/40 bg-zinc-500/10"
+                          : "border-sky-500/35 bg-sky-500/10"
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium text-text">Pack Builder - {status}</div>
+                    <div className="font-mono text-xs text-text-muted">{card.planId}</div>
+                  </div>
+                  <div className="mt-1 text-text-subtle">{card.goal}</div>
+                  {card.selectedConnectors.length > 0 && (
+                    <div className="mt-1 text-xs text-text-muted">
+                      Connectors: {card.selectedConnectors.join(", ")}
+                    </div>
+                  )}
+                  {card.requiredSecrets.length > 0 && (
+                    <div className="mt-1 text-xs text-amber-300">
+                      Required secrets: {card.requiredSecrets.join(", ")}
+                    </div>
+                  )}
+                  {card.nextActions.length > 0 && (
+                    <div className="mt-1 text-xs text-text-muted">{card.nextActions[0]}</div>
+                  )}
+                  {actionable && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <Button
+                        variant="primary"
+                        className="h-8 px-3"
+                        onClick={() => runPackBuilderCardAction(card.planId, "apply")}
+                      >
+                        Confirm Apply
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-8 px-3"
+                        onClick={() => runPackBuilderCardAction(card.planId, "cancel")}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

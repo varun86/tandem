@@ -136,6 +136,29 @@ impl PackBuilderTool {
         }
         best.map(|(plan_id, _)| plan_id.clone())
     }
+
+    fn emit_metric(
+        &self,
+        metric: &str,
+        plan_id: &str,
+        status: &str,
+        session_id: Option<&str>,
+        thread_key: Option<&str>,
+    ) {
+        let surface = infer_surface(thread_key);
+        self.state.event_bus.publish(tandem_types::EngineEvent::new(
+            "pack_builder.metric",
+            json!({
+                "metric": metric,
+                "value": 1,
+                "surface": surface,
+                "planID": plan_id,
+                "status": status,
+                "sessionID": session_id.unwrap_or_default(),
+                "threadKey": thread_key.unwrap_or_default(),
+            }),
+        ));
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -574,6 +597,14 @@ impl PackBuilderTool {
             }
         });
 
+        self.emit_metric(
+            "pack_builder.preview.count",
+            plan_id.as_str(),
+            "preview_pending",
+            input.session_id.as_deref(),
+            input.thread_key.as_deref(),
+        );
+
         if auto_apply_ready {
             let applied = self
                 .apply(PackBuilderInput {
@@ -640,6 +671,13 @@ impl PackBuilderTool {
             input.plan_id.clone()
         };
         let Some(plan_id) = resolved_plan_id.as_deref() else {
+            self.emit_metric(
+                "pack_builder.apply.wrong_plan_prevented",
+                "unknown",
+                "error",
+                input.session_id.as_deref(),
+                input.thread_key.as_deref(),
+            );
             let output = json!({"error":"plan_id is required for apply"});
             self.upsert_workflow(
                 "pack_builder.error",
@@ -662,6 +700,13 @@ impl PackBuilderTool {
             guard.get(plan_id).cloned()
         };
         let Some(plan) = plan else {
+            self.emit_metric(
+                "pack_builder.apply.wrong_plan_prevented",
+                plan_id,
+                "error",
+                input.session_id.as_deref(),
+                input.thread_key.as_deref(),
+            );
             let output = json!({"error":"unknown plan_id", "plan_id": plan_id});
             self.upsert_workflow(
                 "pack_builder.error",
@@ -700,6 +745,14 @@ impl PackBuilderTool {
                 metadata: output,
             });
         }
+
+        self.emit_metric(
+            "pack_builder.apply.count",
+            plan_id,
+            "apply_started",
+            session_id,
+            thread_key,
+        );
 
         if input.approve_pack_install != Some(true) {
             let output = json!({
@@ -783,6 +836,13 @@ impl PackBuilderTool {
                 &output,
             )
             .await;
+            self.emit_metric(
+                "pack_builder.apply.blocked_missing_secrets",
+                plan_id,
+                "apply_blocked_missing_secrets",
+                session_id,
+                thread_key,
+            );
             return Ok(ToolResult {
                 output: render_pack_builder_apply_output(&output),
                 metadata: output,
@@ -819,6 +879,13 @@ impl PackBuilderTool {
                 &output,
             )
             .await;
+            self.emit_metric(
+                "pack_builder.apply.blocked_auth",
+                plan_id,
+                "apply_blocked_auth",
+                session_id,
+                thread_key,
+            );
             return Ok(ToolResult {
                 output: render_pack_builder_apply_output(&output),
                 metadata: output,
@@ -974,6 +1041,13 @@ impl PackBuilderTool {
             &output,
         )
         .await;
+        self.emit_metric(
+            "pack_builder.apply.success",
+            plan_id,
+            "apply_complete",
+            session_id,
+            thread_key,
+        );
 
         Ok(ToolResult {
             output: render_pack_builder_apply_output(&output),
@@ -1035,6 +1109,16 @@ impl PackBuilderTool {
             &output,
         )
         .await;
+        self.emit_metric(
+            "pack_builder.apply.cancelled",
+            output
+                .get("plan_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "cancelled",
+            input.session_id.as_deref(),
+            input.thread_key.as_deref(),
+        );
         Ok(ToolResult {
             output: "Pack Builder Apply Cancelled\n- Pending plan cancelled.".to_string(),
             metadata: output,
@@ -1436,6 +1520,23 @@ fn workflow_status_label(status: &WorkflowStatus) -> &'static str {
         WorkflowStatus::ApplyComplete => "apply_complete",
         WorkflowStatus::Cancelled => "cancelled",
         WorkflowStatus::Error => "error",
+    }
+}
+
+fn infer_surface(thread_key: Option<&str>) -> &'static str {
+    let key = thread_key.unwrap_or_default().to_lowercase();
+    if key.starts_with("telegram:") {
+        "telegram"
+    } else if key.starts_with("discord:") {
+        "discord"
+    } else if key.starts_with("slack:") {
+        "slack"
+    } else if key.starts_with("desktop:") || key.starts_with("tauri:") {
+        "tauri"
+    } else if key.starts_with("web:") || key.starts_with("control-panel:") {
+        "web"
+    } else {
+        "unknown"
     }
 }
 

@@ -992,6 +992,56 @@ export async function capabilityReadiness(
   return invoke("capability_readiness", { request });
 }
 
+export type PackBuilderStatus =
+  | "preview_pending"
+  | "apply_blocked_missing_secrets"
+  | "apply_blocked_auth"
+  | "apply_complete"
+  | "cancelled"
+  | "error"
+  | "ok"
+  | "none";
+
+export interface PackBuilderWorkflowResponse {
+  workflow_id?: string;
+  plan_id?: string;
+  session_id?: string;
+  thread_key?: string;
+  mode?: "preview" | "apply" | "cancel" | string;
+  goal?: string;
+  status?: PackBuilderStatus | string;
+  selected_connectors?: string[];
+  required_secrets?: string[];
+  connector_selection_required?: boolean;
+  next_actions?: string[];
+  [key: string]: unknown;
+}
+
+export async function packBuilderPreview(
+  request: Record<string, unknown>
+): Promise<PackBuilderWorkflowResponse> {
+  return invoke("pack_builder_preview", { request });
+}
+
+export async function packBuilderApply(
+  request: Record<string, unknown>
+): Promise<PackBuilderWorkflowResponse> {
+  return invoke("pack_builder_apply", { request });
+}
+
+export async function packBuilderCancel(
+  request: Record<string, unknown>
+): Promise<PackBuilderWorkflowResponse> {
+  return invoke("pack_builder_cancel", { request });
+}
+
+export async function packBuilderPending(
+  sessionId: string,
+  threadKey?: string
+): Promise<PackBuilderWorkflowResponse> {
+  return invoke("pack_builder_pending", { sessionId, threadKey });
+}
+
 export async function toolIds(): Promise<string[]> {
   return invoke("tool_ids");
 }

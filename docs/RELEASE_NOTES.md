@@ -59,10 +59,20 @@
     - `use connectors: ...` -> apply with explicit connector override
   - Control panel chat now uses the same API-first pack-builder flow for pack intents and confirmation replies, reducing provider calls and avoiding opaque/truncated JSON tool dumps in assistant output.
   - Added endpoint regression tests covering preview/pending/cancel roundtrip, thread-scoped apply correctness, and missing-secret apply blocking semantics.
+- **Tauri desktop Pack Builder parity**:
+  - Added Tauri sidecar/command bridge support for:
+    - `pack_builder_preview`
+    - `pack_builder_apply`
+    - `pack_builder_cancel`
+    - `pack_builder_pending`
+  - Desktop chat now renders inline Pack Builder state cards and uses direct apply/cancel endpoint actions for deterministic transitions.
+  - Added Tauri unit tests to verify preview/apply/cancel/pending endpoint routing.
 - **Pack Builder chat flow parity and in-thread UX**:
   - Restored LLM-led initial pack creation flow in engine loop so pack requests can continue with assistant-guided clarification when needed.
   - Control panel chat now renders Pack Builder preview/apply states inline in the conversation thread (with deterministic apply/cancel actions), not only in side-rail event views.
   - Channel dispatcher no longer short-circuits initial pack-intent messages into immediate canned previews; deterministic `confirm`/`cancel` command mapping remains for apply/cancel.
+- **Pack Builder observability metrics**:
+  - Added metric events for preview/apply/success/blocked/cancelled/wrong-plan outcomes (`pack_builder.metric`) with per-surface tagging for web, Tauri, Telegram, Discord, and Slack.
 
 ---
 

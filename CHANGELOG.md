@@ -43,6 +43,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `confirm`/`ok` -> `/pack-builder/apply` for pending plan on that channel thread
     - `cancel` -> `/pack-builder/cancel`
     - `use connectors: ...` -> `/pack-builder/apply` with connector override
+- **Tauri Pack Builder parity bridge**:
+  - added desktop command/sidecar wrappers for:
+    - `pack_builder_preview`
+    - `pack_builder_apply`
+    - `pack_builder_cancel`
+    - `pack_builder_pending`
+  - added desktop chat inline Pack Builder cards with direct apply/cancel actions that call the same workflow endpoints (no assistant text parsing required)
+  - added Tauri regression tests validating preview/apply/cancel/pending endpoint wiring
+- **Pack Builder observability counters**:
+  - emit `pack_builder.metric` events for:
+    - `pack_builder.preview.count`
+    - `pack_builder.apply.count`
+    - `pack_builder.apply.success`
+    - `pack_builder.apply.blocked_missing_secrets`
+    - `pack_builder.apply.blocked_auth`
+    - `pack_builder.apply.cancelled`
+    - `pack_builder.apply.wrong_plan_prevented`
+  - each metric event includes inferred `surface` tag (`web`, `tauri`, `telegram`, `discord`, `slack`, `unknown`) plus session/thread/plan context
 - **Preset index compatibility expansion**:
   - extended server preset index contract with `pack_presets` collection
   - updated control panel packs view to consume `pack_presets` safely
