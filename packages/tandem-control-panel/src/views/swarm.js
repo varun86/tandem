@@ -48,9 +48,13 @@ function swarmFormHasFocus() {
   const active = document.activeElement;
   if (!active) return false;
   if (!(active instanceof HTMLElement)) return false;
-  const id = String(active.id || "");
-  if (id.startsWith("swarm-")) return true;
-  return !!active.closest("[data-swarm-form]");
+  if (!active.closest("[data-swarm-form]")) return false;
+  const tag = String(active.tagName || "").toLowerCase();
+  if (tag === "textarea") return true;
+  if (tag === "select") return true;
+  if (tag !== "input") return false;
+  const type = String(active.getAttribute("type") || "text").toLowerCase();
+  return !["button", "submit", "reset", "checkbox", "radio", "range"].includes(type);
 }
 
 function swarmRefreshLocked(state) {
@@ -545,7 +549,7 @@ export async function renderSwarm(ctx, options = {}) {
         }),
       });
       toast("ok", "Swarm started.");
-      renderSwarm(ctx);
+      renderSwarm(ctx, { force: true });
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     }
@@ -569,7 +573,7 @@ export async function renderSwarm(ctx, options = {}) {
       });
       toast("ok", "Directory initialized as a Git repo. Swarm started.");
       draft.allowInitNonEmpty = false;
-      renderSwarm(ctx);
+      renderSwarm(ctx, { force: true });
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     }
@@ -579,7 +583,7 @@ export async function renderSwarm(ctx, options = {}) {
     try {
       await api("/api/swarm/stop", { method: "POST" });
       toast("ok", "Swarm stop requested.");
-      renderSwarm(ctx);
+      renderSwarm(ctx, { force: true });
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     }

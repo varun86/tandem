@@ -128,6 +128,11 @@ const PORTAL_PORT = Number.parseInt(process.env.TANDEM_CONTROL_PANEL_PORT || "39
 const ENGINE_HOST = (process.env.TANDEM_ENGINE_HOST || "127.0.0.1").trim();
 const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 10);
 const ENGINE_URL = (process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`).replace(/\/+$/, "");
+const SWARM_RESOURCE_KEYS = [
+  String(process.env.SWARM_RESOURCE_KEY || "").trim(),
+  "swarm.active_tasks",
+  "project/swarm.active_tasks",
+].filter((key, idx, arr) => key && arr.indexOf(key) === idx);
 const AUTO_START_ENGINE = (process.env.TANDEM_CONTROL_PANEL_AUTO_START_ENGINE || "1") !== "0";
 const CONFIGURED_ENGINE_TOKEN = (
   process.env.TANDEM_CONTROL_PANEL_ENGINE_TOKEN ||
@@ -1229,8 +1234,7 @@ async function proxyEngineRequest(req, res, session) {
 }
 
 async function readSwarmRegistry(token) {
-  const keys = ["swarm.active_tasks", "project/swarm.active_tasks"];
-  for (const key of keys) {
+  for (const key of SWARM_RESOURCE_KEYS) {
     try {
       const response = await fetch(`${ENGINE_URL}/resource/${encodeURIComponent(key)}`, {
         headers: {
@@ -1248,7 +1252,10 @@ async function readSwarmRegistry(token) {
       // ignore
     }
   }
-  return { key: "swarm.active_tasks", value: { version: 1, updatedAtMs: Date.now(), tasks: {} } };
+  return {
+    key: SWARM_RESOURCE_KEYS[0] || "swarm.active_tasks",
+    value: { version: 1, updatedAtMs: Date.now(), tasks: {} },
+  };
 }
 
 function stopSwarm() {
@@ -1441,7 +1448,18 @@ async function handleSwarmApi(req, res, session) {
   }
 
   if (pathname === "/api/swarm/snapshot" && req.method === "GET") {
-    const registry = await readSwarmRegistry(session.token);
+    let registry = await readSwarmRegistry(session.token);
+    const registryTasks =
+      registry?.value?.tasks && typeof registry.value.tasks === "object"
+        ? Object.keys(registry.value.tasks).length
+        : 0;
+    const cachedTasks =
+      swarmState.registryCache?.value?.tasks && typeof swarmState.registryCache.value.tasks === "object"
+        ? Object.keys(swarmState.registryCache.value.tasks).length
+        : 0;
+    if (registryTasks === 0 && cachedTasks > 0) {
+      registry = swarmState.registryCache;
+    }
     sendJson(res, 200, {
       ok: true,
       status: swarmState.status,
