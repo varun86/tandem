@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import {
+  mcpAddServer,
   mcpConnect,
   mcpCatalog,
   mcpDisconnect,
@@ -100,6 +101,21 @@ function normalizeCatalog(raw: McpCatalogResult | null | undefined): CatalogRow[
     })
     .filter((entry): entry is CatalogRow => !!entry)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function parseHeaderLinesToMap(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of String(raw || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf(":");
+    if (idx <= 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim();
+    if (!key || !value) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
@@ -404,6 +420,64 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
   const statusFor = useMemo(() => {
     return (name: string) => testResults[name] ?? null;
   }, [testResults]);
+
+  const configuredNames = useMemo(() => {
+    return new Set(
+      servers.map((s) =>
+        String(s.name || "")
+          .trim()
+          .toLowerCase()
+      )
+    );
+  }, [servers]);
+
+  const addCatalogServer = async (row: CatalogRow, connectAfterAdd: boolean) => {
+    const name = (row.serverConfigName || row.slug || row.name).trim();
+    const url = row.transportUrl.trim();
+    if (!name || !url) {
+      setError("Selected catalog entry is missing a name or transport URL.");
+      return;
+    }
+
+    const headersMap = parseHeaderLinesToMap(remoteHeaders);
+    const headerLines = Object.entries(headersMap).map(([k, v]) => `${k}: ${v}`);
+    if (connectAfterAdd && row.requiresAuth && headerLines.length === 0) {
+      setRemoteName(name);
+      setRemoteUrl(url);
+      setError("This MCP requires auth headers. Add headers first, then Add + Connect.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      setError(null);
+      await opencodeAddMcpServer(scope, name, {
+        type: "remote",
+        url,
+        enabled: true,
+        ...(headerLines.length > 0 ? { headers: headerLines } : {}),
+      });
+      await mcpAddServer({
+        name,
+        transport: url,
+        enabled: true,
+        ...(Object.keys(headersMap).length > 0 ? { headers: headersMap } : {}),
+      });
+      if (connectAfterAdd) {
+        const connected = await mcpConnect(name);
+        if (!connected.ok) {
+          throw new Error(connected.error ?? "Added server but failed to connect.");
+        }
+      }
+      await Promise.all([refresh(), refreshRuntime()]);
+      setRemoteName(name);
+      setRemoteUrl(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add MCP server from catalog");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const visibleCatalogRows = useMemo(() => {
     const query = catalogSearch.trim().toLowerCase();
@@ -840,6 +914,27 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
                       }}
                     >
                       Apply
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={saving || configuredNames.has(row.serverConfigName.toLowerCase())}
+                      onClick={() => {
+                        addCatalogServer(row, false).catch(console.error);
+                      }}
+                    >
+                      {configuredNames.has(row.serverConfigName.toLowerCase()) ? "Added" : "Add"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={saving || configuredNames.has(row.serverConfigName.toLowerCase())}
+                      onClick={() => {
+                        addCatalogServer(row, true).catch(console.error);
+                      }}
+                    >
+                      {configuredNames.has(row.serverConfigName.toLowerCase())
+                        ? "Added"
+                        : "Add + Connect"}
                     </Button>
                     {row.documentationUrl && (
                       <Button
