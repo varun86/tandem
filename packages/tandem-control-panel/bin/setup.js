@@ -190,6 +190,18 @@ const swarmState = {
   objective: "",
   workspaceRoot: REPO_ROOT,
   maxTasks: 3,
+  modelProvider: "",
+  modelId: "",
+  mcpServers: [],
+  repoRoot: "",
+  preflight: {
+    gitAvailable: null,
+    repoReady: false,
+    autoInitialized: false,
+    code: "",
+    reason: "",
+    guidance: "",
+  },
   lastError: "",
 };
 const swarmSseClients = new Set();
@@ -207,6 +219,7 @@ function runCmd(bin, args = [], options = {}) {
     const child = spawn(bin, args, {
       stdio: options.stdio || "pipe",
       env: options.env || process.env,
+      cwd: options.cwd || undefined,
     });
     let stdout = "";
     let stderr = "";
@@ -229,6 +242,198 @@ function runCmd(bin, args = [], options = {}) {
       reject(new Error(`${bin} ${args.join(" ")} exited ${code}: ${stderr || stdout}`));
     });
   });
+}
+
+function buildGitSafeEnv(baseEnv, safeDirectory) {
+  const env = { ...(baseEnv || process.env) };
+  const value = String(safeDirectory || "*").trim() || "*";
+  env.GIT_CONFIG_COUNT = "1";
+  env.GIT_CONFIG_KEY_0 = "safe.directory";
+  env.GIT_CONFIG_VALUE_0 = value;
+  return env;
+}
+
+function runGit(args = [], options = {}) {
+  return runCmd("git", args, {
+    ...options,
+    env: buildGitSafeEnv(options.env || process.env, options.safeDirectory),
+  });
+}
+
+function guidanceForGitInstall() {
+  if (process.platform === "darwin") {
+    return "Install Git: `xcode-select --install` or `brew install git`.";
+  }
+  if (process.platform === "win32") {
+    return "Install Git for Windows from https://git-scm.com/download/win and restart the app.";
+  }
+  return "Install Git using your package manager (for example `sudo apt install git`) and restart the app.";
+}
+
+function setSwarmPreflight(patch = {}) {
+  swarmState.preflight = {
+    gitAvailable: swarmState.preflight?.gitAvailable ?? null,
+    repoReady: swarmState.preflight?.repoReady ?? false,
+    autoInitialized: swarmState.preflight?.autoInitialized ?? false,
+    code: swarmState.preflight?.code || "",
+    reason: swarmState.preflight?.reason || "",
+    guidance: swarmState.preflight?.guidance || "",
+    ...patch,
+  };
+}
+
+async function detectGitAvailable() {
+  try {
+    await runGit(["--version"], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isGitRepo(cwd) {
+  try {
+    const out = await runGit(["rev-parse", "--show-toplevel"], {
+      cwd,
+      stdio: "pipe",
+      safeDirectory: cwd,
+    });
+    const root = String(out.stdout || "").trim();
+    return root ? { ok: true, root, error: "" } : { ok: false, root: "", error: "" };
+  } catch (error) {
+    return { ok: false, root: "", error: String(error?.message || error || "") };
+  }
+}
+
+async function bootstrapEmptyGitRepo(workspaceRoot) {
+  await runGit(["init"], { cwd: workspaceRoot, stdio: "pipe", safeDirectory: workspaceRoot });
+  const readmePath = join(workspaceRoot, "README.md");
+  const ignorePath = join(workspaceRoot, ".gitignore");
+  if (!existsSync(readmePath)) {
+    await writeFile(
+      readmePath,
+      "# Swarm Workspace\n\nInitialized automatically for Tandem Swarm.\n",
+      "utf8"
+    );
+  }
+  if (!existsSync(ignorePath)) {
+    await writeFile(
+      ignorePath,
+      "node_modules/\n.DS_Store\n.swarm/worktrees/\n",
+      "utf8"
+    );
+  }
+  await runGit(["add", "."], { cwd: workspaceRoot, stdio: "pipe", safeDirectory: workspaceRoot });
+  try {
+    await runGit(["commit", "-m", "Initialize swarm workspace"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+  } catch (commitError) {
+    const message = String(commitError?.message || "");
+    if (!message.includes("Author identity unknown")) throw commitError;
+    await runGit(["config", "user.name", "Swarm Bootstrap"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+    await runGit(["config", "user.email", "swarm@local"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+    await runGit(["commit", "-m", "Initialize swarm workspace"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+  }
+}
+
+async function preflightSwarmWorkspace(workspaceRoot, options = {}) {
+  const allowInitNonEmpty = options.allowInitNonEmpty === true;
+  const guidance = guidanceForGitInstall();
+  const gitAvailable = await detectGitAvailable();
+  if (!gitAvailable) {
+    return {
+      gitAvailable,
+      repoReady: false,
+      autoInitialized: false,
+      code: "git_missing",
+      repoRoot: "",
+      reason: "Git executable not found",
+      guidance,
+    };
+  }
+
+  const normalized = resolve(workspaceRoot);
+  if (!existsSync(normalized)) {
+    throw new Error(`Workspace root does not exist: ${normalized}`);
+  }
+  const details = await stat(normalized);
+  if (!details.isDirectory()) {
+    throw new Error(`Workspace root is not a directory: ${normalized}`);
+  }
+
+  const repo = await isGitRepo(normalized);
+  if (repo.ok) {
+    return {
+      gitAvailable: true,
+      repoReady: true,
+      autoInitialized: false,
+      code: "ok",
+      repoRoot: repo.root,
+      reason: "",
+      guidance,
+    };
+  }
+  const repoErrorText = String(repo.error || "");
+  const repoErrorLower = repoErrorText.toLowerCase();
+  if (
+    repoErrorText &&
+    !repoErrorLower.includes("not a git repository") &&
+    !repoErrorLower.includes("needed a single revision")
+  ) {
+    return {
+      gitAvailable: true,
+      repoReady: false,
+      autoInitialized: false,
+      code: "git_probe_failed",
+      repoRoot: "",
+      reason: `Git could not inspect the selected directory: ${repoErrorText}`,
+      guidance,
+    };
+  }
+
+  const entries = await readdir(normalized);
+  if (entries.length > 0 && !allowInitNonEmpty) {
+    return {
+      gitAvailable: true,
+      repoReady: false,
+      autoInitialized: false,
+      code: "not_repo_non_empty",
+      repoRoot: "",
+      reason:
+        "Selected directory is not a Git repository and is not empty. Choose an existing repo or an empty directory.",
+      guidance,
+    };
+  }
+
+  await bootstrapEmptyGitRepo(normalized);
+  const initializedRepo = await isGitRepo(normalized);
+  if (!initializedRepo.ok) {
+    throw new Error(`Git repository initialization failed for ${normalized}`);
+  }
+  return {
+    gitAvailable: true,
+    repoReady: true,
+    autoInitialized: true,
+    code: allowInitNonEmpty ? "auto_initialized_non_empty" : "auto_initialized_empty",
+    repoRoot: initializedRepo.root,
+    reason: "",
+    guidance,
+  };
 }
 
 async function installServices() {
@@ -1054,7 +1259,7 @@ function stopSwarm() {
   pushSwarmEvent("status", { status: swarmState.status });
 }
 
-function startSwarm(session, config = {}) {
+async function startSwarm(session, config = {}) {
   if (!isLocalEngineUrl(ENGINE_URL)) {
     throw new Error("Swarm orchestration is disabled when using a remote engine URL.");
   }
@@ -1063,8 +1268,42 @@ function startSwarm(session, config = {}) {
   }
 
   const objective = String(config.objective || "Ship a small feature end-to-end").trim();
-  const workspaceRoot = String(config.workspaceRoot || REPO_ROOT).trim();
+  const workspaceRoot = resolve(String(config.workspaceRoot || REPO_ROOT).trim());
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
+  let modelProvider = String(config.modelProvider || "").trim();
+  let modelId = String(config.modelId || "").trim();
+  if (!modelProvider || !modelId) {
+    modelProvider = "";
+    modelId = "";
+  }
+  const rawMcpServers = Array.isArray(config.mcpServers)
+    ? config.mcpServers
+    : String(config.mcpServers || "")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+  const mcpServers = rawMcpServers
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .slice(0, 64);
+  const preflight = await preflightSwarmWorkspace(workspaceRoot, {
+    allowInitNonEmpty: config.allowInitNonEmpty === true,
+  });
+  setSwarmPreflight({
+    gitAvailable: preflight.gitAvailable,
+    repoReady: preflight.repoReady,
+    autoInitialized: preflight.autoInitialized,
+    code: preflight.code || "",
+    reason: preflight.reason || "",
+    guidance: preflight.guidance || "",
+  });
+  swarmState.repoRoot = preflight.repoRoot || "";
+  if (!preflight.gitAvailable) {
+    throw new Error(`${preflight.reason}. ${preflight.guidance}`);
+  }
+  if (!preflight.repoReady) {
+    throw new Error(preflight.reason || "Workspace preflight failed.");
+  }
 
   const managerPath = join(REPO_ROOT, "examples", "agent-swarm", "src", "manager.mjs");
   if (!existsSync(managerPath)) {
@@ -1079,19 +1318,37 @@ function startSwarm(session, config = {}) {
   swarmState.objective = objective;
   swarmState.workspaceRoot = workspaceRoot;
   swarmState.maxTasks = maxTasks;
+  swarmState.modelProvider = modelProvider;
+  swarmState.modelId = modelId;
+  swarmState.mcpServers = mcpServers;
+  swarmState.repoRoot = preflight.repoRoot || workspaceRoot;
   swarmState.lastError = "";
   swarmState.registryCache = null;
 
-  pushSwarmEvent("status", { status: swarmState.status, objective, workspaceRoot, maxTasks });
+  pushSwarmEvent("status", {
+    status: swarmState.status,
+    objective,
+    workspaceRoot,
+    maxTasks,
+    modelProvider: modelProvider || undefined,
+    modelId: modelId || undefined,
+    mcpServers,
+    repoRoot: swarmState.repoRoot || undefined,
+    preflight: swarmState.preflight,
+  });
 
   const child = spawn(process.execPath, [managerPath, objective], {
     cwd: workspaceRoot,
     env: {
       ...process.env,
+      ...buildGitSafeEnv(process.env, preflight.repoRoot || workspaceRoot),
       TANDEM_BASE_URL: ENGINE_URL,
       TANDEM_API_TOKEN: session.token,
       SWARM_MAX_TASKS: String(maxTasks),
       SWARM_OBJECTIVE: objective,
+      SWARM_MODEL_PROVIDER: modelProvider,
+      SWARM_MODEL_ID: modelId,
+      SWARM_MCP_SERVERS: mcpServers.join(","),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1138,12 +1395,26 @@ async function handleSwarmApi(req, res, session) {
   const pathname = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`).pathname;
 
   if (pathname === "/api/swarm/status" && req.method === "GET") {
+    const detectedGit = await detectGitAvailable();
+    if (swarmState.preflight?.gitAvailable !== detectedGit) {
+      setSwarmPreflight({
+        gitAvailable: detectedGit,
+        code: detectedGit ? "ok" : "git_missing",
+        reason: detectedGit ? "" : "Git executable not found",
+        guidance: guidanceForGitInstall(),
+      });
+    }
     sendJson(res, 200, {
       ok: true,
       status: swarmState.status,
       objective: swarmState.objective,
       workspaceRoot: swarmState.workspaceRoot,
       maxTasks: swarmState.maxTasks,
+      modelProvider: swarmState.modelProvider || "",
+      modelId: swarmState.modelId || "",
+      mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
+      repoRoot: swarmState.repoRoot || "",
+      preflight: swarmState.preflight || null,
       startedAt: swarmState.startedAt,
       stoppedAt: swarmState.stoppedAt,
       localEngine: isLocalEngineUrl(ENGINE_URL),
@@ -1155,7 +1426,7 @@ async function handleSwarmApi(req, res, session) {
   if (pathname === "/api/swarm/start" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      startSwarm(session, body || {});
+      await startSwarm(session, body || {});
       sendJson(res, 200, { ok: true });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });

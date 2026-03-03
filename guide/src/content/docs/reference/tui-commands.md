@@ -113,7 +113,7 @@ Show or switch the active workspace directory used by the current TUI process.
 ```text
 /workspace
 /workspace show
-/workspace use /home/evan/game
+/workspace use /path/to/your/workspace
 /workspace use ~/projects/tandem
 ```
 
@@ -132,7 +132,7 @@ List context runs from the engine.
 Create a new context run.
 
 ```text
-/context_run_create {"objective":"Summarize the run plan","workspace":"/home/evan/game"}
+/context_run_create {"objective":"Summarize the run plan","workspace":"/path/to/your/workspace"}
 ```
 
 ### `/context_run_get <run_id>`

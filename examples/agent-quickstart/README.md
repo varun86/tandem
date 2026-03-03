@@ -117,7 +117,7 @@ sudo systemctl restart tandem-agent-portal
 Use this when you changed Rust engine/runtime code locally and want the VPS service to run the new binary:
 
 ```bash
-cd /home/evan/tandem
+cd /path/to/your/tandem/repo
 cargo build -p tandem-ai --release
 sudo systemctl stop tandem-engine
 sudo install -m 755 target/release/tandem-engine /usr/local/bin/tandem-engine-dev
@@ -129,14 +129,14 @@ Health-check the engine and proxy:
 
 ```bash
 curl -sS http://127.0.0.1:39731/global/health | jq .
-KEY=$(sed -n 's/^PORTAL_KEY=//p' /home/evan/tandem/examples/agent-quickstart/.env | tail -n1)
+KEY=$(sed -n 's/^PORTAL_KEY=//p' /path/to/your/tandem/repo/examples/agent-quickstart/.env | tail -n1)
 curl -sS -H "Authorization: Bearer $KEY" http://127.0.0.1:3302/engine/global/health | jq .
 ```
 
 ### Rebuild and restart the portal service
 
 ```bash
-cd /home/evan/tandem/examples/agent-quickstart
+cd /path/to/your/tandem/repo/examples/agent-quickstart
 pnpm install
 pnpm build
 sudo systemctl restart tandem-agent-portal

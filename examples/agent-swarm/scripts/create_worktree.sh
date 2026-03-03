@@ -1,6 +1,6 @@
 #!/bin/bash
 # create_worktree.sh
-# Safely creates a new git worktree inside the .tandem/worktrees/ directory
+# Safely creates a new git worktree inside the selected repo's .swarm/worktrees/ directory
 # Usage: ./create_worktree.sh <task_id>
 
 set -e
@@ -20,11 +20,12 @@ if ! [[ "$TASK_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 
-# Ensure parent directory exists
-mkdir -p .swarm/worktrees
-
-# Extract the repository root relative to this script
+# Resolve repository root from current working directory
 REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+# Ensure parent directory exists inside selected repo
+mkdir -p .swarm/worktrees
 
 # Create a unique worktree/branch if prior runs already used this task id.
 UNIQ="$BASE_TASK_ID"
@@ -49,13 +50,14 @@ done
 
 echo "Creating new git worktree for $BRANCH_NAME at $WORKTREE_DIR"
 
-# Create the worktree
-cd "$REPO_ROOT/examples/agent-swarm"
+# Create the worktree from repo root
 git worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR"
 
 # Return the absolute path so the Manager Agent knows where to send the Worker
 ABSOLUTE_PATH=$(cd "$WORKTREE_DIR" && pwd)
 
 echo "Success!"
+echo "worktreePath=$ABSOLUTE_PATH"
+echo "branch=$BRANCH_NAME"
 echo "WORKTREE_PATH=$ABSOLUTE_PATH"
 echo "BRANCH=$BRANCH_NAME"
