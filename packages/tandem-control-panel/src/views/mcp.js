@@ -189,7 +189,7 @@ export async function renderMcp(ctx) {
   byId("view").innerHTML = `
     ${movedCard}
     <div class="grid gap-4 xl:grid-cols-[440px_1fr]">
-      <div class="tcp-card">
+      <div id="mcp-add-card" class="tcp-card">
         <h3 class="tcp-title mb-2">Add MCP Server</h3>
         <p class="tcp-subtle mb-3">Paste your MCP endpoint URL and token. For Composio URLs, Auto auth uses <code>x-api-key</code>.</p>
         <div class="grid gap-3">
@@ -226,6 +226,21 @@ export async function renderMcp(ctx) {
 
       <div class="grid gap-4">
         <div class="tcp-card">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 class="tcp-title">Remote MCP Packs (${catalog.count})</h3>
+            <span class="tcp-subtle text-xs">${escapeHtml(
+              catalog.generatedAt ? `generated ${catalog.generatedAt}` : "catalog unavailable"
+            )}</span>
+          </div>
+          <p class="tcp-subtle mb-3">Anthropic remote MCP examples exported as per-server TOML packs. Use Apply to prefill transport/name.</p>
+          <div class="mb-3 grid gap-2 md:grid-cols-[1fr_auto]">
+            <input id="mcp-catalog-search" class="tcp-input" placeholder="Search pack name, slug, or URL" />
+            <button id="mcp-catalog-refresh" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
+          </div>
+          <div id="mcp-catalog-list" class="grid gap-2 max-h-[420px] overflow-auto pr-1"></div>
+        </div>
+
+        <div class="tcp-card">
           <div class="mb-3 flex items-center justify-between gap-2">
             <h3 class="tcp-title">Servers (${servers.length})</h3>
             <button id="mcp-refresh-all" class="tcp-btn"><i data-lucide="refresh-cw"></i> Reload</button>
@@ -247,21 +262,6 @@ export async function renderMcp(ctx) {
           </div>
           <pre id="mcp-readiness-result" class="tcp-code mt-3 max-h-[260px] overflow-auto">No readiness check yet.</pre>
         </div>
-
-        <div class="tcp-card">
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h3 class="tcp-title">Remote MCP Packs (${catalog.count})</h3>
-            <span class="tcp-subtle text-xs">${escapeHtml(
-              catalog.generatedAt ? `generated ${catalog.generatedAt}` : "catalog unavailable"
-            )}</span>
-          </div>
-          <p class="tcp-subtle mb-3">Anthropic remote MCP examples exported as per-server TOML packs. Use Apply to prefill transport/name.</p>
-          <div class="mb-3 grid gap-2 md:grid-cols-[1fr_auto]">
-            <input id="mcp-catalog-search" class="tcp-input" placeholder="Search pack name, slug, or URL" />
-            <button id="mcp-catalog-refresh" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
-          </div>
-          <div id="mcp-catalog-list" class="grid gap-2 max-h-[420px] overflow-auto pr-1"></div>
-        </div>
       </div>
     </div>
   `;
@@ -276,6 +276,11 @@ export async function renderMcp(ctx) {
   const customHeaderWrapEl = byId("mcp-custom-header-wrap");
   const customHeaderEl = byId("mcp-custom-header");
   const authPreviewEl = byId("mcp-auth-preview");
+  const addCardEl = byId("mcp-add-card");
+
+  const focusAddForm = () => {
+    addCardEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const refreshAuthUi = () => {
     const mode = authModeEl.value;
@@ -294,6 +299,46 @@ export async function renderMcp(ctx) {
       const inferred = inferNameFromTransport(transportEl.value.trim());
       if (inferred) nameEl.value = inferred;
     }
+  };
+
+  const prefillServerForEditing = (row) => {
+    if (!row) return;
+    nameEl.value = normalizeName(row.name || "");
+    transportEl.value = String(row.transport || "").trim();
+    const headers = row.headers && typeof row.headers === "object" ? row.headers : {};
+    const keys = Object.keys(headers);
+    const authHeaderKey = keys.find((k) => String(k).toLowerCase() === "authorization");
+    const apiKeyHeaderKey = keys.find((k) => String(k).toLowerCase() === "x-api-key");
+
+    authModeEl.value = "none";
+    tokenEl.value = "";
+    customHeaderEl.value = "";
+
+    if (apiKeyHeaderKey) {
+      authModeEl.value = "x-api-key";
+      tokenEl.value = String(headers[apiKeyHeaderKey] || "").trim();
+    } else if (authHeaderKey) {
+      authModeEl.value = "bearer";
+      tokenEl.value = String(headers[authHeaderKey] || "")
+        .replace(/^bearer\s+/i, "")
+        .trim();
+    } else if (keys.length === 1) {
+      authModeEl.value = "custom";
+      customHeaderEl.value = keys[0];
+      tokenEl.value = String(headers[keys[0]] || "").trim();
+    } else if (keys.length > 1) {
+      authModeEl.value = "custom";
+      customHeaderEl.value = keys[0];
+      tokenEl.value = String(headers[keys[0]] || "").trim();
+      toast(
+        "err",
+        "Multiple auth headers detected; form loaded first header only. Re-enter remaining headers if needed."
+      );
+    }
+
+    maybeInferName();
+    refreshAuthUi();
+    focusAddForm();
   };
 
   transportEl.addEventListener("input", () => {
@@ -393,12 +438,18 @@ export async function renderMcp(ctx) {
       return;
     }
 
-    if (connectAfterAdd && picked.requiresAuth && !String(token || "").trim()) {
+    if (picked.requiresAuth && !String(token || "").trim()) {
       nameEl.value = suggestedName;
       transportEl.value = transport;
       maybeInferName();
       refreshAuthUi();
-      toast("err", "This MCP requires auth. Add token/header first, then Add + Connect.");
+      focusAddForm();
+      toast(
+        "err",
+        connectAfterAdd
+          ? "This MCP requires auth. Add token/header first, then Add + Connect."
+          : "This MCP requires auth. Configure token/header first."
+      );
       return;
     }
 
@@ -547,6 +598,7 @@ export async function renderMcp(ctx) {
                 : `<div class="tcp-subtle text-xs">No stored auth headers.</div>`
             }
             <div class="flex flex-wrap gap-2">
+              <button class="tcp-btn" data-action="edit" data-name="${encodeURIComponent(server.name)}">Edit</button>
               <button class="tcp-btn" data-action="${server.connected ? "disconnect" : "connect"}" data-name="${encodeURIComponent(server.name)}">
                 ${server.connected ? "Disconnect" : "Connect"}
               </button>
@@ -568,7 +620,11 @@ export async function renderMcp(ctx) {
       const name = encoded ? decodeURIComponent(encoded) : "";
       if (!name) return;
       try {
-        if (action === "connect") {
+        if (action === "edit") {
+          const row = servers.find((entry) => entry.name === name);
+          prefillServerForEditing(row);
+          return;
+        } else if (action === "connect") {
           await state.client.mcp.connect(name);
           toast("ok", `Connected ${name}.`);
         } else if (action === "disconnect") {
