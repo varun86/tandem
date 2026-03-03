@@ -1245,8 +1245,15 @@ async function readSwarmRegistry(token) {
       });
       if (!response.ok) continue;
       const record = await response.json();
-      if (record?.value && typeof record.value === "object") {
-        return { key, value: record.value };
+      const value =
+        record?.value && typeof record.value === "object"
+          ? record.value
+          : record?.resource?.value && typeof record.resource.value === "object"
+            ? record.resource.value
+            : null;
+      if (value && typeof value === "object") {
+        const recordKey = String(record?.key || record?.resource?.key || key || "").trim() || key;
+        return { key: recordKey, value };
       }
     } catch {
       // ignore
