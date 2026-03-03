@@ -53,6 +53,15 @@ function swarmFormHasFocus() {
   return !!active.closest("[data-swarm-form]");
 }
 
+function swarmRefreshLocked(state) {
+  return Number(state?.__swarmUiLockUntil || 0) > Date.now();
+}
+
+function setSwarmRefreshLock(state, msFromNow) {
+  const until = Date.now() + Math.max(0, Number(msFromNow || 0));
+  state.__swarmUiLockUntil = Math.max(Number(state.__swarmUiLockUntil || 0), until);
+}
+
 function ageText(ts) {
   const ms = Number(ts || 0);
   if (!ms) return "unknown";
@@ -413,6 +422,10 @@ export async function renderSwarm(ctx) {
   const setDraftValue = (key, value) => {
     draft[key] = value;
   };
+  const formRoot = viewEl.querySelector("[data-swarm-form]");
+  formRoot?.addEventListener("pointerdown", () => setSwarmRefreshLock(state, 1500));
+  formRoot?.addEventListener("focusin", () => setSwarmRefreshLock(state, 60_000));
+  formRoot?.addEventListener("focusout", () => setSwarmRefreshLock(state, 1200));
   const collectCurrentFormState = () => {
     const workspaceRoot = String(byId("swarm-root")?.value ?? draft.workspaceRoot ?? "").trim();
     const objective = String(byId("swarm-objective")?.value ?? draft.objective ?? "").trim();
@@ -570,6 +583,7 @@ export async function renderSwarm(ctx) {
   const poll = setInterval(() => {
     if (state.route !== "swarm") return;
     if (swarmFormHasFocus()) return;
+    if (swarmRefreshLocked(state)) return;
     renderSwarm(ctx);
   }, 4000);
   const stopPoll = () => clearInterval(poll);
@@ -581,6 +595,7 @@ export async function renderSwarm(ctx) {
     evt.onmessage = () => {
       if (state.route !== "swarm") return;
       if (swarmFormHasFocus()) return;
+      if (swarmRefreshLocked(state)) return;
       renderSwarm(ctx);
     };
     evt.onerror = () => evt.close();
