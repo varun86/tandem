@@ -495,6 +495,8 @@ pub struct PresetIndex {
     #[serde(default)]
     pub automation_presets: Vec<PresetRecord>,
     #[serde(default)]
+    pub pack_presets: Vec<PresetRecord>,
+    #[serde(default)]
     pub generated_at_ms: u64,
 }
 

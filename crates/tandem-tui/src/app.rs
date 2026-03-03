@@ -8828,10 +8828,11 @@ MULTI-AGENT KEYS:
                 match sub.as_str() {
                     "index" => match client.presets_index().await {
                         Ok(index) => format!(
-                            "Preset index:\n  skill_modules: {}\n  agent_presets: {}\n  automation_presets: {}\n  generated_at_ms: {}",
+                            "Preset index:\n  skill_modules: {}\n  agent_presets: {}\n  automation_presets: {}\n  pack_presets: {}\n  generated_at_ms: {}",
                             index.skill_modules.len(),
                             index.agent_presets.len(),
                             index.automation_presets.len(),
+                            index.pack_presets.len(),
                             index.generated_at_ms
                         ),
                         Err(err) => format!("Failed to load preset index: {}", err),
