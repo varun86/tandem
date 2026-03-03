@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - extended server preset index contract with `pack_presets` collection
   - updated control panel packs view to consume `pack_presets` safely
   - updated TUI preset index response model and `/preset index` output to include `pack_presets`
+- **Routine MCP tool-picker UX in control panel**:
+  - routine builder now includes a connected-MCP tool browser with server filter + text search
+  - users can add discovered MCP tools to routine allowlist with one click instead of manual comma-separated typing
+  - picker is backed by runtime `mcp.listTools()` discovery and mirrors currently connected/enabled servers
 - **Regression coverage for MCP connector usage**:
   - added HTTP test asserting external-goal pack previews produce MCP tool mappings and mission steps containing `action: mcp.*`
   - added apply-phase test asserting explicit approval gating

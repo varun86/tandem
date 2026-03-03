@@ -12,6 +12,7 @@ Owner: Tandem Engine
 - [x] Add guardrails for non-offered tool calls and false email-send claims
 - [x] Default Pack Builder-created routines to autonomous execution (`active`, no manual approval)
 - [x] Increase default provider stream connect timeout for routine reliability (30s -> 90s)
+- [x] Add routine MCP tool picker UX (search + add from connected MCP servers)
 
 ## In Progress
 
@@ -51,10 +52,14 @@ Owner: Tandem Engine
 - Automation defaults:
   - pack-builder apply now enables routines by default and writes `requires_approval=false`
   - provider stream connect timeout default raised to 90s for slower providers/scheduled runs
+- Routine builder UX:
+  - routine policy section now includes connected-MCP tool search/filter and one-click add to the routine tool allowlist
+  - MCP tool list is sourced from runtime `mcp.listTools()` and filtered by connected server names
 
 ## Delivery Commits
 
 - `ff2a64b` — semantic retrieval runtime integration + MCP catalog prompt + kanban board
 - `e6d564f` — v0.4.1 changelog/release notes updates + kanban completion snapshot
 - `9c5ed20` — reliability hotfix for retrieval fallback, unoffered-tool rejection, and email-claim evidence guard
-- `TBD` — autonomous pack-builder defaults + provider connect-timeout uplift
+- `2df3c64` — autonomous pack-builder defaults + provider connect-timeout uplift
+- `TBD` — routine editor MCP tool picker (search/filter/add to allowlist)

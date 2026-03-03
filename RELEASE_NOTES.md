@@ -42,6 +42,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `examples/vps-web-portal/engine.env.example`
     - quickstart/VPS setup scripts
 
+- Routine builder MCP tool selection UX (`v0.4.1` scope)
+  - The routine editor now includes an MCP tool picker so users can search discovered MCP tools and add them directly to the routine allowlist.
+  - Added connected-server filtering to quickly scope tool selection to a specific MCP integration.
+  - Prevents fragile manual typing of long `mcp.*` tool IDs in routines.
+
 - MCP catalog moved into engine and exposed to frontends
   - Added engine-managed embedded catalog endpoints:
     - `GET /mcp/catalog`

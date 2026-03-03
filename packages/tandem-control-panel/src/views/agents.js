@@ -53,6 +53,7 @@ export async function renderAgents(ctx) {
     providersConfigRaw,
     toolIdsRaw,
     mcpServersRaw,
+    mcpToolsRaw,
     skillsRaw,
   ] = await Promise.all([
     state.client.routines.list().catch(() => ({ routines: [] })),
@@ -65,6 +66,7 @@ export async function renderAgents(ctx) {
     state.client.providers.config().catch(() => ({ default: null, providers: {} })),
     state.client.listToolIds().catch(() => []),
     state.client?.mcp?.list?.().catch(() => ({})) || Promise.resolve({}),
+    state.client?.mcp?.listTools?.().catch(() => []) || Promise.resolve([]),
     state.client?.skills?.list?.().catch(() => ({ skills: [] })) || Promise.resolve({ skills: [] }),
   ]);
   const routines = routinesRaw.routines || [];
@@ -98,6 +100,30 @@ export async function renderAgents(ctx) {
   const connectedMcpServerNames = mcpServers
     .filter((s) => s.connected && s.enabled)
     .map((s) => s.name);
+  const normalizeMcpTools = (raw) => {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const row of raw) {
+      if (!row || typeof row !== "object") continue;
+      const id = String(
+        row.namespaced_name || row.namespacedName || row.id || row.tool_name || row.toolName || ""
+      ).trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const serverRaw =
+        String(row.server_name || row.serverName || "").trim() ||
+        String(id.match(/^mcp\.([^.]+)\./)?.[1] || "").trim();
+      out.push({
+        id,
+        server: serverRaw,
+        description: String(row.description || "").trim(),
+      });
+    }
+    out.sort((a, b) => a.id.localeCompare(b.id));
+    return out;
+  };
+  const mcpTools = normalizeMcpTools(mcpToolsRaw);
   const skillNames = Array.isArray(skillsRaw?.skills)
     ? skillsRaw.skills
         .map((s) => String(s?.name || s?.id || "").trim())
@@ -347,6 +373,10 @@ export async function renderAgents(ctx) {
       .map((modelId) => `<option value="${escapeHtml(modelId)}" ${modelId === initialModelId ? "selected" : ""}>${escapeHtml(modelId)}</option>`)
       .join("") || '<option value="">No models found</option>';
   const toolOptionMarkup = toolIds.map((id) => `<option value="${escapeHtml(id)}"></option>`).join("");
+  const routineMcpServerOptionsMarkup = [
+    '<option value="">All connected MCP servers</option>',
+    ...connectedMcpServerNames.map((server) => `<option value="${escapeHtml(server)}">${escapeHtml(server)}</option>`),
+  ].join("");
   const automationsMarkup =
     automations
       .map((a) => {
@@ -697,6 +727,23 @@ export async function renderAgents(ctx) {
         />
         <datalist id="routine-tool-options">${toolOptionMarkup}</datalist>
         <div id="routine-tool-scope-preview" class="mt-1 text-xs text-slate-400">Tool scope: all tools allowed by policy</div>
+        <div class="mt-3 rounded-lg border border-slate-700/60 bg-slate-950/40 p-2">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs text-slate-300">Connected MCP tools (${mcpTools.length})</span>
+            <span class="text-xs text-slate-500">Search and add to allowlist</span>
+          </div>
+          <div class="grid gap-2 md:grid-cols-2">
+            <select id="routine-mcp-server-filter" class="tcp-select text-xs">
+              ${routineMcpServerOptionsMarkup}
+            </select>
+            <input
+              id="routine-mcp-tool-search"
+              class="tcp-input text-xs"
+              placeholder="Search MCP tool ID or description"
+            />
+          </div>
+          <div id="routine-mcp-tools-list" class="mt-2 grid gap-1 max-h-40 overflow-auto"></div>
+        </div>
         <div class="mt-2 grid gap-2 md:grid-cols-2">
           <label class="inline-flex items-center gap-2 text-xs text-slate-300">
             <input id="routine-requires-approval" type="checkbox" class="h-4 w-4 accent-slate-400" checked />
@@ -1914,6 +1961,7 @@ export async function renderAgents(ctx) {
       );
       setAllowEverythingState(routineAllowEverything, { restore: false });
       renderToolScopePreview();
+      renderRoutineMcpTools();
       setRoutineModelFromSpec(routine);
       setEditMode(routineId, String(routine.name || ""));
       nameEl.focus();
@@ -1943,6 +1991,9 @@ export async function renderAgents(ctx) {
   const allowEverythingEl = byId("routine-allow-everything");
   const allowedToolsEl = byId("routine-allowed-tools");
   const toolScopePreviewEl = byId("routine-tool-scope-preview");
+  const routineMcpServerFilterEl = byId("routine-mcp-server-filter");
+  const routineMcpToolSearchEl = byId("routine-mcp-tool-search");
+  const routineMcpToolsListEl = byId("routine-mcp-tools-list");
   const requiresApprovalEl = byId("routine-requires-approval");
   const externalIntegrationsEl = byId("routine-external-integrations");
   const routineFormModeEl = byId("routine-form-mode");
@@ -1996,6 +2047,58 @@ export async function renderAgents(ctx) {
     toolScopePreviewEl.textContent = allowlist.length
       ? `Tool scope: allowlist (${allowlist.length})`
       : "Tool scope: all tools allowed by policy";
+  };
+  const addToolToAllowlist = (toolId) => {
+    const nextTool = String(toolId || "").trim();
+    if (!nextTool || !allowedToolsEl) return false;
+    if (allowEverythingEl?.checked) {
+      setAllowEverythingState(false, { restore: false });
+    }
+    const tools = normalizeToolList(allowedToolsEl.value || "");
+    if (tools.includes(nextTool)) return false;
+    tools.push(nextTool);
+    allowedToolsEl.value = tools.join(", ");
+    renderToolScopePreview();
+    return true;
+  };
+  const renderRoutineMcpTools = () => {
+    if (!routineMcpToolsListEl) return;
+    if (!mcpTools.length) {
+      routineMcpToolsListEl.innerHTML =
+        '<div class="text-xs text-slate-500">No connected MCP tools found. Connect MCP servers in Settings -> MCP.</div>';
+      return;
+    }
+    const selectedServer = String(routineMcpServerFilterEl?.value || "").trim().toLowerCase();
+    const search = String(routineMcpToolSearchEl?.value || "").trim().toLowerCase();
+    const allowSet = new Set(normalizeToolList(allowedToolsEl?.value || ""));
+    const filtered = mcpTools.filter((tool) => {
+      const server = String(tool.server || "").toLowerCase();
+      if (selectedServer && server !== selectedServer) return false;
+      if (!search) return true;
+      return (
+        tool.id.toLowerCase().includes(search) ||
+        String(tool.description || "").toLowerCase().includes(search) ||
+        server.includes(search)
+      );
+    });
+    if (!filtered.length) {
+      routineMcpToolsListEl.innerHTML =
+        '<div class="text-xs text-slate-500">No MCP tools match this filter.</div>';
+      return;
+    }
+    const rows = filtered.slice(0, 80).map((tool) => {
+      const added = allowSet.has(tool.id);
+      return `
+        <div class="flex items-center justify-between gap-2 rounded border border-slate-700/60 bg-slate-900/40 px-2 py-1">
+          <div class="min-w-0">
+            <div class="truncate font-mono text-[11px] text-slate-200">${escapeHtml(tool.id)}</div>
+            <div class="truncate text-[11px] text-slate-400">${escapeHtml(tool.server || "mcp")} ${tool.description ? `- ${escapeHtml(tool.description)}` : ""}</div>
+          </div>
+          <button class="tcp-btn h-7 px-2 text-xs" data-routine-add-tool="${escapeHtml(tool.id)}" ${added ? "disabled" : ""}>${added ? "Added" : "Add"}</button>
+        </div>
+      `;
+    });
+    routineMcpToolsListEl.innerHTML = rows.join("");
   };
   const isAllowEverythingPolicy = (allowedTools, requiresApproval, externalIntegrationsAllowed) =>
     !requiresApproval && externalIntegrationsAllowed && allowedTools.length === 0;
@@ -2261,8 +2364,24 @@ export async function renderAgents(ctx) {
   });
   allowEverythingEl?.addEventListener("change", () => {
     setAllowEverythingState(!!allowEverythingEl.checked, { restore: true });
+    renderRoutineMcpTools();
   });
-  allowedToolsEl?.addEventListener("input", renderToolScopePreview);
+  allowedToolsEl?.addEventListener("input", () => {
+    renderToolScopePreview();
+    renderRoutineMcpTools();
+  });
+  routineMcpServerFilterEl?.addEventListener("change", renderRoutineMcpTools);
+  routineMcpToolSearchEl?.addEventListener("input", renderRoutineMcpTools);
+  routineMcpToolsListEl?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("[data-routine-add-tool]");
+    if (!(btn instanceof HTMLElement)) return;
+    const toolId = String(btn.getAttribute("data-routine-add-tool") || "").trim();
+    if (!toolId) return;
+    const added = addToolToAllowlist(toolId);
+    if (added) renderRoutineMcpTools();
+  });
   cancelEditEl?.addEventListener("click", () => {
     renderAgents(ctx);
   });
@@ -2271,6 +2390,7 @@ export async function renderAgents(ctx) {
   renderModelPicker();
   setAllowEverythingState(!!allowEverythingEl?.checked, { restore: false });
   renderToolScopePreview();
+  renderRoutineMcpTools();
   clearEditMode();
 
   byId("create-routine").addEventListener("click", async () => {

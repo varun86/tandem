@@ -73,6 +73,10 @@
   - Channel dispatcher no longer short-circuits initial pack-intent messages into immediate canned previews; deterministic `confirm`/`cancel` command mapping remains for apply/cancel.
 - **Pack Builder observability metrics**:
   - Added metric events for preview/apply/success/blocked/cancelled/wrong-plan outcomes (`pack_builder.metric`) with per-surface tagging for web, Tauri, Telegram, Discord, and Slack.
+- **Routine MCP tool-picker in control panel**:
+  - Added a routine-editor MCP picker so users can search discovered `mcp.*` tools and add them directly into the routine allowlist.
+  - Added connected-server filtering in the routine form to quickly target tools from a specific MCP integration.
+  - Reduces routine setup failures caused by manually typing long MCP tool IDs.
 
 ---
 
