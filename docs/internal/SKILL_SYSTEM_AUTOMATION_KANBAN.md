@@ -36,22 +36,23 @@ Ship a control-panel-first Skill System with:
 - [x] In `AutomationsPage` Step 1, call router for top skill suggestion
 - [x] Show matched skill and extracted params in wizard state
 - [x] Keep fallback path to existing pack_builder prompt flow
-- [ ] Review step shows compile/validation summary (or fallback notes)
+- [x] Review step shows compile/validation summary (or fallback notes)
 
 ## Phase 4 - Evaluation Loop Scaffolding
 - [x] Add `skill.eval.yaml` spec draft and validator stubs
 - [x] Add baseline-vs-skill benchmark endpoint scaffold
 - [x] Add trigger-eval endpoint scaffold and report schema
-- [ ] Add UI placeholder badges (`Validated` / `Not validated`)
+- [x] Add UI placeholder badges (`Validated` / `Not validated`)
 
 ## Phase 5 - Built-in Skill Templates and Advanced Mode
 - [x] Land 10 default skills with `SKILL.md` + `workflow.yaml` + `automation.example.yaml`
 - [ ] Add advanced skill builder form + YAML toggle
-- [ ] Add "Generate Skill from Prompt" flow (gated by validation)
+- [x] Add "Generate Skill from Prompt" flow (gated by validation)
 
 ## Commit Log
 - [x] 2026-03-04: Add initial kanban board (`docs/internal/SKILL_SYSTEM_AUTOMATION_KANBAN.md`)
 - [x] 2026-03-04: Add backend skill catalog/validate/router endpoints + SDK updates + tests
 - [x] 2026-03-04: Integrate control-panel wizard skill routing (non-blocking fallback to pack builder)
 - [x] 2026-03-04: Add skill evaluation scaffold endpoints + SDK methods + spec doc
-- [ ] 2026-03-04: Add 10 built-in skill templates (pending commit)
+- [x] 2026-03-04: Add 10 built-in skill templates
+- [x] 2026-03-04: Add skills compile/generate endpoints + review compile UI + validation badge

@@ -50,6 +50,8 @@ import type {
   SkillRouterMatchResponse,
   SkillsBenchmarkEvalResponse,
   SkillsTriggerEvalResponse,
+  SkillCompileResponse,
+  SkillGenerateResponse,
   ResourceRecord,
   ResourceListResponse,
   ResourceWriteOptions,
@@ -1088,6 +1090,37 @@ class Skills {
     return this.req<SkillsTriggerEvalResponse>("/skills/evals/triggers", {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  /** Compile a selected or routed skill into an execution summary. */
+  async compile(options: {
+    skillName?: string;
+    skill_name?: string;
+    goal?: string;
+    threshold?: number;
+    maxMatches?: number;
+    max_matches?: number;
+    schedule?: JsonObject;
+  }): Promise<SkillCompileResponse> {
+    const payload = {
+      skill_name: options.skill_name ?? options.skillName,
+      goal: options.goal,
+      threshold: options.threshold,
+      max_matches: options.max_matches ?? options.maxMatches,
+      schedule: options.schedule,
+    };
+    return this.req<SkillCompileResponse>("/skills/compile", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Generate scaffold skill artifacts from a natural-language prompt. */
+  async generate(options: { prompt: string; threshold?: number }): Promise<SkillGenerateResponse> {
+    return this.req<SkillGenerateResponse>("/skills/generate", {
+      method: "POST",
+      body: JSON.stringify(options),
     });
   }
 }

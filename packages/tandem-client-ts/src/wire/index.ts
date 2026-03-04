@@ -489,6 +489,21 @@ export interface SkillsTriggerEvalResponse {
   cases: Array<Record<string, unknown>>;
 }
 
+export interface SkillCompileResponse {
+  status: string;
+  skill_name?: string;
+  workflow_kind?: string;
+  validation?: Record<string, unknown>;
+  execution_plan?: Record<string, unknown>;
+}
+
+export interface SkillGenerateResponse {
+  status: string;
+  prompt: string;
+  router?: Record<string, unknown>;
+  artifacts?: Record<string, string>;
+}
+
 // ─── Resources (key-value store) ─────────────────────────────────────────────
 
 export interface ResourceRecord {

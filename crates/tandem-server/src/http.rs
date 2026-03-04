@@ -600,6 +600,21 @@ struct SkillsRouterMatchRequest {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct SkillsCompileRequest {
+    skill_name: Option<String>,
+    goal: Option<String>,
+    threshold: Option<f64>,
+    max_matches: Option<usize>,
+    schedule: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SkillsGenerateRequest {
+    prompt: Option<String>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct SkillEvalCaseInput {
     prompt: Option<String>,
     expected_skill: Option<String>,
@@ -2152,6 +2167,8 @@ fn app_router(state: AppState) -> Router {
         .route("/skills/import/preview", post(skills_import_preview))
         .route("/skills/validate", post(skills_validate))
         .route("/skills/router/match", post(skills_router_match))
+        .route("/skills/compile", post(skills_compile))
+        .route("/skills/generate", post(skills_generate))
         .route("/skills/evals/benchmark", post(skills_eval_benchmark))
         .route("/skills/evals/triggers", post(skills_eval_triggers))
         .route("/skills/templates", get(skills_templates_list))
@@ -5887,6 +5904,158 @@ async fn skills_router_match(
         .route_skill_match(&goal, max_matches, threshold)
         .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
     Ok(Json(json!(result)))
+}
+
+fn detect_skill_workflow_kind(base_dir: &str) -> Option<String> {
+    let workflow_path = PathBuf::from(base_dir).join("workflow.yaml");
+    let raw = std::fs::read_to_string(&workflow_path).ok()?;
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw).ok()?;
+    parsed
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+}
+
+fn slugify_skill_name(input: &str) -> String {
+    let cleaned = input
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>();
+    let mut out = cleaned
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("-");
+    if out.is_empty() {
+        out = "generated-skill".to_string();
+    }
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out.trim_matches('-').to_string()
+}
+
+async fn skills_compile(
+    Json(input): Json<SkillsCompileRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
+    let max_matches = input.max_matches.unwrap_or(3).clamp(1, 10);
+
+    let resolved_skill = if let Some(name) = input
+        .skill_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(name.to_string())
+    } else if let Some(goal) = input.goal.as_deref() {
+        let routed = service
+            .route_skill_match(goal, max_matches, threshold)
+            .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+        routed.skill_name
+    } else {
+        None
+    };
+
+    let Some(skill_name) = resolved_skill else {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing skill_name and no routeable goal provided",
+        ));
+    };
+
+    let loaded = service
+        .load_skill(&skill_name)
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let Some(skill) = loaded else {
+        return Err(skill_error(
+            StatusCode::NOT_FOUND,
+            format!("Skill '{}' not found", skill_name),
+        ));
+    };
+    let validation = service
+        .validate_skill_source(Some(&skill.content), None)
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    let workflow_kind = detect_skill_workflow_kind(&skill.base_dir)
+        .unwrap_or_else(|| "pack_builder_recipe".to_string());
+
+    let execution_plan = json!({
+        "workflow_kind": workflow_kind,
+        "goal": input.goal,
+        "schedule": input.schedule,
+        "default_action": if workflow_kind == "automation_v2_dag" {
+            "create_automation_v2"
+        } else {
+            "pack_builder_preview"
+        }
+    });
+
+    Ok(Json(json!({
+        "skill_name": skill.info.name,
+        "workflow_kind": execution_plan.get("workflow_kind"),
+        "validation": validation,
+        "execution_plan": execution_plan,
+        "status": "compiled"
+    })))
+}
+
+async fn skills_generate(
+    Json(input): Json<SkillsGenerateRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let prompt = input.prompt.unwrap_or_default();
+    if prompt.trim().is_empty() {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing prompt for /skills/generate",
+        ));
+    }
+    let service = skills_service();
+    let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
+    let routed = service
+        .route_skill_match(&prompt, 3, threshold)
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    let suggested_name = routed
+        .skill_name
+        .clone()
+        .unwrap_or_else(|| slugify_skill_name(&prompt));
+    let skill_md = format!(
+        "---\nname: {name}\ndescription: Generated from prompt.\nversion: 0.1.0\n---\n\n# Skill: {title}\n\n## Purpose\n{purpose}\n\n## Inputs\n- user prompt\n\n## Agents\n- worker\n\n## Tools\n- webfetch\n\n## Workflow\n1. Interpret user intent\n2. Execute workflow steps\n3. Return result\n\n## Outputs\n- completed task result\n\n## Schedule compatibility\n- manual\n",
+        name = suggested_name,
+        title = suggested_name.replace('-', " "),
+        purpose = prompt.trim()
+    );
+    let workflow_yaml = if suggested_name == "dev-agent" {
+        "kind: automation_v2_dag\nskill_id: dev-agent\n".to_string()
+    } else {
+        format!(
+            "kind: pack_builder_recipe\nskill_id: {}\nexecution_mode: team\ngoal_template: \"{}\"\n",
+            suggested_name,
+            prompt.replace('"', "'")
+        )
+    };
+    let automation_example = format!(
+        "name: {}\nschedule:\n  type: manual\n  timezone: user_local\ninputs:\n  prompt: \"{}\"\n",
+        suggested_name.replace('-', " "),
+        prompt.replace('"', "'")
+    );
+    Ok(Json(json!({
+        "status": "generated_scaffold",
+        "prompt": prompt,
+        "router": routed,
+        "artifacts": {
+            "SKILL.md": skill_md,
+            "workflow.yaml": workflow_yaml,
+            "automation.example.yaml": automation_example
+        }
+    })))
 }
 
 async fn skills_eval_benchmark(

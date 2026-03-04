@@ -96,6 +96,10 @@ function Step1Goal({
   onChange,
   routedSkill,
   routingConfidence,
+  validationBadge,
+  generatedSkill,
+  onGenerateSkill,
+  isGeneratingSkill,
   topMatches,
   isMatching,
 }: {
@@ -103,6 +107,10 @@ function Step1Goal({
   onChange: (v: string) => void;
   routedSkill: string;
   routingConfidence: string;
+  validationBadge: string;
+  generatedSkill: any;
+  onGenerateSkill: () => void;
+  isGeneratingSkill: boolean;
   topMatches: Array<{ skill_name?: string; confidence?: number }>;
   isMatching: boolean;
 }) {
@@ -142,6 +150,13 @@ function Step1Goal({
           <p className="mt-1">
             Selected flow: <strong>{routedSkill}</strong>{" "}
             {routingConfidence ? `(${routingConfidence})` : ""}
+            {validationBadge ? (
+              <span
+                className={`ml-2 ${validationBadge === "validated" ? "tcp-badge-ok" : "tcp-badge-warn"}`}
+              >
+                {validationBadge === "validated" ? "Validated" : "Not validated"}
+              </span>
+            ) : null}
           </p>
         ) : (
           <p className="mt-1 text-slate-400">
@@ -158,6 +173,40 @@ function Step1Goal({
             ))}
           </div>
         ) : null}
+      </div>
+      <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
+        <div className="flex items-center justify-between gap-2">
+          <span className="uppercase tracking-wide text-slate-500">Advanced: Skill Builder</span>
+          <button
+            className="tcp-btn h-7 px-2 text-xs"
+            onClick={onGenerateSkill}
+            disabled={!value.trim() || isGeneratingSkill}
+          >
+            {isGeneratingSkill ? "Generating…" : "Generate Skill from Prompt"}
+          </button>
+        </div>
+        {generatedSkill ? (
+          <div className="mt-2 grid gap-1">
+            <p>
+              Generated scaffold status:{" "}
+              <strong>{String(generatedSkill?.status || "generated")}</strong>
+            </p>
+            <p>
+              Suggested skill:{" "}
+              <strong>{String(generatedSkill?.router?.skill_name || "new generated skill")}</strong>
+            </p>
+            <p className="text-slate-400">
+              Artifacts:{" "}
+              {Object.keys((generatedSkill?.artifacts as Record<string, string>) || {}).join(
+                ", "
+              ) || "SKILL.md, workflow.yaml, automation.example.yaml"}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-1 text-slate-400">
+            Generate scaffold files from your prompt, then refine before installation.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -278,10 +327,14 @@ function Step4Review({
   wizard,
   onSubmit,
   isPending,
+  compileResult,
+  isCompiling,
 }: {
   wizard: WizardState;
   onSubmit: () => void;
   isPending: boolean;
+  compileResult: any;
+  isCompiling: boolean;
 }) {
   const schedule = wizard.cron
     ? wizard.cron
@@ -335,6 +388,34 @@ function Step4Review({
             </code>
           </div>
         ) : null}
+        <div className="grid gap-1">
+          <span className="text-xs text-slate-500 uppercase tracking-wide">Compile Status</span>
+          {isCompiling ? (
+            <span className="text-sm text-slate-300">Compiling selected flow…</span>
+          ) : compileResult ? (
+            <div className="grid gap-1 text-sm text-slate-300">
+              <span>
+                Status: <strong>{String(compileResult?.status || "unknown")}</strong>
+              </span>
+              <span>
+                Workflow kind:{" "}
+                <strong>{String(compileResult?.workflow_kind || "pack_builder_recipe")}</strong>
+              </span>
+              <span>
+                Validation:{" "}
+                <strong>
+                  {typeof compileResult?.validation?.valid === "number"
+                    ? `${String(compileResult.validation.valid)} valid / ${String(compileResult.validation.invalid || 0)} invalid`
+                    : "not available"}
+                </strong>
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-slate-400">
+              No compile summary available. Deploy uses pack builder fallback.
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
@@ -363,6 +444,9 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
   const [routerMatches, setRouterMatches] = useState<
     Array<{ skill_name?: string; confidence?: number }>
   >([]);
+  const [compileResult, setCompileResult] = useState<any>(null);
+  const [validationBadge, setValidationBadge] = useState<string>("");
+  const [generatedSkill, setGeneratedSkill] = useState<any>(null);
   const [wizard, setWizard] = useState<WizardState>({
     goal: "",
     schedulePreset: "Every morning",
@@ -383,6 +467,57 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
     onError: () => {
       // Keep routing non-blocking.
     },
+  });
+
+  const compileMutation = useMutation({
+    mutationFn: async () => {
+      if (!client?.skills?.compile) {
+        return null;
+      }
+      return client.skills.compile({
+        skillName: wizard.routedSkill || undefined,
+        goal: wizard.goal,
+        schedule:
+          wizard.cron && wizard.cron.trim()
+            ? { type: "cron", cron_expression: wizard.cron }
+            : undefined,
+      });
+    },
+    onSuccess: (res) => setCompileResult(res),
+    onError: () => setCompileResult(null),
+  });
+
+  const validateSkillMutation = useMutation({
+    mutationFn: async (skillName: string) => {
+      if (!client?.skills?.get || !client?.skills?.validate) {
+        return null;
+      }
+      const loaded = await client.skills.get(skillName);
+      const content = (loaded as any)?.content;
+      if (!content) {
+        return null;
+      }
+      return client.skills.validate({ content });
+    },
+    onSuccess: (res) => {
+      if (!res) {
+        setValidationBadge("");
+        return;
+      }
+      setValidationBadge(res.invalid > 0 ? "not_validated" : "validated");
+    },
+    onError: () => setValidationBadge("not_validated"),
+  });
+
+  const generateSkillMutation = useMutation({
+    mutationFn: async () => {
+      if (!client?.skills?.generate || !wizard.goal.trim()) {
+        return null;
+      }
+      return client.skills.generate({ prompt: wizard.goal });
+    },
+    onSuccess: (res) => setGeneratedSkill(res),
+    onError: () => setGeneratedSkill(null),
   });
 
   const deployMutation = useMutation({
@@ -433,6 +568,9 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
         routingConfidence: "",
       });
       setRouterMatches([]);
+      setCompileResult(null);
+      setValidationBadge("");
+      setGeneratedSkill(null);
       setStep(1);
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
@@ -452,6 +590,7 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
     if (step === 1) {
       const result = await matchMutation.mutateAsync(wizard.goal);
       if (result && result.decision === "match" && result.skill_name) {
+        void validateSkillMutation.mutateAsync(String(result.skill_name));
         setWizard((s) => ({
           ...s,
           routedSkill: String(result.skill_name),
@@ -459,6 +598,7 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
             typeof result.confidence === "number" ? `${Math.round(result.confidence * 100)}%` : "",
         }));
       } else {
+        setValidationBadge("");
         setWizard((s) => ({
           ...s,
           routedSkill: "",
@@ -468,7 +608,11 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
       const top = Array.isArray((result as any)?.top_matches) ? (result as any).top_matches : [];
       setRouterMatches(top);
     }
-    setStep((s) => (s + 1) as WizardStep);
+    const next = (step + 1) as WizardStep;
+    setStep(next);
+    if (next === 4) {
+      void compileMutation.mutateAsync();
+    }
   };
 
   return (
@@ -531,6 +675,12 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
               onChange={(v) => setWizard((s) => ({ ...s, goal: v }))}
               routedSkill={wizard.routedSkill}
               routingConfidence={wizard.routingConfidence}
+              validationBadge={validationBadge}
+              generatedSkill={generatedSkill}
+              onGenerateSkill={() => {
+                void generateSkillMutation.mutateAsync();
+              }}
+              isGeneratingSkill={generateSkillMutation.isPending}
               topMatches={routerMatches}
               isMatching={matchMutation.isPending}
             />
@@ -559,6 +709,8 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
               wizard={wizard}
               onSubmit={() => deployMutation.mutate()}
               isPending={deployMutation.isPending}
+              compileResult={compileResult}
+              isCompiling={compileMutation.isPending}
             />
           )}
         </motion.div>
