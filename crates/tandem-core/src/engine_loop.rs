@@ -2698,6 +2698,7 @@ fn tool_exec_timeout_ms() -> usize {
 }
 
 fn duplicate_signature_limit_for(tool_name: &str) -> usize {
+    let normalized = normalize_tool_name(tool_name);
     if let Ok(raw) = std::env::var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT") {
         if let Ok(parsed) = raw.trim().parse::<usize>() {
             if parsed > 0 {
@@ -2705,10 +2706,16 @@ fn duplicate_signature_limit_for(tool_name: &str) -> usize {
             }
         }
     }
-    if normalize_tool_name(tool_name) == "pack_builder" {
+    if normalized == "pack_builder" {
         return 1;
     }
-    if is_shell_tool_name(tool_name) {
+    if matches!(
+        normalized.as_str(),
+        "write" | "edit" | "multi_edit" | "apply_patch"
+    ) {
+        return 200;
+    }
+    if is_shell_tool_name(&normalized) {
         2
     } else {
         3
@@ -5219,7 +5226,16 @@ fn compact_chat_history(
 mod tests {
     use super::*;
     use crate::{EventBus, Storage};
+    use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
+
+    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env test lock")
+    }
 
     #[tokio::test]
     async fn todo_updated_event_is_normalized() {
@@ -6147,6 +6163,7 @@ Call: todowrite(task_id=3, status="in_progress")
 
     #[test]
     fn pack_builder_duplicate_signature_limit_defaults_to_one() {
+        let _guard = env_test_lock();
         unsafe {
             std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
         }
@@ -6154,7 +6171,31 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
+    fn write_duplicate_signature_limit_defaults_to_200() {
+        let _guard = env_test_lock();
+        unsafe {
+            std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
+        }
+        assert_eq!(duplicate_signature_limit_for("write"), 200);
+        assert_eq!(duplicate_signature_limit_for("edit"), 200);
+    }
+
+    #[test]
+    fn duplicate_signature_limit_env_override_still_wins() {
+        let _guard = env_test_lock();
+        unsafe {
+            std::env::set_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT", "9");
+        }
+        assert_eq!(duplicate_signature_limit_for("write"), 9);
+        assert_eq!(duplicate_signature_limit_for("bash"), 9);
+        unsafe {
+            std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
+        }
+    }
+
+    #[test]
     fn websearch_duplicate_signature_limit_is_unset_by_default() {
+        let _guard = env_test_lock();
         unsafe {
             std::env::remove_var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT");
         }
@@ -6163,6 +6204,7 @@ Call: todowrite(task_id=3, status="in_progress")
 
     #[test]
     fn websearch_duplicate_signature_limit_reads_env() {
+        let _guard = env_test_lock();
         unsafe {
             std::env::set_var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT", "5");
         }

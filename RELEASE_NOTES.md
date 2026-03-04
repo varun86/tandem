@@ -47,6 +47,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - Swarm now shows a `Run Output` panel with latest completed step, session ID, and assistant output preview
     - task `Open Session` links now resolve from step completion events (`session_id`) for reliable output access
     - status badges now use semantic colors for done/completed, failed, and in-progress states
+  - Increased duplicate-signature retry headroom for write/edit loops:
+    - `write`/`edit`/`multi_edit`/`apply_patch` duplicate call signature limit now defaults to `200` (was `3`)
+    - `pack_builder` remains strict at `1`; shell tools remain strict at `2`
+    - global override `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` remains supported
 - Automation creation UX — simplified to "just describe what you want"
   - Replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a single **Automations** hub (`AutomationsPage`).
   - New **4-step creation wizard**: describe your goal in plain English → pick a recurring schedule → choose how agents run → review & deploy. No YAML, no route navigation between pages.

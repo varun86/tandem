@@ -50,6 +50,10 @@
     - added Swarm `Run Output` panel with latest completed step + session ID + assistant output preview
     - task `Open Session` now resolves from `step_completed` event payload `session_id`
     - run/task status badges now map to semantic success/warn/error styles
+  - Increased duplicate-signature retry headroom for write/edit loops:
+    - `write`/`edit`/`multi_edit`/`apply_patch` duplicate-signature limit now defaults to `200` (previously `3`)
+    - `pack_builder` remains fixed at `1`; shell tools remain strict at `2`
+    - global override through `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` is unchanged
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:
     - `preview`: parse goal, resolve external capabilities to MCP catalog servers, generate pack artifacts, and return approval summary

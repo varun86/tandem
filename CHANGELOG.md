@@ -173,6 +173,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
   - fixes startup panic `runtime accessed before startup completion` that could mark control-panel connectivity unhealthy on boot
+- **Duplicate tool-call guard tuning for write/edit workflows**:
+  - increased default duplicate-signature retry limit for `write`/`edit`/`multi_edit`/`apply_patch` tool calls from `3` to `200`
+  - preserves strict guardrails for `pack_builder` (`1`) and shell tools (`2`)
+  - keeps global override behavior via `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT`
 - **OpenAI-compatible MCP tool schema normalization**:
   - normalized nested MCP function schemas before provider dispatch so tuple-style `items` arrays and object nodes without `properties` are rewritten into OpenAI-valid function parameter schemas
   - fixes `TOOL_SCHEMA_INVALID` 400 failures such as `mcp_airtable_list_records_for_table` when using models like `openai/gpt-5.3-codex` through OpenRouter
