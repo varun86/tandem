@@ -46,7 +46,7 @@ Ship a control-panel-first Skill System with:
 
 ## Phase 5 - Built-in Skill Templates and Advanced Mode
 - [x] Land 10 default skills with `SKILL.md` + `workflow.yaml` + `automation.example.yaml`
-- [ ] Add advanced skill builder form + YAML toggle
+- [x] Add advanced skill builder form + YAML toggle
 - [x] Add "Generate Skill from Prompt" flow (gated by validation)
 
 ## Commit Log
@@ -56,3 +56,4 @@ Ship a control-panel-first Skill System with:
 - [x] 2026-03-04: Add skill evaluation scaffold endpoints + SDK methods + spec doc
 - [x] 2026-03-04: Add 10 built-in skill templates
 - [x] 2026-03-04: Add skills compile/generate endpoints + review compile UI + validation badge
+- [ ] 2026-03-04: Add advanced skill builder form + YAML artifact preview in wizard (pending commit)

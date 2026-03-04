@@ -26,6 +26,10 @@ interface WizardState {
   maxAgents: string;
   routedSkill: string;
   routingConfidence: string;
+  advancedMode: boolean;
+  customSkillName: string;
+  customSkillDescription: string;
+  customWorkflowKind: "pack_builder_recipe" | "automation_v2_dag";
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -98,6 +102,18 @@ function Step1Goal({
   routingConfidence,
   validationBadge,
   generatedSkill,
+  advancedMode,
+  customSkillName,
+  customSkillDescription,
+  customWorkflowKind,
+  onToggleAdvancedMode,
+  onChangeCustomSkillName,
+  onChangeCustomSkillDescription,
+  onChangeCustomWorkflowKind,
+  showArtifactPreview,
+  onToggleArtifactPreview,
+  artifactPreviewKey,
+  onSelectArtifactPreviewKey,
   onGenerateSkill,
   isGeneratingSkill,
   topMatches,
@@ -109,6 +125,18 @@ function Step1Goal({
   routingConfidence: string;
   validationBadge: string;
   generatedSkill: any;
+  advancedMode: boolean;
+  customSkillName: string;
+  customSkillDescription: string;
+  customWorkflowKind: "pack_builder_recipe" | "automation_v2_dag";
+  onToggleAdvancedMode: () => void;
+  onChangeCustomSkillName: (v: string) => void;
+  onChangeCustomSkillDescription: (v: string) => void;
+  onChangeCustomWorkflowKind: (v: "pack_builder_recipe" | "automation_v2_dag") => void;
+  showArtifactPreview: boolean;
+  onToggleArtifactPreview: () => void;
+  artifactPreviewKey: string;
+  onSelectArtifactPreviewKey: (v: string) => void;
   onGenerateSkill: () => void;
   isGeneratingSkill: boolean;
   topMatches: Array<{ skill_name?: string; confidence?: number }>;
@@ -177,14 +205,49 @@ function Step1Goal({
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
         <div className="flex items-center justify-between gap-2">
           <span className="uppercase tracking-wide text-slate-500">Advanced: Skill Builder</span>
-          <button
-            className="tcp-btn h-7 px-2 text-xs"
-            onClick={onGenerateSkill}
-            disabled={!value.trim() || isGeneratingSkill}
-          >
-            {isGeneratingSkill ? "Generating…" : "Generate Skill from Prompt"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="tcp-btn h-7 px-2 text-xs" onClick={onToggleAdvancedMode}>
+              {advancedMode ? "Hide Advanced" : "Show Advanced"}
+            </button>
+            <button
+              className="tcp-btn h-7 px-2 text-xs"
+              onClick={onGenerateSkill}
+              disabled={!value.trim() || isGeneratingSkill}
+            >
+              {isGeneratingSkill ? "Generating…" : "Generate Skill from Prompt"}
+            </button>
+          </div>
         </div>
+        {advancedMode ? (
+          <div className="mt-2 grid gap-2">
+            <input
+              className="tcp-input text-xs"
+              placeholder="skill-name"
+              value={customSkillName}
+              onInput={(e) => onChangeCustomSkillName((e.target as HTMLInputElement).value)}
+            />
+            <input
+              className="tcp-input text-xs"
+              placeholder="Short skill description"
+              value={customSkillDescription}
+              onInput={(e) => onChangeCustomSkillDescription((e.target as HTMLInputElement).value)}
+            />
+            <select
+              className="tcp-input text-xs"
+              value={customWorkflowKind}
+              onInput={(e) =>
+                onChangeCustomWorkflowKind(
+                  (e.target as HTMLSelectElement).value as
+                    | "pack_builder_recipe"
+                    | "automation_v2_dag"
+                )
+              }
+            >
+              <option value="pack_builder_recipe">pack_builder_recipe</option>
+              <option value="automation_v2_dag">automation_v2_dag</option>
+            </select>
+          </div>
+        ) : null}
         {generatedSkill ? (
           <div className="mt-2 grid gap-1">
             <p>
@@ -201,6 +264,35 @@ function Step1Goal({
                 ", "
               ) || "SKILL.md, workflow.yaml, automation.example.yaml"}
             </p>
+            <div className="mt-1 flex items-center gap-2">
+              <button className="tcp-btn h-7 px-2 text-xs" onClick={onToggleArtifactPreview}>
+                {showArtifactPreview ? "Hide Raw" : "Show Raw"}
+              </button>
+              {showArtifactPreview ? (
+                <select
+                  className="tcp-input h-7 text-xs"
+                  value={artifactPreviewKey}
+                  onInput={(e) => onSelectArtifactPreviewKey((e.target as HTMLSelectElement).value)}
+                >
+                  {Object.keys((generatedSkill?.artifacts as Record<string, string>) || {}).map(
+                    (key) => (
+                      <option key={key} value={key}>
+                        {key}
+                      </option>
+                    )
+                  )}
+                </select>
+              ) : null}
+            </div>
+            {showArtifactPreview ? (
+              <textarea
+                className="tcp-input min-h-[140px] font-mono text-[11px]"
+                readOnly
+                value={String(
+                  (generatedSkill?.artifacts as Record<string, string>)?.[artifactPreviewKey] || ""
+                )}
+              />
+            ) : null}
           </div>
         ) : (
           <p className="mt-1 text-slate-400">
@@ -447,6 +539,8 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
   const [compileResult, setCompileResult] = useState<any>(null);
   const [validationBadge, setValidationBadge] = useState<string>("");
   const [generatedSkill, setGeneratedSkill] = useState<any>(null);
+  const [showArtifactPreview, setShowArtifactPreview] = useState<boolean>(false);
+  const [artifactPreviewKey, setArtifactPreviewKey] = useState<string>("SKILL.md");
   const [wizard, setWizard] = useState<WizardState>({
     goal: "",
     schedulePreset: "Every morning",
@@ -455,6 +549,10 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
     maxAgents: "4",
     routedSkill: "",
     routingConfidence: "",
+    advancedMode: false,
+    customSkillName: "",
+    customSkillDescription: "",
+    customWorkflowKind: "pack_builder_recipe",
   });
 
   const matchMutation = useMutation({
@@ -514,10 +612,28 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
       if (!client?.skills?.generate || !wizard.goal.trim()) {
         return null;
       }
-      return client.skills.generate({ prompt: wizard.goal });
+      const prompt = wizard.advancedMode
+        ? [
+            wizard.goal.trim(),
+            wizard.customSkillName ? `Skill name: ${wizard.customSkillName}` : "",
+            wizard.customSkillDescription ? `Description: ${wizard.customSkillDescription}` : "",
+            `Workflow kind: ${wizard.customWorkflowKind}`,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : wizard.goal;
+      return client.skills.generate({ prompt });
     },
-    onSuccess: (res) => setGeneratedSkill(res),
-    onError: () => setGeneratedSkill(null),
+    onSuccess: (res) => {
+      setGeneratedSkill(res);
+      const firstKey = Object.keys((res as any)?.artifacts || {})[0];
+      setArtifactPreviewKey(firstKey || "SKILL.md");
+      setShowArtifactPreview(false);
+    },
+    onError: () => {
+      setGeneratedSkill(null);
+      setShowArtifactPreview(false);
+    },
   });
 
   const deployMutation = useMutation({
@@ -566,11 +682,17 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
         maxAgents: "4",
         routedSkill: "",
         routingConfidence: "",
+        advancedMode: false,
+        customSkillName: "",
+        customSkillDescription: "",
+        customWorkflowKind: "pack_builder_recipe",
       });
       setRouterMatches([]);
       setCompileResult(null);
       setValidationBadge("");
       setGeneratedSkill(null);
+      setShowArtifactPreview(false);
+      setArtifactPreviewKey("SKILL.md");
       setStep(1);
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
@@ -677,6 +799,24 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
               routingConfidence={wizard.routingConfidence}
               validationBadge={validationBadge}
               generatedSkill={generatedSkill}
+              advancedMode={wizard.advancedMode}
+              customSkillName={wizard.customSkillName}
+              customSkillDescription={wizard.customSkillDescription}
+              customWorkflowKind={wizard.customWorkflowKind}
+              onToggleAdvancedMode={() =>
+                setWizard((s) => ({ ...s, advancedMode: !s.advancedMode }))
+              }
+              onChangeCustomSkillName={(v) => setWizard((s) => ({ ...s, customSkillName: v }))}
+              onChangeCustomSkillDescription={(v) =>
+                setWizard((s) => ({ ...s, customSkillDescription: v }))
+              }
+              onChangeCustomWorkflowKind={(v) =>
+                setWizard((s) => ({ ...s, customWorkflowKind: v }))
+              }
+              showArtifactPreview={showArtifactPreview}
+              onToggleArtifactPreview={() => setShowArtifactPreview((v) => !v)}
+              artifactPreviewKey={artifactPreviewKey}
+              onSelectArtifactPreviewKey={(v) => setArtifactPreviewKey(v)}
               onGenerateSkill={() => {
                 void generateSkillMutation.mutateAsync();
               }}
