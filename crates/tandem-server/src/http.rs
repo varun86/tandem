@@ -67,10 +67,11 @@ use crate::{
     pack_manager::{PackExportRequest, PackInstallRequest, PackUninstallRequest},
     ActiveRun, AppState, AutomationAgentMcpPolicy, AutomationAgentProfile,
     AutomationAgentToolPolicy, AutomationExecutionPolicy, AutomationFlowSpec, AutomationRunStatus,
-    AutomationV2Schedule, AutomationV2Spec, AutomationV2Status, ChannelStatus, DiscordConfigFile,
-    RoutineExecutionDecision, RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact,
-    RoutineRunRecord, RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus,
-    RoutineStoreError, SlackConfigFile, StartupStatus, TelegramConfigFile,
+    AutomationV2RunRecord, AutomationV2Schedule, AutomationV2Spec, AutomationV2Status,
+    ChannelStatus, DiscordConfigFile, RoutineExecutionDecision, RoutineHistoryEvent,
+    RoutineMisfirePolicy, RoutineRunArtifact, RoutineRunRecord, RoutineRunStatus, RoutineSchedule,
+    RoutineSpec, RoutineStatus, RoutineStoreError, SlackConfigFile, StartupStatus,
+    TelegramConfigFile,
 };
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -12531,6 +12532,195 @@ fn normalize_automation_v2_agent(mut agent: AutomationAgentProfile) -> Automatio
     agent
 }
 
+fn automation_v2_context_run_id(run_id: &str) -> String {
+    format!("automation-v2-{run_id}")
+}
+
+fn automation_run_status_to_context(status: &AutomationRunStatus) -> ContextRunStatus {
+    match status {
+        AutomationRunStatus::Queued => ContextRunStatus::Queued,
+        AutomationRunStatus::Running
+        | AutomationRunStatus::Pausing
+        | AutomationRunStatus::Paused => ContextRunStatus::Running,
+        AutomationRunStatus::Completed => ContextRunStatus::Completed,
+        AutomationRunStatus::Failed => ContextRunStatus::Failed,
+        AutomationRunStatus::Cancelled => ContextRunStatus::Cancelled,
+    }
+}
+
+fn automation_node_task_status(
+    run: &AutomationV2RunRecord,
+    node_id: &str,
+    depends_on: &[String],
+) -> ContextBlackboardTaskStatus {
+    let completed = run
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|row| row == node_id);
+    if completed {
+        return ContextBlackboardTaskStatus::Done;
+    }
+    if matches!(
+        run.status,
+        AutomationRunStatus::Cancelled | AutomationRunStatus::Failed
+    ) {
+        return ContextBlackboardTaskStatus::Failed;
+    }
+    let deps_done = depends_on
+        .iter()
+        .all(|dep| run.checkpoint.completed_nodes.iter().any(|row| row == dep));
+    if !deps_done {
+        return ContextBlackboardTaskStatus::Blocked;
+    }
+    if matches!(
+        run.status,
+        AutomationRunStatus::Paused | AutomationRunStatus::Pausing
+    ) {
+        return ContextBlackboardTaskStatus::Blocked;
+    }
+    if run
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|row| row == node_id)
+    {
+        return ContextBlackboardTaskStatus::Runnable;
+    }
+    ContextBlackboardTaskStatus::Pending
+}
+
+async fn sync_automation_v2_run_blackboard(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+) -> Result<String, StatusCode> {
+    let context_run_id = automation_v2_context_run_id(&run.run_id);
+    let mut context_run = load_context_run_state(state, &context_run_id).await.ok();
+    let now = crate::now_ms();
+    if context_run.is_none() {
+        let run_state = ContextRunState {
+            run_id: context_run_id.clone(),
+            run_type: "automation_v2_dag".to_string(),
+            source_client: Some("automation_v2_executor".to_string()),
+            model_provider: None,
+            model_id: None,
+            mcp_servers: Vec::new(),
+            status: automation_run_status_to_context(&run.status),
+            objective: format!(
+                "Automation {} / run {}",
+                automation.automation_id, run.run_id
+            ),
+            workspace: ContextWorkspaceLease::default(),
+            steps: Vec::new(),
+            why_next_step: run.detail.clone(),
+            revision: 1,
+            created_at_ms: run.created_at_ms,
+            started_at_ms: run.started_at_ms.or(Some(now)),
+            ended_at_ms: run.finished_at_ms,
+            last_error: None,
+            updated_at_ms: now,
+        };
+        save_context_run_state(state, &run_state).await?;
+        context_run = Some(run_state);
+    }
+    if let Some(mut row) = context_run {
+        row.status = automation_run_status_to_context(&run.status);
+        row.why_next_step = run.detail.clone();
+        row.ended_at_ms = run.finished_at_ms;
+        row.updated_at_ms = now;
+        row.revision = row.revision.saturating_add(1);
+        save_context_run_state(state, &row).await?;
+    }
+
+    let lock = context_run_lock_for(&context_run_id).await;
+    let _guard = lock.lock().await;
+    let blackboard = load_context_blackboard(state, &context_run_id);
+
+    for node in &automation.flow.nodes {
+        let task_id = format!("automation-v2:{}:{}", run.run_id, node.node_id);
+        let existing = blackboard
+            .tasks
+            .iter()
+            .find(|row| row.id == task_id)
+            .cloned();
+        if existing.is_none() {
+            let task = ContextBlackboardTask {
+                id: task_id.clone(),
+                task_type: "automation_v2.node".to_string(),
+                payload: json!({
+                    "title": node.objective,
+                    "node_id": node.node_id,
+                    "automation_id": automation.automation_id,
+                    "run_id": run.run_id,
+                }),
+                status: ContextBlackboardTaskStatus::Pending,
+                workflow_id: Some(automation.automation_id.clone()),
+                workflow_node_id: Some(node.node_id.clone()),
+                parent_task_id: None,
+                depends_on_task_ids: node
+                    .depends_on
+                    .iter()
+                    .map(|dep| format!("automation-v2:{}:{dep}", run.run_id))
+                    .collect::<Vec<_>>(),
+                decision_ids: Vec::new(),
+                artifact_ids: Vec::new(),
+                assigned_agent: Some(node.agent_id.clone()),
+                priority: 0,
+                attempt: 0,
+                max_attempts: 1,
+                last_error: None,
+                next_retry_at_ms: None,
+                lease_owner: None,
+                lease_token: None,
+                lease_expires_at_ms: None,
+                task_rev: 1,
+                created_ts: run.created_at_ms,
+                updated_ts: now,
+            };
+            let _ = append_context_blackboard_patch(
+                state,
+                &context_run_id,
+                ContextBlackboardPatchOp::AddTask,
+                serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            )?;
+        }
+
+        let current = load_context_blackboard(state, &context_run_id)
+            .tasks
+            .into_iter()
+            .find(|row| row.id == task_id);
+        let desired_status = automation_node_task_status(run, &node.node_id, &node.depends_on);
+        let current_status = current
+            .as_ref()
+            .map(|row| row.status.clone())
+            .unwrap_or(ContextBlackboardTaskStatus::Pending);
+        let current_agent = current
+            .as_ref()
+            .and_then(|row| row.assigned_agent.clone())
+            .unwrap_or_default();
+        if current_status != desired_status || current_agent != node.agent_id {
+            let next_rev = current
+                .as_ref()
+                .map(|row| row.task_rev.saturating_add(1))
+                .unwrap_or(1);
+            let _ = append_context_blackboard_patch(
+                state,
+                &context_run_id,
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": task_id,
+                    "status": desired_status,
+                    "assigned_agent": node.agent_id,
+                    "task_rev": next_rev,
+                    "error": if matches!(run.status, AutomationRunStatus::Failed) { run.detail.clone() } else { None::<String> },
+                }),
+            )?;
+        }
+    }
+    Ok(context_run_id)
+}
+
 async fn automations_v2_create(
     State(state): State<AppState>,
     Json(input): Json<AutomationV2CreateInput>,
@@ -12699,6 +12889,7 @@ async fn automations_v2_run_now(
                 })),
             )
         })?;
+    let _ = sync_automation_v2_run_blackboard(&state, &automation, &run).await;
     Ok(Json(json!({ "ok": true, "run": run })))
 }
 
@@ -12774,6 +12965,11 @@ async fn automations_v2_runs(
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(50);
     let rows = state.list_automation_v2_runs(Some(&id), limit).await;
+    if let Some(automation) = state.get_automation_v2(&id).await {
+        for run in &rows {
+            let _ = sync_automation_v2_run_blackboard(&state, &automation, run).await;
+        }
+    }
     Json(json!({ "automationID": id, "runs": rows, "count": rows.len() }))
 }
 
@@ -12789,7 +12985,13 @@ async fn automations_v2_run_get(
             ),
         ));
     };
-    Ok(Json(json!({ "run": run })))
+    if let Some(automation) = state.get_automation_v2(&run.automation_id).await {
+        let _ = sync_automation_v2_run_blackboard(&state, &automation, &run).await;
+    }
+    Ok(Json(json!({
+        "run": run,
+        "contextRunID": automation_v2_context_run_id(&run_id),
+    })))
 }
 
 async fn automations_v2_run_pause(
@@ -20451,6 +20653,134 @@ mod tests {
             .filter(|payload| !payload.get("task").unwrap_or(&Value::Null).is_null())
             .count();
         assert_eq!(winner_count, 1);
+    }
+
+    #[tokio::test]
+    async fn automation_v2_run_get_projects_nodes_into_context_blackboard_tasks() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/automations/v2")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "automation_id": "auto-v2-blackboard-1",
+                    "name": "Automation Blackboard Projection",
+                    "status": "active",
+                    "schedule": {
+                        "type": "manual",
+                        "timezone": "UTC",
+                        "misfire_policy": { "type": "skip" }
+                    },
+                    "agents": [
+                        {
+                            "agent_id": "agent-a",
+                            "display_name": "Agent A",
+                            "skills": [],
+                            "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                            "mcp_policy": { "allowed_servers": [] }
+                        }
+                    ],
+                    "flow": {
+                        "nodes": [
+                            {
+                                "node_id": "node-1",
+                                "agent_id": "agent-a",
+                                "objective": "Analyze incoming signal",
+                                "depends_on": []
+                            }
+                        ]
+                    },
+                    "execution": { "max_parallel_agents": 1 }
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+
+        let run_now_req = Request::builder()
+            .method("POST")
+            .uri("/automations/v2/auto-v2-blackboard-1/run_now")
+            .body(Body::empty())
+            .expect("run now request");
+        let run_now_resp = app
+            .clone()
+            .oneshot(run_now_req)
+            .await
+            .expect("run now response");
+        assert_eq!(run_now_resp.status(), StatusCode::OK);
+        let run_now_body = to_bytes(run_now_resp.into_body(), usize::MAX)
+            .await
+            .expect("run now body");
+        let run_now_payload: Value = serde_json::from_slice(&run_now_body).expect("run now json");
+        let run_id = run_now_payload
+            .get("run")
+            .and_then(|v| v.get("run_id"))
+            .and_then(Value::as_str)
+            .expect("run id")
+            .to_string();
+
+        let run_get_req = Request::builder()
+            .method("GET")
+            .uri(format!("/automations/v2/runs/{run_id}"))
+            .body(Body::empty())
+            .expect("run get request");
+        let run_get_resp = app
+            .clone()
+            .oneshot(run_get_req)
+            .await
+            .expect("run get response");
+        assert_eq!(run_get_resp.status(), StatusCode::OK);
+        let run_get_body = to_bytes(run_get_resp.into_body(), usize::MAX)
+            .await
+            .expect("run get body");
+        let run_get_payload: Value = serde_json::from_slice(&run_get_body).expect("run get json");
+        let context_run_id = run_get_payload
+            .get("contextRunID")
+            .and_then(Value::as_str)
+            .expect("context run id")
+            .to_string();
+
+        let blackboard_req = Request::builder()
+            .method("GET")
+            .uri(format!("/context/runs/{context_run_id}/blackboard"))
+            .body(Body::empty())
+            .expect("blackboard request");
+        let blackboard_resp = app
+            .clone()
+            .oneshot(blackboard_req)
+            .await
+            .expect("blackboard response");
+        assert_eq!(blackboard_resp.status(), StatusCode::OK);
+        let blackboard_body = to_bytes(blackboard_resp.into_body(), usize::MAX)
+            .await
+            .expect("blackboard body");
+        let blackboard_payload: Value =
+            serde_json::from_slice(&blackboard_body).expect("blackboard json");
+        let tasks = blackboard_payload
+            .get("blackboard")
+            .and_then(|v| v.get("tasks"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(tasks.iter().any(|task| {
+            task.get("task_type")
+                .and_then(Value::as_str)
+                .map(|row| row == "automation_v2.node")
+                .unwrap_or(false)
+                && task
+                    .get("workflow_node_id")
+                    .and_then(Value::as_str)
+                    .map(|row| row == "node-1")
+                    .unwrap_or(false)
+        }));
     }
 
     #[tokio::test]

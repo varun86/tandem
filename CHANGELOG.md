@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /pack-builder/cancel`
     - `GET /pack-builder/pending`
   - when `context_run_id` is provided, pack-builder lifecycle updates are materialized as blackboard task patches/events in that context run
+  - added automation v2 DAG projection into blackboard tasks:
+    - `POST /automations/v2/{id}/run_now`, `GET /automations/v2/{id}/runs`, and `GET /automations/v2/runs/{run_id}` now sync node status into context blackboard tasks
+    - `GET /automations/v2/runs/{run_id}` now returns `contextRunID` for the derived context-run projection
   - task lifecycle now emits run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) with `patch_seq` and `task_rev` for UI projections
   - replay/drift responses now include blackboard task parity checks (revision/count/status) and replay-vs-persisted blackboard payloads for debugging
   - control panel swarm route now forwards blackboard patch streams (`blackboardPatches`) and blackboard-aware task state
