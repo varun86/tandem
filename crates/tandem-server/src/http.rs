@@ -734,6 +734,8 @@ struct SkillsRouterMatchRequest {
     goal: Option<String>,
     max_matches: Option<usize>,
     threshold: Option<f64>,
+    #[serde(default)]
+    context_run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -743,6 +745,8 @@ struct SkillsCompileRequest {
     threshold: Option<f64>,
     max_matches: Option<usize>,
     schedule: Option<Value>,
+    #[serde(default)]
+    context_run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -6236,6 +6240,149 @@ fn skill_error(
     )
 }
 
+async fn ensure_skill_router_context_run(
+    state: &AppState,
+    run_id: &str,
+    goal: Option<&str>,
+) -> Result<(), StatusCode> {
+    if load_context_run_state(state, run_id).await.is_ok() {
+        return Ok(());
+    }
+    let now = crate::now_ms();
+    let run = ContextRunState {
+        run_id: run_id.to_string(),
+        run_type: "skill_router".to_string(),
+        source_client: Some("skills_api".to_string()),
+        model_provider: None,
+        model_id: None,
+        mcp_servers: Vec::new(),
+        status: ContextRunStatus::Running,
+        objective: goal
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "Skill routing workflow".to_string()),
+        workspace: ContextWorkspaceLease::default(),
+        steps: Vec::new(),
+        why_next_step: Some("Resolve skill workflow from user goal".to_string()),
+        revision: 1,
+        created_at_ms: now,
+        started_at_ms: Some(now),
+        ended_at_ms: None,
+        last_error: None,
+        updated_at_ms: now,
+    };
+    save_context_run_state(state, &run).await
+}
+
+async fn emit_skill_router_task(
+    state: &AppState,
+    run_id: &str,
+    task_id: &str,
+    task_type: &str,
+    task_payload: Value,
+    status: ContextBlackboardTaskStatus,
+) -> Result<(), StatusCode> {
+    let lock = context_run_lock_for(run_id).await;
+    let _guard = lock.lock().await;
+    let blackboard = load_context_blackboard(state, run_id);
+    let existing = blackboard
+        .tasks
+        .iter()
+        .find(|row| row.id == task_id)
+        .cloned();
+    let now = crate::now_ms();
+
+    if existing.is_none() {
+        let task = ContextBlackboardTask {
+            id: task_id.to_string(),
+            task_type: task_type.to_string(),
+            payload: task_payload.clone(),
+            status: ContextBlackboardTaskStatus::Pending,
+            workflow_id: Some("skill_router".to_string()),
+            workflow_node_id: Some(task_type.to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            assigned_agent: Some("skill_router".to_string()),
+            priority: 0,
+            attempt: 0,
+            max_attempts: 1,
+            last_error: None,
+            next_retry_at_ms: None,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            task_rev: 1,
+            created_ts: now,
+            updated_ts: now,
+        };
+        let (patch, _) = append_context_blackboard_patch(
+            state,
+            run_id,
+            ContextBlackboardPatchOp::AddTask,
+            serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        )?;
+        let _ = context_run_event_append(
+            State(state.clone()),
+            Path(run_id.to_string()),
+            Json(ContextRunEventAppendInput {
+                event_type: "context.task.created".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: Some(task_id.to_string()),
+                payload: json!({
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "patch_seq": patch.seq,
+                    "task_rev": task.task_rev,
+                    "source": "skill_router",
+                }),
+            }),
+        )
+        .await;
+    }
+
+    let current = load_context_blackboard(state, run_id)
+        .tasks
+        .into_iter()
+        .find(|row| row.id == task_id);
+    let next_rev = current
+        .as_ref()
+        .map(|row| row.task_rev.saturating_add(1))
+        .unwrap_or(1);
+    let (patch, _) = append_context_blackboard_patch(
+        state,
+        run_id,
+        ContextBlackboardPatchOp::UpdateTaskState,
+        json!({
+            "task_id": task_id,
+            "status": status,
+            "assigned_agent": "skill_router",
+            "task_rev": next_rev,
+            "error": Value::Null,
+        }),
+    )?;
+    let _ = context_run_event_append(
+        State(state.clone()),
+        Path(run_id.to_string()),
+        Json(ContextRunEventAppendInput {
+            event_type: context_task_status_event_name(&status).to_string(),
+            status: ContextRunStatus::Running,
+            step_id: Some(task_id.to_string()),
+            payload: json!({
+                "task_id": task_id,
+                "status": status,
+                "patch_seq": patch.seq,
+                "task_rev": next_rev,
+                "source": "skill_router",
+            }),
+        }),
+    )
+    .await;
+    Ok(())
+}
+
 async fn skills_list() -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
     let service = skills_service();
     let skills = service
@@ -6327,6 +6474,7 @@ async fn skills_validate(
 }
 
 async fn skills_router_match(
+    State(state): State<AppState>,
     Json(input): Json<SkillsRouterMatchRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
     let goal = input.goal.unwrap_or_default();
@@ -6342,7 +6490,37 @@ async fn skills_router_match(
     let result = service
         .route_skill_match(&goal, max_matches, threshold)
         .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(json!(result)))
+    let payload = json!(result);
+    if let Some(run_id) = sanitize_context_id(input.context_run_id.as_deref()) {
+        let _ = ensure_skill_router_context_run(&state, &run_id, Some(goal.as_str())).await;
+        let digest = Sha256::digest(goal.as_bytes());
+        let task_id = format!("skill-router-match-{:x}", digest);
+        let task_status = if payload
+            .get("skill_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_some()
+        {
+            ContextBlackboardTaskStatus::Done
+        } else {
+            ContextBlackboardTaskStatus::Blocked
+        };
+        let _ = emit_skill_router_task(
+            &state,
+            &run_id,
+            &task_id[..task_id.len().min(30)],
+            "skill_router.match",
+            json!({
+                "title": "Skill Router Match",
+                "goal": goal,
+                "result": payload.clone(),
+            }),
+            task_status,
+        )
+        .await;
+    }
+    Ok(Json(payload))
 }
 
 fn detect_skill_workflow_kind(base_dir: &str) -> Option<String> {
@@ -6428,11 +6606,14 @@ fn generate_skill_scaffold(
 }
 
 async fn skills_compile(
+    State(state): State<AppState>,
     Json(input): Json<SkillsCompileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
     let service = skills_service();
     let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
     let max_matches = input.max_matches.unwrap_or(3).clamp(1, 10);
+    let goal_for_bb = input.goal.clone();
+    let context_run_for_bb = input.context_run_id.clone();
 
     let resolved_skill = if let Some(name) = input
         .skill_name
@@ -6483,13 +6664,31 @@ async fn skills_compile(
         }
     });
 
-    Ok(Json(json!({
+    let response = json!({
         "skill_name": skill.info.name,
         "workflow_kind": execution_plan.get("workflow_kind"),
         "validation": validation,
         "execution_plan": execution_plan,
         "status": "compiled"
-    })))
+    });
+    if let Some(run_id) = sanitize_context_id(context_run_for_bb.as_deref()) {
+        let _ = ensure_skill_router_context_run(&state, &run_id, goal_for_bb.as_deref()).await;
+        let task_id = format!("skill-router-compile-{skill_name}");
+        let _ = emit_skill_router_task(
+            &state,
+            &run_id,
+            &task_id.replace([' ', '/', ':'], "-"),
+            "skill_router.compile",
+            json!({
+                "title": format!("Compile Skill {skill_name}"),
+                "goal": goal_for_bb,
+                "result": response.clone(),
+            }),
+            ContextBlackboardTaskStatus::Done,
+        )
+        .await;
+    }
+    Ok(Json(response))
 }
 
 async fn skills_generate(
@@ -15925,6 +16124,45 @@ mod tests {
             Some("generated_scaffold")
         );
         assert!(generate_payload.get("artifacts").is_some());
+
+        let router_req = Request::builder()
+            .method("POST")
+            .uri("/skills/router/match")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "goal":"check my email every morning",
+                    "context_run_id":"ctx-run-skill-router-1"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let router_resp = app.clone().oneshot(router_req).await.expect("response");
+        assert_eq!(router_resp.status(), StatusCode::OK);
+
+        let blackboard_req = Request::builder()
+            .method("GET")
+            .uri("/context/runs/ctx-run-skill-router-1/blackboard")
+            .body(Body::empty())
+            .expect("request");
+        let blackboard_resp = app.clone().oneshot(blackboard_req).await.expect("response");
+        assert_eq!(blackboard_resp.status(), StatusCode::OK);
+        let blackboard_body = to_bytes(blackboard_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let blackboard_payload: Value = serde_json::from_slice(&blackboard_body).expect("json");
+        let tasks = blackboard_payload
+            .get("blackboard")
+            .and_then(|v| v.get("tasks"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(tasks.iter().any(|task| {
+            task.get("task_type")
+                .and_then(Value::as_str)
+                .map(|v| v == "skill_router.match")
+                .unwrap_or(false)
+        }));
 
         let compile_req = Request::builder()
             .method("POST")

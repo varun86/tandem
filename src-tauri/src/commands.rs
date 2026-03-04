@@ -9455,6 +9455,11 @@ pub async fn orchestrator_get_blackboard(
     state: State<'_, AppState>,
     run_id: String,
 ) -> Result<Blackboard> {
+    // Prefer engine-derived context run blackboard (single source of truth).
+    if let Ok(blackboard) = state.sidecar.context_run_blackboard(&run_id).await {
+        return Ok(context_blackboard_to_orch(blackboard));
+    }
+    // Compatibility fallback for legacy local-orchestrator runs.
     let workspace_path = state
         .get_workspace_path()
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;

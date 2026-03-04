@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added automation v2 DAG projection into blackboard tasks:
     - `POST /automations/v2/{id}/run_now`, `GET /automations/v2/{id}/runs`, and `GET /automations/v2/runs/{run_id}` now sync node status into context blackboard tasks
     - `GET /automations/v2/runs/{run_id}` now returns `contextRunID` for the derived context-run projection
+  - added skill-router blackboard mapping via optional `context_run_id` on:
+    - `POST /skills/router/match`
+    - `POST /skills/compile`
+  - skill-router routing/compile outcomes now materialize as blackboard tasks/events in the target context run
+  - desktop convergence step:
+    - Tauri `orchestrator_get_blackboard` now prefers engine `/context/runs/{run_id}/blackboard` and only falls back to local orchestrator store for legacy compatibility
   - task lifecycle now emits run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) with `patch_seq` and `task_rev` for UI projections
   - replay/drift responses now include blackboard task parity checks (revision/count/status) and replay-vs-persisted blackboard payloads for debugging
   - control panel swarm route now forwards blackboard patch streams (`blackboardPatches`) and blackboard-aware task state

@@ -18,6 +18,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added task lifecycle event emission on context runs (`context.task.created/claimed/started/completed/failed/...`) carrying `patch_seq` + `task_rev` for deterministic UI refresh.
   - Added optional `context_run_id` support on `/pack-builder/preview`, `/pack-builder/apply`, `/pack-builder/cancel`, and `/pack-builder/pending`; when provided, pack-builder lifecycle is mirrored into blackboard task state/events for that context run.
   - `automation_v2_dag` node status now projects into context blackboard tasks; `GET /automations/v2/runs/{run_id}` now includes `contextRunID` for that projection.
+  - Added optional `context_run_id` on `/skills/router/match` and `/skills/compile`; skill routing/compile outputs now emit blackboard task records for workflow coordination.
+  - Desktop convergence: Tauri `orchestrator_get_blackboard` now reads engine context-run blackboard first, with local orchestrator storage as temporary fallback.
   - Replay now includes blackboard parity checks for task revision/count/status and returns replayed/persisted blackboard payloads for drift diagnostics.
   - Control panel swarm shim now forwards blackboard patch streams, and `SwarmPage` now supports blackboard docked, expanded, and fullscreen debug views with decision lineage, agent lanes, workflow progress, artifact lineage, and drift indicators.
   - Added contract/regression tests for claim races, command-id idempotency, optimistic revision mismatch, monotonic patch sequence, and replay parity.
