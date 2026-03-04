@@ -1,0 +1,439 @@
+use super::*;
+
+fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
+    let mut users = value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if users.is_empty() {
+        users.push("*".to_string());
+    }
+    users
+}
+
+pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value> {
+    let effective = state.config.get_effective_value().await;
+    let channels = effective.get("channels").and_then(Value::as_object);
+
+    let telegram = channels
+        .and_then(|obj| obj.get("telegram"))
+        .and_then(Value::as_object);
+    let discord = channels
+        .and_then(|obj| obj.get("discord"))
+        .and_then(Value::as_object);
+    let slack = channels
+        .and_then(|obj| obj.get("slack"))
+        .and_then(Value::as_object);
+
+    let telegram_has_token = telegram
+        .and_then(|cfg| cfg.get("bot_token"))
+        .and_then(Value::as_str)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let discord_has_token = discord
+        .and_then(|cfg| cfg.get("bot_token"))
+        .and_then(Value::as_str)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let slack_has_token = slack
+        .and_then(|cfg| cfg.get("bot_token"))
+        .and_then(Value::as_str)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    Json(json!({
+        "telegram": {
+            "has_token": telegram_has_token,
+            "allowed_users": parse_allowed_users(telegram.and_then(|cfg| cfg.get("allowed_users"))),
+            "mention_only": telegram
+                .and_then(|cfg| cfg.get("mention_only"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            "style_profile": telegram
+                .and_then(|cfg| cfg.get("style_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or("default"),
+        },
+        "discord": {
+            "has_token": discord_has_token,
+            "allowed_users": parse_allowed_users(discord.and_then(|cfg| cfg.get("allowed_users"))),
+            "mention_only": discord
+                .and_then(|cfg| cfg.get("mention_only"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            "guild_id": discord
+                .and_then(|cfg| cfg.get("guild_id"))
+                .and_then(Value::as_str),
+        },
+        "slack": {
+            "has_token": slack_has_token,
+            "allowed_users": parse_allowed_users(slack.and_then(|cfg| cfg.get("allowed_users"))),
+            "channel_id": slack
+                .and_then(|cfg| cfg.get("channel_id"))
+                .and_then(Value::as_str),
+        }
+    }))
+}
+
+pub(super) async fn channels_status(State(state): State<AppState>) -> Json<Value> {
+    let status = state.channel_statuses().await;
+    Json(json!({
+        "telegram": status.get("telegram").cloned().unwrap_or_else(|| ChannelStatus {
+            enabled: false,
+            connected: false,
+            last_error: None,
+            active_sessions: 0,
+            meta: json!({}),
+        }),
+        "discord": status.get("discord").cloned().unwrap_or_else(|| ChannelStatus {
+            enabled: false,
+            connected: false,
+            last_error: None,
+            active_sessions: 0,
+            meta: json!({}),
+        }),
+        "slack": status.get("slack").cloned().unwrap_or_else(|| ChannelStatus {
+            enabled: false,
+            connected: false,
+            last_error: None,
+            active_sessions: 0,
+            meta: json!({}),
+        }),
+    }))
+}
+
+pub(super) async fn channels_verify(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    input: Option<Json<Value>>,
+) -> Result<Json<Value>, StatusCode> {
+    let normalized = name.to_ascii_lowercase();
+    let payload = input.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+
+    match normalized.as_str() {
+        "discord" => Ok(Json(discord_channel_verify(&state, &payload).await)),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+const DISCORD_FLAG_GATEWAY_PRESENCE: u64 = 1 << 12;
+const DISCORD_FLAG_GATEWAY_PRESENCE_LIMITED: u64 = 1 << 13;
+const DISCORD_FLAG_GATEWAY_MEMBERS: u64 = 1 << 14;
+const DISCORD_FLAG_GATEWAY_MEMBERS_LIMITED: u64 = 1 << 15;
+const DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT: u64 = 1 << 18;
+const DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED: u64 = 1 << 19;
+
+async fn discord_channel_verify(state: &AppState, payload: &Value) -> Value {
+    let provided_token = payload
+        .get("bot_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+
+    let effective = state.config.get_effective_value().await;
+    let saved_token = effective
+        .get("channels")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("discord"))
+        .and_then(Value::as_object)
+        .and_then(|cfg| cfg.get("bot_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+
+    let token = provided_token.or(saved_token).unwrap_or_default();
+    let has_token = !token.is_empty();
+    let mut hints: Vec<String> = Vec::new();
+    if !has_token {
+        hints.push("Add your Discord bot token, then click Save or Verify again.".to_string());
+        return json!({
+            "ok": false,
+            "channel": "discord",
+            "checks": {
+                "has_token": false,
+                "token_auth_ok": false,
+                "gateway_ok": false,
+                "message_content_intent_ok": false
+            },
+            "status_codes": {
+                "users_me": null,
+                "gateway_bot": null,
+                "application_me": null
+            },
+            "hints": hints,
+            "details": {}
+        });
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "channel": "discord",
+                "checks": {
+                    "has_token": true,
+                    "token_auth_ok": false,
+                    "gateway_ok": false,
+                    "message_content_intent_ok": false
+                },
+                "status_codes": {
+                    "users_me": null,
+                    "gateway_bot": null,
+                    "application_me": null
+                },
+                "hints": ["Local HTTP client setup failed. Restart Tandem and retry verification."],
+                "details": {
+                    "error": e.to_string()
+                }
+            });
+        }
+    };
+    let auth_header = format!("Bot {token}");
+
+    let users_resp = client
+        .get("https://discord.com/api/v10/users/@me")
+        .header("Authorization", auth_header.clone())
+        .send()
+        .await;
+    let gateway_resp = client
+        .get("https://discord.com/api/v10/gateway/bot")
+        .header("Authorization", auth_header.clone())
+        .send()
+        .await;
+    let app_resp = client
+        .get("https://discord.com/api/v10/applications/@me")
+        .header("Authorization", auth_header)
+        .send()
+        .await;
+
+    let users_status = users_resp.as_ref().ok().map(|r| r.status().as_u16());
+    let gateway_status = gateway_resp.as_ref().ok().map(|r| r.status().as_u16());
+    let app_status = app_resp.as_ref().ok().map(|r| r.status().as_u16());
+
+    let token_auth_ok = users_status == Some(200);
+    let gateway_ok = gateway_status == Some(200);
+
+    let mut bot_username: Option<String> = None;
+    let mut bot_id: Option<String> = None;
+    if let Ok(resp) = users_resp {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<Value>().await {
+                bot_username = v
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                bot_id = v.get("id").and_then(Value::as_str).map(ToString::to_string);
+            }
+        }
+    }
+
+    let mut app_flags: Option<u64> = None;
+    if let Ok(resp) = app_resp {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<Value>().await {
+                app_flags = v.get("flags").and_then(Value::as_u64);
+            }
+        }
+    }
+
+    let message_content_intent_ok = app_flags.is_some_and(|flags| {
+        flags
+            & (DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT | DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED)
+            != 0
+    });
+    let presence_intent_enabled = app_flags.is_some_and(|flags| {
+        flags & (DISCORD_FLAG_GATEWAY_PRESENCE | DISCORD_FLAG_GATEWAY_PRESENCE_LIMITED) != 0
+    });
+    let server_members_intent_enabled = app_flags.is_some_and(|flags| {
+        flags & (DISCORD_FLAG_GATEWAY_MEMBERS | DISCORD_FLAG_GATEWAY_MEMBERS_LIMITED) != 0
+    });
+
+    if !token_auth_ok {
+        if users_status == Some(401) {
+            hints.push("Discord rejected this token (401). Regenerate bot token in Developer Portal -> Bot and update Tandem.".to_string());
+        } else {
+            hints.push("Could not authenticate bot token with Discord `/users/@me`.".to_string());
+        }
+    }
+    if !gateway_ok {
+        if gateway_status == Some(429) {
+            hints.push("Discord gateway verification is rate-limited right now. Wait a few seconds and verify again.".to_string());
+        } else {
+            hints.push("Discord `/gateway/bot` check failed. Verify outbound network access to discord.com.".to_string());
+        }
+    }
+    if token_auth_ok && gateway_ok && !message_content_intent_ok {
+        hints.push("Enable `Message Content Intent` in Discord Developer Portal -> Bot -> Privileged Gateway Intents.".to_string());
+    }
+    if hints.is_empty() {
+        hints.push("Discord checks passed. If replies are still missing, verify channel/thread permissions: View Channel, Send Messages, Read Message History, Send Messages in Threads.".to_string());
+    }
+
+    let ok = token_auth_ok && gateway_ok && message_content_intent_ok;
+    json!({
+        "ok": ok,
+        "channel": "discord",
+        "checks": {
+            "has_token": has_token,
+            "token_auth_ok": token_auth_ok,
+            "gateway_ok": gateway_ok,
+            "message_content_intent_ok": message_content_intent_ok,
+            "presence_intent_enabled": presence_intent_enabled,
+            "server_members_intent_enabled": server_members_intent_enabled
+        },
+        "status_codes": {
+            "users_me": users_status,
+            "gateway_bot": gateway_status,
+            "application_me": app_status
+        },
+        "hints": hints,
+        "details": {
+            "bot_username": bot_username,
+            "bot_id": bot_id,
+            "application_flags": app_flags
+        }
+    })
+}
+
+pub(super) async fn channels_put(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(input): Json<Value>,
+) -> Result<Json<Value>, StatusCode> {
+    let normalized = name.to_ascii_lowercase();
+    let effective = state.config.get_effective_value().await;
+    let existing_channel_cfg = |channel: &str| -> Option<&serde_json::Map<String, Value>> {
+        effective
+            .get("channels")
+            .and_then(Value::as_object)
+            .and_then(|obj| obj.get(channel))
+            .and_then(Value::as_object)
+    };
+    let existing_bot_token = |channel: &str| -> Option<String> {
+        existing_channel_cfg(channel)
+            .and_then(|cfg| cfg.get("bot_token"))
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let existing_channel_id = |channel: &str| -> Option<String> {
+        existing_channel_cfg(channel)
+            .and_then(|cfg| cfg.get("channel_id"))
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let mut project = state.config.get_project_value().await;
+    let Some(root) = project.as_object_mut() else {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    let channels = root
+        .entry("channels".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(channels_obj) = channels.as_object_mut() else {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    match normalized.as_str() {
+        "telegram" => {
+            let mut cfg: TelegramConfigFile =
+                serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            if cfg.bot_token.trim().is_empty() {
+                cfg.bot_token = existing_bot_token("telegram").unwrap_or_default();
+            }
+            if cfg.bot_token.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            channels_obj.insert("telegram".to_string(), json!(cfg));
+        }
+        "discord" => {
+            let mut cfg: DiscordConfigFile =
+                serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            if cfg.bot_token.trim().is_empty() {
+                cfg.bot_token = existing_bot_token("discord").unwrap_or_default();
+            }
+            if cfg.bot_token.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            channels_obj.insert("discord".to_string(), json!(cfg));
+        }
+        "slack" => {
+            let mut cfg: SlackConfigFile =
+                serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            if cfg.bot_token.trim().is_empty() {
+                cfg.bot_token = existing_bot_token("slack").unwrap_or_default();
+            }
+            if cfg.channel_id.trim().is_empty() {
+                cfg.channel_id = existing_channel_id("slack").unwrap_or_default();
+            }
+            if cfg.bot_token.trim().is_empty() || cfg.channel_id.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            channels_obj.insert("slack".to_string(), json!(cfg));
+        }
+        _ => return Err(StatusCode::NOT_FOUND),
+    }
+    state
+        .config
+        .replace_project_value(project)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .restart_channel_listeners()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+pub(super) async fn channels_delete(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut project = state.config.get_project_value().await;
+    let Some(root) = project.as_object_mut() else {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    let channels = root
+        .entry("channels".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(channels_obj) = channels.as_object_mut() else {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    channels_obj.remove(&name.to_ascii_lowercase());
+    state
+        .config
+        .replace_project_value(project)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .restart_channel_listeners()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+pub(super) async fn admin_reload_config(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    state
+        .providers
+        .reload(state.config.get().await.into())
+        .await;
+    state
+        .restart_channel_listeners()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({"ok": true})))
+}

@@ -39,3 +39,11 @@ Coordinate a large multi-file build without losing scope, status, or ownership.
 - Do not implement from chat memory; implement from `WORKBOARD.md`.
 - Do not mark `done` without explicit verification command/output.
 - Do not create orphan docs without linking them from `README.md` and `IMPLEMENTATION_PLAN.md`.
+
+## Rust Module Size Rule
+
+- This rule is mandatory for all newly created Rust source files in this repository.
+- Any new `.rs` file must stay under 600 lines.
+- If a file approaches 500 lines, split it by feature responsibility before adding more logic.
+- Route registration, middleware, data models, and handlers must live in separate Rust modules.
+- PRs adding a new Rust file over 600 lines are non-compliant and must be refactored before merge.

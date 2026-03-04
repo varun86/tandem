@@ -1,0 +1,105 @@
+use super::*;
+
+#[tokio::test]
+async fn capabilities_resolve_prefers_arcade_when_requested() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let req = Request::builder()
+            .method("POST")
+            .uri("/capabilities/resolve")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "workflow_id": "wf-pr",
+                    "required_capabilities": ["github.create_pull_request"],
+                    "provider_preference": ["arcade", "composio"],
+                    "available_tools": [
+                        {"provider":"composio","tool_name":"mcp.composio.github_create_pull_request","schema":{}},
+                        {"provider":"arcade","tool_name":"mcp.arcade.github_create_pull_request","schema":{}}
+                    ]
+                })
+                .to_string(),
+            ))
+            .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let provider = payload
+        .get("resolution")
+        .and_then(|v| v.get("resolved"))
+        .and_then(|v| v.as_array())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("provider"))
+        .and_then(|v| v.as_str());
+    assert_eq!(provider, Some("arcade"));
+}
+
+#[tokio::test]
+async fn capabilities_resolve_returns_missing_capability_error() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/capabilities/resolve")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "workflow_id": "wf-pr",
+                "required_capabilities": ["github.create_pull_request"],
+                "provider_preference": ["arcade", "composio"],
+                "available_tools": []
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("code").and_then(|v| v.as_str()),
+        Some("missing_capability")
+    );
+    assert_eq!(
+        payload.get("workflow_id").and_then(|v| v.as_str()),
+        Some("wf-pr")
+    );
+}
+
+#[tokio::test]
+async fn capabilities_readiness_returns_blocking_issues_when_unbound() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/capabilities/readiness")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "workflow_id": "wf-readiness",
+                "required_capabilities": ["github.create_pull_request"],
+                "provider_preference": ["composio", "arcade", "mcp"],
+                "available_tools": []
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let readiness = payload.get("readiness").cloned().unwrap_or(Value::Null);
+    assert_eq!(
+        readiness.get("runnable").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert!(readiness
+        .get("unbound_capabilities")
+        .and_then(|v| v.as_array())
+        .is_some_and(|rows| !rows.is_empty()));
+    assert!(readiness
+        .get("blocking_issues")
+        .and_then(|v| v.as_array())
+        .is_some_and(|rows| !rows.is_empty()));
+}

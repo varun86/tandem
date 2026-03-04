@@ -1,0 +1,17 @@
+use axum::routing::{get, post};
+use axum::Router;
+
+use super::*;
+
+pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route("/resource", get(resource_list))
+        .route("/resource/events", get(resource_events))
+        .route(
+            "/resource/{*key}",
+            get(resource_get)
+                .put(resource_put)
+                .patch(resource_patch)
+                .delete(resource_delete),
+        )
+}

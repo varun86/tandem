@@ -1,0 +1,400 @@
+use super::*;
+
+#[tokio::test]
+async fn memory_put_enforces_default_write_scope() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-1",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "project"
+                },
+                "kind": "note",
+                "content": "should fail without write scope",
+                "classification": "internal"
+            })
+            .to_string(),
+        ))
+        .expect("request");
+
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn memory_put_then_search_in_session_scope() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-2",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "solution_capsule",
+                "content": "retry budget extension pattern",
+                "classification": "internal",
+                "artifact_refs": ["artifact://run-2/task-1/patch.diff"]
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-2",
+                "query": "budget extension",
+                "read_scopes": ["session"],
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "limit": 5
+            })
+            .to_string(),
+        ))
+        .expect("search request");
+    let search_resp = app.oneshot(search_req).await.expect("response");
+    assert_eq!(search_resp.status(), StatusCode::OK);
+    let body = to_bytes(search_resp.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let result_count = payload
+        .get("results")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    assert!(result_count >= 1);
+}
+
+#[tokio::test]
+async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let capability = json!({
+        "run_id": "run-3",
+        "subject": "reviewer-user",
+        "org_id": "org-1",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "memory": {
+            "read_tiers": ["session", "project"],
+            "write_tiers": ["session"],
+            "promote_targets": ["project"],
+            "require_review_for_promote": true,
+            "allow_auto_use_tiers": ["curated"]
+        },
+        "expires_at": 9999999999999u64
+    });
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "solution_capsule",
+                "content": concat!("-----BEGIN", " PRIVATE KEY-----"),
+                "classification": "restricted",
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_body = to_bytes(put_resp.into_body(), usize::MAX)
+        .await
+        .expect("put body");
+    let put_payload: Value = serde_json::from_slice(&put_body).expect("put json");
+    let memory_id = put_payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("memory id")
+        .to_string();
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri("/memory/promote")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3",
+                "source_memory_id": memory_id,
+                "from_tier": "session",
+                "to_tier": "project",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "reason": "promote test",
+                "review": {
+                    "required": true,
+                    "reviewer_id": "user-1",
+                    "approval_id": "appr-1"
+                },
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::OK);
+    let promote_body = to_bytes(promote_resp.into_body(), usize::MAX)
+        .await
+        .expect("promote body");
+    let promote_payload: Value = serde_json::from_slice(&promote_body).expect("promote json");
+    assert_eq!(
+        promote_payload.get("promoted").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        promote_payload
+            .get("scrub_report")
+            .and_then(|v| v.get("status"))
+            .and_then(|v| v.as_str()),
+        Some("blocked")
+    );
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-3")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_promote_exists = audit_payload
+        .get("events")
+        .and_then(|v| v.as_array())
+        .map(|events| {
+            events.iter().any(|event| {
+                event.get("action").and_then(|v| v.as_str()) == Some("memory_promote")
+                    && event.get("status").and_then(|v| v.as_str()) == Some("blocked")
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_promote_exists);
+}
+
+#[tokio::test]
+async fn memory_list_and_delete_admin_routes_work() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-4",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "admin memory test",
+                "artifact_refs": [],
+                "classification": "internal",
+                "metadata": null
+            })
+            .to_string(),
+        ))
+        .expect("memory put request");
+    let put_resp = app
+        .clone()
+        .oneshot(put_req)
+        .await
+        .expect("memory put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_body = to_bytes(put_resp.into_body(), usize::MAX)
+        .await
+        .expect("memory put body");
+    let put_payload: Value = serde_json::from_slice(&put_body).expect("memory put json");
+    let memory_id = put_payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("memory id")
+        .to_string();
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/memory?limit=20")
+        .body(Body::empty())
+        .expect("memory list request");
+    let list_resp = app
+        .clone()
+        .oneshot(list_req)
+        .await
+        .expect("memory list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("memory list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("memory list json");
+    let contains = list_payload
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .any(|row| row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str()))
+        })
+        .unwrap_or(false);
+    assert!(contains);
+
+    let del_req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/memory/{memory_id}"))
+        .body(Body::empty())
+        .expect("memory delete request");
+    let del_resp = app
+        .clone()
+        .oneshot(del_req)
+        .await
+        .expect("memory delete response");
+    assert_eq!(del_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn memory_demote_hides_item_from_search_results() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-5",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "demote me from search",
+                "classification": "internal"
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_body = to_bytes(put_resp.into_body(), usize::MAX)
+        .await
+        .expect("put body");
+    let put_payload: Value = serde_json::from_slice(&put_body).expect("put json");
+    let memory_id = put_payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("memory id")
+        .to_string();
+
+    let demote_req = Request::builder()
+        .method("POST")
+        .uri("/memory/demote")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": memory_id,
+                "run_id": "run-5"
+            })
+            .to_string(),
+        ))
+        .expect("demote request");
+    let demote_resp = app
+        .clone()
+        .oneshot(demote_req)
+        .await
+        .expect("demote response");
+    assert_eq!(demote_resp.status(), StatusCode::OK);
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-5",
+                "query": "demote me from search",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "read_scopes": ["session"],
+                "limit": 10
+            })
+            .to_string(),
+        ))
+        .expect("search request");
+    let search_resp = app
+        .clone()
+        .oneshot(search_req)
+        .await
+        .expect("search response");
+    assert_eq!(search_resp.status(), StatusCode::OK);
+    let search_body = to_bytes(search_resp.into_body(), usize::MAX)
+        .await
+        .expect("search body");
+    let search_payload: Value = serde_json::from_slice(&search_body).expect("search json");
+    let count = search_payload
+        .get("results")
+        .and_then(|v| v.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or_default();
+    assert_eq!(count, 0);
+}

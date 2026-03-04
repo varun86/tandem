@@ -1430,21 +1430,138 @@ async function appendContextRunEvent(session, runId, eventType, status, payload 
 }
 
 function parseObjectiveTodos(objective, max = 6) {
-  const lines = String(objective || "")
+  const compact = String(objective || "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const todos = [];
-  for (const line of lines) {
-    if (todos.length >= max) break;
-    const normalized = line.replace(/^[-*#\d\.\)\[\]\s]+/, "").trim();
-    if (normalized.length < 8) continue;
-    todos.push(normalized);
+    .map((line) => line.replace(/^[-*#\d\.\)\[\]\s]+/, "").trim())
+    .filter(Boolean)
+    .join(" ");
+  const normalized = compact.replace(/\s+/g, " ").trim();
+  if (!normalized) return ["Execute requested objective"];
+  const maxChars = Math.max(80, Number(max || 6) * 80);
+  const content = normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}...` : normalized;
+  return [content];
+}
+
+function textFromMessageParts(parts) {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((part) => {
+      if (!part) return "";
+      if (typeof part === "string") return part;
+      if (typeof part.text === "string") return part.text;
+      if (typeof part.delta === "string") return part.delta;
+      if (typeof part.content === "string") return part.content;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function roleOfMessage(row) {
+  return String(row?.info?.role || row?.role || row?.message_role || row?.type || row?.author || "assistant")
+    .trim()
+    .toLowerCase();
+}
+
+function textOfMessage(row) {
+  const fromParts = textFromMessageParts(row?.parts);
+  if (fromParts) return fromParts;
+  const direct = [row?.content, row?.text, row?.message, row?.delta, row?.body].find(
+    (value) => typeof value === "string" && value.trim().length > 0
+  );
+  if (typeof direct === "string") return direct.trim();
+  if (Array.isArray(row?.content)) {
+    return row.content
+      .map((chunk) => {
+        if (!chunk) return "";
+        if (typeof chunk === "string") return chunk;
+        if (typeof chunk?.text === "string") return chunk.text;
+        if (typeof chunk?.content === "string") return chunk.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
   }
-  if (!todos.length) {
-    return ["Draft implementation plan", "Execute implementation", "Validate output"];
+  return "";
+}
+
+function extractAssistantText(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (roleOfMessage(list[i]) !== "assistant") continue;
+    const text = textOfMessage(list[i]);
+    if (text) return text;
   }
-  return todos;
+  return "";
+}
+
+function parsePlanTasksFromAssistant(assistantText, maxTasks = 8) {
+  const normalizedMax = Math.max(1, Number(maxTasks) || 8);
+  const fencedJson = String(assistantText || "").match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidateJson = (fencedJson?.[1] || String(assistantText || "")).trim();
+  const parsedTodos = (() => {
+    try {
+      const payload = JSON.parse(candidateJson);
+      if (Array.isArray(payload)) return payload;
+      if (Array.isArray(payload?.tasks)) return payload.tasks;
+      return [];
+    } catch {
+      return [];
+    }
+  })();
+  const fromJson = parsedTodos
+    .map((row) => {
+      if (typeof row === "string") return row.trim();
+      return String(row?.title || row?.task || row?.content || "").trim();
+    })
+    .filter((row) => row.length >= 6);
+  if (fromJson.length) return fromJson.slice(0, normalizedMax);
+  return String(assistantText || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*#\d\.\)\[\]\s]+/, "").trim())
+    .filter((line) => line.length >= 6)
+    .slice(0, normalizedMax);
+}
+
+async function generatePlanTodosWithLLM(session, run, maxTasks) {
+  const runId = String(run?.run_id || "").trim();
+  if (!runId) throw new Error("Missing run id for plan generation.");
+  const sessionId = await createExecutionSession(session, run);
+  const prompt = [
+    "You are planning a swarm run.",
+    "",
+    `Objective: ${String(run?.objective || "").trim()}`,
+    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
+    "",
+    `Generate ${Math.max(1, Number(maxTasks) || 3)} concise, execution-ready implementation steps.`,
+    "Return strict JSON only in this shape:",
+    '{"tasks":[{"title":"..."},{"title":"..."}]}',
+    "Do not include explanations.",
+  ].join("\n");
+  const promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
+    method: "POST",
+    timeoutMs: 3 * 60 * 1000,
+    body: {
+      parts: [{ type: "text", text: prompt }],
+    },
+  });
+  const syncRows = Array.isArray(promptResponse) ? promptResponse : [];
+  const fromSync = extractAssistantText(syncRows);
+  if (fromSync) {
+    return { sessionId, tasks: parsePlanTasksFromAssistant(fromSync, maxTasks), assistantText: fromSync };
+  }
+  const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
+    () => null
+  );
+  const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+  const fromSnapshot = extractAssistantText(messages);
+  return {
+    sessionId,
+    tasks: parsePlanTasksFromAssistant(fromSnapshot, maxTasks),
+    assistantText: fromSnapshot,
+  };
 }
 
 function isRunTerminal(status) {
@@ -1470,7 +1587,23 @@ async function seedContextRunSteps(session, runId, objective) {
 }
 
 async function createExecutionSession(session, run) {
-  const workspaceRoot = String(run?.workspace?.canonical_path || REPO_ROOT).trim();
+  const workspaceCandidates = [
+    run?.workspace?.canonical_path,
+    run?.workspace?.workspace_root,
+    run?.workspace_root,
+    swarmState.workspaceRoot,
+    swarmState.repoRoot,
+    REPO_ROOT,
+  ];
+  const workspaceRootRaw = workspaceCandidates
+    .map((value) => String(value || "").trim())
+    .find((value) => value.length > 0);
+  const workspaceRoot = await workspaceExistsAsDirectory(workspaceRootRaw || REPO_ROOT);
+  if (!workspaceRoot) {
+    throw new Error(
+      `Workspace root does not exist or is not a directory: ${resolve(String(workspaceRootRaw || REPO_ROOT))}`
+    );
+  }
   const resolved = await resolveExecutionModel(session, run);
   const modelProvider = resolved.provider;
   const modelId = resolved.model;
@@ -1789,22 +1922,28 @@ async function requeueInProgressSteps(session, runId) {
 
 async function startSwarm(session, config = {}) {
   const objective = String(config.objective || "Ship a small feature end-to-end").trim();
-  const workspaceRootRaw = String(config.workspaceRoot || REPO_ROOT).trim();
+  const workspaceCandidates = [
+    config.workspaceRoot,
+    config.workspace_root,
+    config.workspace?.canonical_path,
+    config.workspace?.workspace_root,
+    config.repoRoot,
+    config.repo_root,
+    swarmState.workspaceRoot,
+    REPO_ROOT,
+  ];
+  const workspaceRootRaw = workspaceCandidates
+    .map((value) => String(value || "").trim())
+    .find((value) => value.length > 0);
   const workspaceRoot = await workspaceExistsAsDirectory(workspaceRootRaw);
   if (!workspaceRoot) {
-    throw new Error(`Workspace root does not exist or is not a directory: ${resolve(workspaceRootRaw)}`);
+    throw new Error(
+      `Workspace root does not exist or is not a directory: ${resolve(String(workspaceRootRaw || REPO_ROOT))}`
+    );
   }
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
   let modelProvider = String(config.modelProvider || "").trim();
   let modelId = String(config.modelId || "").trim();
-  if (!modelProvider || !modelId) {
-    const defaults = await fetchEngineDefaultModel(session);
-    modelProvider = modelProvider || defaults.provider;
-    modelId = modelId || defaults.model;
-  }
-  if (!modelProvider || !modelId) {
-    throw new Error("MODEL_SELECTION_REQUIRED: configure a default provider/model before starting swarm runs.");
-  }
   const mcpServers = (Array.isArray(config.mcpServers) ? config.mcpServers : [])
     .map((entry) => String(entry || "").trim())
     .filter(Boolean)
@@ -1837,13 +1976,55 @@ async function startSwarm(session, config = {}) {
     model_id: modelId || undefined,
     mcp_servers: mcpServers,
   });
-  await seedContextRunSteps(session, runId, objective);
-  await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
-    source: "local_objective_parser",
-    note: "Initial steps were seeded from objective text. No model call yet.",
+  const synced = (() => engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
+    method: "POST",
+    body: {
+      replace: true,
+      todos: [],
+      source_session_id: null,
+      source_run_id: runId,
+    },
+  }))();
+  await synced;
+  try {
+    const llmPlan = await generatePlanTodosWithLLM(session, run, maxTasks);
+    const todoRows = (Array.isArray(llmPlan.tasks) ? llmPlan.tasks : [])
+      .map((content, idx) => ({
+        id: `step-${idx + 1}`,
+        content: String(content || "").trim(),
+        status: "pending",
+      }))
+      .filter((row) => row.content.length >= 6)
+      .slice(0, Math.max(1, maxTasks));
+    if (!todoRows.length) throw new Error("LLM planner returned no valid tasks.");
+    await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
+      method: "POST",
+      body: {
+        replace: true,
+        todos: todoRows,
+        source_session_id: llmPlan.sessionId || null,
+        source_run_id: runId,
+      },
+    });
+    await appendContextRunEvent(session, runId, "plan_seeded_llm", "planning", {
+      source: "llm_objective_planner",
+      session_id: llmPlan.sessionId || null,
+      task_count: todoRows.length,
+    });
+  } catch (planningError) {
+    await seedContextRunSteps(session, runId, objective);
+    await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
+      source: "local_objective_parser",
+      note: `Fallback planner used: ${String(planningError?.message || planningError || "unknown planning failure")}`,
+    });
+  }
+  await appendContextRunEvent(session, runId, "plan_approved", "running", {
+    source_client: "control_panel",
+    approval_mode: "auto",
   });
+  const started = await driveContextRunExecution(session, runId);
 
-  swarmState.status = "planning";
+  swarmState.status = started ? "running" : "planning";
   swarmState.startedAt = Date.now();
   swarmState.stoppedAt = null;
   swarmState.objective = objective;
@@ -1851,9 +2032,9 @@ async function startSwarm(session, config = {}) {
   swarmState.maxTasks = maxTasks;
   swarmState.modelProvider = modelProvider;
   swarmState.modelId = modelId;
-  swarmState.resolvedModelProvider = modelProvider;
-  swarmState.resolvedModelId = modelId;
-  swarmState.modelResolutionSource = "start";
+  swarmState.resolvedModelProvider = "";
+  swarmState.resolvedModelId = "";
+  swarmState.modelResolutionSource = "deferred";
   swarmState.mcpServers = mcpServers;
   swarmState.repoRoot = workspaceRoot;
   swarmState.lastError = "";
@@ -1944,6 +2125,33 @@ async function handleSwarmApi(req, res, session) {
       recent: runs.slice(0, 30),
       hiddenCount: hiddenRunIds.size,
     });
+    return true;
+  }
+
+  if (pathname === "/api/swarm/workspaces/list" && req.method === "GET") {
+    try {
+      const requestedDir = String(url.searchParams.get("dir") || swarmState.workspaceRoot || REPO_ROOT).trim();
+      const currentDir = await workspaceExistsAsDirectory(requestedDir);
+      if (!currentDir) throw new Error(`Directory not found: ${resolve(requestedDir || REPO_ROOT)}`);
+      const entries = await readdir(currentDir, { withFileTypes: true });
+      const directories = entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => ({
+          name: entry.name,
+          path: resolve(currentDir, entry.name),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 500);
+      const parent = resolve(currentDir, "..");
+      sendJson(res, 200, {
+        ok: true,
+        dir: currentDir,
+        parent: parent === currentDir ? null : parent,
+        directories,
+      });
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
     return true;
   }
 

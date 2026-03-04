@@ -52,6 +52,8 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [blackboardMode, setBlackboardMode] = useState<BlackboardMode>("docked");
   const [expandedTaskTitles, setExpandedTaskTitles] = useState<Record<string, boolean>>({});
+  const [workspaceBrowserOpen, setWorkspaceBrowserOpen] = useState(false);
+  const [workspaceBrowserDir, setWorkspaceBrowserDir] = useState("");
 
   const statusQuery = useQuery({
     queryKey: ["swarm", "status"],
@@ -78,6 +80,11 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
     queryFn: () => api(`/api/swarm/run/${encodeURIComponent(runId)}`),
     refetchInterval: 4500,
   });
+  const workspaceBrowserQuery = useQuery({
+    queryKey: ["swarm", "workspace-browser", workspaceBrowserDir],
+    enabled: workspaceBrowserOpen && !!workspaceBrowserDir,
+    queryFn: () => api(`/api/swarm/workspaces/list?dir=${encodeURIComponent(workspaceBrowserDir)}`),
+  });
 
   const tasks = normalizeTasks(runQuery.data);
   const runEvents = Array.isArray(runQuery.data?.events) ? runQuery.data.events : [];
@@ -85,11 +92,26 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
   const blackboardPatches = Array.isArray(runQuery.data?.blackboardPatches)
     ? runQuery.data.blackboardPatches
     : [];
+  const hasBlackboardSnapshot = !!blackboard;
   const replayDrift = runQuery.data?.replay?.drift || {};
   const runStatus = String(runQuery.data?.run?.status || "")
     .trim()
     .toLowerCase();
+  const runWorkspaceRoot = String(runQuery.data?.run?.workspace?.canonical_path || "").trim();
+  const selectedWorkspaceRoot = String(
+    workspaceRoot || statusQuery.data?.workspaceRoot || ""
+  ).trim();
+  const effectiveWorkspaceRoot = runWorkspaceRoot || selectedWorkspaceRoot || "n/a";
+  const workspaceMismatch =
+    !!runWorkspaceRoot && !!selectedWorkspaceRoot && runWorkspaceRoot !== selectedWorkspaceRoot;
   const lastErrorText = String(statusQuery.data?.lastError || "").trim();
+  const workspaceDirectories = Array.isArray(workspaceBrowserQuery.data?.directories)
+    ? workspaceBrowserQuery.data.directories
+    : [];
+  const workspaceParentDir = String(workspaceBrowserQuery.data?.parent || "").trim();
+  const workspaceCurrentBrowseDir = String(
+    workspaceBrowserQuery.data?.dir || workspaceBrowserDir || ""
+  ).trim();
 
   const sessionsByStepId = useMemo(() => {
     const map = new Map<string, string>();
@@ -341,6 +363,13 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
         </div>
       </div>
 
+      {!hasBlackboardSnapshot ? (
+        <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-950/20 p-2 text-xs text-amber-200">
+          Blackboard snapshot is unavailable for this run right now. Task board data is still live
+          from context run steps.
+        </div>
+      ) : null}
+
       <div className="mb-3 grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border border-slate-700/60 bg-slate-900/30 p-3">
           <div className="mb-1 text-sm font-medium">Decision Lineage</div>
@@ -463,7 +492,7 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
     <>
       <div className="grid min-w-0 gap-4 overflow-x-hidden xl:grid-cols-[1.05fr_1fr]">
         <PageCard title="Swarm Context Runs" subtitle="Create, monitor, and control live runs">
-          <div className="mb-3 grid gap-2 md:grid-cols-[1fr_140px_auto]">
+          <div className="mb-3 grid gap-2 md:grid-cols-[1fr_140px_auto_auto]">
             <input
               className="tcp-input"
               placeholder="workspace root"
@@ -475,6 +504,7 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
               type="number"
               min="1"
               value={maxTasks}
+              title="Maximum planned tasks (not parallel agents)"
               onInput={(e) => setMaxTasks((e.target as HTMLInputElement).value)}
             />
             <button
@@ -484,7 +514,28 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
             >
               New Run
             </button>
+            <button
+              className="tcp-btn"
+              onClick={() => {
+                const seed = String(
+                  workspaceRoot || runWorkspaceRoot || statusQuery.data?.workspaceRoot || ""
+                ).trim();
+                setWorkspaceBrowserDir(seed || "/");
+                setWorkspaceBrowserOpen(true);
+              }}
+            >
+              Browse
+            </button>
           </div>
+          <div className="mb-2 tcp-subtle text-xs">
+            Task count controls plan decomposition count, not number of parallel agents.
+          </div>
+          {workspaceMismatch ? (
+            <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-950/20 p-2 text-xs text-amber-200">
+              Selected workspace is {selectedWorkspaceRoot}, but current run is using{" "}
+              {runWorkspaceRoot}.
+            </div>
+          ) : null}
           <textarea
             className="tcp-input mb-3 min-h-[84px]"
             value={objective}
@@ -492,13 +543,6 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
           />
 
           <div className="mb-3 flex flex-wrap gap-2">
-            <button
-              className="tcp-btn"
-              disabled={!runId}
-              onClick={() => actionMutation.mutate({ path: "/api/swarm/approve", body: { runId } })}
-            >
-              Approve
-            </button>
             <button
               className="tcp-btn"
               disabled={!runId}
@@ -530,6 +574,9 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
               Cancel
             </button>
           </div>
+          <div className="mb-3 tcp-subtle text-xs">
+            New Run now auto-starts planning and execution.
+          </div>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="tcp-subtle">
               visible runs: {runs.length}
@@ -547,7 +594,7 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
               Hide Completed
             </button>
           </div>
-          <div className="mb-3 grid gap-2 md:grid-cols-3">
+          <div className="mb-3 grid gap-2 md:grid-cols-4">
             <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-2 text-xs">
               <div className="font-medium">Resolved model</div>
               <div className="tcp-subtle">
@@ -569,6 +616,10 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
                   ? `: ${String(statusQuery.data?.executorReason || "")}`
                   : ""}
               </div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-2 text-xs">
+              <div className="font-medium">Run workspace</div>
+              <div className="tcp-subtle break-all">{effectiveWorkspaceRoot}</div>
             </div>
           </div>
           {shouldShowLastError ? (
@@ -794,15 +845,64 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
             )}
           </div>
 
-          {blackboard && blackboardMode === "docked" ? renderBlackboardPanel(false) : null}
+          {blackboardMode === "docked" ? renderBlackboardPanel(false) : null}
         </PageCard>
 
-        {blackboard && blackboardMode === "expanded" ? (
+        {blackboardMode === "expanded" ? (
           <div className="xl:col-span-2">{renderBlackboardPanel(false)}</div>
         ) : null}
       </div>
 
-      {blackboard && blackboardMode === "fullscreen" ? renderBlackboardPanel(true) : null}
+      {blackboardMode === "fullscreen" ? renderBlackboardPanel(true) : null}
+      {workspaceBrowserOpen ? (
+        <div className="tcp-confirm-overlay">
+          <div className="tcp-confirm-dialog max-w-2xl">
+            <h3 className="tcp-confirm-title">Select Workspace Folder</h3>
+            <p className="tcp-confirm-message">Current: {workspaceCurrentBrowseDir || "n/a"}</p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button
+                className="tcp-btn"
+                onClick={() => {
+                  if (!workspaceParentDir) return;
+                  setWorkspaceBrowserDir(workspaceParentDir);
+                }}
+                disabled={!workspaceParentDir}
+              >
+                Up
+              </button>
+              <button
+                className="tcp-btn-primary"
+                onClick={() => {
+                  if (!workspaceCurrentBrowseDir) return;
+                  setWorkspaceRoot(workspaceCurrentBrowseDir);
+                  setWorkspaceBrowserOpen(false);
+                  toast("ok", `Workspace selected: ${workspaceCurrentBrowseDir}`);
+                }}
+              >
+                Select This Folder
+              </button>
+              <button className="tcp-btn" onClick={() => setWorkspaceBrowserOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
+              {workspaceDirectories.length ? (
+                workspaceDirectories.map((entry: any) => (
+                  <button
+                    key={String(entry?.path || entry?.name)}
+                    className="tcp-list-item mb-1 w-full text-left"
+                    onClick={() => setWorkspaceBrowserDir(String(entry?.path || ""))}
+                  >
+                    {String(entry?.name || entry?.path || "")}
+                  </button>
+                ))
+              ) : (
+                <EmptyState text="No subdirectories in this folder." />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
