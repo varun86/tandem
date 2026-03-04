@@ -217,9 +217,7 @@ function WireGraph({ tasks, pulses }: { tasks: SwarmTaskRecord[]; pulses: WirePu
 
 export default function Swarm() {
   const now = useNow(1000);
-  const [workspaceRoot, setWorkspaceRootInput] = useState(
-    getWorkspaceRoot() || "/home/evan/tandem"
-  );
+  const [workspaceRoot, setWorkspaceRootInput] = useState(getWorkspaceRoot() || "");
   const [objective, setObjective] = useState(
     "Implement a focused feature, run tests, open PRs, and prepare review notes"
   );

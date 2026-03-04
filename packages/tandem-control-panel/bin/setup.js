@@ -3,7 +3,7 @@
 import { spawn } from "child_process";
 import { createServer } from "http";
 import { readFileSync, existsSync, createReadStream, createWriteStream } from "fs";
-import { mkdir, readdir, stat, rm, readFile, writeFile } from "fs/promises";
+import { mkdir, readdir, stat, rm, readFile, writeFile, readlink } from "fs/promises";
 import { randomBytes } from "crypto";
 import { join, dirname, extname, normalize, resolve, basename } from "path";
 import { Transform } from "stream";
@@ -128,6 +128,12 @@ const PORTAL_PORT = Number.parseInt(process.env.TANDEM_CONTROL_PANEL_PORT || "39
 const ENGINE_HOST = (process.env.TANDEM_ENGINE_HOST || "127.0.0.1").trim();
 const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 10);
 const ENGINE_URL = (process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`).replace(/\/+$/, "");
+const SWARM_RESOURCE_KEYS = [
+  String(process.env.SWARM_RESOURCE_KEY || "").trim(),
+  "swarm.active_tasks",
+  "project/swarm.active_tasks",
+].filter((key, idx, arr) => key && arr.indexOf(key) === idx);
+const SWARM_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-runs.json");
 const AUTO_START_ENGINE = (process.env.TANDEM_CONTROL_PANEL_AUTO_START_ENGINE || "1") !== "0";
 const CONFIGURED_ENGINE_TOKEN = (
   process.env.TANDEM_CONTROL_PANEL_ENGINE_TOKEN ||
@@ -190,7 +196,21 @@ const swarmState = {
   objective: "",
   workspaceRoot: REPO_ROOT,
   maxTasks: 3,
+  modelProvider: "",
+  modelId: "",
+  mcpServers: [],
+  repoRoot: "",
+  preflight: {
+    gitAvailable: null,
+    repoReady: false,
+    autoInitialized: false,
+    code: "",
+    reason: "",
+    guidance: "",
+  },
   lastError: "",
+  runId: "",
+  attachedPid: null,
 };
 const swarmSseClients = new Set();
 
@@ -207,6 +227,7 @@ function runCmd(bin, args = [], options = {}) {
     const child = spawn(bin, args, {
       stdio: options.stdio || "pipe",
       env: options.env || process.env,
+      cwd: options.cwd || undefined,
     });
     let stdout = "";
     let stderr = "";
@@ -229,6 +250,284 @@ function runCmd(bin, args = [], options = {}) {
       reject(new Error(`${bin} ${args.join(" ")} exited ${code}: ${stderr || stdout}`));
     });
   });
+}
+
+async function loadSwarmRunsHistory() {
+  try {
+    const raw = await readFile(SWARM_RUNS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.runs)) return [];
+    return parsed.runs
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({
+        runId: String(row.runId || "").trim(),
+        objective: String(row.objective || "").trim(),
+        workspaceRoot: String(row.workspaceRoot || "").trim(),
+        status: String(row.status || "unknown").trim(),
+        startedAt: Number(row.startedAt || 0) || 0,
+        stoppedAt: Number(row.stoppedAt || 0) || 0,
+        pid: Number(row.pid || 0) || null,
+        attached: row.attached === true,
+      }))
+      .filter((row) => row.runId || row.workspaceRoot || row.pid);
+  } catch {
+    return [];
+  }
+}
+
+async function saveSwarmRunsHistory(runs = []) {
+  const payload = JSON.stringify({ version: 1, updatedAtMs: Date.now(), runs: runs.slice(-100) }, null, 2);
+  await mkdir(dirname(SWARM_RUNS_PATH), { recursive: true });
+  await writeFile(SWARM_RUNS_PATH, payload, "utf8");
+}
+
+async function recordSwarmRun(update = {}) {
+  try {
+    const runId = String(update.runId || "").trim() || randomBytes(8).toString("hex");
+    const runs = await loadSwarmRunsHistory();
+    const idx = runs.findIndex((row) => row.runId === runId);
+    const next = {
+      runId,
+      objective: String(update.objective || "").trim(),
+      workspaceRoot: String(update.workspaceRoot || "").trim(),
+      status: String(update.status || "unknown").trim(),
+      startedAt: Number(update.startedAt || 0) || Date.now(),
+      stoppedAt: Number(update.stoppedAt || 0) || 0,
+      pid: Number(update.pid || 0) || null,
+      attached: update.attached === true,
+    };
+    if (idx >= 0) runs[idx] = { ...runs[idx], ...next };
+    else runs.push(next);
+    await saveSwarmRunsHistory(runs);
+    return runId;
+  } catch {
+    return String(update.runId || "").trim();
+  }
+}
+
+async function discoverRunningSwarmManagers() {
+  try {
+    const { stdout } = await runCmd("ps", ["-eo", "pid=,args="], { stdio: "pipe" });
+    const lines = String(stdout || "").split(/\r?\n/).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      if (!line.includes("examples/agent-swarm/src/manager.mjs")) continue;
+      const m = line.trim().match(/^(\d+)\s+(.*)$/);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      const args = String(m[2] || "");
+      let cwd = "";
+      try {
+        cwd = await readlink(`/proc/${pid}/cwd`);
+      } catch {
+        cwd = "";
+      }
+      const marker = "examples/agent-swarm/src/manager.mjs";
+      const idx = args.indexOf(marker);
+      const objective = idx >= 0 ? args.slice(idx + marker.length).trim() : "";
+      out.push({
+        pid,
+        command: args,
+        objective,
+        workspaceRoot: cwd,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function buildGitSafeEnv(baseEnv, safeDirectory) {
+  const env = { ...(baseEnv || process.env) };
+  const value = String(safeDirectory || "*").trim() || "*";
+  env.GIT_CONFIG_COUNT = "1";
+  env.GIT_CONFIG_KEY_0 = "safe.directory";
+  env.GIT_CONFIG_VALUE_0 = value;
+  return env;
+}
+
+function runGit(args = [], options = {}) {
+  return runCmd("git", args, {
+    ...options,
+    env: buildGitSafeEnv(options.env || process.env, options.safeDirectory),
+  });
+}
+
+function guidanceForGitInstall() {
+  if (process.platform === "darwin") {
+    return "Install Git: `xcode-select --install` or `brew install git`.";
+  }
+  if (process.platform === "win32") {
+    return "Install Git for Windows from https://git-scm.com/download/win and restart the app.";
+  }
+  return "Install Git using your package manager (for example `sudo apt install git`) and restart the app.";
+}
+
+function setSwarmPreflight(patch = {}) {
+  swarmState.preflight = {
+    gitAvailable: swarmState.preflight?.gitAvailable ?? null,
+    repoReady: swarmState.preflight?.repoReady ?? false,
+    autoInitialized: swarmState.preflight?.autoInitialized ?? false,
+    code: swarmState.preflight?.code || "",
+    reason: swarmState.preflight?.reason || "",
+    guidance: swarmState.preflight?.guidance || "",
+    ...patch,
+  };
+}
+
+async function detectGitAvailable() {
+  try {
+    await runGit(["--version"], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isGitRepo(cwd) {
+  try {
+    const out = await runGit(["-C", String(cwd || ""), "rev-parse", "--show-toplevel"], {
+      stdio: "pipe",
+      safeDirectory: "*",
+    });
+    const root = String(out.stdout || "").trim();
+    return root ? { ok: true, root, error: "" } : { ok: false, root: "", error: "" };
+  } catch (error) {
+    return { ok: false, root: "", error: String(error?.message || error || "") };
+  }
+}
+
+async function bootstrapEmptyGitRepo(workspaceRoot) {
+  await runGit(["init"], { cwd: workspaceRoot, stdio: "pipe", safeDirectory: workspaceRoot });
+  const readmePath = join(workspaceRoot, "README.md");
+  const ignorePath = join(workspaceRoot, ".gitignore");
+  if (!existsSync(readmePath)) {
+    await writeFile(
+      readmePath,
+      "# Swarm Workspace\n\nInitialized automatically for Tandem Swarm.\n",
+      "utf8"
+    );
+  }
+  if (!existsSync(ignorePath)) {
+    await writeFile(
+      ignorePath,
+      "node_modules/\n.DS_Store\n.swarm/worktrees/\n",
+      "utf8"
+    );
+  }
+  await runGit(["add", "."], { cwd: workspaceRoot, stdio: "pipe", safeDirectory: workspaceRoot });
+  try {
+    await runGit(["commit", "-m", "Initialize swarm workspace"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+  } catch (commitError) {
+    const message = String(commitError?.message || "");
+    if (!message.includes("Author identity unknown")) throw commitError;
+    await runGit(["config", "user.name", "Swarm Bootstrap"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+    await runGit(["config", "user.email", "swarm@local"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+    await runGit(["commit", "-m", "Initialize swarm workspace"], {
+      cwd: workspaceRoot,
+      stdio: "pipe",
+      safeDirectory: workspaceRoot,
+    });
+  }
+}
+
+async function preflightSwarmWorkspace(workspaceRoot, options = {}) {
+  const allowInitNonEmpty = options.allowInitNonEmpty === true;
+  const guidance = guidanceForGitInstall();
+  const gitAvailable = await detectGitAvailable();
+  if (!gitAvailable) {
+    return {
+      gitAvailable,
+      repoReady: false,
+      autoInitialized: false,
+      code: "git_missing",
+      repoRoot: "",
+      reason: "Git executable not found",
+      guidance,
+    };
+  }
+
+  const normalized = resolve(workspaceRoot);
+  if (!existsSync(normalized)) {
+    throw new Error(`Workspace root does not exist: ${normalized}`);
+  }
+  const details = await stat(normalized);
+  if (!details.isDirectory()) {
+    throw new Error(`Workspace root is not a directory: ${normalized}`);
+  }
+
+  const repo = await isGitRepo(normalized);
+  if (repo.ok) {
+    return {
+      gitAvailable: true,
+      repoReady: true,
+      autoInitialized: false,
+      code: "ok",
+      repoRoot: repo.root,
+      reason: "",
+      guidance,
+    };
+  }
+  const repoErrorText = String(repo.error || "");
+  const repoErrorLower = repoErrorText.toLowerCase();
+  if (
+    repoErrorText &&
+    !repoErrorLower.includes("not a git repository") &&
+    !repoErrorLower.includes("needed a single revision")
+  ) {
+    return {
+      gitAvailable: true,
+      repoReady: false,
+      autoInitialized: false,
+      code: "git_probe_failed",
+      repoRoot: "",
+      reason: `Git could not inspect the selected directory: ${repoErrorText}`,
+      guidance,
+    };
+  }
+
+  const entries = await readdir(normalized);
+  if (entries.length > 0 && !allowInitNonEmpty) {
+    const detail = repoErrorText ? ` Git probe output: ${repoErrorText}` : "";
+    return {
+      gitAvailable: true,
+      repoReady: false,
+      autoInitialized: false,
+      code: "not_repo_non_empty",
+      repoRoot: "",
+      reason:
+        `Selected directory is not a Git repository and is not empty: ${normalized}. Choose an existing repo or an empty directory.${detail}`,
+      guidance,
+    };
+  }
+
+  await bootstrapEmptyGitRepo(normalized);
+  const initializedRepo = await isGitRepo(normalized);
+  if (!initializedRepo.ok) {
+    throw new Error(`Git repository initialization failed for ${normalized}`);
+  }
+  return {
+    gitAvailable: true,
+    repoReady: true,
+    autoInitialized: true,
+    code: allowInitNonEmpty ? "auto_initialized_non_empty" : "auto_initialized_empty",
+    repoRoot: initializedRepo.root,
+    reason: "",
+    guidance,
+  };
 }
 
 async function installServices() {
@@ -550,6 +849,28 @@ function clearSwarmMonitor() {
     clearInterval(swarmState.monitorTimer);
     swarmState.monitorTimer = null;
   }
+}
+
+function beginSwarmMonitoring(token, attachedPid = null) {
+  clearSwarmMonitor();
+  void monitorSwarmRegistry(token);
+  swarmState.monitorTimer = setInterval(() => {
+    if (swarmState.status !== "running") return;
+    if (attachedPid) {
+      try {
+        process.kill(attachedPid, 0);
+      } catch {
+        swarmState.status = "idle";
+        swarmState.stoppedAt = Date.now();
+        swarmState.lastError = "";
+        swarmState.attachedPid = null;
+        clearSwarmMonitor();
+        pushSwarmEvent("status", { status: swarmState.status, attachedPid: null });
+        return;
+      }
+    }
+    void monitorSwarmRegistry(token);
+  }, 3000);
 }
 
 async function engineHealth(token = "") {
@@ -1024,8 +1345,7 @@ async function proxyEngineRequest(req, res, session) {
 }
 
 async function readSwarmRegistry(token) {
-  const keys = ["swarm.active_tasks", "project/swarm.active_tasks"];
-  for (const key of keys) {
+  for (const key of SWARM_RESOURCE_KEYS) {
     try {
       const response = await fetch(`${ENGINE_URL}/resource/${encodeURIComponent(key)}`, {
         headers: {
@@ -1036,25 +1356,60 @@ async function readSwarmRegistry(token) {
       });
       if (!response.ok) continue;
       const record = await response.json();
-      if (record?.value && typeof record.value === "object") {
-        return { key, value: record.value };
+      const value =
+        record?.value && typeof record.value === "object"
+          ? record.value
+          : record?.resource?.value && typeof record.resource.value === "object"
+            ? record.resource.value
+            : null;
+      if (value && typeof value === "object") {
+        const recordKey = String(record?.key || record?.resource?.key || key || "").trim() || key;
+        return { key: recordKey, value };
       }
     } catch {
       // ignore
     }
   }
-  return { key: "swarm.active_tasks", value: { version: 1, updatedAtMs: Date.now(), tasks: {} } };
+  return {
+    key: SWARM_RESOURCE_KEYS[0] || "swarm.active_tasks",
+    value: { version: 1, updatedAtMs: Date.now(), tasks: {} },
+  };
 }
 
 function stopSwarm() {
-  if (!swarmState.process) return;
+  if (!swarmState.process && !swarmState.attachedPid) return;
+  const stoppingRunId = swarmState.runId;
+  const stoppingObjective = swarmState.objective;
+  const stoppingWorkspaceRoot = swarmState.workspaceRoot;
+  const stoppingAttachedPid = swarmState.attachedPid;
   swarmState.status = "stopping";
   clearSwarmMonitor();
-  swarmState.process.kill("SIGTERM");
+  if (swarmState.process) {
+    swarmState.process.kill("SIGTERM");
+  } else if (swarmState.attachedPid) {
+    try {
+      process.kill(swarmState.attachedPid, "SIGTERM");
+    } catch {
+      // ignore
+    }
+    swarmState.attachedPid = null;
+    swarmState.status = "idle";
+    swarmState.stoppedAt = Date.now();
+    void recordSwarmRun({
+      runId: stoppingRunId,
+      objective: stoppingObjective,
+      workspaceRoot: stoppingWorkspaceRoot,
+      status: "idle",
+      startedAt: swarmState.startedAt || Date.now(),
+      stoppedAt: swarmState.stoppedAt || Date.now(),
+      pid: stoppingAttachedPid,
+      attached: true,
+    });
+  }
   pushSwarmEvent("status", { status: swarmState.status });
 }
 
-function startSwarm(session, config = {}) {
+async function startSwarm(session, config = {}) {
   if (!isLocalEngineUrl(ENGINE_URL)) {
     throw new Error("Swarm orchestration is disabled when using a remote engine URL.");
   }
@@ -1063,8 +1418,42 @@ function startSwarm(session, config = {}) {
   }
 
   const objective = String(config.objective || "Ship a small feature end-to-end").trim();
-  const workspaceRoot = String(config.workspaceRoot || REPO_ROOT).trim();
+  const workspaceRoot = resolve(String(config.workspaceRoot || REPO_ROOT).trim());
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
+  let modelProvider = String(config.modelProvider || "").trim();
+  let modelId = String(config.modelId || "").trim();
+  if (!modelProvider || !modelId) {
+    modelProvider = "";
+    modelId = "";
+  }
+  const rawMcpServers = Array.isArray(config.mcpServers)
+    ? config.mcpServers
+    : String(config.mcpServers || "")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+  const mcpServers = rawMcpServers
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .slice(0, 64);
+  const preflight = await preflightSwarmWorkspace(workspaceRoot, {
+    allowInitNonEmpty: config.allowInitNonEmpty === true,
+  });
+  setSwarmPreflight({
+    gitAvailable: preflight.gitAvailable,
+    repoReady: preflight.repoReady,
+    autoInitialized: preflight.autoInitialized,
+    code: preflight.code || "",
+    reason: preflight.reason || "",
+    guidance: preflight.guidance || "",
+  });
+  swarmState.repoRoot = preflight.repoRoot || "";
+  if (!preflight.gitAvailable) {
+    throw new Error(`${preflight.reason}. ${preflight.guidance}`);
+  }
+  if (!preflight.repoReady) {
+    throw new Error(preflight.reason || "Workspace preflight failed.");
+  }
 
   const managerPath = join(REPO_ROOT, "examples", "agent-swarm", "src", "manager.mjs");
   if (!existsSync(managerPath)) {
@@ -1079,19 +1468,40 @@ function startSwarm(session, config = {}) {
   swarmState.objective = objective;
   swarmState.workspaceRoot = workspaceRoot;
   swarmState.maxTasks = maxTasks;
+  swarmState.modelProvider = modelProvider;
+  swarmState.modelId = modelId;
+  swarmState.mcpServers = mcpServers;
+  swarmState.repoRoot = preflight.repoRoot || workspaceRoot;
   swarmState.lastError = "";
+  swarmState.runId = randomBytes(8).toString("hex");
+  swarmState.attachedPid = null;
   swarmState.registryCache = null;
 
-  pushSwarmEvent("status", { status: swarmState.status, objective, workspaceRoot, maxTasks });
+  pushSwarmEvent("status", {
+    status: swarmState.status,
+    objective,
+    workspaceRoot,
+    maxTasks,
+    modelProvider: modelProvider || undefined,
+    modelId: modelId || undefined,
+    mcpServers,
+    repoRoot: swarmState.repoRoot || undefined,
+    preflight: swarmState.preflight,
+    runId: swarmState.runId,
+  });
 
   const child = spawn(process.execPath, [managerPath, objective], {
     cwd: workspaceRoot,
     env: {
       ...process.env,
+      ...buildGitSafeEnv(process.env, preflight.repoRoot || workspaceRoot),
       TANDEM_BASE_URL: ENGINE_URL,
       TANDEM_API_TOKEN: session.token,
       SWARM_MAX_TASKS: String(maxTasks),
       SWARM_OBJECTIVE: objective,
+      SWARM_MODEL_PROVIDER: modelProvider,
+      SWARM_MODEL_ID: modelId,
+      SWARM_MCP_SERVERS: mcpServers.join(","),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1103,11 +1513,17 @@ function startSwarm(session, config = {}) {
 
   child.on("spawn", () => {
     swarmState.status = "running";
-    pushSwarmEvent("status", { status: swarmState.status });
-    void monitorSwarmRegistry(session.token);
-    swarmState.monitorTimer = setInterval(() => {
-      if (swarmState.status === "running") void monitorSwarmRegistry(session.token);
-    }, 2000);
+    void recordSwarmRun({
+      runId: swarmState.runId,
+      objective,
+      workspaceRoot,
+      status: "running",
+      startedAt: swarmState.startedAt,
+      pid: child.pid,
+      attached: false,
+    });
+    pushSwarmEvent("status", { status: swarmState.status, runId: swarmState.runId, pid: child.pid });
+    beginSwarmMonitoring(session.token);
   });
 
   child.on("error", (e) => {
@@ -1131,6 +1547,16 @@ function startSwarm(session, config = {}) {
       signal,
       error: swarmState.lastError || undefined,
     });
+    void recordSwarmRun({
+      runId: swarmState.runId,
+      objective: swarmState.objective,
+      workspaceRoot: swarmState.workspaceRoot,
+      status: swarmState.status,
+      startedAt: swarmState.startedAt || Date.now(),
+      stoppedAt: swarmState.stoppedAt || Date.now(),
+      pid: child.pid,
+      attached: false,
+    });
   });
 }
 
@@ -1138,16 +1564,42 @@ async function handleSwarmApi(req, res, session) {
   const pathname = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`).pathname;
 
   if (pathname === "/api/swarm/status" && req.method === "GET") {
+    const detectedGit = await detectGitAvailable();
+    if (swarmState.preflight?.gitAvailable !== detectedGit) {
+      setSwarmPreflight({
+        gitAvailable: detectedGit,
+        code: detectedGit ? "ok" : "git_missing",
+        reason: detectedGit ? "" : "Git executable not found",
+        guidance: guidanceForGitInstall(),
+      });
+    }
     sendJson(res, 200, {
       ok: true,
       status: swarmState.status,
       objective: swarmState.objective,
       workspaceRoot: swarmState.workspaceRoot,
       maxTasks: swarmState.maxTasks,
+      modelProvider: swarmState.modelProvider || "",
+      modelId: swarmState.modelId || "",
+      mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
+      repoRoot: swarmState.repoRoot || "",
+      preflight: swarmState.preflight || null,
       startedAt: swarmState.startedAt,
       stoppedAt: swarmState.stoppedAt,
+      runId: swarmState.runId || "",
+      attachedPid: swarmState.attachedPid || null,
       localEngine: isLocalEngineUrl(ENGINE_URL),
       lastError: swarmState.lastError || null,
+    });
+    return true;
+  }
+
+  if (pathname === "/api/swarm/runs" && req.method === "GET") {
+    const [active, recent] = await Promise.all([discoverRunningSwarmManagers(), loadSwarmRunsHistory()]);
+    sendJson(res, 200, {
+      ok: true,
+      active,
+      recent: recent.slice(-30).reverse(),
     });
     return true;
   }
@@ -1155,7 +1607,7 @@ async function handleSwarmApi(req, res, session) {
   if (pathname === "/api/swarm/start" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      startSwarm(session, body || {});
+      await startSwarm(session, body || {});
       sendJson(res, 200, { ok: true });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -1169,8 +1621,61 @@ async function handleSwarmApi(req, res, session) {
     return true;
   }
 
+  if (pathname === "/api/swarm/attach" && req.method === "POST") {
+    try {
+      if (swarmState.process) throw new Error("Cannot attach while managed swarm process is running.");
+      const body = await readJsonBody(req);
+      const pid = Number(body?.pid || 0);
+      if (!Number.isFinite(pid) || pid <= 0) throw new Error("Invalid swarm manager pid.");
+      process.kill(pid, 0);
+      const workspaceRoot = resolve(String(body?.workspaceRoot || REPO_ROOT).trim());
+      const objective = String(body?.objective || "Attached swarm manager").trim();
+      swarmState.status = "running";
+      swarmState.startedAt = Number(body?.startedAt || 0) || Date.now();
+      swarmState.stoppedAt = null;
+      swarmState.objective = objective;
+      swarmState.workspaceRoot = workspaceRoot;
+      swarmState.attachedPid = pid;
+      swarmState.process = null;
+      swarmState.lastError = "";
+      swarmState.runId = String(body?.runId || "").trim() || randomBytes(8).toString("hex");
+      swarmState.logs = [];
+      swarmState.reasons = [];
+      void recordSwarmRun({
+        runId: swarmState.runId,
+        objective,
+        workspaceRoot,
+        status: "running",
+        startedAt: swarmState.startedAt,
+        pid,
+        attached: true,
+      });
+      beginSwarmMonitoring(session.token, pid);
+      pushSwarmEvent("status", {
+        status: swarmState.status,
+        attachedPid: pid,
+        runId: swarmState.runId,
+      });
+      sendJson(res, 200, { ok: true, status: swarmState.status, attachedPid: pid });
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+    return true;
+  }
+
   if (pathname === "/api/swarm/snapshot" && req.method === "GET") {
-    const registry = await readSwarmRegistry(session.token);
+    let registry = await readSwarmRegistry(session.token);
+    const registryTasks =
+      registry?.value?.tasks && typeof registry.value.tasks === "object"
+        ? Object.keys(registry.value.tasks).length
+        : 0;
+    const cachedTasks =
+      swarmState.registryCache?.value?.tasks && typeof swarmState.registryCache.value.tasks === "object"
+        ? Object.keys(swarmState.registryCache.value.tasks).length
+        : 0;
+    if (registryTasks === 0 && cachedTasks > 0) {
+      registry = swarmState.registryCache;
+    }
     sendJson(res, 200, {
       ok: true,
       status: swarmState.status,

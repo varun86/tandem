@@ -15,6 +15,12 @@ loadDotEnv(path.join(root, ".env"));
 const BASE_URL = process.env.TANDEM_BASE_URL || "http://127.0.0.1:39731";
 const API_TOKEN = process.env.TANDEM_API_TOKEN || "";
 const MAX_TASKS = Number(process.env.SWARM_MAX_TASKS || "3");
+const MODEL_PROVIDER = String(process.env.SWARM_MODEL_PROVIDER || "").trim();
+const MODEL_ID = String(process.env.SWARM_MODEL_ID || "").trim();
+const MCP_SERVERS = String(process.env.SWARM_MCP_SERVERS || "")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
 const OBJECTIVE =
   process.argv.slice(2).join(" ") ||
   process.env.SWARM_OBJECTIVE ||
@@ -61,39 +67,110 @@ function extractAssistantTextFromSession(sessionWire) {
 function runCreateWorktree(taskId) {
   const script = path.join(root, "scripts", "create_worktree.sh");
   const out = execFileSync(script, [taskId], { encoding: "utf8" });
-  const rows = Object.fromEntries(
-    out
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => line.split("="))
-      .filter((pair) => pair.length === 2)
-  );
-  return { worktreePath: rows.worktreePath, branch: rows.branch };
+  const rows = {};
+  for (const rawLine of out.trim().split(/\r?\n/)) {
+    const line = String(rawLine || "").trim();
+    if (!line) continue;
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (!key) continue;
+    rows[key] = value;
+  }
+  const worktreePath = String(rows.worktreePath || rows.WORKTREE_PATH || "").trim();
+  const branch = String(rows.branch || rows.BRANCH || "").trim();
+  if (!worktreePath || !branch) {
+    throw new Error(`create_worktree.sh returned invalid output. Missing worktreePath/branch for task ${taskId}. Raw output:\n${out}`);
+  }
+  return { worktreePath, branch };
 }
 
-async function createTaskSession(title, worktreePath) {
+function mcpSlug(input) {
+  const cleaned = String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "mcp";
+}
+
+function buildPermissionRules(mcpServers = []) {
+  const rules = [
+    "ls",
+    "list",
+    "glob",
+    "search",
+    "grep",
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "todowrite",
+    "todo_write",
+    "websearch",
+    "webfetch",
+    "webfetch_html",
+    "memory_store",
+    "memory_search",
+    "memory_list",
+  ].map((permission) => ({ permission, pattern: "*", action: "allow" }));
+
+  for (const server of mcpServers) {
+    rules.push({
+      permission: `mcp.${mcpSlug(server)}.*`,
+      pattern: "*",
+      action: "allow",
+    });
+  }
+
+  return rules;
+}
+
+function modelPayload(modelProvider, modelId) {
+  if (!modelProvider || !modelId) return {};
+  return {
+    provider: modelProvider,
+    model: { providerID: modelProvider, modelID: modelId },
+  };
+}
+
+async function createTaskSession(title, worktreePath, runtimeConfig) {
   return api.post("/session", {
     title,
     directory: worktreePath,
     workspace_root: worktreePath,
+    permission: runtimeConfig.permissionRules,
+    ...modelPayload(runtimeConfig.modelProvider, runtimeConfig.modelId),
   });
 }
 
-async function startRun(sessionId, prompt) {
-  const res = await api.post(`/session/${sessionId}/prompt_async?return=run`, {
+async function startRun(sessionId, prompt, runtimeConfig) {
+  const payload = {
     parts: [{ type: "text", text: prompt }],
-  });
+  };
+  if (runtimeConfig.modelProvider && runtimeConfig.modelId) {
+    payload.model = {
+      providerID: runtimeConfig.modelProvider,
+      modelID: runtimeConfig.modelId,
+    };
+  }
+  const res = await api.post(`/session/${sessionId}/prompt_async?return=run`, payload);
   return res.runID || res.runId || res.run_id;
 }
 
-async function sendManagerDecompose(objective) {
+async function sendManagerDecompose(objective, runtimeConfig) {
   const managerSession = await api.post("/session", {
     title: "Agent Swarm Manager",
     directory: process.cwd(),
     workspace_root: process.cwd(),
+    permission: runtimeConfig.permissionRules,
+    ...modelPayload(runtimeConfig.modelProvider, runtimeConfig.modelId),
   });
   const managerPrompt = readPrompt("manager.md");
-  const req = `${managerPrompt}\n\nObjective:\n${objective}\n\nReturn 1-${MAX_TASKS} tasks.`;
+  const mcpHint = runtimeConfig.mcpServers.length
+    ? `\nUse MCP servers when relevant: ${runtimeConfig.mcpServers.join(", ")}.`
+    : "";
+  const req = `${managerPrompt}\n\nObjective:\n${objective}\n\nReturn 1-${MAX_TASKS} tasks.${mcpHint}`;
   const response = await api.post(`/session/${managerSession.id}/prompt_sync`, {
     parts: [{ type: "text", text: req }],
   });
@@ -144,16 +221,21 @@ async function updatePrFromSession(task) {
 }
 
 async function main() {
-  const taskDefs = await sendManagerDecompose(OBJECTIVE);
+  const runtimeConfig = {
+    modelProvider: MODEL_PROVIDER,
+    modelId: MODEL_ID,
+    mcpServers: MCP_SERVERS,
+    permissionRules: buildPermissionRules(MCP_SERVERS),
+  };
+  const taskDefs = await sendManagerDecompose(OBJECTIVE, runtimeConfig);
   const registry = await loadRegistry(api);
   await seedTasks({
     registry,
     taskDefs,
     createWorktree: async (taskId) => runCreateWorktree(taskId),
-    createSession: async (taskId, worktreePath) =>
-      createTaskSession(`Swarm Worker ${taskId}`, worktreePath),
+    createSession: async (taskId, worktreePath) => createTaskSession(`Swarm Worker ${taskId}`, worktreePath, runtimeConfig),
     startRun: async (task, sessionId, worktreePath, branch) =>
-      startRun(sessionId, buildWorkerPrompt(task, worktreePath, branch)),
+      startRun(sessionId, buildWorkerPrompt(task, worktreePath, branch), runtimeConfig),
   });
 
   await saveRegistry(api, registry);
@@ -182,8 +264,8 @@ async function main() {
             !task._testerStarted
           ) {
             await updatePrFromSession(task);
-            const s = await createTaskSession(`Swarm Tester ${task.taskId}`, task.worktreePath);
-            const r = await startRun(s.id, buildTesterPrompt(task, task.worktreePath));
+            const s = await createTaskSession(`Swarm Tester ${task.taskId}`, task.worktreePath, runtimeConfig);
+            const r = await startRun(s.id, buildTesterPrompt(task, task.worktreePath), runtimeConfig);
             Object.assign(task, {
               ownerRole: "tester",
               status: TASK_STATUS.RUNNING,
@@ -196,10 +278,11 @@ async function main() {
             task.ownerRole === "tester" &&
             !task._reviewerStarted
           ) {
-            const s = await createTaskSession(`Swarm Reviewer ${task.taskId}`, task.worktreePath);
+            const s = await createTaskSession(`Swarm Reviewer ${task.taskId}`, task.worktreePath, runtimeConfig);
             const r = await startRun(
               s.id,
-              buildReviewerPrompt(task, task.worktreePath, task.prUrl)
+              buildReviewerPrompt(task, task.worktreePath, task.prUrl),
+              runtimeConfig
             );
             Object.assign(task, {
               ownerRole: "reviewer",
