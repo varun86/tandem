@@ -9468,6 +9468,17 @@ pub async fn orchestrator_get_events(
     since_seq: Option<u64>,
     tail: Option<usize>,
 ) -> Result<Vec<crate::orchestrator::types::RunEventRecord>> {
+    if let Ok(events) = state
+        .sidecar
+        .context_run_events(&run_id, since_seq, tail)
+        .await
+    {
+        return Ok(events
+            .into_iter()
+            .map(context_event_to_run_event)
+            .collect::<Vec<_>>());
+    }
+    // Compatibility fallback for legacy local-orchestrator runs.
     let workspace_path = state
         .get_workspace_path()
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
@@ -9866,6 +9877,27 @@ pub async fn orchestrator_cancel(state: State<'_, AppState>, run_id: String) -> 
 /// List all orchestrator runs (from disk)
 #[tauri::command]
 pub async fn orchestrator_list_runs(state: State<'_, AppState>) -> Result<Vec<RunSummary>> {
+    if let Ok(rows) = state.sidecar.context_run_list().await {
+        let mut summaries = rows
+            .into_iter()
+            .map(|run| RunSummary {
+                run_id: run.run_id.clone(),
+                session_id: format!("context-{}", run.run_id),
+                workspace_root: Some(run.workspace.canonical_path),
+                source: context_run_source(&run.run_type),
+                objective: run.objective,
+                status: context_status_to_run_status(run.status),
+                created_at: ms_to_datetime(run.created_at_ms),
+                updated_at: ms_to_datetime(run.updated_at_ms),
+                started_at: ms_to_datetime(run.created_at_ms),
+                ended_at: None,
+                last_error: None,
+            })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        return Ok(summaries);
+    }
+    // Compatibility fallback for legacy local-orchestrator runs.
     // Get workspace path
     let workspace_path = {
         let path_guard = state.workspace_path.read().unwrap();
@@ -9937,6 +9969,10 @@ pub async fn orchestrator_load_run(
     state: State<'_, AppState>,
     run_id: String,
 ) -> Result<Run> {
+    if let Ok(run) = state.sidecar.context_run_get(&run_id).await {
+        return Ok(context_run_to_run(&run));
+    }
+    // Compatibility fallback for legacy local-orchestrator runs.
     let workspace_path = state
         .get_workspace_path()
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
