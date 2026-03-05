@@ -353,6 +353,9 @@ impl EngineLoop {
             let websearch_duplicate_signature_limit = websearch_duplicate_signature_limit();
             let mut pack_builder_executed = false;
             let mut auto_workspace_probe_attempted = false;
+            let mut executed_tool_calls_total = 0usize;
+            let mut required_tool_retry_used = false;
+            let mut required_tool_unsatisfied_emitted = false;
             let email_delivery_requested = requires_email_delivery_prompt(&text);
             let web_research_requested = requires_web_research_prompt(&text);
             let mut email_action_executed = false;
@@ -1095,6 +1098,7 @@ impl EngineLoop {
                         *entry += 1;
                         accepted_tool_calls_in_cycle =
                             accepted_tool_calls_in_cycle.saturating_add(1);
+                        executed_tool_calls_total = executed_tool_calls_total.saturating_add(1);
                         if let Some(output) = self
                             .execute_tool_with_permission(
                                 &session_id,
@@ -1155,6 +1159,53 @@ impl EngineLoop {
                     }
                     if !outputs.is_empty() {
                         last_tool_outputs = outputs.clone();
+                        if matches!(requested_tool_mode, ToolMode::Required)
+                            && executed_tool_calls_total == 0
+                        {
+                            if !required_tool_retry_used {
+                                required_tool_retry_used = true;
+                                followup_context =
+                                    Some(build_required_tool_retry_context(&offered_tool_preview));
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "required_tool_retry",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                    }),
+                                ));
+                                continue;
+                            }
+                            completion = required_tool_mode_unsatisfied_completion();
+                            if !required_tool_unsatisfied_emitted {
+                                required_tool_unsatisfied_emitted = true;
+                                self.event_bus.publish(EngineEvent::new(
+                                    "tool.mode.required.unsatisfied",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "selectedToolCount": allowed_tool_names.len(),
+                                        "offeredToolsPreview": offered_tool_preview,
+                                    }),
+                                ));
+                            }
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.finish",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "finishReason": "required_tool_unsatisfied",
+                                    "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                    "rejectedToolCalls": 0,
+                                }),
+                            ));
+                            break;
+                        }
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
                         if executed_productive_tool {
@@ -1218,18 +1269,67 @@ impl EngineLoop {
                     ));
                 }
 
-                self.event_bus.publish(EngineEvent::new(
-                    "provider.call.iteration.finish",
-                    json!({
-                        "sessionID": session_id,
-                        "messageID": user_message_id,
-                        "iteration": iteration,
-                        "finishReason": "provider_completion",
-                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
-                        "rejectedToolCalls": 0,
-                    }),
-                ));
+                if matches!(requested_tool_mode, ToolMode::Required)
+                    && executed_tool_calls_total == 0
+                {
+                    if !required_tool_retry_used {
+                        required_tool_retry_used = true;
+                        followup_context =
+                            Some(build_required_tool_retry_context(&offered_tool_preview));
+                        continue;
+                    }
+                    completion = required_tool_mode_unsatisfied_completion();
+                    if !required_tool_unsatisfied_emitted {
+                        required_tool_unsatisfied_emitted = true;
+                        self.event_bus.publish(EngineEvent::new(
+                            "tool.mode.required.unsatisfied",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "iteration": iteration,
+                                "selectedToolCount": allowed_tool_names.len(),
+                                "offeredToolsPreview": offered_tool_preview,
+                            }),
+                        ));
+                    }
+                    self.event_bus.publish(EngineEvent::new(
+                        "provider.call.iteration.finish",
+                        json!({
+                            "sessionID": session_id,
+                            "messageID": user_message_id,
+                            "iteration": iteration,
+                            "finishReason": "required_tool_unsatisfied",
+                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                            "rejectedToolCalls": 0,
+                        }),
+                    ));
+                } else {
+                    self.event_bus.publish(EngineEvent::new(
+                        "provider.call.iteration.finish",
+                        json!({
+                            "sessionID": session_id,
+                            "messageID": user_message_id,
+                            "iteration": iteration,
+                            "finishReason": "provider_completion",
+                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                            "rejectedToolCalls": 0,
+                        }),
+                    ));
+                }
                 break;
+            }
+            if matches!(requested_tool_mode, ToolMode::Required) && executed_tool_calls_total == 0 {
+                completion = required_tool_mode_unsatisfied_completion();
+                if !required_tool_unsatisfied_emitted {
+                    self.event_bus.publish(EngineEvent::new(
+                        "tool.mode.required.unsatisfied",
+                        json!({
+                            "sessionID": session_id,
+                            "messageID": user_message_id,
+                            "selectedToolCount": tool_call_counts.len(),
+                        }),
+                    ));
+                }
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
                 if let Some(narrative) = self
@@ -2623,6 +2723,26 @@ fn summarize_duplicate_signature_outputs(outputs: &[String]) -> Option<String> {
         "This run paused because the same tool call kept repeating.\n\n{}\n\nRephrase the request or start a new message with a clearer command target.",
         lines.join("\n")
     ))
+}
+
+const REQUIRED_TOOL_MODE_UNSATISFIED_REASON: &str = "TOOL_MODE_REQUIRED_NOT_SATISFIED";
+
+fn required_tool_mode_unsatisfied_completion() -> String {
+    format!(
+        "{REQUIRED_TOOL_MODE_UNSATISFIED_REASON}: tool_mode=required but the model ended without executing any tool calls."
+    )
+}
+
+fn build_required_tool_retry_context(offered_tool_preview: &str) -> String {
+    let offered = offered_tool_preview.trim();
+    let available_tools = if offered.is_empty() {
+        "Use one of the tools offered in this turn before you produce final text.".to_string()
+    } else {
+        format!("Use one of these offered tools before you produce final text: {offered}.")
+    };
+    format!(
+        "Tool access is mandatory for this request. Execute at least one offered tool call before any final text. {available_tools}"
+    )
 }
 
 fn find_first_url(text: &str) -> Option<String> {
@@ -6089,6 +6209,20 @@ Call: todowrite(task_id=3, status="in_progress")
             summarize_duplicate_signature_outputs(&outputs).expect("expected duplicate summary");
         assert!(summary.contains("same tool call kept repeating"));
         assert!(summary.contains("clearer command target"));
+    }
+
+    #[test]
+    fn required_tool_mode_unsatisfied_completion_includes_marker() {
+        let message = required_tool_mode_unsatisfied_completion();
+        assert!(message.contains(REQUIRED_TOOL_MODE_UNSATISFIED_REASON));
+        assert!(message.contains("tool_mode=required"));
+    }
+
+    #[test]
+    fn required_tool_retry_context_mentions_offered_tools() {
+        let prompt = build_required_tool_retry_context("read, write, apply_patch");
+        assert!(prompt.contains("Execute at least one offered tool call"));
+        assert!(prompt.contains("read, write, apply_patch"));
     }
 
     #[test]

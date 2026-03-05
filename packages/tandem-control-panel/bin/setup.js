@@ -5,7 +5,7 @@ import { createServer } from "http";
 import { readFileSync, existsSync, createReadStream, createWriteStream } from "fs";
 import { mkdir, readdir, stat, rm, readFile, writeFile } from "fs/promises";
 import { createHash, randomBytes } from "crypto";
-import { join, dirname, extname, normalize, resolve, basename } from "path";
+import { join, dirname, extname, normalize, resolve, basename, relative } from "path";
 import { Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { fileURLToPath } from "url";
@@ -23,7 +23,10 @@ function parseDotEnv(content) {
     if (idx <= 0) continue;
     const key = line.slice(0, idx).trim();
     let value = line.slice(idx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     out[key] = value;
@@ -84,7 +87,9 @@ const installServicesRequested = cli.has("install-services");
 const serviceOpRaw = String(cli.value("service-op") || "")
   .trim()
   .toLowerCase();
-const serviceOp = ["status", "start", "stop", "restart", "enable", "disable", "logs"].includes(serviceOpRaw)
+const serviceOp = ["status", "start", "stop", "restart", "enable", "disable", "logs"].includes(
+  serviceOpRaw
+)
   ? serviceOpRaw
   : "";
 const serviceModeRaw = String(cli.value("service-mode") || "both")
@@ -92,13 +97,15 @@ const serviceModeRaw = String(cli.value("service-mode") || "both")
   .toLowerCase();
 const serviceMode = ["both", "engine", "panel"].includes(serviceModeRaw) ? serviceModeRaw : "both";
 const serviceUserArg = String(cli.value("service-user") || "").trim();
-const serviceSetupOnly = rawArgs.length > 0 && rawArgs.every((arg) => {
-  if (arg === "--install-services") return true;
-  if (arg.startsWith("--service-op")) return true;
-  if (arg.startsWith("--service-mode")) return true;
-  if (arg.startsWith("--service-user")) return true;
-  return false;
-});
+const serviceSetupOnly =
+  rawArgs.length > 0 &&
+  rawArgs.every((arg) => {
+    if (arg === "--install-services") return true;
+    if (arg.startsWith("--service-op")) return true;
+    if (arg.startsWith("--service-mode")) return true;
+    if (arg.startsWith("--service-user")) return true;
+    return false;
+  });
 const cwdEnvPath = resolve(process.cwd(), ".env");
 
 if (initRequested) {
@@ -108,7 +115,10 @@ if (initRequested) {
   console.log(`[Tandem Control Panel] Engine URL: ${result.engineUrl}`);
   console.log(`[Tandem Control Panel] Panel URL:  http://localhost:${result.panelPort}`);
   console.log(`[Tandem Control Panel] Token:      ${result.token}`);
-  if (process.argv.slice(2).length === 1 || (process.argv.slice(2).length === 2 && resetTokenRequested)) {
+  if (
+    process.argv.slice(2).length === 1 ||
+    (process.argv.slice(2).length === 2 && resetTokenRequested)
+  ) {
     process.exit(0);
   }
 }
@@ -135,9 +145,16 @@ function resolveDefaultChannelUploadsRoot() {
 const PORTAL_PORT = Number.parseInt(process.env.TANDEM_CONTROL_PANEL_PORT || "39732", 10);
 const ENGINE_HOST = (process.env.TANDEM_ENGINE_HOST || "127.0.0.1").trim();
 const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 10);
-const ENGINE_URL = (process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`).replace(/\/+$/, "");
+const ENGINE_URL = (
+  process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`
+).replace(/\/+$/, "");
 const SWARM_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-runs.json");
-const SWARM_HIDDEN_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-hidden-runs.json");
+const SWARM_HIDDEN_RUNS_PATH = resolve(
+  homedir(),
+  ".tandem",
+  "control-panel",
+  "swarm-hidden-runs.json"
+);
 const AUTO_START_ENGINE = (process.env.TANDEM_CONTROL_PANEL_AUTO_START_ENGINE || "1") !== "0";
 const CONFIGURED_ENGINE_TOKEN = (
   process.env.TANDEM_CONTROL_PANEL_ENGINE_TOKEN ||
@@ -146,7 +163,9 @@ const CONFIGURED_ENGINE_TOKEN = (
 ).trim();
 const SESSION_TTL_MS =
   Number.parseInt(process.env.TANDEM_CONTROL_PANEL_SESSION_TTL_MINUTES || "1440", 10) * 60 * 1000;
-const FILES_ROOT = resolve(process.env.TANDEM_CONTROL_PANEL_FILES_ROOT || resolveDefaultChannelUploadsRoot());
+const FILES_ROOT = resolve(
+  process.env.TANDEM_CONTROL_PANEL_FILES_ROOT || resolveDefaultChannelUploadsRoot()
+);
 const FILES_SCOPE = String(process.env.TANDEM_CONTROL_PANEL_FILES_SCOPE || "control-panel")
   .trim()
   .replace(/\\/g, "/")
@@ -154,8 +173,10 @@ const FILES_SCOPE = String(process.env.TANDEM_CONTROL_PANEL_FILES_SCOPE || "cont
   .replace(/\/+$/, "");
 const MAX_UPLOAD_BYTES = Math.max(
   1,
-  Number.parseInt(process.env.TANDEM_CONTROL_PANEL_MAX_UPLOAD_BYTES || `${250 * 1024 * 1024}`, 10) ||
-    250 * 1024 * 1024
+  Number.parseInt(
+    process.env.TANDEM_CONTROL_PANEL_MAX_UPLOAD_BYTES || `${250 * 1024 * 1024}`,
+    10
+  ) || 250 * 1024 * 1024
 );
 const require = createRequire(import.meta.url);
 const SETUP_ENTRYPOINT = fileURLToPath(import.meta.url);
@@ -238,6 +259,7 @@ const swarmState = {
   resolvedModelProvider: "",
   resolvedModelId: "",
   modelResolutionSource: "none",
+  verificationMode: "strict",
   runId: "",
   attachedPid: null,
   buildVersion: CONTROL_PANEL_VERSION,
@@ -308,7 +330,11 @@ async function loadSwarmRunsHistory() {
 }
 
 async function saveSwarmRunsHistory(runs = []) {
-  const payload = JSON.stringify({ version: 1, updatedAtMs: Date.now(), runs: runs.slice(-100) }, null, 2);
+  const payload = JSON.stringify(
+    { version: 1, updatedAtMs: Date.now(), runs: runs.slice(-100) },
+    null,
+    2
+  );
   await mkdir(dirname(SWARM_RUNS_PATH), { recursive: true });
   await writeFile(SWARM_RUNS_PATH, payload, "utf8");
 }
@@ -438,11 +464,7 @@ async function bootstrapEmptyGitRepo(workspaceRoot) {
     );
   }
   if (!existsSync(ignorePath)) {
-    await writeFile(
-      ignorePath,
-      "node_modules/\n.DS_Store\n.swarm/worktrees/\n",
-      "utf8"
-    );
+    await writeFile(ignorePath, "node_modules/\n.DS_Store\n.swarm/worktrees/\n", "utf8");
   }
   await runGit(["add", "."], { cwd: workspaceRoot, stdio: "pipe", safeDirectory: workspaceRoot });
   try {
@@ -536,8 +558,7 @@ async function preflightSwarmWorkspace(workspaceRoot, options = {}) {
       autoInitialized: false,
       code: "not_repo_non_empty",
       repoRoot: "",
-      reason:
-        `Selected directory is not a Git repository and is not empty: ${normalized}. Choose an existing repo or an empty directory.${detail}`,
+      reason: `Selected directory is not a Git repository and is not empty: ${normalized}. Choose an existing repo or an empty directory.${detail}`,
       guidance,
     };
   }
@@ -566,7 +587,8 @@ async function installServices() {
     throw new Error("Service installation needs root privileges. Re-run with sudo.");
   }
 
-  const serviceUser = serviceUserArg || String(process.env.SUDO_USER || process.env.USER || "root").trim();
+  const serviceUser =
+    serviceUserArg || String(process.env.SUDO_USER || process.env.USER || "root").trim();
   if (!serviceUser) throw new Error("Could not determine service user.");
   const serviceGroup = serviceUser;
   const installEngine = serviceMode === "both" || serviceMode === "engine";
@@ -579,7 +601,9 @@ async function installServices() {
   const engineBin = String(process.env.TANDEM_ENGINE_BIN || "tandem-engine").trim();
   const token =
     CONFIGURED_ENGINE_TOKEN ||
-    (existsSync(engineEnvPath) ? parseDotEnv(readFileSync(engineEnvPath, "utf8")).TANDEM_API_TOKEN || "" : "") ||
+    (existsSync(engineEnvPath)
+      ? parseDotEnv(readFileSync(engineEnvPath, "utf8")).TANDEM_API_TOKEN || ""
+      : "") ||
     `tk_${randomBytes(16).toString("hex")}`;
 
   await mkdir("/etc/tandem", { recursive: true });
@@ -590,17 +614,17 @@ async function installServices() {
     log(`Warning: could not chown ${stateDir} to ${serviceUser}:${serviceGroup}: ${e.message}`);
   }
 
-  const existingEngineEnv = existsSync(engineEnvPath) ? parseDotEnv(readFileSync(engineEnvPath, "utf8")) : {};
+  const existingEngineEnv = existsSync(engineEnvPath)
+    ? parseDotEnv(readFileSync(engineEnvPath, "utf8"))
+    : {};
   const engineEnv = {
     ...existingEngineEnv,
     TANDEM_API_TOKEN: token,
     TANDEM_STATE_DIR: stateDir,
     TANDEM_MEMORY_DB_PATH: existingEngineEnv.TANDEM_MEMORY_DB_PATH || `${stateDir}/memory.sqlite`,
     TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
-    TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
-      existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
-    TANDEM_TOOL_ROUTER_ENABLED:
-      existingEngineEnv.TANDEM_TOOL_ROUTER_ENABLED || "0",
+    TANDEM_DISABLE_TOOL_GUARD_BUDGETS: existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
+    TANDEM_TOOL_ROUTER_ENABLED: existingEngineEnv.TANDEM_TOOL_ROUTER_ENABLED || "0",
     TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
       existingEngineEnv.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
     TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
@@ -609,8 +633,7 @@ async function installServices() {
       existingEngineEnv.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
     TANDEM_PERMISSION_WAIT_TIMEOUT_MS:
       existingEngineEnv.TANDEM_PERMISSION_WAIT_TIMEOUT_MS || "15000",
-    TANDEM_TOOL_EXEC_TIMEOUT_MS:
-      existingEngineEnv.TANDEM_TOOL_EXEC_TIMEOUT_MS || "45000",
+    TANDEM_TOOL_EXEC_TIMEOUT_MS: existingEngineEnv.TANDEM_TOOL_EXEC_TIMEOUT_MS || "45000",
     TANDEM_BASH_TIMEOUT_MS: existingEngineEnv.TANDEM_BASH_TIMEOUT_MS || "30000",
   };
   const engineEnvBody = Object.entries(engineEnv)
@@ -620,7 +643,9 @@ async function installServices() {
   await runCmd("chmod", ["640", engineEnvPath]);
 
   const panelAutoStart = serviceMode === "panel" ? "1" : "0";
-  const existingPanelEnv = existsSync(panelEnvPath) ? parseDotEnv(readFileSync(panelEnvPath, "utf8")) : {};
+  const existingPanelEnv = existsSync(panelEnvPath)
+    ? parseDotEnv(readFileSync(panelEnvPath, "utf8"))
+    : {};
   const panelEnv = {
     ...existingPanelEnv,
     TANDEM_CONTROL_PANEL_PORT: String(PORTAL_PORT),
@@ -692,10 +717,14 @@ WantedBy=multi-user.target
 
   await runCmd("systemctl", ["daemon-reload"], { stdio: "inherit" });
   if (installEngine) {
-    await runCmd("systemctl", ["enable", "--now", `${engineServiceName}.service`], { stdio: "inherit" });
+    await runCmd("systemctl", ["enable", "--now", `${engineServiceName}.service`], {
+      stdio: "inherit",
+    });
   }
   if (installPanel) {
-    await runCmd("systemctl", ["enable", "--now", `${panelServiceName}.service`], { stdio: "inherit" });
+    await runCmd("systemctl", ["enable", "--now", `${panelServiceName}.service`], {
+      stdio: "inherit",
+    });
   }
 
   log("Services installed.");
@@ -727,7 +756,9 @@ async function operateServices(operation, mode) {
   }
   const units = selectedServiceUnits(mode);
   if (op === "logs") {
-    const args = units.flatMap((unit) => ["-u", unit]).concat(["-n", "120", "-f", "-o", "short-iso"]);
+    const args = units
+      .flatMap((unit) => ["-u", unit])
+      .concat(["-n", "120", "-f", "-o", "short-iso"]);
     await runCmd("journalctl", args, { stdio: "inherit" });
     return;
   }
@@ -836,7 +867,9 @@ function pushSwarmEvent(kind, payload = {}) {
 }
 
 function appendSwarmLog(stream, text) {
-  const lines = String(text || "").split(/\r?\n/).filter(Boolean);
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .filter(Boolean);
   for (const line of lines) {
     swarmState.logs.push({ at: Date.now(), stream, line });
     if (swarmState.logs.length > 800) swarmState.logs.shift();
@@ -887,7 +920,9 @@ async function ensureEngineRunning() {
       log(
         "Note: TANDEM_CONTROL_PANEL_ENGINE_TOKEN is only applied when control panel starts a new engine process."
       );
-      log("Use the existing engine's token, or stop that engine to let control panel start one with your configured token.");
+      log(
+        "Use the existing engine's token, or stop that engine to let control panel start one with your configured token."
+      );
     }
     return;
   }
@@ -907,25 +942,28 @@ async function ensureEngineRunning() {
   log(`Starting Tandem Engine at ${ENGINE_URL}...`);
   engineProcess = spawn(
     process.execPath,
-    [engineEntrypoint, "serve", "--hostname", url.hostname, "--port", String(url.port || ENGINE_PORT)],
+    [
+      engineEntrypoint,
+      "serve",
+      "--hostname",
+      url.hostname,
+      "--port",
+      String(url.port || ENGINE_PORT),
+    ],
     {
       env: {
         ...process.env,
         TANDEM_API_TOKEN: managedEngineToken,
-        TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
-          process.env.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
-        TANDEM_TOOL_ROUTER_ENABLED:
-          process.env.TANDEM_TOOL_ROUTER_ENABLED || "0",
+        TANDEM_DISABLE_TOOL_GUARD_BUDGETS: process.env.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
+        TANDEM_TOOL_ROUTER_ENABLED: process.env.TANDEM_TOOL_ROUTER_ENABLED || "0",
         TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
           process.env.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
         TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
           process.env.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "30000",
         TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS:
           process.env.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
-        TANDEM_PERMISSION_WAIT_TIMEOUT_MS:
-          process.env.TANDEM_PERMISSION_WAIT_TIMEOUT_MS || "15000",
-        TANDEM_TOOL_EXEC_TIMEOUT_MS:
-          process.env.TANDEM_TOOL_EXEC_TIMEOUT_MS || "45000",
+        TANDEM_PERMISSION_WAIT_TIMEOUT_MS: process.env.TANDEM_PERMISSION_WAIT_TIMEOUT_MS || "15000",
+        TANDEM_TOOL_EXEC_TIMEOUT_MS: process.env.TANDEM_TOOL_EXEC_TIMEOUT_MS || "45000",
         TANDEM_BASH_TIMEOUT_MS: process.env.TANDEM_BASH_TIMEOUT_MS || "30000",
       },
       stdio: "inherit",
@@ -933,7 +971,9 @@ async function ensureEngineRunning() {
   );
   log(`Engine API token for this process: ${managedEngineToken}`);
   if (!CONFIGURED_ENGINE_TOKEN) {
-    log("Token was auto-generated. Set TANDEM_CONTROL_PANEL_ENGINE_TOKEN (or TANDEM_API_TOKEN) to keep it stable.");
+    log(
+      "Token was auto-generated. Set TANDEM_CONTROL_PANEL_ENGINE_TOKEN (or TANDEM_API_TOKEN) to keep it stable."
+    );
   }
 
   engineProcess.on("error", (e) => err(`Failed to start engine: ${e.message}`));
@@ -968,7 +1008,8 @@ function toSafeRelPath(raw) {
   if (normalized.includes("\0")) return null;
   const full = resolve(FILES_ROOT, normalized);
   if (full !== FILES_ROOT && !full.startsWith(`${FILES_ROOT}/`)) return null;
-  if (FILES_SCOPE && normalized !== FILES_SCOPE && !normalized.startsWith(`${FILES_SCOPE}/`)) return null;
+  if (FILES_SCOPE && normalized !== FILES_SCOPE && !normalized.startsWith(`${FILES_SCOPE}/`))
+    return null;
   return normalized;
 }
 
@@ -1223,7 +1264,11 @@ async function handleAuthLogin(req, res) {
     sendJson(res, 200, {
       ok: true,
       requiresToken: !!health.apiTokenRequired,
-      engine: { url: ENGINE_URL, version: health.version || "unknown", local: isLocalEngineUrl(ENGINE_URL) },
+      engine: {
+        url: ENGINE_URL,
+        version: health.version || "unknown",
+        local: isLocalEngineUrl(ENGINE_URL),
+      },
     });
   } catch (e) {
     sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -1268,7 +1313,10 @@ async function proxyEngineRequest(req, res, session) {
       duplex: hasBody ? "half" : undefined,
     });
   } catch (e) {
-    sendJson(res, 502, { ok: false, error: `Engine unreachable: ${e instanceof Error ? e.message : String(e)}` });
+    sendJson(res, 502, {
+      ok: false,
+      error: `Engine unreachable: ${e instanceof Error ? e.message : String(e)}`,
+    });
     return;
   }
 
@@ -1316,7 +1364,11 @@ async function proxyEngineRequest(req, res, session) {
 }
 
 function contextStepStatusToLegacyTaskStatus(status) {
-  switch (String(status || "").trim().toLowerCase()) {
+  switch (
+    String(status || "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "in_progress":
       return "running";
     case "runnable":
@@ -1334,7 +1386,9 @@ function contextStepStatusToLegacyTaskStatus(status) {
 }
 
 function contextRunStatusToSwarmStatus(status) {
-  const normalized = String(status || "").trim().toLowerCase();
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
   if (
     [
       "queued",
@@ -1354,7 +1408,9 @@ function contextRunStatusToSwarmStatus(status) {
 }
 
 function buildWorkspaceId(workspaceRoot) {
-  const digest = createHash("sha1").update(String(workspaceRoot || "")).digest("hex");
+  const digest = createHash("sha1")
+    .update(String(workspaceRoot || ""))
+    .digest("hex");
   return `ws-${digest.slice(0, 16)}`;
 }
 
@@ -1452,15 +1508,21 @@ function eventsToLogs(events = []) {
 }
 
 async function contextRunSnapshot(session, runId) {
-  const [runPayload, eventsPayload, blackboardPayload, replayPayload, patchesPayload] = await Promise.all([
-    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`),
-    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/events?tail=300`),
-    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/blackboard`).catch(() => ({})),
-    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/replay`).catch(() => ({})),
-    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/blackboard/patches?tail=300`).catch(
-      () => ({})
-    ),
-  ]);
+  const [runPayload, eventsPayload, blackboardPayload, replayPayload, patchesPayload] =
+    await Promise.all([
+      engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`),
+      engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/events?tail=300`),
+      engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/blackboard`).catch(
+        () => ({})
+      ),
+      engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/replay`).catch(
+        () => ({})
+      ),
+      engineRequestJson(
+        session,
+        `/context/runs/${encodeURIComponent(runId)}/blackboard/patches?tail=300`
+      ).catch(() => ({})),
+    ]);
   const run = runPayload?.run || {};
   const events = Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
   const blackboardPatches = Array.isArray(patchesPayload?.patches) ? patchesPayload.patches : [];
@@ -1485,7 +1547,14 @@ async function contextRunSnapshot(session, runId) {
   };
 }
 
-async function appendContextRunEvent(session, runId, eventType, status, payload = {}, stepId = null) {
+async function appendContextRunEvent(
+  session,
+  runId,
+  eventType,
+  status,
+  payload = {},
+  stepId = null
+) {
   return engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/events`, {
     method: "POST",
     body: {
@@ -1506,7 +1575,8 @@ function parseObjectiveTodos(objective, max = 6) {
   const normalized = compact.replace(/\s+/g, " ").trim();
   if (!normalized) return ["Execute requested objective"];
   const maxChars = Math.max(80, Number(max || 6) * 80);
-  const content = normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}...` : normalized;
+  const content =
+    normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}...` : normalized;
   return [content];
 }
 
@@ -1527,7 +1597,9 @@ function textFromMessageParts(parts) {
 }
 
 function roleOfMessage(row) {
-  return String(row?.info?.role || row?.role || row?.message_role || row?.type || row?.author || "assistant")
+  return String(
+    row?.info?.role || row?.role || row?.message_role || row?.type || row?.author || "assistant"
+  )
     .trim()
     .toLowerCase();
 }
@@ -1678,21 +1750,30 @@ async function generatePlanTodosWithLLM(session, run, maxTasks) {
     "Independent tasks must have an empty depends_on_task_ids array.",
     "Do not include explanations.",
   ].join("\n");
-  const promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
-    method: "POST",
-    timeoutMs: 3 * 60 * 1000,
-    body: {
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
+  const promptResponse = await engineRequestJson(
+    session,
+    `/session/${encodeURIComponent(sessionId)}/prompt_sync`,
+    {
+      method: "POST",
+      timeoutMs: 3 * 60 * 1000,
+      body: {
+        parts: [{ type: "text", text: prompt }],
+      },
+    }
+  );
   const syncRows = Array.isArray(promptResponse) ? promptResponse : [];
   const fromSync = extractAssistantText(syncRows);
   if (fromSync) {
-    return { sessionId, tasks: parsePlanTasksFromAssistant(fromSync, maxTasks), assistantText: fromSync };
+    return {
+      sessionId,
+      tasks: parsePlanTasksFromAssistant(fromSync, maxTasks),
+      assistantText: fromSync,
+    };
   }
-  const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
-    () => null
-  );
+  const sessionSnapshot = await engineRequestJson(
+    session,
+    `/session/${encodeURIComponent(sessionId)}`
+  ).catch(() => null);
   const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
   const fromSnapshot = extractAssistantText(messages);
   return {
@@ -1703,7 +1784,9 @@ async function generatePlanTodosWithLLM(session, run, maxTasks) {
 }
 
 function isRunTerminal(status) {
-  const normalized = String(status || "").trim().toLowerCase();
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
   return ["completed", "failed", "cancelled"].includes(normalized);
 }
 
@@ -1816,19 +1899,419 @@ async function createExecutionSession(session, run) {
 }
 
 function workerExecutionToolAllowlist() {
-  return ["ls", "list", "glob", "search", "grep", "codesearch", "read", "write", "edit", "apply_patch"];
+  return [
+    "ls",
+    "list",
+    "glob",
+    "search",
+    "grep",
+    "codesearch",
+    "read",
+    "write",
+    "edit",
+    "apply_patch",
+  ];
+}
+
+const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch"]);
+const REQUIRED_TOOL_MODE_REASON = "TOOL_MODE_REQUIRED_NOT_SATISFIED";
+
+function normalizeVerificationMode(mode) {
+  return String(mode || "")
+    .trim()
+    .toLowerCase() === "lenient"
+    ? "lenient"
+    : "strict";
+}
+
+function normalizeToolName(tool) {
+  const raw = String(tool || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return "";
+  const parts = raw.split(":").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function isWriteToolName(tool) {
+  return WRITE_TOOL_NAMES.has(normalizeToolName(tool));
+}
+
+function createExecutionError(message, details = {}) {
+  const error = new Error(message);
+  if (details?.sessionId) error.sessionId = String(details.sessionId || "").trim();
+  if (details?.verification && typeof details.verification === "object") {
+    error.verification = details.verification;
+  }
+  return error;
+}
+
+function normalizeWorkspaceRelativePath(pathname) {
+  return String(pathname || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .replace(/^\/+/, "")
+    .trim();
+}
+
+function shouldTrackWorkspacePath(pathname) {
+  const normalized = normalizeWorkspaceRelativePath(pathname);
+  return (
+    !!normalized &&
+    normalized !== ".git" &&
+    normalized !== ".tandem" &&
+    !normalized.startsWith(".git/") &&
+    !normalized.startsWith(".tandem/") &&
+    !normalized.startsWith(".swarm/") &&
+    !normalized.startsWith("node_modules/") &&
+    !normalized.startsWith("dist/") &&
+    !normalized.startsWith("target/")
+  );
+}
+
+async function fingerprintWorkspaceFile(pathname) {
+  const info = await stat(pathname).catch(() => null);
+  if (!info?.isFile()) return null;
+  let contentHash = "";
+  if (Number(info.size || 0) <= 1024 * 1024) {
+    const bytes = await readFile(pathname).catch(() => null);
+    if (bytes) {
+      contentHash = createHash("sha1").update(bytes).digest("hex");
+    }
+  }
+  return {
+    size: Number(info.size || 0),
+    modifiedMs: Number(info.mtimeMs || 0),
+    contentHash,
+  };
+}
+
+function parseGitStatusEntries(output) {
+  const chunks = String(output || "").split("\0");
+  const entries = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = String(chunks[index] || "");
+    if (!chunk) continue;
+    const status = chunk.slice(0, 2);
+    const primaryPath = normalizeWorkspaceRelativePath(chunk.slice(3));
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const renamedPath = normalizeWorkspaceRelativePath(chunks[index + 1] || "");
+      if (!renamedPath && !primaryPath) continue;
+      entries.push({
+        status,
+        path: renamedPath || primaryPath,
+        originalPath: primaryPath || "",
+      });
+      index += 1;
+      continue;
+    }
+    if (!primaryPath) continue;
+    entries.push({
+      status,
+      path: primaryPath,
+      originalPath: "",
+    });
+  }
+  return entries;
+}
+
+function buildGitStatusIndex(entries) {
+  const statusByPath = Object.create(null);
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const rawStatus = String(entry?.status || "")
+      .trim()
+      .toUpperCase();
+    let normalized = "M";
+    if (rawStatus === "??") normalized = "A";
+    else if (rawStatus.startsWith("R") || rawStatus.startsWith("C"))
+      normalized = rawStatus.slice(0, 1);
+    else if (rawStatus.includes("D")) normalized = "D";
+    else if (rawStatus.includes("A")) normalized = "A";
+    if (entry?.originalPath && shouldTrackWorkspacePath(entry.originalPath)) {
+      statusByPath[normalizeWorkspaceRelativePath(entry.originalPath)] = "D";
+    }
+    if (entry?.path && shouldTrackWorkspacePath(entry.path)) {
+      statusByPath[normalizeWorkspaceRelativePath(entry.path)] = normalized;
+    }
+  }
+  return statusByPath;
+}
+
+function collectWorkspaceSnapshotSeedPaths(includePaths = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(includePaths) ? includePaths : [])
+        .map((pathname) => normalizeWorkspaceRelativePath(pathname))
+        .filter((pathname) => shouldTrackWorkspacePath(pathname))
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+async function captureGitWorkspaceSnapshot(workspaceRoot, includePaths = []) {
+  const repo = await isGitRepo(workspaceRoot);
+  if (!repo?.ok || !repo.root) return null;
+  const gitStatus = await runGit(
+    ["-C", repo.root, "status", "--porcelain=v1", "--untracked-files=all", "-z"],
+    {
+      stdio: "pipe",
+      safeDirectory: repo.root,
+    }
+  ).catch(() => null);
+  if (!gitStatus) return null;
+  const entries = parseGitStatusEntries(gitStatus.stdout || "");
+  const files = Object.create(null);
+  const candidatePaths = collectWorkspaceSnapshotSeedPaths([
+    ...entries.flatMap((entry) => [entry?.path || "", entry?.originalPath || ""]),
+    ...includePaths,
+  ]);
+  for (const relativePath of candidatePaths) {
+    const fingerprint = await fingerprintWorkspaceFile(join(repo.root, relativePath));
+    if (fingerprint) files[relativePath] = fingerprint;
+  }
+  return {
+    mode: "git_status",
+    root: repo.root,
+    files,
+    statusByPath: buildGitStatusIndex(entries),
+  };
+}
+
+async function captureWorkspaceSnapshot(workspaceRoot, options = {}) {
+  const root = await workspaceExistsAsDirectory(workspaceRoot);
+  if (!root) {
+    throw new Error(
+      `Workspace snapshot root not found: ${resolve(String(workspaceRoot || REPO_ROOT))}`
+    );
+  }
+  const includePaths = collectWorkspaceSnapshotSeedPaths(options?.includePaths);
+  const gitSnapshot = await captureGitWorkspaceSnapshot(root, includePaths);
+  if (gitSnapshot) return gitSnapshot;
+  const files = Object.create(null);
+  async function walk(dirPath) {
+    const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const absolutePath = join(dirPath, entry.name);
+      const relativePath = normalizeWorkspaceRelativePath(relative(root, absolutePath));
+      if (!shouldTrackWorkspacePath(relativePath)) continue;
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const fingerprint = await fingerprintWorkspaceFile(absolutePath);
+      if (fingerprint) files[relativePath] = fingerprint;
+    }
+  }
+  await walk(root);
+  return {
+    mode: "filesystem_fingerprint",
+    root,
+    files,
+    statusByPath: Object.create(null),
+  };
+}
+
+function summarizeWorkspaceChanges(beforeSnapshot, afterSnapshot) {
+  const beforeFiles =
+    beforeSnapshot?.files && typeof beforeSnapshot.files === "object" ? beforeSnapshot.files : {};
+  const afterFiles =
+    afterSnapshot?.files && typeof afterSnapshot.files === "object" ? afterSnapshot.files : {};
+  const beforeStatusByPath =
+    beforeSnapshot?.statusByPath && typeof beforeSnapshot.statusByPath === "object"
+      ? beforeSnapshot.statusByPath
+      : {};
+  const afterStatusByPath =
+    afterSnapshot?.statusByPath && typeof afterSnapshot.statusByPath === "object"
+      ? afterSnapshot.statusByPath
+      : {};
+  const created = [];
+  const updated = [];
+  const deleted = [];
+  const allPaths = new Set([
+    ...Object.keys(beforeFiles),
+    ...Object.keys(afterFiles),
+    ...Object.keys(beforeStatusByPath),
+    ...Object.keys(afterStatusByPath),
+  ]);
+  for (const pathname of Array.from(allPaths)) {
+    const beforeFingerprint = beforeFiles[pathname];
+    const afterFingerprint = afterFiles[pathname];
+    const afterStatus = String(afterStatusByPath[pathname] || "")
+      .trim()
+      .toUpperCase();
+    const beforeStatus = String(beforeStatusByPath[pathname] || "")
+      .trim()
+      .toUpperCase();
+    if (!beforeFingerprint && !afterFingerprint) {
+      if (afterStatus === "D") deleted.push(pathname);
+      else if (afterStatus || beforeStatus) updated.push(pathname);
+      continue;
+    }
+    if (!beforeFingerprint && afterFingerprint) {
+      if (afterStatus === "A" || afterStatus === "C" || afterStatus === "R") created.push(pathname);
+      else updated.push(pathname);
+      continue;
+    }
+    if (beforeFingerprint && !afterFingerprint) {
+      deleted.push(pathname);
+      continue;
+    }
+    if (
+      Number(beforeFingerprint?.size || 0) !== Number(afterFingerprint?.size || 0) ||
+      Number(beforeFingerprint?.modifiedMs || 0) !== Number(afterFingerprint?.modifiedMs || 0) ||
+      String(beforeFingerprint?.contentHash || "") !== String(afterFingerprint?.contentHash || "")
+    ) {
+      updated.push(pathname);
+    }
+  }
+  created.sort((a, b) => a.localeCompare(b));
+  updated.sort((a, b) => a.localeCompare(b));
+  deleted.sort((a, b) => a.localeCompare(b));
+  const lines = [
+    `Workspace changes: ${created.length} created, ${updated.length} updated, ${deleted.length} deleted`,
+    ...created.slice(0, 20).map((pathname) => `+ ${pathname}`),
+    ...updated.slice(0, 40).map((pathname) => `~ ${pathname}`),
+    ...deleted.slice(0, 20).map((pathname) => `- ${pathname}`),
+  ];
+  return {
+    mode: String(afterSnapshot?.mode || beforeSnapshot?.mode || "unknown"),
+    hasChanges: created.length > 0 || updated.length > 0 || deleted.length > 0,
+    created,
+    updated,
+    deleted,
+    paths: [...created, ...updated, ...deleted],
+    summary: lines.join("\n"),
+  };
+}
+
+function emptyToolActivityAudit(source = "") {
+  return {
+    source: source || "",
+    totalToolCalls: 0,
+    writeToolCalls: 0,
+    toolNames: [],
+  };
+}
+
+function collectToolActivity(rows, source = "") {
+  if (!Array.isArray(rows)) return emptyToolActivityAudit(source);
+  const toolNames = new Set();
+  let totalToolCalls = 0;
+  let writeToolCalls = 0;
+  const recordTool = (tool) => {
+    const normalized = normalizeToolName(tool) || "tool";
+    totalToolCalls += 1;
+    toolNames.add(normalized);
+    if (isWriteToolName(normalized)) writeToolCalls += 1;
+  };
+  for (const row of rows) {
+    const parts = Array.isArray(row?.parts) ? row.parts : [];
+    let rowRecorded = false;
+    for (const part of parts) {
+      const partType = String(part?.type || part?.part_type || "")
+        .trim()
+        .toLowerCase();
+      const partTool = String(part?.tool || part?.name || "").trim();
+      if (!partType.includes("tool") && !partTool) continue;
+      recordTool(partTool);
+      rowRecorded = true;
+    }
+    if (rowRecorded) continue;
+    const rowType = String(row?.type || "")
+      .trim()
+      .toLowerCase();
+    const rowTool = String(row?.tool || row?.name || "").trim();
+    if (rowType.includes("tool") || rowTool) recordTool(rowTool);
+  }
+  return {
+    source: source || "",
+    totalToolCalls,
+    writeToolCalls,
+    toolNames: Array.from(toolNames).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+function mergeToolActivityAudits(...audits) {
+  const valid = audits.filter((audit) => audit && typeof audit === "object");
+  const toolNames = new Set();
+  const sources = [];
+  let totalToolCalls = 0;
+  let writeToolCalls = 0;
+  for (const audit of valid) {
+    totalToolCalls = Math.max(totalToolCalls, Number(audit?.totalToolCalls || 0));
+    writeToolCalls = Math.max(writeToolCalls, Number(audit?.writeToolCalls || 0));
+    if (audit?.source && (audit.totalToolCalls || audit.writeToolCalls)) {
+      sources.push(String(audit.source));
+    }
+    for (const tool of Array.isArray(audit?.toolNames) ? audit.toolNames : []) {
+      const normalized = normalizeToolName(tool);
+      if (normalized) toolNames.add(normalized);
+    }
+  }
+  return {
+    totalToolCalls,
+    writeToolCalls,
+    toolNames: Array.from(toolNames).sort((a, b) => a.localeCompare(b)),
+    sources: Array.from(new Set(sources)),
+  };
+}
+
+function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionId) {
+  const syncAudit = collectToolActivity(syncRows, "prompt_sync");
+  const sessionAudit = collectToolActivity(messages, "session_snapshot");
+  const toolAudit = mergeToolActivityAudits(syncAudit, sessionAudit);
+  const assistantText = extractAssistantText(syncRows) || extractAssistantText(messages);
+  const mode = normalizeVerificationMode(swarmState.verificationMode);
+  const requiredToolModeUnsatisfied = assistantText.includes(REQUIRED_TOOL_MODE_REASON);
+  const workspaceChanged = workspaceChanges?.hasChanges === true;
+  const strictMode = mode === "strict";
+  const passed = strictMode
+    ? workspaceChanged || toolAudit.writeToolCalls > 0
+    : workspaceChanged || toolAudit.totalToolCalls > 0;
+  let reason = "VERIFIED";
+  if (!passed) {
+    if (requiredToolModeUnsatisfied) reason = REQUIRED_TOOL_MODE_REASON;
+    else if (strictMode && toolAudit.totalToolCalls > 0)
+      reason = "NO_WRITE_ACTIVITY_NO_WORKSPACE_CHANGE";
+    else reason = "NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE";
+  }
+  return {
+    mode,
+    reason,
+    passed,
+    session_id: String(sessionId || "").trim() || null,
+    assistant_present: !!assistantText.trim(),
+    assistant_excerpt: assistantText.trim().slice(0, 280),
+    any_tool_calls: toolAudit.totalToolCalls > 0,
+    total_tool_calls: toolAudit.totalToolCalls,
+    write_tool_calls: toolAudit.writeToolCalls,
+    tool_names: toolAudit.toolNames,
+    detection_sources: toolAudit.sources,
+    workspace_changed: workspaceChanged,
+    workspace_change_mode: String(workspaceChanges?.mode || "unknown"),
+    workspace_change_paths: Array.isArray(workspaceChanges?.paths)
+      ? workspaceChanges.paths.slice(0, 80)
+      : [],
+    workspace_change_summary: String(workspaceChanges?.summary || "").trim(),
+  };
 }
 
 function hasToolActivity(rows) {
   if (!Array.isArray(rows)) return false;
   return rows.some((row) => {
-    const rowType = String(row?.type || "").trim().toLowerCase();
+    const rowType = String(row?.type || "")
+      .trim()
+      .toLowerCase();
     if (rowType.includes("tool")) return true;
-    const rowTool = String(row?.tool || "").trim().toLowerCase();
+    const rowTool = String(row?.tool || "")
+      .trim()
+      .toLowerCase();
     if (rowTool) return true;
     const parts = Array.isArray(row?.parts) ? row.parts : [];
     return parts.some((part) => {
-      const partType = String(part?.type || part?.part_type || "").trim().toLowerCase();
+      const partType = String(part?.type || part?.part_type || "")
+        .trim()
+        .toLowerCase();
       if (partType.includes("tool")) return true;
       return String(part?.tool || "").trim().length > 0;
     });
@@ -1848,7 +2331,8 @@ async function fetchEngineDefaultModel(session) {
   }
   const payload = await engineRequestJson(session, "/config/providers").catch(() => ({}));
   const defaultProvider = String(payload?.default || "").trim();
-  const providers = payload?.providers && typeof payload.providers === "object" ? payload.providers : {};
+  const providers =
+    payload?.providers && typeof payload.providers === "object" ? payload.providers : {};
   const defaultModel = String(providers?.[defaultProvider]?.default_model || "").trim();
   cachedEngineDefaultModel = {
     provider: defaultProvider,
@@ -1894,21 +2378,51 @@ function stepPromptText(run, step, stepIndex, totalSteps) {
   ].join("\n");
 }
 
-async function runStepWithLLM(session, run, step, stepIndex, totalSteps) {
-  const sessionId = await createExecutionSession(session, run);
-  if (!sessionId) throw new Error("Failed to create execution session.");
-  const prompt = stepPromptText(run, step, stepIndex, totalSteps);
-  let promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
-    method: "POST",
-    timeoutMs: 10 * 60 * 1000,
-    body: {
-      parts: [{ type: "text", text: prompt }],
-      tool_mode: "required",
-      tool_allowlist: workerExecutionToolAllowlist(),
-    },
-  });
+async function runExecutionPromptWithVerification(session, run, prompt, sessionId = "") {
+  const activeSessionId =
+    String(sessionId || "").trim() || (await createExecutionSession(session, run));
+  if (!activeSessionId) throw new Error("Failed to create execution session.");
+  const workspaceRoot = await workspaceExistsAsDirectory(
+    String(
+      run?.workspace?.canonical_path || run?.workspace_root || swarmState.workspaceRoot || REPO_ROOT
+    ).trim()
+  );
+  let workspaceBefore = null;
+  let workspaceAfter = null;
+  let workspaceChanges = {
+    mode: "unavailable",
+    hasChanges: false,
+    paths: [],
+    summary: "",
+  };
+  const workspaceSeedPaths = () => [
+    ...Object.keys(workspaceBefore?.files || {}),
+    ...Object.keys(workspaceBefore?.statusByPath || {}),
+  ];
+  if (workspaceRoot) {
+    workspaceBefore = await captureWorkspaceSnapshot(workspaceRoot).catch((error) => ({
+      mode: "capture_failed",
+      root: workspaceRoot,
+      files: {},
+      statusByPath: {},
+      error: String(error?.message || error || "workspace snapshot failed"),
+    }));
+  }
+  let promptResponse = await engineRequestJson(
+    session,
+    `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
+    {
+      method: "POST",
+      timeoutMs: 10 * 60 * 1000,
+      body: {
+        parts: [{ type: "text", text: prompt }],
+        tool_mode: "required",
+        tool_allowlist: workerExecutionToolAllowlist(),
+      },
+    }
+  );
   let syncRows = Array.isArray(promptResponse) ? promptResponse : [];
-  let hasAssistant = syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
+  let hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
   let hasToolSignal = hasToolActivity(syncRows);
   if (!hasAssistant || !hasToolSignal) {
     const retryPrompt = [
@@ -1919,36 +2433,84 @@ async function runStepWithLLM(session, run, step, stepIndex, totalSteps) {
       "- Use write/edit/apply_patch to make workspace changes.",
       "- Do not use bash.",
     ].join("\n");
-    promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
-      method: "POST",
-      timeoutMs: 10 * 60 * 1000,
-      body: {
-        parts: [{ type: "text", text: retryPrompt }],
-        tool_mode: "required",
-        tool_allowlist: workerExecutionToolAllowlist(),
-      },
-    }).catch(() => promptResponse);
+    promptResponse = await engineRequestJson(
+      session,
+      `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
+      {
+        method: "POST",
+        timeoutMs: 10 * 60 * 1000,
+        body: {
+          parts: [{ type: "text", text: retryPrompt }],
+          tool_mode: "required",
+          tool_allowlist: workerExecutionToolAllowlist(),
+        },
+      }
+    ).catch(() => promptResponse);
     syncRows = Array.isArray(promptResponse) ? promptResponse : syncRows;
-    hasAssistant = hasAssistant || syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
+    hasAssistant = hasAssistant || syncRows.some((row) => roleOfMessage(row) === "assistant");
     hasToolSignal = hasToolSignal || hasToolActivity(syncRows);
   }
-  const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
-    () => null
-  );
+  const sessionSnapshot = await engineRequestJson(
+    session,
+    `/session/${encodeURIComponent(activeSessionId)}`
+  ).catch(() => null);
   const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
-  const persistedAssistant = messages.some(
-    (message) => String(message?.info?.role || "").toLowerCase() === "assistant"
+  const persistedAssistant = messages.some((message) => roleOfMessage(message) === "assistant");
+  if (workspaceRoot) {
+    workspaceAfter = await captureWorkspaceSnapshot(workspaceRoot, {
+      includePaths: workspaceSeedPaths(),
+    }).catch((error) => ({
+      mode: "capture_failed",
+      root: workspaceRoot,
+      files: {},
+      statusByPath: {},
+      error: String(error?.message || error || "workspace snapshot failed"),
+    }));
+  }
+  if (workspaceBefore && workspaceAfter) {
+    workspaceChanges = summarizeWorkspaceChanges(workspaceBefore, workspaceAfter);
+    if (workspaceBefore?.error || workspaceAfter?.error) {
+      const detail = [workspaceBefore?.error, workspaceAfter?.error].filter(Boolean).join(" | ");
+      workspaceChanges.summary = [
+        workspaceChanges.summary,
+        detail ? `Workspace snapshot warnings: ${detail}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+  }
+  const verification = buildVerificationSummary(
+    syncRows,
+    messages,
+    workspaceChanges,
+    activeSessionId
   );
-  hasToolSignal = hasToolSignal || hasToolActivity(messages);
   if (!hasAssistant && !persistedAssistant) {
-    throw new Error(
-      "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved."
+    throw createExecutionError(
+      "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved.",
+      {
+        sessionId: activeSessionId,
+        verification: {
+          ...verification,
+          reason: "PROMPT_DISPATCH_EMPTY_RESPONSE",
+          passed: false,
+          assistant_present: false,
+        },
+      }
     );
   }
-  if (!hasToolSignal) {
-    throw new Error("TASK_NOT_VERIFIED: NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE");
+  if (!verification.passed) {
+    throw createExecutionError(`TASK_NOT_VERIFIED: ${verification.reason}`, {
+      sessionId: activeSessionId,
+      verification,
+    });
   }
-  return sessionId;
+  return { sessionId: activeSessionId, verification };
+}
+
+async function runStepWithLLM(session, run, step, stepIndex, totalSteps, sessionId = "") {
+  const prompt = stepPromptText(run, step, stepIndex, totalSteps);
+  return runExecutionPromptWithVerification(session, run, prompt, sessionId);
 }
 
 function extractBlackboardTasks(blackboardPayload) {
@@ -2007,67 +2569,16 @@ function taskPromptText(run, task, workerId, workflowId) {
   ].join("\n");
 }
 
-async function runTaskWithLLM(session, run, task, workerId, workflowId) {
-  const sessionId = await createExecutionSession(session, run);
-  if (!sessionId) throw new Error("Failed to create execution session.");
+async function runTaskWithLLM(session, run, task, workerId, workflowId, sessionId = "") {
   const prompt = taskPromptText(run, task, workerId, workflowId);
-  let promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
-    method: "POST",
-    timeoutMs: 10 * 60 * 1000,
-    body: {
-      parts: [{ type: "text", text: prompt }],
-      tool_mode: "required",
-      tool_allowlist: workerExecutionToolAllowlist(),
-    },
-  });
-  let syncRows = Array.isArray(promptResponse) ? promptResponse : [];
-  let hasAssistant = syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
-  let hasToolSignal = hasToolActivity(syncRows);
-  if (!hasAssistant || !hasToolSignal) {
-    const retryPrompt = [
-      prompt,
-      "",
-      "Mandatory execution rule:",
-      "- Before final text, execute at least one tool call.",
-      "- Use write/edit/apply_patch to make workspace changes.",
-      "- Do not use bash.",
-    ].join("\n");
-    promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
-      method: "POST",
-      timeoutMs: 10 * 60 * 1000,
-      body: {
-        parts: [{ type: "text", text: retryPrompt }],
-        tool_mode: "required",
-        tool_allowlist: workerExecutionToolAllowlist(),
-      },
-    }).catch(() => promptResponse);
-    syncRows = Array.isArray(promptResponse) ? promptResponse : syncRows;
-    hasAssistant = hasAssistant || syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
-    hasToolSignal = hasToolSignal || hasToolActivity(syncRows);
-  }
-  const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
-    () => null
-  );
-  const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
-  const persistedAssistant = messages.some(
-    (message) => String(message?.info?.role || "").toLowerCase() === "assistant"
-  );
-  hasToolSignal = hasToolSignal || hasToolActivity(messages);
-  if (!hasAssistant && !persistedAssistant) {
-    throw new Error(
-      "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved."
-    );
-  }
-  if (!hasToolSignal) {
-    throw new Error("TASK_NOT_VERIFIED: NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE");
-  }
-  return sessionId;
+  return runExecutionPromptWithVerification(session, run, prompt, sessionId);
 }
 
 async function fetchBlackboardTasks(session, runId) {
-  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/blackboard`).catch(
-    () => ({})
-  );
+  const payload = await engineRequestJson(
+    session,
+    `/context/runs/${encodeURIComponent(runId)}/blackboard`
+  ).catch(() => ({}));
   return extractBlackboardTasks(payload);
 }
 
@@ -2143,7 +2654,10 @@ async function transitionBlackboardTask(session, runId, task, update = {}) {
 async function detectExecutorMode(session, runId) {
   const blackboardTasks = await fetchBlackboardTasks(session, runId);
   if (blackboardTasks.length) return "blackboard";
-  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+  const payload = await engineRequestJson(
+    session,
+    `/context/runs/${encodeURIComponent(runId)}`
+  ).catch(() => null);
   const steps = Array.isArray(payload?.run?.steps) ? payload.run.steps : [];
   if (steps.length) return "context_steps";
   return String(swarmState.executorMode || "context_steps");
@@ -2153,15 +2667,19 @@ const swarmExecutors = new Map();
 
 function findStepByStatus(steps, status) {
   return (Array.isArray(steps) ? steps : []).find(
-    (step) => String(step?.status || "").trim().toLowerCase() === status
+    (step) =>
+      String(step?.status || "")
+        .trim()
+        .toLowerCase() === status
   );
 }
 
 async function ensureStepMarkedDone(session, runId, stepId) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
-      () => null
-    );
+    const payload = await engineRequestJson(
+      session,
+      `/context/runs/${encodeURIComponent(runId)}`
+    ).catch(() => null);
     const run = payload?.run;
     const steps = Array.isArray(run?.steps) ? run.steps : [];
     const idx = steps.findIndex((step) => String(step?.step_id || "") === stepId);
@@ -2182,7 +2700,10 @@ async function ensureStepMarkedDone(session, runId, stepId) {
       method: "PUT",
       body: patched,
     });
-    const verify = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+    const verify = await engineRequestJson(
+      session,
+      `/context/runs/${encodeURIComponent(runId)}`
+    ).catch(() => null);
     const verifySteps = Array.isArray(verify?.run?.steps) ? verify.run.steps : [];
     const verifyStep = verifySteps.find((step) => String(step?.step_id || "") === stepId);
     return String(verifyStep?.status || "").toLowerCase() === "done";
@@ -2198,14 +2719,21 @@ async function driveContextRunExecution(session, runId) {
     let completionStreak = 0;
     let lastCompletedStepId = "";
     for (let cycle = 0; cycle < 24; cycle += 1) {
-      const runPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`);
+      const runPayload = await engineRequestJson(
+        session,
+        `/context/runs/${encodeURIComponent(runId)}`
+      );
       const run = runPayload?.run || {};
       if (isRunTerminal(run.status)) return;
 
-      const nextPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/driver/next`, {
-        method: "POST",
-        body: { dry_run: false },
-      });
+      const nextPayload = await engineRequestJson(
+        session,
+        `/context/runs/${encodeURIComponent(runId)}/driver/next`,
+        {
+          method: "POST",
+          body: { dry_run: false },
+        }
+      );
       const selectedStepId = String(nextPayload?.selected_step_id || "").trim();
       const latestRun = nextPayload?.run || run;
       const steps = Array.isArray(latestRun?.steps) ? latestRun.steps : [];
@@ -2213,7 +2741,10 @@ async function driveContextRunExecution(session, runId) {
       const executionStepId = selectedStepId || String(inProgressStep?.step_id || "").trim();
 
       if (!executionStepId) {
-        if (steps.length && steps.every((step) => String(step?.status || "").toLowerCase() === "done")) {
+        if (
+          steps.length &&
+          steps.every((step) => String(step?.status || "").toLowerCase() === "done")
+        ) {
           await appendContextRunEvent(session, runId, "run_completed", "completed", {
             why_next_step: "all steps completed",
           });
@@ -2222,16 +2753,21 @@ async function driveContextRunExecution(session, runId) {
           swarmState.executorReason = "run completed";
           return;
         }
-        swarmState.lastError = String(nextPayload?.why_next_step || latestRun?.why_next_step || "No actionable step selected.");
+        swarmState.lastError = String(
+          nextPayload?.why_next_step || latestRun?.why_next_step || "No actionable step selected."
+        );
         swarmState.executorState = "blocked";
         swarmState.executorReason = swarmState.lastError;
         return;
       }
 
       const stepIndex = steps.findIndex((step) => String(step?.step_id || "") === executionStepId);
-      const step = stepIndex >= 0 ? steps[stepIndex] : { step_id: executionStepId, title: executionStepId };
+      const step =
+        stepIndex >= 0 ? steps[stepIndex] : { step_id: executionStepId, title: executionStepId };
+      let stepSessionId = "";
 
       try {
+        stepSessionId = await createExecutionSession(session, latestRun);
         await appendContextRunEvent(
           session,
           runId,
@@ -2240,13 +2776,21 @@ async function driveContextRunExecution(session, runId) {
           {
             step_status: "in_progress",
             step_title: String(step?.title || executionStepId),
+            session_id: stepSessionId || null,
             why_next_step: selectedStepId
               ? `executing ${executionStepId}`
               : `resuming in_progress step ${executionStepId}`,
           },
           executionStepId
         );
-        const sessionId = await runStepWithLLM(session, latestRun, step, Math.max(stepIndex, 0), Math.max(steps.length, 1));
+        const { sessionId, verification } = await runStepWithLLM(
+          session,
+          latestRun,
+          step,
+          Math.max(stepIndex, 0),
+          Math.max(steps.length, 1),
+          stepSessionId
+        );
         await appendContextRunEvent(
           session,
           runId,
@@ -2256,13 +2800,19 @@ async function driveContextRunExecution(session, runId) {
             step_status: "done",
             step_title: String(step?.title || executionStepId),
             session_id: sessionId,
+            verification,
             why_next_step: `completed ${executionStepId}`,
           },
           executionStepId
         );
-        const refresh = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+        const refresh = await engineRequestJson(
+          session,
+          `/context/runs/${encodeURIComponent(runId)}`
+        ).catch(() => null);
         const refreshedSteps = Array.isArray(refresh?.run?.steps) ? refresh.run.steps : [];
-        const refreshedStep = refreshedSteps.find((item) => String(item?.step_id || "") === executionStepId);
+        const refreshedStep = refreshedSteps.find(
+          (item) => String(item?.step_id || "") === executionStepId
+        );
         const refreshedStatus = String(refreshedStep?.status || "").toLowerCase();
         if (refreshedStatus !== "done") {
           const reconciled = await ensureStepMarkedDone(session, runId, executionStepId);
@@ -2279,9 +2829,9 @@ async function driveContextRunExecution(session, runId) {
               executionStepId
             );
           } else {
-          throw new Error(
-            `STEP_STATE_NOT_ADVANCING: step \`${executionStepId}\` remained \`${refreshedStatus || "unknown"}\` after completion`
-          );
+            throw new Error(
+              `STEP_STATE_NOT_ADVANCING: step \`${executionStepId}\` remained \`${refreshedStatus || "unknown"}\` after completion`
+            );
           }
         }
         if (executionStepId === lastCompletedStepId) completionStreak += 1;
@@ -2297,6 +2847,11 @@ async function driveContextRunExecution(session, runId) {
         swarmState.executorReason = "";
       } catch (error) {
         const message = String(error?.message || error || "Unknown step failure");
+        const failureSessionId = String(error?.sessionId || stepSessionId || "").trim();
+        const verification =
+          error?.verification && typeof error.verification === "object"
+            ? error.verification
+            : undefined;
         swarmState.lastError = message;
         swarmState.executorState = "error";
         swarmState.executorReason = message;
@@ -2307,6 +2862,8 @@ async function driveContextRunExecution(session, runId) {
           "failed",
           {
             step_status: "failed",
+            session_id: failureSessionId || null,
+            verification,
             error: message,
             why_next_step: `step failed: ${executionStepId}`,
           },
@@ -2334,8 +2891,13 @@ async function driveContextRunExecution(session, runId) {
 
 async function driveBlackboardRunExecution(session, runId, options = {}) {
   if (swarmExecutors.has(runId)) return false;
-  const workflowId = String(options.workflowId || swarmState.workflowId || "swarm.blackboard.default").trim();
-  const maxAgents = Math.max(1, Math.min(16, Number.parseInt(String(options.maxAgents || swarmState.maxAgents || 3), 10) || 3));
+  const workflowId = String(
+    options.workflowId || swarmState.workflowId || "swarm.blackboard.default"
+  ).trim();
+  const maxAgents = Math.max(
+    1,
+    Math.min(16, Number.parseInt(String(options.maxAgents || swarmState.maxAgents || 3), 10) || 3)
+  );
   swarmState.executorState = "running";
   swarmState.executorReason = "";
   swarmState.executorMode = "blackboard";
@@ -2358,9 +2920,10 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
       return (async () => {
         let idleSpins = 0;
         for (let cycle = 0; cycle < 96; cycle += 1) {
-          const runPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
-            () => null
-          );
+          const runPayload = await engineRequestJson(
+            session,
+            `/context/runs/${encodeURIComponent(runId)}`
+          ).catch(() => null);
           const run = runPayload?.run || {};
           if (isRunTerminal(run.status)) return;
 
@@ -2388,7 +2951,10 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
             idleSpins += 1;
             if (idleSpins > 6) {
               const refreshedBoard = await fetchBlackboardTasks(session, runId);
-              if (refreshedBoard.length && refreshedBoard.every((row) => isCompletedTaskStatus(row?.status))) {
+              if (
+                refreshedBoard.length &&
+                refreshedBoard.every((row) => isCompletedTaskStatus(row?.status))
+              ) {
                 await markRunComplete("all blackboard tasks completed");
                 return;
               }
@@ -2400,7 +2966,9 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
           idleSpins = 0;
           const taskId = String(task?.id || "").trim();
           const title = taskTitleFromRecord(task);
+          let taskSessionId = "";
           try {
+            taskSessionId = await createExecutionSession(session, run);
             await appendContextRunEvent(
               session,
               runId,
@@ -2409,16 +2977,25 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
               {
                 step_status: "in_progress",
                 step_title: title,
+                session_id: taskSessionId || null,
                 workflow_id: String(task?.workflow_id || workflowId || "").trim(),
                 assigned_agent: agentId,
                 why_next_step: `executing ${taskId || title}`,
               },
               taskId || null
             );
-            const runSnapshot = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
-              () => ({ run: {} })
+            const runSnapshot = await engineRequestJson(
+              session,
+              `/context/runs/${encodeURIComponent(runId)}`
+            ).catch(() => ({ run: {} }));
+            const { sessionId, verification } = await runTaskWithLLM(
+              session,
+              runSnapshot?.run || run,
+              task,
+              agentId,
+              workflowId,
+              taskSessionId
             );
-            const sessionId = await runTaskWithLLM(session, runSnapshot?.run || run, task, agentId, workflowId);
             await transitionBlackboardTask(session, runId, task, {
               status: "done",
               agentId,
@@ -2433,6 +3010,7 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
                 step_status: "done",
                 step_title: title,
                 session_id: sessionId,
+                verification,
                 workflow_id: String(task?.workflow_id || workflowId || "").trim(),
                 assigned_agent: agentId,
                 why_next_step: `completed ${taskId || title}`,
@@ -2444,6 +3022,11 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
             swarmState.executorReason = "";
           } catch (error) {
             const message = String(error?.message || error || "Unknown task failure");
+            const failureSessionId = String(error?.sessionId || taskSessionId || "").trim();
+            const verification =
+              error?.verification && typeof error.verification === "object"
+                ? error.verification
+                : undefined;
             await transitionBlackboardTask(session, runId, task, {
               status: "failed",
               error: message,
@@ -2460,6 +3043,8 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
               {
                 step_status: "failed",
                 step_title: title,
+                session_id: failureSessionId || null,
+                verification,
                 workflow_id: String(task?.workflow_id || workflowId || "").trim(),
                 assigned_agent: agentId,
                 error: message,
@@ -2500,18 +3085,31 @@ async function startRunExecutor(session, runId, options = {}) {
 }
 
 async function requeueInProgressSteps(session, runId) {
-  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+  const payload = await engineRequestJson(
+    session,
+    `/context/runs/${encodeURIComponent(runId)}`
+  ).catch(() => null);
   const run = payload?.run;
   const steps = Array.isArray(run?.steps) ? run.steps : [];
   const inProgress = steps.filter(
-    (step) => String(step?.status || "").trim().toLowerCase() === "in_progress"
+    (step) =>
+      String(step?.status || "")
+        .trim()
+        .toLowerCase() === "in_progress"
   );
   for (const step of inProgress) {
     const stepId = String(step?.step_id || "").trim();
     if (!stepId) continue;
-    await appendContextRunEvent(session, runId, "task_retry_requested", "running", {
-      why_next_step: `requeued stale in_progress step \`${stepId}\` before continue`,
-    }, stepId);
+    await appendContextRunEvent(
+      session,
+      runId,
+      "task_retry_requested",
+      "running",
+      {
+        why_next_step: `requeued stale in_progress step \`${stepId}\` before continue`,
+      },
+      stepId
+    );
   }
   return inProgress.length;
 }
@@ -2530,7 +3128,9 @@ async function startSwarm(session, config = {}) {
     .map((value) => String(value || "").trim())
     .find((value) => value.length > 0);
   if (!workspaceRootRaw) {
-    throw new Error("WORKSPACE_SELECTION_REQUIRED: select a workspace folder before starting a swarm run.");
+    throw new Error(
+      "WORKSPACE_SELECTION_REQUIRED: select a workspace folder before starting a swarm run."
+    );
   }
   const workspaceRoot = await workspaceExistsAsDirectory(workspaceRootRaw);
   if (!workspaceRoot) {
@@ -2539,8 +3139,15 @@ async function startSwarm(session, config = {}) {
     );
   }
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
-  const maxAgents = Math.max(1, Math.min(16, Number.parseInt(String(config.maxAgents || 3), 10) || 3));
-  const workflowId = String(config.workflowId || "swarm.blackboard.default").trim() || "swarm.blackboard.default";
+  const maxAgents = Math.max(
+    1,
+    Math.min(16, Number.parseInt(String(config.maxAgents || 3), 10) || 3)
+  );
+  const workflowId =
+    String(config.workflowId || "swarm.blackboard.default").trim() || "swarm.blackboard.default";
+  const verificationMode = normalizeVerificationMode(
+    config?.verificationMode || config?.verification_mode
+  );
   const requireLlmPlan = config?.requireLlmPlan === true || config?.require_llm_plan === true;
   const allowLocalPlannerFallback =
     config?.allowLocalPlannerFallback === true || config?.allow_local_planner_fallback === true;
@@ -2576,19 +3183,21 @@ async function startSwarm(session, config = {}) {
     max_tasks: maxTasks,
     max_agents: maxAgents,
     workflow_id: workflowId,
+    verification_mode: verificationMode,
     model_provider: modelProvider || undefined,
     model_id: modelId || undefined,
     mcp_servers: mcpServers,
   });
-  const synced = (() => engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
-    method: "POST",
-    body: {
-      replace: true,
-      todos: [],
-      source_session_id: null,
-      source_run_id: runId,
-    },
-  }))();
+  const synced = (() =>
+    engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
+      method: "POST",
+      body: {
+        replace: true,
+        todos: [],
+        source_session_id: null,
+        source_run_id: runId,
+      },
+    }))();
   await synced;
   let plannerTasks = [];
   let planSeedMode = "fallback_local";
@@ -2603,7 +3212,8 @@ async function startSwarm(session, config = {}) {
       session_id: llmPlan.sessionId || null,
       task_count: Number(seeded?.count || 0),
       dependency_edges: plannerTasks.reduce(
-        (sum, task) => sum + (Array.isArray(task?.dependsOnTaskIds) ? task.dependsOnTaskIds.length : 0),
+        (sum, task) =>
+          sum + (Array.isArray(task?.dependsOnTaskIds) ? task.dependsOnTaskIds.length : 0),
         0
       ),
       workflow_id: workflowId,
@@ -2621,9 +3231,10 @@ async function startSwarm(session, config = {}) {
     plannerTasks = normalizePlannerTasks(parseObjectiveTodos(objective, maxTasks), maxTasks, {
       linearFallback: true,
     });
-    if (!plannerTasks.length) plannerTasks = normalizePlannerTasks(["Execute requested objective"], 1, {
-      linearFallback: false,
-    });
+    if (!plannerTasks.length)
+      plannerTasks = normalizePlannerTasks(["Execute requested objective"], 1, {
+        linearFallback: false,
+      });
     try {
       const seeded = await seedBlackboardTasks(session, runId, objective, plannerTasks, workflowId);
       planSeedMode = seeded?.mode === "steps_compat" ? "steps_local_compat" : "blackboard_local";
@@ -2631,7 +3242,8 @@ async function startSwarm(session, config = {}) {
         source: "local_objective_parser",
         task_count: Number(seeded?.count || 0),
         dependency_edges: plannerTasks.reduce(
-          (sum, task) => sum + (Array.isArray(task?.dependsOnTaskIds) ? task.dependsOnTaskIds.length : 0),
+          (sum, task) =>
+            sum + (Array.isArray(task?.dependsOnTaskIds) ? task.dependsOnTaskIds.length : 0),
           0
         ),
         workflow_id: workflowId,
@@ -2651,6 +3263,7 @@ async function startSwarm(session, config = {}) {
     source_client: "control_panel",
     workflow_id: workflowId,
     max_agents: maxAgents,
+    verification_mode: verificationMode,
     planner_mode: planSeedMode,
   });
   swarmState.status = "awaiting_approval";
@@ -2668,6 +3281,7 @@ async function startSwarm(session, config = {}) {
   swarmState.modelResolutionSource = "deferred";
   swarmState.mcpServers = mcpServers;
   swarmState.repoRoot = workspaceRoot;
+  swarmState.verificationMode = verificationMode;
   swarmState.lastError = "";
   swarmState.executorMode = planSeedMode.startsWith("blackboard") ? "blackboard" : "context_steps";
   swarmState.executorState = "idle";
@@ -2745,7 +3359,10 @@ async function handleApi(req, res) {
     if (!health) {
       sessions.delete(session.sid);
       clearSessionCookie(res);
-      sendJson(res, 401, { ok: false, error: "Session token is no longer valid for the configured engine." });
+      sendJson(res, 401, {
+        ok: false,
+        error: "Session token is no longer valid for the configured engine.",
+      });
       return true;
     }
     sendJson(res, 200, {

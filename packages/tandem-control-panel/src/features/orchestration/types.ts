@@ -27,4 +27,6 @@ export interface BudgetUsage {
   subagent_runs_used: number;
   exceeded: boolean;
   exceeded_reason?: string;
+  limits_enforced?: boolean;
+  source?: "run" | "derived";
 }

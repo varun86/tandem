@@ -61,12 +61,26 @@ async function startFakeEngine() {
     if (url.pathname === "/global/health") {
       if (auth === `Bearer ${token}` || xToken === token) {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ready: true, healthy: true, version: "test-engine", apiTokenRequired: true }));
+        res.end(
+          JSON.stringify({
+            ready: true,
+            healthy: true,
+            version: "test-engine",
+            apiTokenRequired: true,
+          })
+        );
         return;
       }
       // /global/health is intentionally open in real engine auth-gate.
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ready: true, healthy: true, version: "test-engine", apiTokenRequired: true }));
+      res.end(
+        JSON.stringify({
+          ready: true,
+          healthy: true,
+          version: "test-engine",
+          apiTokenRequired: true,
+        })
+      );
       return;
     }
 
@@ -77,7 +91,12 @@ async function startFakeEngine() {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ default: "openai", providers: { openai: { default_model: "gpt-4o-mini" } } }));
+      res.end(
+        JSON.stringify({
+          default: "openai",
+          providers: { openai: { default_model: "gpt-4o-mini" } },
+        })
+      );
       return;
     }
 
@@ -96,7 +115,11 @@ async function startFakeEngine() {
         mcp_servers: Array.isArray(input.mcp_servers) ? input.mcp_servers : [],
         status: "queued",
         objective: input.objective || "",
-        workspace: input.workspace || { workspace_id: "ws-test", canonical_path: process.cwd(), lease_epoch: 1 },
+        workspace: input.workspace || {
+          workspace_id: "ws-test",
+          canonical_path: process.cwd(),
+          lease_epoch: 1,
+        },
         steps: [],
         why_next_step: null,
         revision: 1,
@@ -149,7 +172,9 @@ async function startFakeEngine() {
 
     if (url.pathname === "/context/runs" && req.method === "GET") {
       const workspace = url.searchParams.get("workspace") || "";
-      const rows = [...runs.values()].filter((run) => !workspace || run.workspace?.canonical_path === workspace);
+      const rows = [...runs.values()].filter(
+        (run) => !workspace || run.workspace?.canonical_path === workspace
+      );
       rows.sort((a, b) => Number(b.updated_at_ms || 0) - Number(a.updated_at_ms || 0));
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ runs: rows }));
@@ -318,13 +343,23 @@ async function startFakeEngine() {
       return;
     }
 
-    if (url.pathname.match(/^\/context\/runs\/[^/]+\/(blackboard|replay)$/) && req.method === "GET") {
+    if (
+      url.pathname.match(/^\/context\/runs\/[^/]+\/(blackboard|replay)$/) &&
+      req.method === "GET"
+    ) {
       const kind = url.pathname.split("/").at(-1);
       res.writeHead(200, { "content-type": "application/json" });
       if (kind === "blackboard") {
         res.end(
           JSON.stringify({
-            blackboard: { facts: [], decisions: [], open_questions: [], artifacts: [], summaries: { rolling: "" }, revision: 0 },
+            blackboard: {
+              facts: [],
+              decisions: [],
+              open_questions: [],
+              artifacts: [],
+              summaries: { rolling: "" },
+              revision: 0,
+            },
           })
         );
       } else {
@@ -467,6 +502,7 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
       workspaceRoot: process.cwd(),
       objective: "Test objective",
       maxTasks: 2,
+      verificationMode: "strict",
       requireLlmPlan: true,
       allowLocalPlannerFallback: true,
     },
@@ -475,12 +511,20 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
   assert.equal(swarmStart.status, 200, JSON.stringify(swarmStartJson));
   assert.ok(String(swarmStartJson.runId || "").length > 0, "missing run id");
 
-  const runsRes = await request(baseUrl, `/api/swarm/runs?workspace=${encodeURIComponent(process.cwd())}`, { cookie });
+  const runsRes = await request(
+    baseUrl,
+    `/api/swarm/runs?workspace=${encodeURIComponent(process.cwd())}`,
+    { cookie }
+  );
   assert.equal(runsRes.status, 200);
   const runsJson = await runsRes.json();
   assert.ok(Array.isArray(runsJson.runs) && runsJson.runs.length > 0, "missing runs");
 
-  const runRes = await request(baseUrl, `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`, { cookie });
+  const runRes = await request(
+    baseUrl,
+    `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`,
+    { cookie }
+  );
   assert.equal(runRes.status, 200);
   const runJson = await runRes.json();
   assert.equal(runJson.run?.run_id, swarmStartJson.runId);
@@ -502,30 +546,68 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
     "expected execution prompt_sync calls to set tool_mode=required"
   );
   assert.ok(
-    fake.sessionCreates.some((call) =>
-      Array.isArray(call?.body?.permission) &&
-      call.body.permission.some((rule) => rule.permission === "bash" && rule.action === "deny")
+    fake.sessionCreates.some(
+      (call) =>
+        Array.isArray(call?.body?.permission) &&
+        call.body.permission.some((rule) => rule.permission === "bash" && rule.action === "deny")
     ),
     "expected session permission rules to deny bash"
   );
   assert.ok(
-    fake.sessionCreates.some((call) =>
-      Array.isArray(call?.body?.permission) &&
-      call.body.permission.some((rule) => rule.permission === "write" && rule.action === "allow")
+    fake.sessionCreates.some(
+      (call) =>
+        Array.isArray(call?.body?.permission) &&
+        call.body.permission.some((rule) => rule.permission === "write" && rule.action === "allow")
     ),
     "expected worker session permission rules to allow write"
   );
 
   await waitForCondition(async () => {
-    const runState = await request(baseUrl, `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`, {
-      cookie,
-    });
+    const runState = await request(
+      baseUrl,
+      `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`,
+      {
+        cookie,
+      }
+    );
     if (!runState.ok) return false;
     const payload = await runState.json();
     const status = String(payload?.run?.status || "").toLowerCase();
     return status === "failed";
   }, 12000);
 
-  const proxiedAuthSeen = fake.requests.some((r) => r.path === "/global/health" && r.auth === `Bearer ${fake.token}`);
+  const failedRunRes = await request(
+    baseUrl,
+    `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`,
+    {
+      cookie,
+    }
+  );
+  assert.equal(failedRunRes.status, 200);
+  const failedRunJson = await failedRunRes.json();
+  const events = Array.isArray(failedRunJson.events) ? failedRunJson.events : [];
+  const stepStarted = events.find((event) => event?.type === "step_started");
+  const stepFailed = events.find((event) => event?.type === "step_failed");
+  assert.ok(stepStarted, "missing step_started event");
+  assert.ok(stepFailed, "missing step_failed event");
+  assert.ok(
+    String(stepStarted?.payload?.session_id || "").length > 0,
+    "step_started missing session_id"
+  );
+  assert.ok(
+    String(stepFailed?.payload?.session_id || "").length > 0,
+    "step_failed missing session_id"
+  );
+  assert.deepEqual(stepFailed?.payload?.verification?.mode, "strict");
+  assert.deepEqual(
+    stepFailed?.payload?.verification?.reason,
+    "NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE"
+  );
+  assert.equal(stepFailed?.payload?.verification?.passed, false);
+  assert.equal(stepFailed?.payload?.verification?.workspace_changed, false);
+
+  const proxiedAuthSeen = fake.requests.some(
+    (r) => r.path === "/global/health" && r.auth === `Bearer ${fake.token}`
+  );
   assert.ok(proxiedAuthSeen, "proxy did not forward token auth header");
 });

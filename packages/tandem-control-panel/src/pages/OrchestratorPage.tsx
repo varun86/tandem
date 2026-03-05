@@ -21,12 +21,14 @@ const DEFAULT_BUDGET: BudgetUsage = {
   iterations_used: 0,
   max_tokens: 400000,
   tokens_used: 0,
-  max_wall_time_secs: 3600,
+  max_wall_time_secs: 7 * 24 * 60 * 60,
   wall_time_secs: 0,
   max_subagent_runs: 2000,
   subagent_runs_used: 0,
   exceeded: false,
   exceeded_reason: "",
+  limits_enforced: false,
+  source: "derived",
 };
 
 function normalizeTaskState(status: string): TaskState {
@@ -699,6 +701,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
   const isTerminal = ["completed", "failed", "cancelled"].includes(runStatus);
   const canPause = runStatus === "running";
   const canResume = runStatus === "paused";
+  const canContinue = runStatus === "failed" || runStatus === "blocked";
   const canCancel = [
     "queued",
     "planning",
@@ -1111,6 +1114,20 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                       Resume
                     </button>
                   ) : null}
+                  {canContinue ? (
+                    <button
+                      className="tcp-btn"
+                      onClick={() =>
+                        actionMutation.mutate({
+                          path: "/api/orchestrator/continue",
+                          body: { runId },
+                        })
+                      }
+                    >
+                      <i data-lucide="rotate-cw"></i>
+                      Continue Run
+                    </button>
+                  ) : null}
                   {canCancel ? (
                     <button
                       className="tcp-btn-danger"
@@ -1130,7 +1147,9 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
               ) : null}
               {isTerminal ? (
                 <div className="mb-3 rounded-lg border border-slate-700/60 bg-slate-900/25 p-2 text-xs tcp-subtle">
-                  This run is {runStatus}. Start a new prompt to continue.
+                  {runStatus === "failed"
+                    ? "This run is failed. Continue the run or retry a failed task."
+                    : `This run is ${runStatus}. Start a new prompt to continue.`}
                 </div>
               ) : null}
 
