@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
-use tandem_types::{ModelInfo, ProviderInfo, ToolSchema};
+use tandem_types::{ModelInfo, ProviderInfo, ToolMode, ToolSchema};
 
 fn provider_max_tokens() -> u32 {
     std::env::var("TANDEM_PROVIDER_MAX_TOKENS")
@@ -156,6 +156,13 @@ fn normalize_openai_items_schema(items: &mut serde_json::Value) {
     normalize_openai_schema_or_bool(items);
 }
 
+fn openai_tool_choice(tool_mode: &ToolMode) -> &'static str {
+    match tool_mode {
+        ToolMode::Required => "required",
+        ToolMode::Auto | ToolMode::None => "auto",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfig {
     pub api_key: Option<String>,
@@ -233,6 +240,7 @@ pub trait Provider: Send + Sync {
         &self,
         messages: Vec<ChatMessage>,
         model_override: Option<&str>,
+        _tool_mode: ToolMode,
         _tools: Option<Vec<ToolSchema>>,
         _cancel: CancellationToken,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
@@ -366,10 +374,11 @@ impl ProviderRegistry {
     pub async fn default_stream(
         &self,
         messages: Vec<ChatMessage>,
+        tool_mode: ToolMode,
         tools: Option<Vec<ToolSchema>>,
         cancel: CancellationToken,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
-        self.stream_for_provider(None, None, messages, tools, cancel)
+        self.stream_for_provider(None, None, messages, tool_mode, tools, cancel)
             .await
     }
 
@@ -378,11 +387,14 @@ impl ProviderRegistry {
         provider_id: Option<&str>,
         model_id: Option<&str>,
         messages: Vec<ChatMessage>,
+        tool_mode: ToolMode,
         tools: Option<Vec<ToolSchema>>,
         cancel: CancellationToken,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
         let provider = self.select_provider(provider_id).await?;
-        provider.stream(messages, model_id, tools, cancel).await
+        provider
+            .stream(messages, model_id, tool_mode, tools, cancel)
+            .await
     }
 
     async fn select_provider(
@@ -857,6 +869,7 @@ impl Provider for OpenAICompatibleProvider {
         &self,
         messages: Vec<ChatMessage>,
         model_override: Option<&str>,
+        tool_mode: ToolMode,
         tools: Option<Vec<ToolSchema>>,
         cancel: CancellationToken,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
@@ -906,7 +919,7 @@ impl Provider for OpenAICompatibleProvider {
         });
         if !wire_tools.is_empty() {
             body["tools"] = serde_json::Value::Array(wire_tools);
-            body["tool_choice"] = json!("auto");
+            body["tool_choice"] = json!(openai_tool_choice(&tool_mode));
         }
 
         let mut resp_opt = None;
@@ -1183,6 +1196,7 @@ impl Provider for AnthropicProvider {
         &self,
         messages: Vec<ChatMessage>,
         model_override: Option<&str>,
+        _tool_mode: ToolMode,
         _tools: Option<Vec<ToolSchema>>,
         cancel: CancellationToken,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {

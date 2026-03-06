@@ -353,7 +353,7 @@ impl EngineLoop {
             let websearch_duplicate_signature_limit = websearch_duplicate_signature_limit();
             let mut pack_builder_executed = false;
             let mut auto_workspace_probe_attempted = false;
-            let mut executed_tool_calls_total = 0usize;
+            let mut productive_tool_calls_total = 0usize;
             let mut required_tool_retry_used = false;
             let mut required_tool_unsatisfied_emitted = false;
             let email_delivery_requested = requires_email_delivery_prompt(&text);
@@ -666,6 +666,7 @@ impl EngineLoop {
                         Some(provider_id.as_str()),
                         Some(model_id_value.as_str()),
                         messages,
+                        requested_tool_mode.clone(),
                         Some(tool_schemas),
                         cancel.clone(),
                     ),
@@ -1098,7 +1099,6 @@ impl EngineLoop {
                         *entry += 1;
                         accepted_tool_calls_in_cycle =
                             accepted_tool_calls_in_cycle.saturating_add(1);
-                        executed_tool_calls_total = executed_tool_calls_total.saturating_add(1);
                         if let Some(output) = self
                             .execute_tool_with_permission(
                                 &session_id,
@@ -1112,9 +1112,7 @@ impl EngineLoop {
                             )
                             .await?
                         {
-                            let productive = !(tool_key == "batch"
-                                && is_non_productive_batch_output(&output))
-                                && !is_auth_required_tool_output(&output);
+                            let productive = is_productive_tool_output(&tool_key, &output);
                             if output.contains("WEBSEARCH_QUERY_MISSING") {
                                 websearch_query_blocked = true;
                             }
@@ -1129,6 +1127,8 @@ impl EngineLoop {
                                 readonly_tool_cache.insert(signature, output.clone());
                             }
                             if productive {
+                                productive_tool_calls_total =
+                                    productive_tool_calls_total.saturating_add(1);
                                 executed_productive_tool = true;
                                 if tool_key == "pack_builder" {
                                     pack_builder_executed = true;
@@ -1160,7 +1160,7 @@ impl EngineLoop {
                     if !outputs.is_empty() {
                         last_tool_outputs = outputs.clone();
                         if matches!(requested_tool_mode, ToolMode::Required)
-                            && executed_tool_calls_total == 0
+                            && productive_tool_calls_total == 0
                         {
                             if !required_tool_retry_used {
                                 required_tool_retry_used = true;
@@ -1270,7 +1270,7 @@ impl EngineLoop {
                 }
 
                 if matches!(requested_tool_mode, ToolMode::Required)
-                    && executed_tool_calls_total == 0
+                    && productive_tool_calls_total == 0
                 {
                     if !required_tool_retry_used {
                         required_tool_retry_used = true;
@@ -1318,7 +1318,8 @@ impl EngineLoop {
                 }
                 break;
             }
-            if matches!(requested_tool_mode, ToolMode::Required) && executed_tool_calls_total == 0 {
+            if matches!(requested_tool_mode, ToolMode::Required) && productive_tool_calls_total == 0
+            {
                 completion = required_tool_mode_unsatisfied_completion();
                 if !required_tool_unsatisfied_emitted {
                     self.event_bus.publish(EngineEvent::new(
@@ -2126,7 +2127,14 @@ impl EngineLoop {
         });
         let stream = self
             .providers
-            .stream_for_provider(provider_hint, model_id, messages, None, cancel.clone())
+            .stream_for_provider(
+                provider_hint,
+                model_id,
+                messages,
+                ToolMode::None,
+                None,
+                cancel.clone(),
+            )
             .await
             .ok()?;
         tokio::pin!(stream);
@@ -2505,6 +2513,64 @@ fn batch_tool_signature(args: &Value) -> Option<String> {
         .map(|(tool, call_args)| tool_signature(&tool, &call_args))
         .collect::<Vec<_>>();
     Some(format!("batch:{}", parts.join("|")))
+}
+
+fn is_productive_tool_output(tool_name: &str, output: &str) -> bool {
+    let normalized_tool = normalize_tool_name(tool_name);
+    if normalized_tool == "batch" && is_non_productive_batch_output(output) {
+        return false;
+    }
+    if is_auth_required_tool_output(output) {
+        return false;
+    }
+    let Some(result_body) = extract_tool_result_body(output) else {
+        return false;
+    };
+    !is_non_productive_tool_result_body(result_body)
+}
+
+fn extract_tool_result_body(output: &str) -> Option<&str> {
+    let trimmed = output.trim();
+    let rest = trimmed.strip_prefix("Tool `")?;
+    let (_, result_body) = rest.split_once("` result:")?;
+    Some(result_body.trim())
+}
+
+fn is_non_productive_tool_result_body(output: &str) -> bool {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("unknown tool:")
+        || lower.contains("call skipped")
+        || lower.contains("guard budget exceeded")
+        || lower.contains("invalid_function_parameters")
+        || is_terminal_tool_error_reason(trimmed)
+}
+
+fn is_terminal_tool_error_reason(output: &str) -> bool {
+    let first_line = output.lines().next().unwrap_or_default().trim();
+    if first_line.is_empty() {
+        return false;
+    }
+    let normalized = first_line.to_ascii_uppercase();
+    matches!(
+        normalized.as_str(),
+        "TOOL_ARGUMENTS_MISSING"
+            | "WEBSEARCH_QUERY_MISSING"
+            | "BASH_COMMAND_MISSING"
+            | "FILE_PATH_MISSING"
+            | "WRITE_CONTENT_MISSING"
+            | "WEBFETCH_URL_MISSING"
+            | "PACK_BUILDER_PLAN_ID_MISSING"
+            | "PACK_BUILDER_GOAL_MISSING"
+            | "PROVIDER_REQUEST_FAILED"
+            | "AUTHENTICATION_ERROR"
+            | "CONTEXT_LENGTH_EXCEEDED"
+            | "RATE_LIMIT_EXCEEDED"
+    ) || normalized.ends_with("_MISSING")
+        || normalized.ends_with("_ERROR")
 }
 
 fn is_non_productive_batch_output(output: &str) -> bool {
@@ -6164,6 +6230,36 @@ Call: todowrite(task_id=3, status="in_progress")
             "Authorization pending for `mcp.arcade.gmail_whoami`.\nAuthorize here: https://example.com\nRetry after 8s."
         ));
         assert!(!is_auth_required_tool_output("Tool `read` result: ok"));
+    }
+
+    #[test]
+    fn productive_tool_output_detector_rejects_missing_terminal_write_errors() {
+        assert!(!is_productive_tool_output("write", "WRITE_CONTENT_MISSING"));
+        assert!(!is_productive_tool_output("write", "FILE_PATH_MISSING"));
+        assert!(!is_productive_tool_output(
+            "write",
+            "Tool `write` result:\nWRITE_CONTENT_MISSING"
+        ));
+        assert!(!is_productive_tool_output(
+            "edit",
+            "Tool `edit` result:\nFILE_PATH_MISSING"
+        ));
+        assert!(!is_productive_tool_output(
+            "write",
+            "Tool `write` result:\ninvalid_function_parameters"
+        ));
+    }
+
+    #[test]
+    fn productive_tool_output_detector_accepts_real_tool_results() {
+        assert!(is_productive_tool_output(
+            "write",
+            "Tool `write` result:\nWrote /tmp/probe.html"
+        ));
+        assert!(!is_productive_tool_output(
+            "write",
+            "Authorization required for `write`.\nAuthorize here: https://example.com"
+        ));
     }
 
     #[test]
