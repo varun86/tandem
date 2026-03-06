@@ -2067,6 +2067,59 @@ function normalizeWorkspaceRelativePath(pathname) {
     .trim();
 }
 
+function extractClaimedWorkspaceDocPath(text, workspaceRoot = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  const root = String(workspaceRoot || "").trim();
+  for (const match of raw.matchAll(/`([^`]+(?:README\.md|[\w./-]+\.md))`/gi)) {
+    const candidate = String(match[1] || "").trim();
+    if (!candidate) continue;
+    if (root && candidate.startsWith(root)) {
+      const relative = normalizeWorkspaceRelativePath(candidate.slice(root.length));
+      if (relative.toLowerCase().endsWith(".md")) return relative;
+      continue;
+    }
+    const normalized = normalizeWorkspaceRelativePath(candidate);
+    if (normalized.toLowerCase().endsWith(".md")) return normalized;
+  }
+  return "";
+}
+
+async function persistClaimedWorkspaceDocArtifact(
+  session,
+  sessionId,
+  workspaceRoot,
+  assistantText,
+  originalPrompt
+) {
+  const path = extractClaimedWorkspaceDocPath(assistantText, workspaceRoot);
+  const content = String(assistantText || "").trim();
+  if (!sessionId || !path || content.length < 32) return null;
+  const writeCommand = `/tool write ${JSON.stringify({ path, content })}`;
+  return engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
+    method: "POST",
+    timeoutMs: 2 * 60 * 1000,
+    body: {
+      parts: [
+        {
+          type: "text",
+          text: [
+            "Persist the generated workspace artifact exactly once via the write tool.",
+            "Use the provided path and content exactly as given.",
+            "Do not add commentary.",
+            "",
+            `Original task prompt:\n${String(originalPrompt || "").trim()}`,
+            "",
+            writeCommand,
+          ].join("\n"),
+        },
+      ],
+      tool_mode: "required",
+      tool_allowlist: ["write"],
+    },
+  }).catch(() => null);
+}
+
 function shouldTrackWorkspacePath(pathname) {
   const normalized = normalizeWorkspaceRelativePath(pathname);
   return (
@@ -2772,6 +2825,20 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
     }
   );
   let syncRows = Array.isArray(promptResponse) ? promptResponse : [];
+  if (!hasToolActivity(syncRows)) {
+    const assistantDraft = extractAssistantText(syncRows);
+    const persisted = await persistClaimedWorkspaceDocArtifact(
+      session,
+      activeSessionId,
+      workspaceRoot,
+      assistantDraft,
+      prompt
+    );
+    if (Array.isArray(persisted) && hasToolActivity(persisted)) {
+      promptResponse = persisted;
+      syncRows = persisted;
+    }
+  }
   initialAttemptRows = syncRows.slice();
   let verificationStartIndex = 0;
   let retryError = null;
