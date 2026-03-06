@@ -72,8 +72,12 @@ pub(super) struct ContextRunState {
     #[serde(default)]
     pub(super) steps: Vec<ContextRunStep>,
     #[serde(default)]
+    pub(super) tasks: Vec<ContextBlackboardTask>,
+    #[serde(default)]
     pub(super) why_next_step: Option<String>,
     pub(super) revision: u64,
+    #[serde(default)]
+    pub(super) last_event_seq: u64,
     pub(super) created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) started_at_ms: Option<u64>,
@@ -103,13 +107,20 @@ pub(super) struct ContextRunCreateInput {
 pub(super) struct ContextRunEventRecord {
     pub(super) event_id: String,
     pub(super) run_id: String,
+    #[serde(alias = "event_seq")]
     pub(super) seq: u64,
     pub(super) ts_ms: u64,
     #[serde(rename = "type")]
     pub(super) event_type: String,
     pub(super) status: ContextRunStatus,
+    #[serde(default)]
+    pub(super) revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) command_id: Option<String>,
     pub(super) payload: Value,
 }
 
@@ -244,6 +255,8 @@ pub(super) struct ContextBlackboardPatchRecord {
     pub(super) run_id: String,
     pub(super) seq: u64,
     pub(super) ts_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) source_event_seq: Option<u64>,
     pub(super) op: ContextBlackboardPatchOp,
     pub(super) payload: Value,
 }

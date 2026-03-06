@@ -111,6 +111,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - monotonic patch sequence and dedupe behavior
     - replay compatibility with task blackboard state
 
+- **Run Engine commit boundary for context-run mutations**:
+  - added `ContextRunEngine` as the single mutation path for context runs, with per-run locking and deterministic commit ordering for event append, snapshot persistence, and compatibility blackboard projection writes
+  - task mutation endpoints now commit through the run engine instead of performing split writes directly:
+    - `POST /context/runs/{run_id}/tasks`
+    - `POST /context/runs/{run_id}/tasks/claim`
+    - `POST /context/runs/{run_id}/tasks/{task_id}/transition`
+    - `POST /context/runs/{run_id}/events`
+  - authoritative run events now carry stable mutation metadata including `event_seq`, `revision`, `task_id`, and `command_id`
+  - `events.jsonl` is now treated as the authoritative ordered per-run mutation history, while `run_state.json`, `blackboard.json`, and `blackboard_patches.jsonl` remain derived compatibility outputs
+  - read paths now repair stale snapshots from `events.jsonl` and stale blackboard projections from `blackboard_patches.jsonl`, reducing crash-consistency drift
+  - `POST /context/runs/{run_id}/events` now rejects `context.task.*` writes so task authority cannot bypass the run engine
+  - added regression coverage for task race single-winner claims, task event metadata, snapshot repair, blackboard repair, command idempotency, and concurrent multi-run isolation
+
 - **Automation creation UX simplified (control panel)**:
   - replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a unified `Automations` hub (`AutomationsPage.tsx`)
   - added a 4-step wizard: **What?** (plain-English goal) → **When?** (visual schedule presets + custom cron) → **How?** (execution mode selector) → **Review & Deploy**

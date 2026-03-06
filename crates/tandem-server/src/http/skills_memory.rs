@@ -1,3 +1,4 @@
+use super::context_runs::context_run_engine;
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -171,8 +172,10 @@ pub(super) async fn ensure_skill_router_context_run(
             .unwrap_or_else(|| "Skill routing workflow".to_string()),
         workspace: ContextWorkspaceLease::default(),
         steps: Vec::new(),
+        tasks: Vec::new(),
         why_next_step: Some("Resolve skill workflow from user goal".to_string()),
         revision: 1,
+        last_event_seq: 0,
         created_at_ms: now,
         started_at_ms: Some(now),
         ended_at_ms: None,
@@ -190,14 +193,8 @@ pub(super) async fn emit_skill_router_task(
     task_payload: Value,
     status: ContextBlackboardTaskStatus,
 ) -> Result<(), StatusCode> {
-    let lock = context_run_lock_for(run_id).await;
-    let _guard = lock.lock().await;
-    let blackboard = load_context_blackboard(state, run_id);
-    let existing = blackboard
-        .tasks
-        .iter()
-        .find(|row| row.id == task_id)
-        .cloned();
+    let run = load_context_run_state(state, run_id).await?;
+    let existing = run.tasks.iter().find(|row| row.id == task_id).cloned();
     let now = crate::now_ms();
 
     if existing.is_none() {
@@ -225,32 +222,28 @@ pub(super) async fn emit_skill_router_task(
             created_ts: now,
             updated_ts: now,
         };
-        let (patch, _) = append_context_blackboard_patch(
-            state,
-            run_id,
-            ContextBlackboardPatchOp::AddTask,
-            serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        )?;
-        let _ = context_run_event_append(
-            State(state.clone()),
-            Path(run_id.to_string()),
-            Json(ContextRunEventAppendInput {
-                event_type: "context.task.created".to_string(),
-                status: ContextRunStatus::Running,
-                step_id: Some(task_id.to_string()),
-                payload: json!({
+        let _ = context_run_engine()
+            .commit_task_mutation(
+                state,
+                run_id,
+                task.clone(),
+                ContextBlackboardPatchOp::AddTask,
+                serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                "context.task.created".to_string(),
+                ContextRunStatus::Running,
+                None,
+                json!({
                     "task_id": task_id,
                     "task_type": task_type,
-                    "patch_seq": patch.seq,
                     "task_rev": task.task_rev,
                     "source": "skill_router",
                 }),
-            }),
-        )
-        .await;
+            )
+            .await?;
     }
 
-    let current = load_context_blackboard(state, run_id)
+    let current = load_context_run_state(state, run_id)
+        .await?
         .tasks
         .into_iter()
         .find(|row| row.id == task_id);
@@ -258,35 +251,61 @@ pub(super) async fn emit_skill_router_task(
         .as_ref()
         .map(|row| row.task_rev.saturating_add(1))
         .unwrap_or(1);
-    let (patch, _) = append_context_blackboard_patch(
-        state,
-        run_id,
-        ContextBlackboardPatchOp::UpdateTaskState,
-        json!({
-            "task_id": task_id,
-            "status": status,
-            "assigned_agent": "skill_router",
-            "task_rev": next_rev,
-            "error": Value::Null,
-        }),
-    )?;
-    let _ = context_run_event_append(
-        State(state.clone()),
-        Path(run_id.to_string()),
-        Json(ContextRunEventAppendInput {
-            event_type: context_task_status_event_name(&status).to_string(),
-            status: ContextRunStatus::Running,
-            step_id: Some(task_id.to_string()),
-            payload: json!({
+    let next_task = ContextBlackboardTask {
+        status: status.clone(),
+        assigned_agent: Some("skill_router".to_string()),
+        last_error: None,
+        task_rev: next_rev,
+        updated_ts: now,
+        ..current.unwrap_or(ContextBlackboardTask {
+            id: task_id.to_string(),
+            task_type: task_type.to_string(),
+            payload: task_payload.clone(),
+            status: ContextBlackboardTaskStatus::Pending,
+            workflow_id: Some("skill_router".to_string()),
+            workflow_node_id: Some(task_type.to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            assigned_agent: Some("skill_router".to_string()),
+            priority: 0,
+            attempt: 0,
+            max_attempts: 1,
+            last_error: None,
+            next_retry_at_ms: None,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            task_rev: 1,
+            created_ts: now,
+            updated_ts: now,
+        })
+    };
+    let _ = context_run_engine()
+        .commit_task_mutation(
+            state,
+            run_id,
+            next_task,
+            ContextBlackboardPatchOp::UpdateTaskState,
+            json!({
                 "task_id": task_id,
                 "status": status,
-                "patch_seq": patch.seq,
+                "assigned_agent": "skill_router",
+                "task_rev": next_rev,
+                "error": Value::Null,
+            }),
+            context_task_status_event_name(&status).to_string(),
+            ContextRunStatus::Running,
+            None,
+            json!({
+                "task_id": task_id,
+                "status": status,
                 "task_rev": next_rev,
                 "source": "skill_router",
             }),
-        }),
-    )
-    .await;
+        )
+        .await?;
     Ok(())
 }
 

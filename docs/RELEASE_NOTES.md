@@ -82,6 +82,15 @@
     - `write`/`edit`/`multi_edit`/`apply_patch` duplicate-signature limit now defaults to `200` (previously `3`)
     - `pack_builder` remains fixed at `1`; shell tools remain strict at `2`
     - global override through `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` is unchanged
+
+- **Context runs now commit through a single Run Engine boundary**:
+  - Added `ContextRunEngine` with per-run locking so context-run mutations apply in one deterministic order: load snapshot, apply mutation, append the authoritative event, persist the updated run snapshot, then emit compatibility blackboard projection output.
+  - Task lifecycle endpoints (`/context/runs/{run_id}/tasks`, `/tasks/claim`, `/tasks/{task_id}/transition`) and run event mutation paths now route through that shared commit helper instead of writing `run_state.json`, `events.jsonl`, and blackboard projection files independently.
+  - `events.jsonl` is now treated as the authoritative ordered per-run mutation history; `run_state.json`, `blackboard.json`, and `blackboard_patches.jsonl` remain compatibility projections and caches.
+  - Authoritative task events now include stable sequencing and mutation metadata such as `event_seq`, `revision`, `task_id`, and `command_id` for replay/debug flows.
+  - Read paths now repair stale `run_state.json` from the event log and stale blackboard projection data from the patch log, improving crash recovery and replay determinism.
+  - `POST /context/runs/{run_id}/events` now rejects `context.task.*` writes so task authority cannot bypass the run engine.
+  - Added backend regression coverage for lifecycle transition validation, claim-race single-winner behavior, idempotent command handling, snapshot repair, blackboard repair, and concurrent multi-run isolation.
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:
     - `preview`: parse goal, resolve external capabilities to MCP catalog servers, generate pack artifacts, and return approval summary

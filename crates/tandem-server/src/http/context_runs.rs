@@ -20,6 +20,35 @@ use crate::http::context_types::*;
 use crate::AppState;
 use base64::Engine;
 use tandem_types::EngineEvent;
+use tandem_workflows::WorkflowActionRunStatus;
+
+#[derive(Debug, Clone)]
+pub(super) struct ContextRunCommitResult {
+    pub(super) run: ContextRunState,
+    pub(super) event: ContextRunEventRecord,
+    pub(super) blackboard: ContextBlackboardState,
+    pub(super) patch: Option<ContextBlackboardPatchRecord>,
+}
+
+#[derive(Default)]
+pub(crate) struct ContextRunEngine {
+    locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+pub(super) fn context_run_engine() -> &'static ContextRunEngine {
+    static ENGINE: std::sync::OnceLock<ContextRunEngine> = std::sync::OnceLock::new();
+    ENGINE.get_or_init(ContextRunEngine::default)
+}
+
+impl ContextRunEngine {
+    async fn lock_for(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut guard = self.locks.lock().await;
+        guard
+            .entry(run_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+}
 
 pub(super) fn context_runs_root(state: &AppState) -> PathBuf {
     state
@@ -68,11 +97,21 @@ pub(super) async fn load_context_run_state(
     state: &AppState,
     run_id: &str,
 ) -> Result<ContextRunState, StatusCode> {
-    let path = context_run_state_path(state, run_id);
-    let raw = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    serde_json::from_str::<ContextRunState>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    load_and_repair_context_run_state(state, run_id)
+}
+
+fn write_string_atomically(path: &FsPath, payload: &str) -> Result<(), StatusCode> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let tmp_path = path.with_extension(format!(
+        "{}.tmp",
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("json")
+    ));
+    std::fs::write(&tmp_path, payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    std::fs::rename(&tmp_path, path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(super) async fn save_context_run_state(
@@ -83,9 +122,9 @@ pub(super) async fn save_context_run_state(
     let path = context_run_state_path(state, &run.run_id);
     let payload =
         serde_json::to_string_pretty(run).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tokio::fs::write(path, payload)
+    tokio::task::spawn_blocking(move || write_string_atomically(&path, &payload))
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 pub(super) fn load_context_run_events_jsonl(
@@ -175,6 +214,330 @@ pub(super) fn load_context_run_workspace_sync(state: &AppState, run_id: &str) ->
         .map(ToString::to_string)
 }
 
+pub(super) fn load_context_run_state_sync(
+    state: &AppState,
+    run_id: &str,
+) -> Result<ContextRunState, StatusCode> {
+    let path = context_run_state_path(state, run_id);
+    let raw = std::fs::read_to_string(path).map_err(|_| StatusCode::NOT_FOUND)?;
+    serde_json::from_str::<ContextRunState>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+pub(super) fn save_context_run_state_sync(
+    state: &AppState,
+    run: &ContextRunState,
+) -> Result<(), StatusCode> {
+    let path = context_run_state_path(state, &run.run_id);
+    let payload =
+        serde_json::to_string_pretty(run).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    write_string_atomically(&path, &payload)
+}
+
+fn upsert_context_run_task(run: &mut ContextRunState, task: ContextBlackboardTask) {
+    if let Some(existing) = run.tasks.iter_mut().find(|row| row.id == task.id) {
+        *existing = task;
+    } else {
+        run.tasks.push(task);
+    }
+}
+
+fn next_context_run_event_seq(state: &AppState, run_id: &str, run: &ContextRunState) -> u64 {
+    run.last_event_seq
+        .max(latest_context_run_event_seq(&context_run_events_path(
+            state, run_id,
+        )))
+        .saturating_add(1)
+}
+
+fn append_context_run_event_record_sync(
+    state: &AppState,
+    run_id: &str,
+    record: &ContextRunEventRecord,
+) -> Result<(), StatusCode> {
+    append_jsonl_line(
+        &context_run_events_path(state, run_id),
+        &serde_json::to_value(record).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    )?;
+    if let Some(workspace) = load_context_run_workspace_sync(state, run_id) {
+        if !workspace.trim().is_empty() {
+            let envelope = ContextRunsStreamEnvelope {
+                kind: "context_run_event".to_string(),
+                run_id: run_id.to_string(),
+                workspace,
+                seq: record.seq,
+                ts_ms: record.ts_ms,
+                payload: serde_json::to_value(record).unwrap_or_else(|_| json!({})),
+            };
+            publish_context_run_stream_envelope(state, &envelope);
+        }
+    }
+    Ok(())
+}
+
+fn apply_context_run_event_record(run: &mut ContextRunState, event: &ContextRunEventRecord) {
+    if let Some(next_run) = event
+        .payload
+        .get("run")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ContextRunState>(value).ok())
+    {
+        *run = next_run;
+        run.run_id = event.run_id.clone();
+        run.revision = event.revision.max(run.revision);
+        run.last_event_seq = event.seq.max(run.last_event_seq);
+        run.updated_at_ms = run.updated_at_ms.max(event.ts_ms);
+        return;
+    }
+
+    if let Some(task) = event
+        .payload
+        .get("task")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ContextBlackboardTask>(value).ok())
+    {
+        upsert_context_run_task(run, task);
+    } else {
+        apply_context_event_transition(
+            run,
+            &ContextRunEventAppendInput {
+                event_type: event.event_type.clone(),
+                status: event.status.clone(),
+                step_id: event.step_id.clone(),
+                payload: event.payload.clone(),
+            },
+        );
+    }
+    run.revision = event.revision.max(run.revision);
+    run.last_event_seq = event.seq.max(run.last_event_seq);
+    run.updated_at_ms = run.updated_at_ms.max(event.ts_ms);
+}
+
+fn load_and_repair_context_run_state(
+    state: &AppState,
+    run_id: &str,
+) -> Result<ContextRunState, StatusCode> {
+    let mut run = load_context_run_state_sync(state, run_id)?;
+    let pending = load_context_run_events_jsonl(
+        &context_run_events_path(state, run_id),
+        Some(run.last_event_seq),
+        None,
+    );
+    if !pending.is_empty() {
+        for event in &pending {
+            apply_context_run_event_record(&mut run, event);
+        }
+        save_context_run_state_sync(state, &run)?;
+    }
+    Ok(run)
+}
+
+impl ContextRunEngine {
+    pub(super) async fn commit_task_mutation(
+        &self,
+        state: &AppState,
+        run_id: &str,
+        mut next_task: ContextBlackboardTask,
+        patch_op: ContextBlackboardPatchOp,
+        mut patch_payload: Value,
+        event_type: String,
+        event_status: ContextRunStatus,
+        command_id: Option<String>,
+        mut event_payload: Value,
+    ) -> Result<ContextRunCommitResult, StatusCode> {
+        let lock = self.lock_for(run_id).await;
+        let _guard = lock.lock().await;
+        let mut run = load_and_repair_context_run_state(state, run_id)?;
+        let now = crate::now_ms();
+        let next_revision = run.revision.saturating_add(1);
+        let next_event_seq = next_context_run_event_seq(state, run_id, &run);
+
+        next_task.updated_ts = now;
+        upsert_context_run_task(&mut run, next_task.clone());
+        run.revision = next_revision;
+        run.last_event_seq = next_event_seq;
+        run.updated_at_ms = now;
+
+        if let Some(payload) = event_payload.as_object_mut() {
+            payload.insert(
+                "task".to_string(),
+                serde_json::to_value(&next_task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            );
+            payload
+                .entry("patch_seq".to_string())
+                .or_insert_with(|| json!(next_event_seq));
+        }
+
+        let event = ContextRunEventRecord {
+            event_id: format!("evt-{}", Uuid::new_v4()),
+            run_id: run_id.to_string(),
+            seq: next_event_seq,
+            ts_ms: now,
+            event_type,
+            status: event_status,
+            revision: next_revision,
+            step_id: Some(next_task.id.clone()),
+            task_id: Some(next_task.id.clone()),
+            command_id,
+            payload: event_payload,
+        };
+        append_context_run_event_record_sync(state, run_id, &event)?;
+        save_context_run_state_sync(state, &run)?;
+
+        if let Some(payload) = patch_payload.as_object_mut() {
+            payload
+                .entry("task_rev".to_string())
+                .or_insert_with(|| json!(next_task.task_rev));
+        }
+        let patch = append_context_blackboard_patch_record(
+            state,
+            run_id,
+            next_event_seq,
+            patch_op,
+            patch_payload,
+        )?;
+        let blackboard = load_projected_context_blackboard(state, run_id);
+        Ok(ContextRunCommitResult {
+            run,
+            event,
+            blackboard,
+            patch: Some(patch),
+        })
+    }
+
+    pub(super) async fn commit_run_event(
+        &self,
+        state: &AppState,
+        run_id: &str,
+        input: ContextRunEventAppendInput,
+        command_id: Option<String>,
+    ) -> Result<ContextRunCommitResult, StatusCode> {
+        let lock = self.lock_for(run_id).await;
+        let _guard = lock.lock().await;
+        let mut run = load_and_repair_context_run_state(state, run_id)?;
+        let now = crate::now_ms();
+        let next_revision = run.revision.saturating_add(1);
+        let next_event_seq = next_context_run_event_seq(state, run_id, &run);
+        apply_context_event_transition(&mut run, &input);
+        run.revision = next_revision;
+        run.last_event_seq = next_event_seq;
+        run.updated_at_ms = now;
+
+        let event = ContextRunEventRecord {
+            event_id: format!("evt-{}", Uuid::new_v4()),
+            run_id: run_id.to_string(),
+            seq: next_event_seq,
+            ts_ms: now,
+            event_type: input.event_type.clone(),
+            status: input.status.clone(),
+            revision: next_revision,
+            step_id: input.step_id.clone(),
+            task_id: None,
+            command_id,
+            payload: input.payload.clone(),
+        };
+        append_context_run_event_record_sync(state, run_id, &event)?;
+        save_context_run_state_sync(state, &run)?;
+        let blackboard = load_projected_context_blackboard(state, run_id);
+        Ok(ContextRunCommitResult {
+            run,
+            event,
+            blackboard,
+            patch: None,
+        })
+    }
+
+    pub(super) async fn commit_snapshot_with_event(
+        &self,
+        state: &AppState,
+        run_id: &str,
+        mut run: ContextRunState,
+        input: ContextRunEventAppendInput,
+        command_id: Option<String>,
+    ) -> Result<ContextRunCommitResult, StatusCode> {
+        let lock = self.lock_for(run_id).await;
+        let _guard = lock.lock().await;
+        let current = load_and_repair_context_run_state(state, run_id)?;
+        let now = crate::now_ms();
+        let next_revision = current.revision.saturating_add(1);
+        let next_event_seq = next_context_run_event_seq(state, run_id, &current);
+        run.revision = next_revision;
+        run.last_event_seq = next_event_seq;
+        run.updated_at_ms = now;
+        let event = ContextRunEventRecord {
+            event_id: format!("evt-{}", Uuid::new_v4()),
+            run_id: run_id.to_string(),
+            seq: next_event_seq,
+            ts_ms: now,
+            event_type: input.event_type.clone(),
+            status: input.status.clone(),
+            revision: next_revision,
+            step_id: input.step_id.clone(),
+            task_id: None,
+            command_id,
+            payload: input.payload.clone(),
+        };
+        append_context_run_event_record_sync(state, run_id, &event)?;
+        save_context_run_state_sync(state, &run)?;
+        let blackboard = load_projected_context_blackboard(state, run_id);
+        Ok(ContextRunCommitResult {
+            run,
+            event,
+            blackboard,
+            patch: None,
+        })
+    }
+
+    pub(super) async fn commit_blackboard_patch(
+        &self,
+        state: &AppState,
+        run_id: &str,
+        op: ContextBlackboardPatchOp,
+        payload: Value,
+    ) -> Result<ContextRunCommitResult, StatusCode> {
+        let lock = self.lock_for(run_id).await;
+        let _guard = lock.lock().await;
+        let mut run = load_and_repair_context_run_state(state, run_id)?;
+        let now = crate::now_ms();
+        let next_revision = run.revision.saturating_add(1);
+        let next_event_seq = next_context_run_event_seq(state, run_id, &run);
+        run.revision = next_revision;
+        run.last_event_seq = next_event_seq;
+        run.updated_at_ms = now;
+        let event = ContextRunEventRecord {
+            event_id: format!("evt-{}", Uuid::new_v4()),
+            run_id: run_id.to_string(),
+            seq: next_event_seq,
+            ts_ms: now,
+            event_type: if matches!(op, ContextBlackboardPatchOp::AddArtifact) {
+                "context.artifact.added".to_string()
+            } else {
+                "context.blackboard.patched".to_string()
+            },
+            status: run.status.clone(),
+            revision: next_revision,
+            step_id: None,
+            task_id: None,
+            command_id: None,
+            payload: json!({
+                "op": op,
+                "payload": payload.clone(),
+                "patch_seq": next_event_seq,
+            }),
+        };
+        append_context_run_event_record_sync(state, run_id, &event)?;
+        save_context_run_state_sync(state, &run)?;
+        let patch =
+            append_context_blackboard_patch_record(state, run_id, next_event_seq, op, payload)?;
+        let blackboard = load_projected_context_blackboard(state, run_id);
+        Ok(ContextRunCommitResult {
+            run,
+            event,
+            blackboard,
+            patch: Some(patch),
+        })
+    }
+}
+
 pub(super) fn publish_context_run_stream_envelope(
     state: &AppState,
     envelope: &ContextRunsStreamEnvelope,
@@ -238,12 +601,42 @@ pub(super) fn save_context_blackboard(
     blackboard: &ContextBlackboardState,
 ) -> Result<(), StatusCode> {
     let path = context_run_blackboard_path(state, run_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
+    let mut stored = blackboard.clone();
+    stored.tasks.clear();
     let payload =
-        serde_json::to_string_pretty(blackboard).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    std::fs::write(path, payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        serde_json::to_string_pretty(&stored).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    write_string_atomically(&path, &payload)
+}
+
+pub(super) fn project_context_blackboard_with_run_tasks(
+    state: &AppState,
+    run_id: &str,
+    mut blackboard: ContextBlackboardState,
+) -> ContextBlackboardState {
+    if let Ok(run) = load_context_run_state_sync(state, run_id) {
+        blackboard.tasks = run.tasks;
+    }
+    blackboard
+}
+
+pub(super) fn load_projected_context_blackboard(
+    state: &AppState,
+    run_id: &str,
+) -> ContextBlackboardState {
+    let mut blackboard = load_context_blackboard(state, run_id);
+    let latest_patch_seq = load_context_blackboard_patches(state, run_id, None, Some(1))
+        .last()
+        .map(|patch| patch.seq)
+        .unwrap_or(0);
+    if blackboard.revision < latest_patch_seq {
+        let patches =
+            load_context_blackboard_patches(state, run_id, Some(blackboard.revision), None);
+        for patch in &patches {
+            let _ = apply_context_blackboard_patch(&mut blackboard, patch);
+        }
+        let _ = save_context_blackboard(state, run_id, &blackboard);
+    }
+    project_context_blackboard_with_run_tasks(state, run_id, blackboard)
 }
 
 pub(super) fn apply_context_blackboard_patch(
@@ -434,6 +827,14 @@ pub(super) fn apply_context_blackboard_patch(
             if let Some(next_attempt) = patch.payload.get("attempt").and_then(Value::as_u64) {
                 task.attempt = next_attempt as u32;
             }
+            if let Some(artifact_ids) = patch.payload.get("artifact_ids").and_then(Value::as_array)
+            {
+                task.artifact_ids = artifact_ids
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect();
+            }
             if let Some(next_rev) = patch.payload.get("task_rev").and_then(Value::as_u64) {
                 task.task_rev = next_rev;
             } else {
@@ -473,25 +874,19 @@ pub(super) fn load_context_blackboard_patches(
     parsed
 }
 
-pub(super) fn next_context_blackboard_patch_seq(state: &AppState, run_id: &str) -> u64 {
-    load_context_blackboard_patches(state, run_id, None, Some(1))
-        .last()
-        .map(|row| row.seq)
-        .unwrap_or(0)
-        .saturating_add(1)
-}
-
-pub(super) fn append_context_blackboard_patch(
+pub(super) fn append_context_blackboard_patch_record(
     state: &AppState,
     run_id: &str,
+    seq: u64,
     op: ContextBlackboardPatchOp,
     payload: Value,
-) -> Result<(ContextBlackboardPatchRecord, ContextBlackboardState), StatusCode> {
+) -> Result<ContextBlackboardPatchRecord, StatusCode> {
     let patch = ContextBlackboardPatchRecord {
         patch_id: format!("bbp-{}", Uuid::new_v4()),
         run_id: run_id.to_string(),
-        seq: next_context_blackboard_patch_seq(state, run_id),
+        seq,
         ts_ms: crate::now_ms(),
+        source_event_seq: Some(seq),
         op,
         payload,
     };
@@ -499,7 +894,7 @@ pub(super) fn append_context_blackboard_patch(
         &context_run_blackboard_patches_path(state, run_id),
         &serde_json::to_value(&patch).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     )?;
-    let mut blackboard = load_context_blackboard(state, run_id);
+    let mut blackboard = load_projected_context_blackboard(state, run_id);
     apply_context_blackboard_patch(&mut blackboard, &patch)?;
     save_context_blackboard(state, run_id, &blackboard)?;
     if let Some(workspace) = load_context_run_workspace_sync(state, run_id) {
@@ -513,7 +908,7 @@ pub(super) fn append_context_blackboard_patch(
         };
         publish_context_run_stream_envelope(state, &envelope);
     }
-    Ok((patch, blackboard))
+    Ok(patch)
 }
 
 pub(super) fn context_task_status_event_name(status: &ContextBlackboardTaskStatus) -> &'static str {
@@ -528,17 +923,59 @@ pub(super) fn context_task_status_event_name(status: &ContextBlackboardTaskStatu
     }
 }
 
-pub(super) fn context_run_lock_map(
-) -> &'static std::sync::OnceLock<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>
-{
-    static LOCKS: std::sync::OnceLock<
-        tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    > = std::sync::OnceLock::new();
-    &LOCKS
+fn context_task_status_transition_allowed(
+    current: &ContextBlackboardTaskStatus,
+    next: &ContextBlackboardTaskStatus,
+) -> bool {
+    use ContextBlackboardTaskStatus as Status;
+
+    if current == next {
+        return true;
+    }
+
+    matches!(
+        (current, next),
+        (Status::Pending, Status::Runnable)
+            | (Status::Pending, Status::Blocked)
+            | (Status::Runnable, Status::Blocked)
+            | (Status::InProgress, Status::Blocked)
+            | (Status::InProgress, Status::Done)
+            | (Status::InProgress, Status::Failed)
+            | (Status::InProgress, Status::Runnable)
+            | (Status::Blocked, Status::Runnable)
+            | (Status::Blocked, Status::Failed)
+            | (Status::Failed, Status::Runnable)
+    )
+}
+
+fn context_task_transition_requires_valid_lease(
+    current: &ContextBlackboardTask,
+    action: &str,
+    next_status: Option<&ContextBlackboardTaskStatus>,
+) -> bool {
+    if current.lease_token.is_none() {
+        return false;
+    }
+
+    if action == "heartbeat" || action == "complete" || action == "fail" || action == "release" {
+        return true;
+    }
+
+    action == "status"
+        && matches!(
+            next_status,
+            Some(ContextBlackboardTaskStatus::InProgress)
+                | Some(ContextBlackboardTaskStatus::Done)
+                | Some(ContextBlackboardTaskStatus::Failed)
+                | Some(ContextBlackboardTaskStatus::Blocked)
+        )
 }
 
 pub(super) async fn context_run_lock_for(run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let map = context_run_lock_map().get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+    static LOCKS: std::sync::OnceLock<
+        tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    > = std::sync::OnceLock::new();
+    let map = LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
     let mut guard = map.lock().await;
     guard
         .entry(run_id.to_string())
@@ -589,8 +1026,10 @@ pub(super) async fn context_run_create(
         objective: input.objective,
         workspace: input.workspace.unwrap_or_default(),
         steps: Vec::new(),
+        tasks: Vec::new(),
         why_next_step: None,
         revision: 1,
+        last_event_seq: 0,
         created_at_ms: now,
         started_at_ms: None,
         ended_at_ms: None,
@@ -663,16 +1102,27 @@ pub(super) async fn context_run_get(
 pub(super) async fn context_run_put(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
-    Json(mut run): Json<ContextRunState>,
+    Json(run): Json<ContextRunState>,
 ) -> Result<Json<Value>, StatusCode> {
     if run.run_id != run_id {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let now = crate::now_ms();
-    run.revision = run.revision.saturating_add(1);
-    run.updated_at_ms = now;
-    save_context_run_state(&state, &run).await?;
-    Ok(Json(json!({ "ok": true, "run": run })))
+    let status = run.status.clone();
+    let outcome = context_run_engine()
+        .commit_snapshot_with_event(
+            &state,
+            &run_id,
+            run.clone(),
+            ContextRunEventAppendInput {
+                event_type: "context.run.replaced".to_string(),
+                status,
+                step_id: None,
+                payload: json!({ "run": run }),
+            },
+            None,
+        )
+        .await?;
+    Ok(Json(json!({ "ok": true, "run": outcome.run })))
 }
 
 pub(super) fn context_run_is_terminal(status: &ContextRunStatus) -> bool {
@@ -776,32 +1226,36 @@ pub(super) async fn context_run_todos_sync(
         })
         .map(|step| format!("continue task `{}` from synced todo list", step.step_id));
 
-    run.revision = run.revision.saturating_add(1);
-    run.updated_at_ms = crate::now_ms();
-    save_context_run_state(&state, &run).await?;
-
-    let _ = context_run_event_append(
-        State(state.clone()),
-        Path(run_id.clone()),
-        Json(ContextRunEventAppendInput {
-            event_type: "todo_synced".to_string(),
-            status: run.status.clone(),
-            step_id: None,
-            payload: json!({
-                "count": run.steps.len(),
-                "replace": replace,
-                "source_session_id": input.source_session_id,
-                "source_run_id": input.source_run_id,
-                "todos": input.todos,
-                "why_next_step": run.why_next_step.clone(),
-            }),
-        }),
-    )
-    .await;
+    let event_status = run.status.clone();
+    let event_payload = json!({
+        "count": run.steps.len(),
+        "replace": replace,
+        "source_session_id": input.source_session_id,
+        "source_run_id": input.source_run_id,
+        "todos": input.todos,
+        "why_next_step": run.why_next_step.clone(),
+        "steps": run.steps,
+        "run": run,
+    });
+    let outcome = context_run_engine()
+        .commit_snapshot_with_event(
+            &state,
+            &run_id,
+            serde_json::from_value(event_payload.get("run").cloned().unwrap_or(Value::Null))
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            ContextRunEventAppendInput {
+                event_type: "todo_synced".to_string(),
+                status: event_status,
+                step_id: None,
+                payload: event_payload,
+            },
+            None,
+        )
+        .await?;
 
     Ok(Json(json!({
         "ok": true,
-        "run": run
+        "run": outcome.run
     })))
 }
 
@@ -919,26 +1373,30 @@ pub(super) async fn context_run_driver_next(
         }
         run.status = target_status.clone();
         run.why_next_step = Some(why_next_step.clone());
-        run.revision = run.revision.saturating_add(1);
-        run.updated_at_ms = crate::now_ms();
-        save_context_run_state(&state, &run).await?;
-
-        let _ = context_run_event_append(
-            State(state.clone()),
-            Path(run_id.clone()),
-            Json(ContextRunEventAppendInput {
-                event_type: "meta_next_step_selected".to_string(),
-                status: target_status.clone(),
-                step_id: selected_step_id.clone(),
-                payload: json!({
-                    "why_next_step": why_next_step,
-                    "selected_step_id": selected_step_id,
-                    "selected_step_previous_status": selected_step_status,
-                    "driver": "context_driver_v1"
-                }),
-            }),
-        )
-        .await;
+        let event_payload = json!({
+            "why_next_step": why_next_step,
+            "selected_step_id": selected_step_id,
+            "selected_step_previous_status": selected_step_status,
+            "driver": "context_driver_v1",
+            "steps": run.steps,
+            "run": run,
+        });
+        run = context_run_engine()
+            .commit_snapshot_with_event(
+                &state,
+                &run_id,
+                serde_json::from_value(event_payload.get("run").cloned().unwrap_or(Value::Null))
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                ContextRunEventAppendInput {
+                    event_type: "meta_next_step_selected".to_string(),
+                    status: target_status.clone(),
+                    step_id: selected_step_id.clone(),
+                    payload: event_payload,
+                },
+                None,
+            )
+            .await?
+            .run;
     }
 
     Ok(Json(json!({
@@ -1164,45 +1622,17 @@ pub(super) async fn context_run_event_append(
     Path(run_id): Path<String>,
     Json(input): Json<ContextRunEventAppendInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let events_path = context_run_events_path(&state, &run_id);
-    let seq = latest_context_run_event_seq(&events_path).saturating_add(1);
-    let record = ContextRunEventRecord {
-        event_id: format!("evt-{}", Uuid::new_v4()),
-        run_id: run_id.clone(),
-        seq,
-        ts_ms: crate::now_ms(),
-        event_type: input.event_type.clone(),
-        status: input.status.clone(),
-        step_id: input.step_id.clone(),
-        payload: input.payload.clone(),
-    };
-    append_jsonl_line(
-        &events_path,
-        &serde_json::to_value(&record).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-    )?;
-
-    let mut workspace_for_stream = String::new();
-    if let Ok(mut run) = load_context_run_state(&state, &run_id).await {
-        workspace_for_stream = run.workspace.canonical_path.clone();
-        apply_context_event_transition(&mut run, &input);
-        run.revision = run.revision.saturating_add(1);
-        run.updated_at_ms = crate::now_ms();
-        save_context_run_state(&state, &run).await?;
+    if input.event_type.trim().starts_with("context.task.") {
+        return Ok(Json(json!({
+            "ok": false,
+            "error": "task events must go through the run task endpoints",
+            "code": "TASK_EVENT_APPEND_DISABLED"
+        })));
     }
-
-    if !workspace_for_stream.trim().is_empty() {
-        let envelope = ContextRunsStreamEnvelope {
-            kind: "context_run_event".to_string(),
-            run_id: run_id.clone(),
-            workspace: workspace_for_stream,
-            seq: record.seq,
-            ts_ms: record.ts_ms,
-            payload: serde_json::to_value(&record).unwrap_or_else(|_| json!({})),
-        };
-        publish_context_run_stream_envelope(&state, &envelope);
-    }
-
-    Ok(Json(json!({ "ok": true, "event": record })))
+    let outcome = context_run_engine()
+        .commit_run_event(&state, &run_id, input, None)
+        .await?;
+    Ok(Json(json!({ "ok": true, "event": outcome.event })))
 }
 
 pub(super) async fn context_run_events(
@@ -1451,32 +1881,49 @@ pub(super) async fn context_run_lease_validate(
         if run.workspace.lease_epoch == 0 {
             run.workspace.lease_epoch = 1;
         }
-        run.revision = run.revision.saturating_add(1);
-        run.updated_at_ms = crate::now_ms();
-        save_context_run_state(&state, &run).await?;
+        let _ = context_run_engine()
+            .commit_snapshot_with_event(
+                &state,
+                &run_id,
+                run.clone(),
+                ContextRunEventAppendInput {
+                    event_type: "workspace_validated".to_string(),
+                    status: run.status.clone(),
+                    step_id: input.step_id.clone(),
+                    payload: json!({
+                        "phase": input.phase,
+                        "expected_path": run.workspace.canonical_path,
+                        "actual_path": input.current_path,
+                        "run": run,
+                    }),
+                },
+                None,
+            )
+            .await?;
         return Ok(Json(json!({ "ok": true, "mismatch": false })));
     }
 
     if run.workspace.canonical_path != input.current_path {
         run.status = ContextRunStatus::Paused;
-        run.revision = run.revision.saturating_add(1);
-        run.updated_at_ms = crate::now_ms();
-        save_context_run_state(&state, &run).await?;
-        let _ = context_run_event_append(
-            State(state.clone()),
-            Path(run_id.clone()),
-            Json(ContextRunEventAppendInput {
-                event_type: "workspace_mismatch".to_string(),
-                status: ContextRunStatus::Paused,
-                step_id: input.step_id.clone(),
-                payload: json!({
-                    "phase": input.phase,
-                    "expected_path": run.workspace.canonical_path,
-                    "actual_path": input.current_path,
-                }),
-            }),
-        )
-        .await;
+        let _ = context_run_engine()
+            .commit_snapshot_with_event(
+                &state,
+                &run_id,
+                run.clone(),
+                ContextRunEventAppendInput {
+                    event_type: "workspace_mismatch".to_string(),
+                    status: ContextRunStatus::Paused,
+                    step_id: input.step_id.clone(),
+                    payload: json!({
+                        "phase": input.phase,
+                        "expected_path": run.workspace.canonical_path,
+                        "actual_path": input.current_path,
+                        "run": run,
+                    }),
+                },
+                None,
+            )
+            .await?;
         return Ok(Json(json!({
             "ok": false,
             "mismatch": true,
@@ -1491,11 +1938,11 @@ pub(super) async fn context_run_blackboard_get(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let blackboard = load_context_blackboard(&state, &run_id);
+    let blackboard = load_projected_context_blackboard(&state, &run_id);
     Ok(Json(json!({ "blackboard": blackboard })))
 }
 
-pub(super) fn context_blackboard_has_command_id(
+pub(super) fn context_run_events_have_command_id(
     state: &AppState,
     run_id: &str,
     command_id: &str,
@@ -1503,16 +1950,9 @@ pub(super) fn context_blackboard_has_command_id(
     if command_id.trim().is_empty() {
         return false;
     }
-    load_context_blackboard_patches(state, run_id, None, Some(500))
+    load_context_run_events_jsonl(&context_run_events_path(state, run_id), None, Some(500))
         .iter()
-        .any(|patch| {
-            patch
-                .payload
-                .get("command_id")
-                .and_then(Value::as_str)
-                .map(|value| value == command_id)
-                .unwrap_or(false)
-        })
+        .any(|event| event.command_id.as_deref() == Some(command_id))
 }
 
 pub(super) async fn context_run_blackboard_patches_get(
@@ -1529,13 +1969,26 @@ pub(super) async fn context_run_blackboard_patch(
     Path(run_id): Path<String>,
     Json(input): Json<ContextBlackboardPatchInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let lock = context_run_lock_for(&run_id).await;
-    let _guard = lock.lock().await;
-    let (patch, blackboard) =
-        append_context_blackboard_patch(&state, &run_id, input.op, input.payload)?;
-    Ok(Json(
-        json!({ "ok": true, "patch": patch, "blackboard": blackboard }),
-    ))
+    if matches!(
+        input.op,
+        ContextBlackboardPatchOp::AddTask
+            | ContextBlackboardPatchOp::UpdateTaskLease
+            | ContextBlackboardPatchOp::UpdateTaskState
+    ) {
+        return Ok(Json(json!({
+            "ok": false,
+            "error": "task mutations must go through the run task endpoints",
+            "code": "TASK_PATCH_OP_DISABLED"
+        })));
+    }
+    let outcome = context_run_engine()
+        .commit_blackboard_patch(&state, &run_id, input.op, input.payload)
+        .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "patch": outcome.patch,
+        "blackboard": outcome.blackboard
+    })))
 }
 
 pub(super) async fn context_run_tasks_create(
@@ -1557,11 +2010,12 @@ pub(super) async fn context_run_tasks_create(
     let mut patches = Vec::<ContextBlackboardPatchRecord>::new();
 
     for row in input.tasks {
+        let command_id = row.command_id.clone();
         if row.task_type.trim().is_empty() {
             return Err(StatusCode::BAD_REQUEST);
         }
-        if let Some(command_id) = row.command_id.as_deref() {
-            if context_blackboard_has_command_id(&state, &run_id, command_id) {
+        if let Some(command_id) = command_id.as_deref() {
+            if context_run_events_have_command_id(&state, &run_id, command_id) {
                 continue;
             }
         }
@@ -1610,37 +2064,35 @@ pub(super) async fn context_run_tasks_create(
         };
         let mut payload =
             serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(command_id) = row.command_id {
+        if let Some(command_id) = command_id.clone() {
             payload["command_id"] = json!(command_id);
         }
-        let (patch, _) = append_context_blackboard_patch(
-            &state,
-            &run_id,
-            ContextBlackboardPatchOp::AddTask,
-            payload,
-        )?;
-        let _ = context_run_event_append(
-            State(state.clone()),
-            Path(run_id.clone()),
-            Json(ContextRunEventAppendInput {
-                event_type: "context.task.created".to_string(),
-                status: run_status.clone(),
-                step_id: Some(task.id.clone()),
-                payload: json!({
-                    "task_id": task.id,
-                    "task_type": task.task_type,
-                    "patch_seq": patch.seq,
-                    "task_rev": task.task_rev,
-                    "workflow_id": task.workflow_id,
-                }),
-            }),
-        )
-        .await;
-        patches.push(patch);
+        let event_payload = json!({
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "task_rev": task.task_rev,
+            "workflow_id": task.workflow_id,
+        });
+        let outcome = context_run_engine()
+            .commit_task_mutation(
+                &state,
+                &run_id,
+                task.clone(),
+                ContextBlackboardPatchOp::AddTask,
+                payload,
+                "context.task.created".to_string(),
+                run_status.clone(),
+                command_id,
+                event_payload,
+            )
+            .await?;
+        if let Some(patch) = outcome.patch {
+            patches.push(patch);
+        }
         created.push(task);
     }
 
-    let blackboard = load_context_blackboard(&state, &run_id);
+    let blackboard = load_projected_context_blackboard(&state, &run_id);
     Ok(Json(
         json!({ "ok": true, "tasks": created, "patches": patches, "blackboard": blackboard }),
     ))
@@ -1653,16 +2105,18 @@ pub(super) async fn context_run_tasks_claim(
 ) -> Result<Json<Value>, StatusCode> {
     let lock = context_run_lock_for(&run_id).await;
     let _guard = lock.lock().await;
+    let command_id = input.command_id.clone();
     if input.agent_id.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    if let Some(command_id) = input.command_id.as_deref() {
-        if context_blackboard_has_command_id(&state, &run_id, command_id) {
+    if let Some(command_id) = command_id.as_deref() {
+        if context_run_events_have_command_id(&state, &run_id, command_id) {
+            let blackboard = load_projected_context_blackboard(&state, &run_id);
             return Ok(Json(json!({
                 "ok": true,
                 "deduped": true,
                 "task": null,
-                "blackboard": load_context_blackboard(&state, &run_id),
+                "blackboard": blackboard,
             })));
         }
     }
@@ -1671,9 +2125,9 @@ pub(super) async fn context_run_tasks_claim(
         .ok()
         .map(|run| run.status)
         .unwrap_or(ContextRunStatus::Running);
-    let blackboard = load_context_blackboard(&state, &run_id);
+    let run = load_context_run_state(&state, &run_id).await?;
     let now = crate::now_ms();
-    let mut task_idx = blackboard
+    let mut task_idx = run
         .tasks
         .iter()
         .enumerate()
@@ -1695,8 +2149,7 @@ pub(super) async fn context_run_tasks_claim(
         })
         .filter(|(_, task)| {
             task.depends_on_task_ids.iter().all(|dep| {
-                blackboard
-                    .tasks
+                run.tasks
                     .iter()
                     .find(|row| row.id == *dep)
                     .map(|row| matches!(row.status, ContextBlackboardTaskStatus::Done))
@@ -1706,8 +2159,8 @@ pub(super) async fn context_run_tasks_claim(
         .map(|(idx, _)| idx)
         .collect::<Vec<_>>();
     task_idx.sort_by(|a, b| {
-        let left = &blackboard.tasks[*a];
-        let right = &blackboard.tasks[*b];
+        let left = &run.tasks[*a];
+        let right = &run.tasks[*b];
         right
             .priority
             .cmp(&left.priority)
@@ -1715,12 +2168,12 @@ pub(super) async fn context_run_tasks_claim(
     });
     let Some(selected_idx) = task_idx.first().copied() else {
         return Ok(Json(json!({
-            "ok": true,
-            "task": null,
-            "blackboard": blackboard,
+        "ok": true,
+        "task": null,
+            "blackboard": load_projected_context_blackboard(&state, &run_id),
         })));
     };
-    let selected = blackboard.tasks[selected_idx].clone();
+    let selected = run.tasks[selected_idx].clone();
     let lease_ms = input.lease_ms.unwrap_or(30_000).clamp(5_000, 300_000);
     let lease_token = format!("lease-{}", Uuid::new_v4());
     let next_rev = selected.task_rev.saturating_add(1);
@@ -1733,57 +2186,40 @@ pub(super) async fn context_run_tasks_claim(
         "lease_expires_at_ms": now.saturating_add(lease_ms),
         "task_rev": next_rev,
     });
-    if let Some(command_id) = input.command_id {
+    let claimed_task = ContextBlackboardTask {
+        status: ContextBlackboardTaskStatus::InProgress,
+        assigned_agent: Some(input.agent_id.trim().to_string()),
+        lease_owner: Some(input.agent_id.trim().to_string()),
+        lease_token: Some(lease_token.clone()),
+        lease_expires_at_ms: Some(now.saturating_add(lease_ms)),
+        task_rev: next_rev,
+        updated_ts: now,
+        ..selected.clone()
+    };
+    if let Some(command_id) = command_id.clone() {
         payload["command_id"] = json!(command_id);
     }
-    let (patch, mut blackboard) = append_context_blackboard_patch(
-        &state,
-        &run_id,
-        ContextBlackboardPatchOp::UpdateTaskState,
-        payload,
-    )?;
-    let claimed = blackboard
-        .tasks
-        .iter()
-        .find(|task| task.id == selected.id)
-        .cloned();
-    let _ = context_run_event_append(
-        State(state.clone()),
-        Path(run_id.clone()),
-        Json(ContextRunEventAppendInput {
-            event_type: "context.task.claimed".to_string(),
-            status: run_status.clone(),
-            step_id: Some(selected.id.clone()),
-            payload: json!({
+    let outcome = context_run_engine()
+        .commit_task_mutation(
+            &state,
+            &run_id,
+            claimed_task.clone(),
+            ContextBlackboardPatchOp::UpdateTaskState,
+            payload,
+            "context.task.claimed".to_string(),
+            run_status.clone(),
+            command_id,
+            json!({
                 "task_id": selected.id,
                 "agent_id": input.agent_id.trim(),
-                "patch_seq": patch.seq,
                 "task_rev": next_rev,
                 "workflow_id": selected.workflow_id,
             }),
-        }),
-    )
-    .await;
-    if let Some(task) = claimed.as_ref() {
-        let _ = context_run_event_append(
-            State(state.clone()),
-            Path(run_id.clone()),
-            Json(ContextRunEventAppendInput {
-                event_type: "context.task.started".to_string(),
-                status: run_status,
-                step_id: Some(task.id.clone()),
-                payload: json!({
-                    "task_id": task.id,
-                    "patch_seq": patch.seq,
-                    "task_rev": task.task_rev,
-                }),
-            }),
         )
-        .await;
-    }
-    blackboard = load_context_blackboard(&state, &run_id);
+        .await?;
+    let claimed = Some(claimed_task.clone());
     Ok(Json(
-        json!({ "ok": true, "task": claimed, "patch": patch, "blackboard": blackboard }),
+        json!({ "ok": true, "task": claimed, "patch": outcome.patch, "blackboard": outcome.blackboard }),
     ))
 }
 
@@ -1794,16 +2230,21 @@ pub(super) async fn context_run_task_transition(
 ) -> Result<Json<Value>, StatusCode> {
     let lock = context_run_lock_for(&run_id).await;
     let _guard = lock.lock().await;
-    if let Some(command_id) = input.command_id.as_deref() {
-        if context_blackboard_has_command_id(&state, &run_id, command_id) {
+    let command_id = input.command_id.clone();
+    if let Some(command_id) = command_id.as_deref() {
+        if context_run_events_have_command_id(&state, &run_id, command_id) {
+            let run = load_context_run_state(&state, &run_id).await.ok();
+            let blackboard = load_projected_context_blackboard(&state, &run_id);
             return Ok(Json(json!({
                 "ok": true,
                 "deduped": true,
-                "task": load_context_blackboard(&state, &run_id)
-                    .tasks
+                "task": run
+                    .as_ref()
+                    .map(|row| row.tasks.clone())
+                    .unwrap_or_default()
                     .into_iter()
                     .find(|row| row.id == task_id),
-                "blackboard": load_context_blackboard(&state, &run_id),
+                "blackboard": blackboard,
             })));
         }
     }
@@ -1812,13 +2253,8 @@ pub(super) async fn context_run_task_transition(
         .ok()
         .map(|run| run.status)
         .unwrap_or(ContextRunStatus::Running);
-    let blackboard = load_context_blackboard(&state, &run_id);
-    let Some(current) = blackboard
-        .tasks
-        .iter()
-        .find(|row| row.id == task_id)
-        .cloned()
-    else {
+    let run = load_context_run_state(&state, &run_id).await?;
+    let Some(current) = run.tasks.iter().find(|row| row.id == task_id).cloned() else {
         return Err(StatusCode::NOT_FOUND);
     };
     if let Some(expected_rev) = input.expected_task_rev {
@@ -1831,7 +2267,16 @@ pub(super) async fn context_run_task_transition(
             })));
         }
     }
-    if let Some(token) = input.lease_token.as_deref() {
+    let action = input.action.trim().to_ascii_lowercase();
+    let requested_status = input.status.as_ref();
+    if context_task_transition_requires_valid_lease(&current, &action, requested_status) {
+        let Some(token) = input.lease_token.as_deref() else {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "lease token required",
+                "code": "TASK_LEASE_REQUIRED"
+            })));
+        };
         if current.lease_token.as_deref() != Some(token) {
             return Ok(Json(json!({
                 "ok": false,
@@ -1840,62 +2285,191 @@ pub(super) async fn context_run_task_transition(
             })));
         }
     }
-    let action = input.action.trim().to_ascii_lowercase();
+    match action.as_str() {
+        "heartbeat" if current.status != ContextBlackboardTaskStatus::InProgress => {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "heartbeat requires an in_progress task",
+                "code": "TASK_TRANSITION_INVALID",
+                "current_status": current.status.clone(),
+            })));
+        }
+        "status" => {
+            let Some(next_status) = requested_status else {
+                return Err(StatusCode::BAD_REQUEST);
+            };
+            if !context_task_status_transition_allowed(&current.status, next_status) {
+                return Ok(Json(json!({
+                    "ok": false,
+                    "error": "invalid task status transition",
+                    "code": "TASK_TRANSITION_INVALID",
+                    "current_status": current.status.clone(),
+                    "requested_status": next_status.clone(),
+                })));
+            }
+        }
+        "complete" if current.status != ContextBlackboardTaskStatus::InProgress => {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "task must be in_progress before completion",
+                "code": "TASK_TRANSITION_INVALID",
+                "current_status": current.status.clone(),
+            })));
+        }
+        "fail"
+            if !matches!(
+                current.status,
+                ContextBlackboardTaskStatus::InProgress | ContextBlackboardTaskStatus::Blocked
+            ) =>
+        {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "task must be active before failure is recorded",
+                "code": "TASK_TRANSITION_INVALID",
+                "current_status": current.status.clone(),
+            })));
+        }
+        "release"
+            if !matches!(
+                current.status,
+                ContextBlackboardTaskStatus::InProgress | ContextBlackboardTaskStatus::Blocked
+            ) =>
+        {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "task must be active before release",
+                "code": "TASK_TRANSITION_INVALID",
+                "current_status": current.status.clone(),
+            })));
+        }
+        "retry"
+            if !matches!(
+                current.status,
+                ContextBlackboardTaskStatus::Failed | ContextBlackboardTaskStatus::Blocked
+            ) =>
+        {
+            return Ok(Json(json!({
+                "ok": false,
+                "error": "task must be failed or blocked before retry",
+                "code": "TASK_TRANSITION_INVALID",
+                "current_status": current.status.clone(),
+            })));
+        }
+        _ => {}
+    }
     let next_rev = current.task_rev.saturating_add(1);
     let now = crate::now_ms();
-    let (op, mut payload) = match action.as_str() {
-        "heartbeat" => (
-            ContextBlackboardPatchOp::UpdateTaskLease,
-            json!({
-                "task_id": task_id,
-                "lease_owner": input.agent_id.clone().or(current.lease_owner.clone()),
-                "assigned_agent": input.agent_id.clone().or(current.assigned_agent.clone()),
-                "lease_token": input.lease_token.clone().or(current.lease_token.clone()),
-                "lease_expires_at_ms": now.saturating_add(input.lease_ms.unwrap_or(30_000).clamp(5_000, 300_000)),
-                "task_rev": next_rev,
-            }),
-        ),
-        "status" => (
-            ContextBlackboardPatchOp::UpdateTaskState,
-            json!({
-                "task_id": task_id,
-                "status": input.status.clone().ok_or(StatusCode::BAD_REQUEST)?,
-                "lease_owner": current.lease_owner,
-                "lease_token": current.lease_token,
-                "lease_expires_at_ms": current.lease_expires_at_ms,
-                "assigned_agent": input.agent_id.clone().or(current.assigned_agent),
-                "task_rev": next_rev,
-                "error": input.error.clone(),
-                "attempt": current.attempt,
-            }),
-        ),
-        "complete" => (
-            ContextBlackboardPatchOp::UpdateTaskState,
-            json!({
-                "task_id": task_id,
-                "status": ContextBlackboardTaskStatus::Done,
-                "lease_owner": Value::Null,
-                "lease_token": Value::Null,
-                "lease_expires_at_ms": Value::Null,
-                "assigned_agent": input.agent_id.clone().or(current.assigned_agent),
-                "task_rev": next_rev,
-                "attempt": current.attempt,
-            }),
-        ),
-        "fail" => (
-            ContextBlackboardPatchOp::UpdateTaskState,
-            json!({
-                "task_id": task_id,
-                "status": ContextBlackboardTaskStatus::Failed,
-                "lease_owner": Value::Null,
-                "lease_token": Value::Null,
-                "lease_expires_at_ms": Value::Null,
-                "assigned_agent": input.agent_id.clone().or(current.assigned_agent),
-                "task_rev": next_rev,
-                "error": input.error.clone().or(current.last_error),
-                "attempt": current.attempt.saturating_add(1),
-            }),
-        ),
+    let (op, mut payload, next_task) = match action.as_str() {
+        "heartbeat" => {
+            let lease_expires_at_ms =
+                now.saturating_add(input.lease_ms.unwrap_or(30_000).clamp(5_000, 300_000));
+            let assigned_agent = input.agent_id.clone().or(current.assigned_agent.clone());
+            let lease_owner = input.agent_id.clone().or(current.lease_owner.clone());
+            let lease_token = input.lease_token.clone().or(current.lease_token.clone());
+            (
+                ContextBlackboardPatchOp::UpdateTaskLease,
+                json!({
+                    "task_id": task_id,
+                    "lease_owner": lease_owner.clone(),
+                    "assigned_agent": assigned_agent.clone(),
+                    "lease_token": lease_token.clone(),
+                    "lease_expires_at_ms": lease_expires_at_ms,
+                    "task_rev": next_rev,
+                }),
+                ContextBlackboardTask {
+                    assigned_agent,
+                    lease_owner,
+                    lease_token,
+                    lease_expires_at_ms: Some(lease_expires_at_ms),
+                    task_rev: next_rev,
+                    updated_ts: now,
+                    ..current.clone()
+                },
+            )
+        }
+        "status" => {
+            let status = input.status.clone().ok_or(StatusCode::BAD_REQUEST)?;
+            let assigned_agent = input.agent_id.clone().or(current.assigned_agent.clone());
+            (
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": task_id,
+                    "status": status.clone(),
+                    "lease_owner": current.lease_owner.clone(),
+                    "lease_token": current.lease_token.clone(),
+                    "lease_expires_at_ms": current.lease_expires_at_ms,
+                    "assigned_agent": assigned_agent.clone(),
+                    "task_rev": next_rev,
+                    "error": input.error.clone(),
+                    "attempt": current.attempt,
+                }),
+                ContextBlackboardTask {
+                    status,
+                    assigned_agent,
+                    last_error: input.error.clone().or(current.last_error.clone()),
+                    task_rev: next_rev,
+                    updated_ts: now,
+                    ..current.clone()
+                },
+            )
+        }
+        "complete" => {
+            let assigned_agent = input.agent_id.clone().or(current.assigned_agent.clone());
+            (
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": task_id,
+                    "status": ContextBlackboardTaskStatus::Done,
+                    "lease_owner": Value::Null,
+                    "lease_token": Value::Null,
+                    "lease_expires_at_ms": Value::Null,
+                    "assigned_agent": assigned_agent.clone(),
+                    "task_rev": next_rev,
+                    "attempt": current.attempt,
+                }),
+                ContextBlackboardTask {
+                    status: ContextBlackboardTaskStatus::Done,
+                    assigned_agent,
+                    lease_owner: None,
+                    lease_token: None,
+                    lease_expires_at_ms: None,
+                    task_rev: next_rev,
+                    updated_ts: now,
+                    ..current.clone()
+                },
+            )
+        }
+        "fail" => {
+            let assigned_agent = input.agent_id.clone().or(current.assigned_agent.clone());
+            let last_error = input.error.clone().or(current.last_error.clone());
+            let attempt = current.attempt.saturating_add(1);
+            (
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": task_id,
+                    "status": ContextBlackboardTaskStatus::Failed,
+                    "lease_owner": Value::Null,
+                    "lease_token": Value::Null,
+                    "lease_expires_at_ms": Value::Null,
+                    "assigned_agent": assigned_agent.clone(),
+                    "task_rev": next_rev,
+                    "error": last_error.clone(),
+                    "attempt": attempt,
+                }),
+                ContextBlackboardTask {
+                    status: ContextBlackboardTaskStatus::Failed,
+                    assigned_agent,
+                    lease_owner: None,
+                    lease_token: None,
+                    lease_expires_at_ms: None,
+                    last_error,
+                    attempt,
+                    task_rev: next_rev,
+                    updated_ts: now,
+                    ..current.clone()
+                },
+            )
+        }
         "release" => (
             ContextBlackboardPatchOp::UpdateTaskState,
             json!({
@@ -1904,43 +2478,61 @@ pub(super) async fn context_run_task_transition(
                 "lease_owner": Value::Null,
                 "lease_token": Value::Null,
                 "lease_expires_at_ms": Value::Null,
-                "assigned_agent": current.assigned_agent,
+                "assigned_agent": current.assigned_agent.clone(),
                 "task_rev": next_rev,
                 "attempt": current.attempt,
             }),
+            ContextBlackboardTask {
+                status: ContextBlackboardTaskStatus::Runnable,
+                lease_owner: None,
+                lease_token: None,
+                lease_expires_at_ms: None,
+                task_rev: next_rev,
+                updated_ts: now,
+                ..current.clone()
+            },
         ),
-        "retry" => (
-            ContextBlackboardPatchOp::UpdateTaskState,
-            json!({
-                "task_id": task_id,
-                "status": ContextBlackboardTaskStatus::Runnable,
-                "lease_owner": Value::Null,
-                "lease_token": Value::Null,
-                "lease_expires_at_ms": Value::Null,
-                "assigned_agent": current.assigned_agent,
-                "task_rev": next_rev,
-                "error": Value::Null,
-                "attempt": current.attempt.saturating_add(1),
-                "next_retry_at_ms": now,
-            }),
-        ),
+        "retry" => {
+            let attempt = current.attempt.saturating_add(1);
+            (
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": task_id,
+                    "status": ContextBlackboardTaskStatus::Runnable,
+                    "lease_owner": Value::Null,
+                    "lease_token": Value::Null,
+                    "lease_expires_at_ms": Value::Null,
+                    "assigned_agent": current.assigned_agent.clone(),
+                    "task_rev": next_rev,
+                    "error": Value::Null,
+                    "attempt": attempt,
+                    "next_retry_at_ms": now,
+                }),
+                ContextBlackboardTask {
+                    status: ContextBlackboardTaskStatus::Runnable,
+                    lease_owner: None,
+                    lease_token: None,
+                    lease_expires_at_ms: None,
+                    last_error: None,
+                    attempt,
+                    next_retry_at_ms: Some(now),
+                    task_rev: next_rev,
+                    updated_ts: now,
+                    ..current.clone()
+                },
+            )
+        }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
-    if let Some(command_id) = input.command_id {
+    if let Some(command_id) = command_id.clone() {
         payload["command_id"] = json!(command_id);
     }
-    let (patch, blackboard) = append_context_blackboard_patch(&state, &run_id, op, payload)?;
-    let task = blackboard
-        .tasks
-        .iter()
-        .find(|row| row.id == task_id)
-        .cloned();
+    let task = Some(next_task.clone());
     let (event_type, event_payload) = if action == "heartbeat" {
         (
             "context.task.heartbeat".to_string(),
             json!({
                 "task_id": task_id,
-                "patch_seq": patch.seq,
                 "task_rev": task.as_ref().map(|row| row.task_rev),
             }),
         )
@@ -1953,27 +2545,31 @@ pub(super) async fn context_run_task_transition(
             context_task_status_event_name(&status).to_string(),
             json!({
                 "task_id": task_id,
-                "patch_seq": patch.seq,
                 "task_rev": task.as_ref().map(|row| row.task_rev),
                 "status": status,
                 "error": input.error,
             }),
         )
     };
-    let _ = context_run_event_append(
-        State(state.clone()),
-        Path(run_id.clone()),
-        Json(ContextRunEventAppendInput {
+    let outcome = context_run_engine()
+        .commit_task_mutation(
+            &state,
+            &run_id,
+            next_task.clone(),
+            op,
+            payload,
             event_type,
-            status: run_status,
-            step_id: Some(task_id.clone()),
-            payload: event_payload,
-        }),
-    )
-    .await;
-    Ok(Json(
-        json!({ "ok": true, "task": task, "patch": patch, "blackboard": blackboard }),
-    ))
+            run_status,
+            command_id,
+            event_payload,
+        )
+        .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "task": task,
+        "patch": outcome.patch,
+        "blackboard": outcome.blackboard
+    })))
 }
 
 pub(super) async fn context_run_checkpoint_create(
@@ -1982,7 +2578,7 @@ pub(super) async fn context_run_checkpoint_create(
     Json(input): Json<ContextCheckpointCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
     let run_state = load_context_run_state(&state, &run_id).await?;
-    let blackboard = load_context_blackboard(&state, &run_id);
+    let blackboard = load_projected_context_blackboard(&state, &run_id);
     let events_path = context_run_events_path(&state, &run_id);
     let seq = latest_context_run_event_seq(&events_path);
     let checkpoint = ContextCheckpointRecord {
@@ -2224,6 +2820,7 @@ pub(super) fn context_blackboard_replay_materialize(
     for patch in patches {
         let _ = apply_context_blackboard_patch(&mut replay, patch);
     }
+    replay.tasks = persisted.tasks.clone();
     replay
 }
 
@@ -2249,7 +2846,7 @@ pub(super) async fn context_run_replay(
         events.retain(|row| row.seq <= upto_seq);
     }
     let replay = context_run_replay_materialize(&run_id, &persisted, checkpoint.as_ref(), &events);
-    let persisted_blackboard = load_context_blackboard(&state, &run_id);
+    let persisted_blackboard = load_projected_context_blackboard(&state, &run_id);
     let mut patches = load_context_blackboard_patches(&state, &run_id, None, None);
     if let Some(cp) = checkpoint.as_ref() {
         patches.retain(|patch| patch.ts_ms > cp.ts_ms);
@@ -2309,8 +2906,6 @@ pub(super) async fn sync_automation_v2_run_blackboard(
     run: &crate::AutomationV2RunRecord,
 ) -> Result<(), StatusCode> {
     let run_id = automation_v2_context_run_id(&run.run_id);
-    let lock = context_run_lock_for(&run_id).await;
-    let _guard = lock.lock().await;
 
     if load_context_run_state(state, &run_id).await.is_err() {
         let now = crate::now_ms();
@@ -2337,8 +2932,10 @@ pub(super) async fn sync_automation_v2_run_blackboard(
                     status: ContextStepStatus::Pending,
                 })
                 .collect(),
+            tasks: Vec::new(),
             why_next_step: Some("Track automation v2 flow via blackboard tasks".to_string()),
             revision: 1,
+            last_event_seq: 0,
             created_at_ms: now,
             started_at_ms: Some(now),
             ended_at_ms: if matches!(
@@ -2357,7 +2954,7 @@ pub(super) async fn sync_automation_v2_run_blackboard(
         save_context_run_state(state, &context_run).await?;
     }
 
-    let blackboard = load_context_blackboard(state, &run_id);
+    let mut run_state = load_context_run_state(state, &run_id).await?;
     let now = crate::now_ms();
 
     for node in &automation.flow.nodes {
@@ -2370,20 +2967,43 @@ pub(super) async fn sync_automation_v2_run_blackboard(
 
         let status = automation_node_task_status(run, &node.node_id, &depends_on);
 
-        let existing = blackboard.tasks.iter().find(|t| t.id == task_id);
+        let existing = run_state.tasks.iter().find(|t| t.id == task_id).cloned();
         if let Some(task) = existing {
             if task.status != status {
-                let payload = json!({
-                    "task_id": task_id,
-                    "status": status,
-                    "task_rev": task.task_rev.saturating_add(1),
-                });
-                let _ = append_context_blackboard_patch(
-                    state,
-                    &run_id,
-                    ContextBlackboardPatchOp::UpdateTaskState,
-                    payload,
-                )?;
+                let next_task = ContextBlackboardTask {
+                    status: status.clone(),
+                    task_rev: task.task_rev.saturating_add(1),
+                    updated_ts: now,
+                    ..task.clone()
+                };
+                let _ = context_run_engine()
+                    .commit_task_mutation(
+                        state,
+                        &run_id,
+                        next_task.clone(),
+                        ContextBlackboardPatchOp::UpdateTaskState,
+                        json!({
+                            "task_id": task_id,
+                            "status": status,
+                            "task_rev": next_task.task_rev,
+                        }),
+                        context_task_status_event_name(&status).to_string(),
+                        automation_run_status_to_context(&run.status),
+                        None,
+                        json!({
+                            "task_id": task_id,
+                            "status": status,
+                            "task_rev": next_task.task_rev,
+                            "source": "automation_v2",
+                            "automation_id": automation.automation_id,
+                        }),
+                    )
+                    .await?;
+                if let Some(existing_task) =
+                    run_state.tasks.iter_mut().find(|row| row.id == task_id)
+                {
+                    *existing_task = next_task.clone();
+                }
             }
         } else {
             let task = ContextBlackboardTask {
@@ -2414,12 +3034,26 @@ pub(super) async fn sync_automation_v2_run_blackboard(
                 created_ts: now,
                 updated_ts: now,
             };
-            let _ = append_context_blackboard_patch(
-                state,
-                &run_id,
-                ContextBlackboardPatchOp::AddTask,
-                serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            )?;
+            let _ = context_run_engine()
+                .commit_task_mutation(
+                    state,
+                    &run_id,
+                    task.clone(),
+                    ContextBlackboardPatchOp::AddTask,
+                    serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                    "context.task.created".to_string(),
+                    automation_run_status_to_context(&run.status),
+                    None,
+                    json!({
+                        "task_id": task.id,
+                        "task_type": task.task_type,
+                        "task_rev": task.task_rev,
+                        "source": "automation_v2",
+                        "automation_id": automation.automation_id,
+                    }),
+                )
+                .await?;
+            run_state.tasks.push(task.clone());
         }
     }
 
@@ -2428,6 +3062,10 @@ pub(super) async fn sync_automation_v2_run_blackboard(
 
 pub(super) fn automation_v2_context_run_id(run_id: &str) -> String {
     format!("automation-v2-{run_id}")
+}
+
+pub(crate) fn workflow_context_run_id(run_id: &str) -> String {
+    format!("workflow-{run_id}")
 }
 
 pub(super) fn automation_run_status_to_context(
@@ -2442,6 +3080,252 @@ pub(super) fn automation_run_status_to_context(
         crate::AutomationRunStatus::Failed => ContextRunStatus::Failed,
         crate::AutomationRunStatus::Cancelled => ContextRunStatus::Cancelled,
     }
+}
+
+fn workflow_run_status_to_context(status: &crate::WorkflowRunStatus) -> ContextRunStatus {
+    match status {
+        crate::WorkflowRunStatus::Queued => ContextRunStatus::Queued,
+        crate::WorkflowRunStatus::Running => ContextRunStatus::Running,
+        crate::WorkflowRunStatus::Completed | crate::WorkflowRunStatus::DryRun => {
+            ContextRunStatus::Completed
+        }
+        crate::WorkflowRunStatus::Failed => ContextRunStatus::Failed,
+    }
+}
+
+fn workflow_action_status_to_context(
+    status: &WorkflowActionRunStatus,
+) -> ContextBlackboardTaskStatus {
+    match status {
+        WorkflowActionRunStatus::Pending => ContextBlackboardTaskStatus::Pending,
+        WorkflowActionRunStatus::Running => ContextBlackboardTaskStatus::InProgress,
+        WorkflowActionRunStatus::Completed => ContextBlackboardTaskStatus::Done,
+        WorkflowActionRunStatus::Failed => ContextBlackboardTaskStatus::Failed,
+        WorkflowActionRunStatus::Skipped => ContextBlackboardTaskStatus::Blocked,
+    }
+}
+
+pub(crate) async fn sync_workflow_run_blackboard(
+    state: &AppState,
+    run: &crate::WorkflowRunRecord,
+) -> Result<String, StatusCode> {
+    let run_id = workflow_context_run_id(&run.run_id);
+
+    if load_context_run_state(state, &run_id).await.is_err() {
+        let workspace_root = state.workspace_index.snapshot().await.root;
+        let now = crate::now_ms();
+        let context_run = ContextRunState {
+            run_id: run_id.clone(),
+            run_type: "workflow".to_string(),
+            source_client: Some("workflow_runtime".to_string()),
+            model_provider: None,
+            model_id: None,
+            mcp_servers: Vec::new(),
+            status: workflow_run_status_to_context(&run.status),
+            objective: format!("Workflow {}", run.workflow_id),
+            workspace: ContextWorkspaceLease {
+                workspace_id: run.workflow_id.clone(),
+                canonical_path: workspace_root,
+                lease_epoch: 0,
+            },
+            steps: run
+                .actions
+                .iter()
+                .map(|action| ContextRunStep {
+                    step_id: action.action_id.clone(),
+                    title: action.action.clone(),
+                    status: match workflow_action_status_to_context(&action.status) {
+                        ContextBlackboardTaskStatus::Pending => ContextStepStatus::Pending,
+                        ContextBlackboardTaskStatus::Runnable => ContextStepStatus::Runnable,
+                        ContextBlackboardTaskStatus::InProgress => ContextStepStatus::InProgress,
+                        ContextBlackboardTaskStatus::Done => ContextStepStatus::Done,
+                        ContextBlackboardTaskStatus::Failed => ContextStepStatus::Failed,
+                        ContextBlackboardTaskStatus::Blocked => ContextStepStatus::Blocked,
+                    },
+                })
+                .collect(),
+            tasks: Vec::new(),
+            why_next_step: Some(
+                "Track workflow hook actions via blackboard tasks and artifacts".to_string(),
+            ),
+            revision: 1,
+            last_event_seq: 0,
+            created_at_ms: run.created_at_ms.max(now),
+            started_at_ms: Some(run.created_at_ms.max(now)),
+            ended_at_ms: run.finished_at_ms,
+            last_error: run.actions.iter().find_map(|action| action.detail.clone()),
+            updated_at_ms: run.updated_at_ms.max(now),
+        };
+        save_context_run_state(state, &context_run).await?;
+    }
+
+    let mut run_state = load_context_run_state(state, &run_id).await?;
+    let now = crate::now_ms();
+    run_state.status = workflow_run_status_to_context(&run.status);
+    run_state.objective = format!("Workflow {}", run.workflow_id);
+    run_state.updated_at_ms = run.updated_at_ms.max(now);
+    run_state.ended_at_ms = run.finished_at_ms;
+    run_state.last_error = run.actions.iter().find_map(|action| action.detail.clone());
+    run_state.steps = run
+        .actions
+        .iter()
+        .map(|action| ContextRunStep {
+            step_id: action.action_id.clone(),
+            title: action.action.clone(),
+            status: match workflow_action_status_to_context(&action.status) {
+                ContextBlackboardTaskStatus::Pending => ContextStepStatus::Pending,
+                ContextBlackboardTaskStatus::Runnable => ContextStepStatus::Runnable,
+                ContextBlackboardTaskStatus::InProgress => ContextStepStatus::InProgress,
+                ContextBlackboardTaskStatus::Done => ContextStepStatus::Done,
+                ContextBlackboardTaskStatus::Failed => ContextStepStatus::Failed,
+                ContextBlackboardTaskStatus::Blocked => ContextStepStatus::Blocked,
+            },
+        })
+        .collect();
+    save_context_run_state(state, &run_state).await?;
+
+    let mut blackboard = load_context_blackboard(state, &run_id);
+    for action in &run.actions {
+        let task_id = format!("workflow-action-{}", action.action_id);
+        let artifact_id = format!("workflow-artifact-{}", action.action_id);
+        let artifact_ids = if action.output.is_some() {
+            vec![artifact_id.clone()]
+        } else {
+            Vec::new()
+        };
+        let status = workflow_action_status_to_context(&action.status);
+        let existing = run_state
+            .tasks
+            .iter()
+            .find(|row| row.id == task_id)
+            .cloned();
+        if let Some(task) = existing {
+            if task.status != status
+                || task.last_error != action.detail
+                || task.artifact_ids != artifact_ids
+            {
+                let next_task = ContextBlackboardTask {
+                    status: status.clone(),
+                    last_error: action.detail.clone(),
+                    artifact_ids: artifact_ids.clone(),
+                    task_rev: task.task_rev.saturating_add(1),
+                    updated_ts: action.updated_at_ms.max(now),
+                    ..task.clone()
+                };
+                let _ = context_run_engine()
+                    .commit_task_mutation(
+                        state,
+                        &run_id,
+                        next_task.clone(),
+                        ContextBlackboardPatchOp::UpdateTaskState,
+                        json!({
+                            "task_id": task_id,
+                            "status": status,
+                            "error": action.detail,
+                            "artifact_ids": artifact_ids,
+                            "task_rev": next_task.task_rev,
+                        }),
+                        context_task_status_event_name(&status).to_string(),
+                        workflow_run_status_to_context(&run.status),
+                        None,
+                        json!({
+                            "task_id": task_id,
+                            "status": status,
+                            "error": action.detail,
+                            "artifact_ids": artifact_ids,
+                            "task_rev": next_task.task_rev,
+                            "source": "workflow_runtime",
+                        }),
+                    )
+                    .await?;
+                if let Some(existing_task) =
+                    run_state.tasks.iter_mut().find(|row| row.id == task_id)
+                {
+                    *existing_task = next_task.clone();
+                }
+            }
+        } else {
+            let task = ContextBlackboardTask {
+                id: task_id.clone(),
+                task_type: "workflow_action".to_string(),
+                payload: json!({
+                    "action": action.action,
+                    "action_id": action.action_id,
+                    "workflow_run_id": run.run_id,
+                    "workflow_id": run.workflow_id,
+                    "task_id": action.task_id.clone().or(run.task_id.clone()),
+                }),
+                status: status.clone(),
+                workflow_id: Some(run.workflow_id.clone()),
+                workflow_node_id: Some(action.action_id.clone()),
+                parent_task_id: run.task_id.clone(),
+                depends_on_task_ids: Vec::new(),
+                decision_ids: Vec::new(),
+                artifact_ids: artifact_ids.clone(),
+                assigned_agent: None,
+                priority: 0,
+                attempt: 0,
+                max_attempts: 1,
+                last_error: action.detail.clone(),
+                next_retry_at_ms: None,
+                lease_owner: None,
+                lease_token: None,
+                lease_expires_at_ms: None,
+                task_rev: 1,
+                created_ts: run.created_at_ms.max(now),
+                updated_ts: action.updated_at_ms.max(now),
+            };
+            let _ = context_run_engine()
+                .commit_task_mutation(
+                    state,
+                    &run_id,
+                    task.clone(),
+                    ContextBlackboardPatchOp::AddTask,
+                    serde_json::to_value(&task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                    "context.task.created".to_string(),
+                    workflow_run_status_to_context(&run.status),
+                    None,
+                    json!({
+                        "task_id": task.id,
+                        "task_type": task.task_type,
+                        "task_rev": task.task_rev,
+                        "source": "workflow_runtime",
+                    }),
+                )
+                .await?;
+            run_state.tasks.push(task.clone());
+        }
+
+        if let Some(output) = action.output.clone() {
+            let artifact_exists = blackboard.artifacts.iter().any(|row| row.id == artifact_id);
+            if !artifact_exists {
+                let artifact = ContextBlackboardArtifact {
+                    id: artifact_id.clone(),
+                    ts_ms: action.updated_at_ms.max(now),
+                    path: format!(
+                        "workflow://{}/{}/{}",
+                        run.workflow_id, run.run_id, action.action_id
+                    ),
+                    artifact_type: "workflow_action_output".to_string(),
+                    step_id: Some(task_id.clone()),
+                    source_event_id: run.source_event_id.clone(),
+                };
+                let _ = context_run_engine()
+                    .commit_blackboard_patch(
+                        state,
+                        &run_id,
+                        ContextBlackboardPatchOp::AddArtifact,
+                        serde_json::to_value(&artifact)
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                    )
+                    .await?;
+                blackboard.artifacts.push(artifact);
+                let _ = output;
+            }
+        }
+    }
+
+    Ok(run_id)
 }
 
 pub(super) fn automation_node_task_status(
