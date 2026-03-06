@@ -56,7 +56,10 @@ pub mod webui;
 mod workflows;
 
 pub use agent_teams::AgentTeamRuntime;
-pub use browser::{BrowserHealthSummary, BrowserSubsystem};
+pub use browser::{
+    install_browser_sidecar, BrowserHealthSummary, BrowserSidecarInstallResult,
+    BrowserSmokeTestResult, BrowserSubsystem,
+};
 pub use capability_resolver::CapabilityResolver;
 pub use http::serve;
 pub use pack_manager::PackManager;
@@ -496,6 +499,8 @@ pub struct RoutineRunRecord {
     pub artifacts: Vec<RoutineRunArtifact>,
     #[serde(default)]
     pub active_session_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_session_id: Option<String>,
     #[serde(default)]
     pub prompt_tokens: u64,
     #[serde(default)]
@@ -968,10 +973,10 @@ impl AppState {
             )))
             .await;
         let _ = self.load_shared_resources().await;
-        let _ = self.load_routines().await;
+        self.load_routines().await?;
         let _ = self.load_routine_history().await;
         let _ = self.load_routine_runs().await;
-        let _ = self.load_automations_v2().await;
+        self.load_automations_v2().await?;
         let _ = self.load_automation_v2_runs().await;
         let _ = self.load_workflow_runs().await;
         let _ = self.load_workflow_hook_overrides().await;
@@ -1278,14 +1283,30 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn persist_routines(&self) -> anyhow::Result<()> {
+    async fn persist_routines_inner(&self, allow_empty_overwrite: bool) -> anyhow::Result<()> {
         if let Some(parent) = self.routines_path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        let payload = {
+        let (payload, is_empty) = {
             let guard = self.routines.read().await;
-            serde_json::to_string_pretty(&*guard)?
+            (serde_json::to_string_pretty(&*guard)?, guard.is_empty())
         };
+        if is_empty && !allow_empty_overwrite && self.routines_path.exists() {
+            let existing_raw = fs::read_to_string(&self.routines_path)
+                .await
+                .unwrap_or_default();
+            let existing_has_rows = serde_json::from_str::<
+                std::collections::HashMap<String, RoutineSpec>,
+            >(&existing_raw)
+            .map(|rows| !rows.is_empty())
+            .unwrap_or(true);
+            if existing_has_rows {
+                return Err(anyhow::anyhow!(
+                    "refusing to overwrite non-empty routines store {} with empty in-memory state",
+                    self.routines_path.display()
+                ));
+            }
+        }
         let backup_path = sibling_backup_path(&self.routines_path);
         if self.routines_path.exists() {
             let _ = fs::copy(&self.routines_path, &backup_path).await;
@@ -1294,6 +1315,10 @@ impl AppState {
         fs::write(&tmp_path, payload).await?;
         fs::rename(&tmp_path, &self.routines_path).await?;
         Ok(())
+    }
+
+    pub async fn persist_routines(&self) -> anyhow::Result<()> {
+        self.persist_routines_inner(false).await
     }
 
     pub async fn persist_routine_history(&self) -> anyhow::Result<()> {
@@ -1397,7 +1422,8 @@ impl AppState {
         let removed = guard.remove(routine_id);
         drop(guard);
 
-        if let Err(error) = self.persist_routines().await {
+        let allow_empty_overwrite = self.routines.read().await.is_empty();
+        if let Err(error) = self.persist_routines_inner(allow_empty_overwrite).await {
             if let Some(removed) = removed.clone() {
                 self.routines
                     .write()
@@ -1520,6 +1546,7 @@ impl AppState {
             output_targets: routine.output_targets.clone(),
             artifacts: Vec::new(),
             active_session_ids: Vec::new(),
+            latest_session_id: None,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -1682,6 +1709,7 @@ impl AppState {
         if !row.active_session_ids.iter().any(|id| id == &session_id) {
             row.active_session_ids.push(session_id);
         }
+        row.latest_session_id = row.active_session_ids.last().cloned();
         row.updated_at_ms = now_ms();
         let updated = row.clone();
         drop(guard);
@@ -3109,7 +3137,35 @@ fn extract_persistable_tool_part(properties: &Value) -> Option<(String, MessageP
         .or_else(|| part.get("message_id"))
         .and_then(|v| v.as_str())?
         .to_string();
-    let args = part.get("args").cloned().unwrap_or_else(|| json!({}));
+    let mut args = part.get("args").cloned().unwrap_or_else(|| json!({}));
+    if args.is_null() || args.as_object().is_some_and(|value| value.is_empty()) {
+        if let Some(preview) = properties
+            .get("toolCallDelta")
+            .and_then(|delta| delta.get("parsedArgsPreview"))
+            .cloned()
+        {
+            let preview_nonempty = !preview.is_null()
+                && !preview.as_object().is_some_and(|value| value.is_empty())
+                && !preview
+                    .as_str()
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(false);
+            if preview_nonempty {
+                args = preview;
+            }
+        }
+    }
+    if tool == "write" && (args.is_null() || args.as_object().is_some_and(|value| value.is_empty()))
+    {
+        tracing::info!(
+            message_id = %message_id,
+            has_tool_call_delta = properties.get("toolCallDelta").is_some(),
+            part_state = %part.get("state").and_then(|v| v.as_str()).unwrap_or(""),
+            has_result = part.get("result").is_some(),
+            has_error = part.get("error").is_some(),
+            "persistable write tool part still has empty args"
+        );
+    }
     let result = part.get("result").cloned().filter(|value| !value.is_null());
     let error = part
         .get("error")
@@ -3211,34 +3267,36 @@ pub async fn run_session_part_persister(state: AppState) {
         tracing::warn!("session part persister: skipped because runtime did not become ready");
         return;
     }
-    let mut rx = state.event_bus.subscribe();
-    loop {
-        match rx.recv().await {
-            Ok(event) => {
-                if event.event_type != "message.part.updated" {
-                    continue;
-                }
-                let Some(session_id) = extract_event_session_id(&event.properties) else {
-                    continue;
-                };
-                let Some((message_id, part)) = extract_persistable_tool_part(&event.properties)
-                else {
-                    continue;
-                };
-                if let Err(error) = state
-                    .storage
-                    .append_message_part(&session_id, &message_id, part)
-                    .await
-                {
-                    tracing::warn!(
-                        "session part persister failed for session={} message={}: {error:#}",
-                        session_id,
-                        message_id
-                    );
-                }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+    let Some(mut rx) = state.event_bus.take_session_part_receiver() else {
+        tracing::warn!("session part persister: skipped because receiver was already taken");
+        return;
+    };
+    while let Some(event) = rx.recv().await {
+        if event.event_type != "message.part.updated" {
+            continue;
+        }
+        // Streaming tool-call previews are useful for the live UI, but persistence
+        // should store the finalized invocation/result events to avoid duplicating
+        // one tool part per streamed args delta.
+        if event.properties.get("toolCallDelta").is_some() {
+            continue;
+        }
+        let Some(session_id) = extract_event_session_id(&event.properties) else {
+            continue;
+        };
+        let Some((message_id, part)) = extract_persistable_tool_part(&event.properties) else {
+            continue;
+        };
+        if let Err(error) = state
+            .storage
+            .append_message_part(&session_id, &message_id, part)
+            .await
+        {
+            tracing::warn!(
+                "session part persister failed for session={} message={}: {error:#}",
+                session_id,
+                message_id
+            );
         }
     }
 }
@@ -4411,6 +4469,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persist_routines_does_not_clobber_existing_store_with_empty_state() {
+        let routines_path = tmp_routines_file("persist-guard");
+        let mut writer = AppState::new_starting("routines-writer".to_string(), true);
+        writer.routines_path = routines_path.clone();
+        writer
+            .put_routine(RoutineSpec {
+                routine_id: "automation-guarded".to_string(),
+                name: "Guarded Automation".to_string(),
+                status: RoutineStatus::Active,
+                schedule: RoutineSchedule::IntervalSeconds { seconds: 300 },
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+                entrypoint: "mission.default".to_string(),
+                args: serde_json::json!({
+                    "prompt": "Keep this saved across restart"
+                }),
+                allowed_tools: vec!["read".to_string()],
+                output_targets: vec![],
+                creator_type: "user".to_string(),
+                creator_id: "user-1".to_string(),
+                requires_approval: false,
+                external_integrations_allowed: false,
+                next_fire_at_ms: Some(5_000),
+                last_fired_at_ms: None,
+            })
+            .await
+            .expect("persist baseline routine");
+
+        let mut empty_state = AppState::new_starting("routines-empty".to_string(), true);
+        empty_state.routines_path = routines_path.clone();
+        let persist = empty_state.persist_routines().await;
+        assert!(
+            persist.is_err(),
+            "empty state should not overwrite existing routines store"
+        );
+
+        let raw = tokio::fs::read_to_string(&routines_path)
+            .await
+            .expect("read guarded routines file");
+        let parsed: std::collections::HashMap<String, RoutineSpec> =
+            serde_json::from_str(&raw).expect("parse guarded routines file");
+        assert!(parsed.contains_key("automation-guarded"));
+
+        let _ = tokio::fs::remove_file(routines_path.clone()).await;
+        let _ = tokio::fs::remove_file(sibling_backup_path(&routines_path)).await;
+    }
+
+    #[tokio::test]
     async fn load_routines_recovers_from_backup_when_primary_corrupt() {
         let routines_path = tmp_routines_file("backup-recovery");
         let backup_path = sibling_backup_path(&routines_path);
@@ -4620,6 +4726,7 @@ mod tests {
             output_targets: vec![],
             artifacts: vec![],
             active_session_ids: vec![],
+            latest_session_id: None,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -4669,6 +4776,48 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn routine_run_preserves_latest_session_id_after_session_clears() {
+        let state = AppState::new_starting("routine-latest-session".to_string(), true);
+        let routine = RoutineSpec {
+            routine_id: "routine-session-link".to_string(),
+            name: "Routine Session Link".to_string(),
+            status: RoutineStatus::Active,
+            schedule: RoutineSchedule::IntervalSeconds { seconds: 300 },
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::Skip,
+            entrypoint: "mission.default".to_string(),
+            args: serde_json::json!({}),
+            allowed_tools: vec![],
+            output_targets: vec![],
+            creator_type: "user".to_string(),
+            creator_id: "test".to_string(),
+            requires_approval: false,
+            external_integrations_allowed: false,
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        };
+
+        let run = state
+            .create_routine_run(&routine, "manual", 1, RoutineRunStatus::Queued, None)
+            .await;
+        state
+            .add_active_session_id(&run.run_id, "session-123".to_string())
+            .await
+            .expect("active session added");
+        state
+            .clear_active_session_id(&run.run_id, "session-123")
+            .await
+            .expect("active session cleared");
+
+        let updated = state
+            .get_routine_run(&run.run_id)
+            .await
+            .expect("run exists");
+        assert!(updated.active_session_ids.is_empty());
+        assert_eq!(updated.latest_session_id.as_deref(), Some("session-123"));
+    }
+
     #[test]
     fn routine_mission_prompt_includes_orchestrated_contract() {
         let run = RoutineRunRecord {
@@ -4698,6 +4847,7 @@ mod tests {
             output_targets: vec!["file://reports/release-readiness.md".to_string()],
             artifacts: vec![],
             active_session_ids: vec![],
+            latest_session_id: None,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -4741,6 +4891,7 @@ mod tests {
             output_targets: vec![],
             artifacts: vec![],
             active_session_ids: vec![],
+            latest_session_id: None,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,

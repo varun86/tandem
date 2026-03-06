@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
-import { PageCard, EmptyState } from "./ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { renderIcons } from "../app/icons.js";
+import { useEngineStream } from "../features/stream/useEngineStream";
+import { PageCard, EmptyState, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type ExecutionMode = "single" | "team" | "swarm";
 type WizardStep = 1 | 2 | 3 | 4;
-type ActiveTab = "create" | "list" | "approvals";
+type ActiveTab = "create" | "list" | "running" | "approvals";
 
 interface SchedulePreset {
   label: string;
@@ -26,10 +28,25 @@ interface WizardState {
   maxAgents: string;
   routedSkill: string;
   routingConfidence: string;
+  modelProvider: string;
+  modelId: string;
+  roleModelsJson: string;
+  selectedMcpServers: string[];
   advancedMode: boolean;
   customSkillName: string;
   customSkillDescription: string;
   customWorkflowKind: "pack_builder_recipe" | "automation_v2_dag";
+}
+
+interface ProviderOption {
+  id: string;
+  models: string[];
+}
+
+interface McpServerOption {
+  name: string;
+  connected: boolean;
+  enabled: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -91,6 +108,369 @@ function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.[key])) return input[key];
   return [];
+}
+
+function normalizeMcpServers(raw: any): McpServerOption[] {
+  if (Array.isArray(raw?.servers)) {
+    return raw.servers
+      .map((row: any) => {
+        const name = String(row?.name || "").trim();
+        if (!name) return null;
+        return {
+          name,
+          connected: !!row?.connected,
+          enabled: row?.enabled !== false,
+        };
+      })
+      .filter((row): row is McpServerOption => !!row)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw)
+      .map(([name, row]) => {
+        const cleanName = String(name || "").trim();
+        if (!cleanName) return null;
+        const cfg = row && typeof row === "object" ? row : {};
+        return {
+          name: cleanName,
+          connected: !!(cfg as any).connected,
+          enabled: (cfg as any).enabled !== false,
+        };
+      })
+      .filter((row): row is McpServerOption => !!row)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return [];
+}
+
+function normalizeMcpToolIds(raw: any): string[] {
+  const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.tools) ? raw.tools : [];
+  return rows
+    .map((tool: any) => {
+      if (typeof tool === "string") return tool.trim();
+      if (!tool || typeof tool !== "object") return "";
+      return String(
+        tool.namespaced_name ||
+          tool.namespacedName ||
+          tool.id ||
+          tool.tool_name ||
+          tool.toolName ||
+          ""
+      ).trim();
+    })
+    .filter(Boolean);
+}
+
+function sanitizeAutomationName(goal: string) {
+  const trimmed = String(goal || "").trim();
+  if (!trimmed) return "Automation";
+  const compact = trimmed.replace(/\s+/g, " ");
+  return compact.length > 72 ? `${compact.slice(0, 69)}...` : compact;
+}
+
+function toSchedulePayload(wizard: WizardState) {
+  const customCron = String(wizard.cron || "").trim();
+  if (customCron) {
+    return { cron: { expression: customCron } };
+  }
+  const preset = SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset);
+  if (preset?.intervalSeconds) {
+    return { interval_seconds: { seconds: preset.intervalSeconds } };
+  }
+  if (preset?.cron) {
+    return { cron: { expression: preset.cron } };
+  }
+  return { interval_seconds: { seconds: 86400 } };
+}
+
+function formatScheduleLabel(schedule: any) {
+  const cronExpr = String(schedule?.cron?.expression || schedule?.cron_expression || "").trim();
+  if (cronExpr) return cronExpr;
+  const seconds = Number(schedule?.interval_seconds?.seconds);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    if (seconds % 3600 === 0) return `Every ${seconds / 3600}h`;
+    if (seconds % 60 === 0) return `Every ${seconds / 60}m`;
+    return `Every ${seconds}s`;
+  }
+  return "manual";
+}
+
+function formatAutomationV2ScheduleLabel(schedule: any) {
+  const type = String(schedule?.type || "")
+    .trim()
+    .toLowerCase();
+  if (type === "cron")
+    return String(schedule?.cron_expression || schedule?.cronExpression || "cron");
+  if (type === "interval") {
+    const seconds = Number(schedule?.interval_seconds || schedule?.intervalSeconds || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return "interval";
+    if (seconds % 3600 === 0) return `Every ${seconds / 3600}h`;
+    if (seconds % 60 === 0) return `Every ${seconds / 60}m`;
+    return `Every ${seconds}s`;
+  }
+  return "manual";
+}
+
+function scheduleToEditor(schedule: any) {
+  const cronExpression = String(
+    schedule?.cron?.expression || schedule?.cron_expression || schedule?.cron || ""
+  ).trim();
+  const intervalValue = Number(
+    schedule?.interval_seconds?.seconds || schedule?.interval_seconds || 3600
+  );
+  const intervalSeconds =
+    Number.isFinite(intervalValue) && intervalValue > 0 ? Math.round(intervalValue) : 3600;
+  return {
+    scheduleKind: cronExpression ? ("cron" as const) : ("interval" as const),
+    cronExpression,
+    intervalSeconds,
+  };
+}
+
+function toolMatchesServer(toolId: string, serverName: string) {
+  const tool = String(toolId || "").toLowerCase();
+  const server = String(serverName || "").toLowerCase();
+  if (!tool || !server) return false;
+  return (
+    tool.startsWith(`mcp.${server}.`) ||
+    tool.startsWith(`${server}.`) ||
+    tool.includes(`.${server}.`) ||
+    tool.includes(`_${server}_`)
+  );
+}
+
+function isActiveRunStatus(status: string) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+  return [
+    "queued",
+    "running",
+    "in_progress",
+    "executing",
+    "pending_approval",
+    "awaiting_approval",
+  ].includes(normalized);
+}
+
+function runTimeLabel(run: any) {
+  const started = Number(run?.started_at_ms || run?.fired_at_ms || run?.created_at_ms || 0);
+  if (!Number.isFinite(started) || started <= 0) return "time unavailable";
+  const deltaMs = Date.now() - started;
+  const seconds = Math.max(0, Math.floor(deltaMs / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
+
+function deriveRunDebugHints(run: any, artifacts: any[]) {
+  const hints: string[] = [];
+  const status = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if (status === "pending_approval" || status === "awaiting_approval") {
+    hints.push("Run is waiting for approval before external actions.");
+  }
+  if (status === "blocked_policy") {
+    hints.push("Run was blocked by policy. Check tool allowlist and integration permissions.");
+  }
+  if (status === "failed" || status === "error") {
+    hints.push("Run failed. Inspect detail/error fields for root cause.");
+  }
+  if ((status === "completed" || status === "done") && !artifacts.length) {
+    hints.push("Run completed but produced no artifacts. Verify output target and tool actions.");
+  }
+  if (run?.requires_approval === true) {
+    hints.push("Automation policy requires human approval. Disable it for fully automated runs.");
+  }
+  return hints;
+}
+
+function eventRunId(event: any) {
+  const props = event?.properties || {};
+  return String(
+    event?.run_id ||
+      event?.runId ||
+      event?.runID ||
+      props?.run_id ||
+      props?.runId ||
+      props?.runID ||
+      props?.run?.id ||
+      ""
+  ).trim();
+}
+
+function eventType(event: any) {
+  return String(event?.type || event?.event_type || event?.event || "").trim();
+}
+
+function eventAt(event: any) {
+  const props = event?.properties || {};
+  const raw =
+    event?.timestamp_ms ||
+    event?.timestampMs ||
+    props?.timestamp_ms ||
+    props?.timestampMs ||
+    props?.firedAtMs ||
+    Date.now();
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function normalizeTimestamp(raw: any) {
+  const value = Number(raw || 0);
+  if (!Number.isFinite(value) || value <= 0) return Date.now();
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function extractSessionIdsFromRun(run: any) {
+  const direct = Array.isArray(run?.active_session_ids)
+    ? run.active_session_ids
+    : Array.isArray(run?.activeSessionIds)
+      ? run.activeSessionIds
+      : [];
+  const latest = [
+    String(run?.latest_session_id || "").trim(),
+    String(run?.latestSessionId || "").trim(),
+  ].filter(Boolean);
+  return Array.from(
+    new Set(
+      [...latest, ...direct.map((row: any) => String(row || "").trim()).filter(Boolean)].filter(
+        Boolean
+      )
+    )
+  );
+}
+
+function sessionMessageText(message: any) {
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  const rows = parts
+    .map((part: any) => {
+      const type = String(part?.type || "").trim();
+      if (type === "text" || type === "reasoning") return String(part?.text || "").trim();
+      if (type === "tool") {
+        const tool = String(part?.tool || "tool").trim();
+        const error = String(part?.error || "").trim();
+        const result = part?.result ? formatJson(part.result) : "";
+        return [`tool: ${tool}`, error ? `error: ${error}` : "", result].filter(Boolean).join("\n");
+      }
+      return String(part?.text || "").trim();
+    })
+    .filter(Boolean);
+  return rows.join("\n\n").trim();
+}
+
+function sessionMessageVariant(message: any) {
+  const role = String(message?.info?.role || "")
+    .trim()
+    .toLowerCase();
+  if (role === "user") return "user";
+  if (role === "assistant") return "assistant";
+  const body = sessionMessageText(message).toLowerCase();
+  if (body.includes("engine_error") || body.includes("error")) return "error";
+  return "system";
+}
+
+function sessionMessageParts(message: any) {
+  return Array.isArray(message?.parts) ? message.parts : [];
+}
+
+function eventReason(event: any) {
+  const props = event?.properties || event || {};
+  return String(
+    props?.reason ||
+      props?.detail ||
+      props?.error?.message ||
+      props?.error ||
+      props?.message ||
+      props?.status ||
+      ""
+  ).trim();
+}
+
+function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
+  const blockers: Array<{
+    key: string;
+    title: string;
+    reason: string;
+    source: string;
+    at?: number;
+  }> = [];
+  const push = (key: string, title: string, reason: string, source: string, at?: number) => {
+    if (!reason.trim()) return;
+    if (blockers.some((row) => row.key === key)) return;
+    blockers.push({ key, title, reason, source, at });
+  };
+
+  if (run?.requires_approval === true || String(run?.status || "").trim() === "pending_approval") {
+    push(
+      "approval-required",
+      "Approval required",
+      String(
+        run?.approval_reason || "Manual approval required before external side effects."
+      ).trim(),
+      "policy"
+    );
+  }
+  if (String(run?.denial_reason || "").trim()) {
+    push("denied", "Run denied", String(run.denial_reason).trim(), "run");
+  }
+  if (String(run?.paused_reason || "").trim()) {
+    push("paused", "Run paused", String(run.paused_reason).trim(), "run");
+  }
+  if (String(run?.detail || "").trim()) {
+    const detail = String(run.detail).trim();
+    if (
+      detail.toLowerCase().includes("tool") ||
+      detail.toLowerCase().includes("permission") ||
+      detail.toLowerCase().includes("approval") ||
+      detail.toLowerCase().includes("mcp") ||
+      detail.toLowerCase().includes("auth")
+    ) {
+      push("detail", "Run detail", detail, "run");
+    }
+  }
+  if (!extractSessionIdsFromRun(run).length) {
+    push(
+      "missing-session",
+      "No linked session transcript",
+      "This run does not expose a linked session transcript, so only telemetry/history are available.",
+      "run"
+    );
+  }
+
+  [...sessionEvents, ...runEvents].forEach((row: any) => {
+    const type = String(eventType(row?.event || row) || "").trim();
+    const reason = eventReason(row?.event || row);
+    const at = Number(row?.at || eventAt(row?.event || row) || 0);
+    if (
+      type === "permission.asked" ||
+      type === "approval.required" ||
+      type === "routine.approval_required"
+    ) {
+      push(`event-${type}`, "Permission or approval required", reason || type, "permission", at);
+    }
+    if (type === "mcp.auth.required") {
+      push(
+        `event-${type}`,
+        "MCP auth required",
+        reason || "An MCP connector requires authorization.",
+        "mcp",
+        at
+      );
+    }
+    if (type === "session.error" || type === "run.failed" || type === "routine.run.failed") {
+      push(`event-${type}`, "Execution failure", reason || type, "session", at);
+    }
+    if (reason.toLowerCase().includes("no further tool calls")) {
+      push("tool-mode", "Tool policy blocked progress", reason, "policy", at);
+    }
+    if (reason.toLowerCase().includes("timed out")) {
+      push(`timeout-${type || at}`, "Timeout", reason, "session", at);
+    }
+  });
+
+  return blockers.sort((a, b) => (b.at || 0) - (a.at || 0));
 }
 
 // ─── Wizard Steps ───────────────────────────────────────────────────────────
@@ -372,12 +752,35 @@ function Step3Mode({
   onSelect,
   maxAgents,
   onMaxAgents,
+  providerOptions,
+  providerId,
+  modelId,
+  onProviderChange,
+  onModelChange,
+  roleModelsJson,
+  onRoleModelsChange,
+  mcpServers,
+  selectedMcpServers,
+  onToggleMcpServer,
+  onOpenMcpSettings,
 }: {
   selected: ExecutionMode;
   onSelect: (mode: ExecutionMode) => void;
   maxAgents: string;
   onMaxAgents: (v: string) => void;
+  providerOptions: ProviderOption[];
+  providerId: string;
+  modelId: string;
+  onProviderChange: (v: string) => void;
+  onModelChange: (v: string) => void;
+  roleModelsJson: string;
+  onRoleModelsChange: (v: string) => void;
+  mcpServers: McpServerOption[];
+  selectedMcpServers: string[];
+  onToggleMcpServer: (name: string) => void;
+  onOpenMcpSettings: () => void;
 }) {
+  const modelOptions = providerOptions.find((p) => p.id === providerId)?.models || [];
   return (
     <div className="grid gap-4">
       <p className="text-sm text-slate-400">
@@ -425,6 +828,80 @@ function Step3Mode({
           />
         </div>
       ) : null}
+      <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
+        <div className="text-xs uppercase tracking-wide text-slate-500">Model Selection</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-1">
+            <label className="text-xs text-slate-400">Provider</label>
+            <select
+              className="tcp-input text-sm"
+              value={providerId}
+              onInput={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
+            >
+              <option value="">Use workspace default</option>
+              {providerOptions.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid gap-1">
+            <label className="text-xs text-slate-400">Model</label>
+            <input
+              className="tcp-input text-sm"
+              value={modelId}
+              list={providerId ? `models-${providerId}` : undefined}
+              onInput={(e) => onModelChange((e.target as HTMLInputElement).value)}
+              placeholder="Use workspace default model"
+            />
+            {providerId ? (
+              <datalist id={`models-${providerId}`}>
+                {modelOptions.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
+            ) : null}
+          </div>
+        </div>
+        <div className="grid gap-1">
+          <label className="text-xs text-slate-400">Role model overrides (advanced JSON)</label>
+          <textarea
+            className="tcp-input min-h-[72px] font-mono text-xs"
+            value={roleModelsJson}
+            onInput={(e) => onRoleModelsChange((e.target as HTMLTextAreaElement).value)}
+            placeholder={`{"planner":{"provider_id":"openai","model_id":"gpt-5"},"worker":{"provider_id":"anthropic","model_id":"claude-sonnet-4"}}`}
+          />
+        </div>
+      </div>
+      <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs uppercase tracking-wide text-slate-500">MCP Servers</div>
+          <button className="tcp-btn h-7 px-2 text-xs" onClick={onOpenMcpSettings}>
+            Add MCP Server
+          </button>
+        </div>
+        {mcpServers.length ? (
+          <div className="flex flex-wrap gap-2">
+            {mcpServers.map((server) => {
+              const isSelected = selectedMcpServers.includes(server.name);
+              return (
+                <button
+                  key={server.name}
+                  className={`tcp-btn h-7 px-2 text-xs ${isSelected ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                  onClick={() => onToggleMcpServer(server.name)}
+                >
+                  {server.name} {server.connected ? "• connected" : "• disconnected"}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400">
+            No MCP servers configured yet. Add one to allow external tools in this automation.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -452,10 +929,7 @@ function Step4Review({
 
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-slate-400">
-        Review your automation before deploying. The AI will create and install a pack
-        automatically.
-      </p>
+      <p className="text-sm text-slate-400">Review your automation before deploying.</p>
 
       {/* Summary card */}
       <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 grid gap-3">
@@ -477,6 +951,26 @@ function Step4Review({
             </span>
           </div>
         </div>
+        {wizard.modelProvider || wizard.modelId ? (
+          <div className="grid gap-1">
+            <span className="text-xs text-slate-500 uppercase tracking-wide">Model Override</span>
+            <span className="text-sm font-medium text-slate-200">
+              {wizard.modelProvider || "default provider"} / {wizard.modelId || "default model"}
+            </span>
+          </div>
+        ) : null}
+        {wizard.selectedMcpServers.length ? (
+          <div className="grid gap-1">
+            <span className="text-xs text-slate-500 uppercase tracking-wide">MCP Servers</span>
+            <div className="flex flex-wrap gap-1">
+              {wizard.selectedMcpServers.map((name) => (
+                <span key={name} className="tcp-badge-info">
+                  {name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {wizard.routedSkill ? (
           <div className="grid gap-1">
             <span className="text-xs text-slate-500 uppercase tracking-wide">Selected Flow</span>
@@ -517,15 +1011,13 @@ function Step4Review({
               </span>
             </div>
           ) : (
-            <span className="text-sm text-slate-400">
-              No compile summary available. Deploy uses pack builder fallback.
-            </span>
+            <span className="text-sm text-slate-400">No compile summary available.</span>
           )}
         </div>
       </div>
 
       <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
-        💡 Tandem will build a custom automation pack and schedule a{" "}
+        💡 Tandem will save this automation and schedule a{" "}
         <strong className="text-slate-300">{modeInfo?.label}</strong> that runs{" "}
         <strong className="text-slate-300">{wizard.schedulePreset || schedule}</strong>. You can
         pause, edit or delete it anytime.
@@ -544,7 +1036,19 @@ function Step4Review({
 
 // ─── Wizard Container ───────────────────────────────────────────────────────
 
-function CreateWizard({ client, toast }: { client: any; toast: any }) {
+function CreateWizard({
+  client,
+  toast,
+  navigate,
+  defaultProvider,
+  defaultModel,
+}: {
+  client: any;
+  toast: any;
+  navigate: (route: string) => void;
+  defaultProvider: string;
+  defaultModel: string;
+}) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>(1);
   const [routerMatches, setRouterMatches] = useState<
@@ -564,11 +1068,81 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
     maxAgents: "4",
     routedSkill: "",
     routingConfidence: "",
+    modelProvider: String(defaultProvider || ""),
+    modelId: String(defaultModel || ""),
+    roleModelsJson: "",
+    selectedMcpServers: [],
     advancedMode: false,
     customSkillName: "",
     customSkillDescription: "",
     customWorkflowKind: "pack_builder_recipe",
   });
+
+  const providersCatalogQuery = useQuery({
+    queryKey: ["settings", "providers", "catalog"],
+    queryFn: () => client.providers.catalog().catch(() => ({ all: [] })),
+    refetchInterval: 30000,
+  });
+
+  const providersConfigQuery = useQuery({
+    queryKey: ["settings", "providers", "config"],
+    queryFn: () => client.providers.config().catch(() => ({})),
+    refetchInterval: 30000,
+  });
+
+  const mcpServersQuery = useQuery({
+    queryKey: ["mcp", "servers"],
+    queryFn: () => client.mcp.list().catch(() => ({})),
+    refetchInterval: 12000,
+  });
+
+  const mcpToolsQuery = useQuery({
+    queryKey: ["mcp", "tools"],
+    queryFn: () => client.mcp.listTools().catch(() => []),
+    refetchInterval: 15000,
+  });
+
+  const providerOptions = useMemo(() => {
+    const rows = Array.isArray(providersCatalogQuery.data?.all)
+      ? providersCatalogQuery.data.all
+      : [];
+    return rows
+      .map((provider: any) => ({
+        id: String(provider?.id || "").trim(),
+        models: Object.keys(provider?.models || {}),
+      }))
+      .filter((provider: ProviderOption) => !!provider.id)
+      .sort((a: ProviderOption, b: ProviderOption) => a.id.localeCompare(b.id));
+  }, [providersCatalogQuery.data]);
+
+  const mcpServers = useMemo(
+    () => normalizeMcpServers(mcpServersQuery.data),
+    [mcpServersQuery.data]
+  );
+  const mcpToolIds = useMemo(() => normalizeMcpToolIds(mcpToolsQuery.data), [mcpToolsQuery.data]);
+
+  useEffect(() => {
+    const configDefaultProvider = String(
+      providersConfigQuery.data?.default || defaultProvider || ""
+    ).trim();
+    if (!configDefaultProvider) return;
+    const models =
+      providerOptions.find((provider) => provider.id === configDefaultProvider)?.models || [];
+    const configDefaultModel = String(
+      providersConfigQuery.data?.providers?.[configDefaultProvider]?.default_model ||
+        defaultModel ||
+        models[0] ||
+        ""
+    ).trim();
+    setWizard((current) => {
+      if (current.modelProvider && current.modelId) return current;
+      return {
+        ...current,
+        modelProvider: current.modelProvider || configDefaultProvider,
+        modelId: current.modelId || configDefaultModel,
+      };
+    });
+  }, [defaultModel, defaultProvider, providerOptions, providersConfigQuery.data]);
 
   const matchMutation = useMutation({
     mutationFn: async (goal: string) => {
@@ -688,41 +1262,86 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
   const deployMutation = useMutation({
     mutationFn: async () => {
       if (!wizard.goal.trim()) throw new Error("Please describe your goal first.");
-      const preset = SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset);
-      const schedule = wizard.cron
-        ? { cron: wizard.cron }
-        : preset?.intervalSeconds
-          ? { interval_seconds: preset.intervalSeconds }
-          : preset?.cron
-            ? { cron: preset.cron }
-            : {};
-
-      // Build the prompt for the pack_builder tool via a chat session
-      const sessionId = await client.sessions.create({
-        title: `Auto: ${wizard.goal.slice(0, 60)}`,
+      const normalizedProvider = String(wizard.modelProvider || "").trim();
+      const normalizedModel = String(wizard.modelId || "").trim();
+      const roleModelsRaw = String(wizard.roleModelsJson || "").trim();
+      let roleModels: Record<string, { provider_id: string; model_id: string }> = {};
+      if (roleModelsRaw) {
+        const parsed = JSON.parse(roleModelsRaw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Role model overrides must be a JSON object.");
+        }
+        for (const [role, spec] of Object.entries(parsed as Record<string, any>)) {
+          const providerId = String(spec?.provider_id || "").trim();
+          const modelId = String(spec?.model_id || "").trim();
+          if (!providerId || !modelId) {
+            throw new Error(
+              `Role override '${String(role)}' must include provider_id and model_id.`
+            );
+          }
+          roleModels[role] = { provider_id: providerId, model_id: modelId };
+        }
+      }
+      const modelPolicy =
+        (normalizedProvider && normalizedModel) || Object.keys(roleModels).length
+          ? {
+              ...(normalizedProvider && normalizedModel
+                ? {
+                    default_model: {
+                      provider_id: normalizedProvider,
+                      model_id: normalizedModel,
+                    },
+                  }
+                : {}),
+              ...(Object.keys(roleModels).length ? { role_models: roleModels } : {}),
+            }
+          : undefined;
+      const selectedServers = wizard.selectedMcpServers
+        .map((server) => String(server).trim())
+        .filter(Boolean);
+      const selectedToolAllowlist = Array.from(
+        new Set(
+          mcpToolIds.filter((toolId) =>
+            selectedServers.some((serverName) => toolMatchesServer(toolId, serverName))
+          )
+        )
+      );
+      const briefing = selectedServers.length
+        ? `Preferred MCP servers: ${selectedServers.join(", ")}`
+        : undefined;
+      return client.automations.create({
+        name: sanitizeAutomationName(wizard.goal),
+        schedule: toSchedulePayload(wizard),
+        mode: wizard.mode === "single" ? "standalone" : "orchestrated",
+        mission: {
+          objective: wizard.goal.trim(),
+          success_criteria: wizard.routedSkill
+            ? [
+                `Use routed skill ${wizard.routedSkill}`,
+                "Produce a complete outcome for the defined goal",
+              ]
+            : ["Produce a complete outcome for the defined goal"],
+          briefing,
+        },
+        policy: {
+          tool: {
+            ...(selectedToolAllowlist.length ? { run_allowlist: selectedToolAllowlist } : {}),
+            external_integrations_allowed: selectedServers.length > 0,
+            orchestrator_only_tool_calls: wizard.mode !== "single",
+          },
+          approval: { requires_approval: false },
+        },
+        ...(modelPolicy ? { model_policy: modelPolicy } : {}),
+        creator_type: "user",
+        creator_id: "control-panel",
       });
-      const prompt = [
-        `Create an automation pack for this goal: "${wizard.goal}"`,
-        wizard.routedSkill
-          ? `Preferred skill flow: ${wizard.routedSkill}${wizard.routingConfidence ? ` (${wizard.routingConfidence})` : ""}`
-          : "No skill flow selected; infer best approach.",
-        `Execution mode: ${wizard.mode}${wizard.mode === "swarm" ? ` (max ${wizard.maxAgents} agents)` : ""}`,
-        wizard.schedulePreset !== "Manual only"
-          ? `Schedule: ${wizard.cron || preset?.cron || `every ${preset?.intervalSeconds}s`}`
-          : "Run manually on demand",
-        "Please use the pack_builder tool to create and install this automation now.",
-      ].join("\n");
-
-      await client.sessions.promptAsync(String(sessionId), prompt);
-      return { sessionId: String(sessionId) };
     },
     onSuccess: async () => {
       toast("ok", "🎉 Automation created! Check 'My Automations' to see it running.");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["automations"] }),
-        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp"] }),
       ]);
-      // Reset wizard
       setWizard({
         goal: "",
         schedulePreset: "Every morning",
@@ -731,6 +1350,10 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
         maxAgents: "4",
         routedSkill: "",
         routingConfidence: "",
+        modelProvider: String(defaultProvider || ""),
+        modelId: String(defaultModel || ""),
+        roleModelsJson: "",
+        selectedMcpServers: [],
         advancedMode: false,
         customSkillName: "",
         customSkillDescription: "",
@@ -752,7 +1375,7 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
     step === 1
       ? wizard.goal.trim().length > 8
       : step === 2
-        ? !!wizard.schedulePreset
+        ? !!wizard.schedulePreset || !!wizard.cron.trim()
         : step === 3
           ? !!wizard.mode
           : true;
@@ -898,6 +1521,30 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
               onSelect={(mode) => setWizard((s) => ({ ...s, mode }))}
               maxAgents={wizard.maxAgents}
               onMaxAgents={(v) => setWizard((s) => ({ ...s, maxAgents: v }))}
+              providerOptions={providerOptions}
+              providerId={wizard.modelProvider}
+              modelId={wizard.modelId}
+              onProviderChange={(v) =>
+                setWizard((s) => ({
+                  ...s,
+                  modelProvider: v,
+                  modelId: v === s.modelProvider ? s.modelId : "",
+                }))
+              }
+              onModelChange={(v) => setWizard((s) => ({ ...s, modelId: v }))}
+              roleModelsJson={wizard.roleModelsJson}
+              onRoleModelsChange={(v) => setWizard((s) => ({ ...s, roleModelsJson: v }))}
+              mcpServers={mcpServers}
+              selectedMcpServers={wizard.selectedMcpServers}
+              onToggleMcpServer={(name) =>
+                setWizard((s) => ({
+                  ...s,
+                  selectedMcpServers: s.selectedMcpServers.includes(name)
+                    ? s.selectedMcpServers.filter((row) => row !== name)
+                    : [...s.selectedMcpServers, name],
+                }))
+              }
+              onOpenMcpSettings={() => navigate("mcp")}
             />
           ) : (
             <Step4Review
@@ -938,22 +1585,104 @@ function CreateWizard({ client, toast }: { client: any; toast: any }) {
 
 // ─── My Automations (combined routines + packs) ─────────────────────────────
 
-function MyAutomations({ client, toast }: { client: any; toast: any }) {
+function MyAutomations({
+  client,
+  toast,
+  navigate,
+  viewMode,
+}: {
+  client: any;
+  toast: any;
+  navigate: (route: string) => void;
+  viewMode: "list" | "running";
+}) {
   const queryClient = useQueryClient();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    automationId: string;
+    name: string;
+    objective: string;
+    mode: "standalone" | "orchestrated";
+    requiresApproval: boolean;
+    scheduleKind: "cron" | "interval";
+    cronExpression: string;
+    intervalSeconds: string;
+  } | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [selectedLogSource, setSelectedLogSource] = useState<"all" | "automations" | "global">(
+    "all"
+  );
+  const [runEvents, setRunEvents] = useState<
+    Array<{ id: string; source: "automations" | "global"; at: number; event: any }>
+  >([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [sessionEvents, setSessionEvents] = useState<Array<{ id: string; at: number; event: any }>>(
+    []
+  );
+  const sessionLogRef = useRef<HTMLDivElement | null>(null);
+  const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
 
-  const routinesQuery = useQuery({
-    queryKey: ["automations", "routines"],
+  const automationsQuery = useQuery({
+    queryKey: ["automations", "list"],
     queryFn: () =>
-      client?.routines?.list?.().catch(() => ({ routines: [] })) ??
-      Promise.resolve({ routines: [] }),
+      client?.automations?.list?.().catch(() => ({ automations: [] })) ??
+      Promise.resolve({ automations: [] }),
+    refetchInterval: 20000,
+  });
+  const automationsV2Query = useQuery({
+    queryKey: ["automations", "v2", "list"],
+    queryFn: () =>
+      client?.automationsV2?.list?.().catch(() => ({ automations: [] })) ??
+      Promise.resolve({ automations: [] }),
     refetchInterval: 20000,
   });
   const runsQuery = useQuery({
     queryKey: ["automations", "runs"],
     queryFn: () =>
-      client?.routines?.listRuns?.(undefined, 20).catch(() => ({ runs: [] })) ??
+      client?.automations?.listRuns?.({ limit: 20 }).catch(() => ({ runs: [] })) ??
       Promise.resolve({ runs: [] }),
     refetchInterval: 9000,
+  });
+  const runDetailQuery = useQuery({
+    queryKey: ["automations", "run", selectedRunId],
+    enabled: !!selectedRunId,
+    queryFn: () => client?.automations?.getRun?.(selectedRunId).catch(() => ({ run: null })),
+    refetchInterval: selectedRunId ? 5000 : false,
+  });
+  const runArtifactsQuery = useQuery({
+    queryKey: ["automations", "run", "artifacts", selectedRunId],
+    enabled: !!selectedRunId,
+    queryFn: () =>
+      client?.automations?.listArtifacts?.(selectedRunId).catch(() => ({ artifacts: [] })),
+    refetchInterval: selectedRunId ? 8000 : false,
+  });
+  const availableSessionIds = useMemo(
+    () => extractSessionIdsFromRun((runDetailQuery.data as any)?.run),
+    [runDetailQuery.data]
+  );
+  const sessionMessagesQuery = useQuery({
+    queryKey: ["automations", "run", "session", selectedRunId, selectedSessionId, "messages"],
+    enabled: !!selectedRunId && !!selectedSessionId,
+    queryFn: () =>
+      client?.sessions?.messages?.(selectedSessionId).catch(() => []) ?? Promise.resolve([]),
+    refetchInterval:
+      selectedRunId &&
+      selectedSessionId &&
+      isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 4000
+        : false,
+  });
+  const selectedAutomationId = String(
+    (runDetailQuery.data as any)?.run?.automation_id ||
+      (runDetailQuery.data as any)?.run?.routine_id ||
+      ""
+  ).trim();
+  const runHistoryQuery = useQuery({
+    queryKey: ["automations", "history", selectedAutomationId],
+    enabled: !!selectedAutomationId,
+    queryFn: () =>
+      client?.automations?.history?.(selectedAutomationId, 80).catch(() => ({ events: [] })),
+    refetchInterval: selectedRunId ? 10000 : false,
   });
   const packsQuery = useQuery({
     queryKey: ["automations", "packs"],
@@ -963,17 +1692,242 @@ function MyAutomations({ client, toast }: { client: any; toast: any }) {
   });
 
   const runNowMutation = useMutation({
-    mutationFn: (id: string) => client?.routines?.runNow?.(id),
+    mutationFn: (id: string) => client?.automations?.runNow?.(id),
     onSuccess: async () => {
-      toast("ok", "Routine triggered.");
+      toast("ok", "Automation triggered.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const runActionMutation = useMutation({
+    mutationFn: async ({
+      action,
+      runId,
+      reason,
+    }: {
+      action: "pause" | "resume";
+      runId: string;
+      reason?: string;
+    }) => {
+      if (action === "pause") return client.automations.pauseRun(runId, reason);
+      return client.automations.resumeRun(runId, reason);
+    },
+    onSuccess: async () => {
+      toast("ok", "Run action applied.");
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
 
-  const routines = toArray(routinesQuery.data, "routines");
+  const updateAutomationMutation = useMutation({
+    mutationFn: async (draft: {
+      automationId: string;
+      name: string;
+      objective: string;
+      mode: "standalone" | "orchestrated";
+      requiresApproval: boolean;
+      scheduleKind: "cron" | "interval";
+      cronExpression: string;
+      intervalSeconds: string;
+    }) => {
+      const name = String(draft.name || "").trim();
+      const objective = String(draft.objective || "").trim();
+      const cronExpression = String(draft.cronExpression || "").trim();
+      const intervalSeconds = Number(draft.intervalSeconds);
+      if (!name) throw new Error("Automation name is required.");
+      if (!objective) throw new Error("Objective is required.");
+      if (draft.scheduleKind === "cron" && !cronExpression) {
+        throw new Error("Cron expression is required.");
+      }
+      if (
+        draft.scheduleKind === "interval" &&
+        (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0)
+      ) {
+        throw new Error("Interval seconds must be greater than zero.");
+      }
+      return client.automations.update(draft.automationId, {
+        name,
+        mode: draft.mode,
+        mission: { objective },
+        policy: { approval: { requires_approval: !!draft.requiresApproval } },
+        schedule:
+          draft.scheduleKind === "cron"
+            ? { cron: { expression: cronExpression } }
+            : { interval_seconds: { seconds: Math.round(intervalSeconds) } },
+      });
+    },
+    onSuccess: async () => {
+      toast("ok", "Automation updated.");
+      setEditDraft(null);
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const automationActionMutation = useMutation({
+    mutationFn: async ({
+      action,
+      automationId,
+      family,
+    }: {
+      action: "pause" | "resume" | "delete";
+      automationId: string;
+      family: "legacy" | "v2";
+    }) => {
+      if (family === "v2") {
+        if (action === "delete") return client.automationsV2.delete(automationId);
+        if (action === "pause") return client.automationsV2.pause(automationId);
+        return client.automationsV2.resume(automationId);
+      }
+      if (action === "delete") return client.automations.delete(automationId);
+      return client.automations.update(automationId, {
+        status: action === "pause" ? "paused" : "enabled",
+      });
+    },
+    onSuccess: async (_payload, vars) => {
+      if (vars.action === "delete") toast("ok", "Automation removed.");
+      if (vars.action === "pause") toast("ok", "Automation paused.");
+      if (vars.action === "resume") toast("ok", "Automation resumed.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+
+  const automations = useMemo(() => {
+    const merged = [
+      ...toArray(automationsQuery.data, "automations"),
+      ...toArray(automationsQuery.data, "routines"),
+    ];
+    const byId = new Map<string, any>();
+    for (const row of merged) {
+      const id = String(row?.automation_id || row?.routine_id || row?.id || "").trim();
+      if (!id) continue;
+      if (!byId.has(id)) byId.set(id, row);
+    }
+    return Array.from(byId.values());
+  }, [automationsQuery.data]);
   const runs = toArray(runsQuery.data, "runs");
+  const automationsV2 = toArray(automationsV2Query.data, "automations");
   const packs = toArray(packsQuery.data, "packs");
+  const activeRuns = runs.filter((run: any) => isActiveRunStatus(run?.status));
+  const selectedRun = (runDetailQuery.data as any)?.run || null;
+  const runArtifacts = toArray(runArtifactsQuery.data, "artifacts");
+  const runHints = deriveRunDebugHints(selectedRun, runArtifacts);
+  const runHistoryEvents = Array.isArray((runHistoryQuery.data as any)?.events)
+    ? (runHistoryQuery.data as any).events
+    : Array.isArray((runHistoryQuery.data as any)?.history)
+      ? (runHistoryQuery.data as any).history
+      : [];
+  const filteredRunEvents = runEvents.filter((item) =>
+    selectedLogSource === "all" ? true : item.source === selectedLogSource
+  );
+  const sessionMessages = Array.isArray(sessionMessagesQuery.data) ? sessionMessagesQuery.data : [];
+
+  useEffect(() => {
+    setSelectedSessionId((current) => {
+      if (current && availableSessionIds.includes(current)) return current;
+      return availableSessionIds[0] || "";
+    });
+  }, [availableSessionIds]);
+
+  useEffect(() => {
+    setRunEvents([]);
+    setSelectedLogSource("all");
+    setSessionEvents([]);
+    setSessionLogPinnedToBottom(true);
+  }, [selectedRunId]);
+
+  useEngineStream(
+    selectedRunId
+      ? `/api/engine/automations/events?run_id=${encodeURIComponent(selectedRunId)}`
+      : "",
+    (msg) => {
+      try {
+        const payload = JSON.parse(String(msg?.data || "{}"));
+        if (!payload || payload.status === "ready") return;
+        const runId = eventRunId(payload);
+        if (!runId || runId !== selectedRunId) return;
+        const type = eventType(payload);
+        const at = eventAt(payload);
+        const id = `automations:${runId}:${type}:${at}:${Math.random().toString(16).slice(2, 8)}`;
+        setRunEvents((prev) => [
+          ...prev.slice(-299),
+          { id, source: "automations", at, event: payload },
+        ]);
+      } catch {
+        return;
+      }
+    },
+    { enabled: !!selectedRunId }
+  );
+
+  useEngineStream(
+    selectedRunId && selectedSessionId
+      ? `/event?sessionID=${encodeURIComponent(selectedSessionId)}&runID=${encodeURIComponent(selectedRunId)}`
+      : "",
+    (msg) => {
+      try {
+        const payload = JSON.parse(String(msg?.data || "{}"));
+        if (!payload) return;
+        const type = eventType(payload);
+        const at = eventAt(payload);
+        const id = [
+          type || "event",
+          String(payload?.properties?.sessionID || payload?.sessionID || selectedSessionId || ""),
+          String(payload?.properties?.runID || payload?.runID || selectedRunId || ""),
+          String(payload?.properties?.messageID || payload?.messageID || ""),
+          String(
+            payload?.properties?.part?.id || payload?.properties?.seq || payload?.timestamp_ms || at
+          ),
+        ].join(":");
+        setSessionEvents((prev) => {
+          if (prev.some((row) => row.id === id)) return prev;
+          return [...prev.slice(-499), { id, at, event: payload }];
+        });
+      } catch {
+        return;
+      }
+    },
+    { enabled: !!selectedRunId && !!selectedSessionId }
+  );
+
+  useEngineStream(
+    selectedRunId ? "/api/global/event" : "",
+    (msg) => {
+      try {
+        const payload = JSON.parse(String(msg?.data || "{}"));
+        const runId = eventRunId(payload);
+        if (!runId || runId !== selectedRunId) return;
+        const type = eventType(payload);
+        if (!type || type === "server.connected" || type === "engine.lifecycle.ready") return;
+        const at = eventAt(payload);
+        const id = `global:${runId}:${type}:${at}:${Math.random().toString(16).slice(2, 8)}`;
+        setRunEvents((prev) => [...prev.slice(-299), { id, source: "global", at, event: payload }]);
+      } catch {
+        return;
+      }
+    },
+    { enabled: !!selectedRunId }
+  );
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    renderIcons(root);
+  }, [
+    automations.length,
+    automationsV2.length,
+    runs.length,
+    packs.length,
+    activeRuns.length,
+    !!editDraft,
+    !!selectedRunId,
+    !!selectedSessionId,
+    runEvents.length,
+    sessionEvents.length,
+    updateAutomationMutation.isPending,
+    runActionMutation.isPending,
+    runNowMutation.isPending,
+  ]);
 
   const statusColor = (status: string) => {
     const s = String(status || "").toLowerCase();
@@ -983,10 +1937,87 @@ function MyAutomations({ client, toast }: { client: any; toast: any }) {
     return "tcp-badge-info";
   };
 
+  const beginEdit = (automation: any) => {
+    const automationId = String(
+      automation?.automation_id || automation?.id || automation?.routine_id || ""
+    ).trim();
+    if (!automationId) {
+      toast("err", "Cannot edit automation without an id.");
+      return;
+    }
+    const scheduleEditor = scheduleToEditor(automation?.schedule);
+    setEditDraft({
+      automationId,
+      name: String(automation?.name || automationId || "").trim(),
+      objective: String(
+        automation?.mission?.objective || automation?.mission_snapshot?.objective || ""
+      ).trim(),
+      mode:
+        String(automation?.mode || "").toLowerCase() === "standalone"
+          ? "standalone"
+          : "orchestrated",
+      requiresApproval:
+        automation?.requires_approval === true ||
+        automation?.policy?.approval?.requires_approval === true,
+      scheduleKind: scheduleEditor.scheduleKind,
+      cronExpression: scheduleEditor.cronExpression,
+      intervalSeconds: String(scheduleEditor.intervalSeconds),
+    });
+  };
+
+  const isPausedAutomation = (automation: any) => {
+    const status = String(automation?.status || "")
+      .trim()
+      .toLowerCase();
+    return status === "paused" || status === "disabled";
+  };
+
+  const legacyAutomationCount = automations.length;
+  const workflowAutomationCount = automationsV2.length;
+  const totalSavedAutomations = legacyAutomationCount + workflowAutomationCount;
+  const blockers = useMemo(
+    () => buildRunBlockers(selectedRun, sessionEvents, runEvents),
+    [selectedRun, sessionEvents, runEvents]
+  );
+  const sessionLogEntries = useMemo(() => {
+    const messageEntries = sessionMessages.map((message: any, index: number) => ({
+      id: `message:${String(message?.info?.id || index)}`,
+      kind: "message" as const,
+      at: normalizeTimestamp(message?.info?.time?.created),
+      variant: sessionMessageVariant(message),
+      label: String(message?.info?.role || "session").trim() || "session",
+      body: sessionMessageText(message),
+      raw: message,
+      parts: sessionMessageParts(message),
+    }));
+    const liveEntries = sessionEvents.map((item) => ({
+      id: `event:${item.id}`,
+      kind: "event" as const,
+      at: item.at,
+      variant:
+        eventType(item.event) === "session.error"
+          ? "error"
+          : eventType(item.event).startsWith("session.")
+            ? "system"
+            : "tool",
+      label: eventType(item.event) || "event",
+      body: eventReason(item.event),
+      raw: item.event,
+      parts: [],
+    }));
+    return [...messageEntries, ...liveEntries].sort((a, b) => a.at - b.at);
+  }, [sessionMessages, sessionEvents]);
+
+  useEffect(() => {
+    const el = sessionLogRef.current;
+    if (!el || !sessionLogPinnedToBottom) return;
+    el.scrollTop = el.scrollHeight;
+  }, [sessionLogEntries, sessionLogPinnedToBottom]);
+
   return (
-    <div className="grid gap-4">
+    <div ref={rootRef} className="grid gap-4">
       {/* Installed packs from pack_builder */}
-      {packs.length > 0 ? (
+      {viewMode === "list" && packs.length > 0 ? (
         <div className="grid gap-2">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
             Installed Packs
@@ -1008,45 +2039,287 @@ function MyAutomations({ client, toast }: { client: any; toast: any }) {
         </div>
       ) : null}
 
-      {/* Scheduled routines */}
-      {routines.length > 0 ? (
+      {viewMode === "list" ? (
         <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            Scheduled Routines
-          </p>
-          {routines.map((routine: any) => {
-            const id = String(routine?.id || routine?.routine_id || "");
-            return (
-              <div key={id} className="tcp-list-item">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span>⏰</span>
-                    <strong>{String(routine?.name || id || "Routine")}</strong>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
+              Saved Automations
+            </p>
+            <span className="tcp-badge-info">{totalSavedAutomations} saved</span>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
+                Scheduled Automations
+              </p>
+              <span className="tcp-subtle text-xs">{legacyAutomationCount} items</span>
+            </div>
+            {automations.length > 0 ? (
+              automations.map((automation: any) => {
+                const id = String(
+                  automation?.automation_id || automation?.id || automation?.routine_id || ""
+                );
+                return (
+                  <div key={id} className="tcp-list-item">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span>⏰</span>
+                        <strong>{String(automation?.name || id || "Automation")}</strong>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => beginEdit(automation)}
+                        >
+                          <i data-lucide="pencil"></i>
+                        </button>
+                        <span className={statusColor(automation?.status)}>
+                          {String(automation?.status || "active")}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="tcp-subtle text-xs">
+                      {formatScheduleLabel(automation?.schedule)}
+                    </div>
+                    <div className="mt-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => runNowMutation.mutate(id)}
+                        >
+                          <i data-lucide="play"></i>
+                          Run now
+                        </button>
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() =>
+                            automationActionMutation.mutate({
+                              action: isPausedAutomation(automation) ? "resume" : "pause",
+                              automationId: id,
+                              family: "legacy",
+                            })
+                          }
+                          disabled={!id || automationActionMutation.isPending}
+                        >
+                          <i data-lucide={isPausedAutomation(automation) ? "play" : "pause"}></i>
+                          {isPausedAutomation(automation) ? "Resume" : "Pause"}
+                        </button>
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => {
+                            const latestForAutomation = runs.find((run: any) => {
+                              const automationId = String(
+                                run?.automation_id || run?.routine_id || run?.id || ""
+                              ).trim();
+                              return automationId === id;
+                            });
+                            const runId = String(
+                              latestForAutomation?.run_id || latestForAutomation?.id || ""
+                            ).trim();
+                            if (runId) {
+                              setSelectedRunId(runId);
+                            } else {
+                              toast("info", "No runs yet for this automation.");
+                            }
+                          }}
+                        >
+                          <i data-lucide="info"></i>
+                          Debug latest
+                        </button>
+                        <button
+                          className="tcp-btn-danger h-7 px-2 text-xs"
+                          onClick={() =>
+                            automationActionMutation.mutate({
+                              action: "delete",
+                              automationId: id,
+                              family: "legacy",
+                            })
+                          }
+                          disabled={!id || automationActionMutation.isPending}
+                        >
+                          <i data-lucide="trash-2"></i>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <span className={statusColor(routine?.status)}>
-                    {String(routine?.status || "active")}
-                  </span>
-                </div>
-                <div className="tcp-subtle text-xs">{String(routine?.schedule || "manual")}</div>
-                <div className="mt-2">
-                  <button
-                    className="tcp-btn h-7 px-2 text-xs"
-                    onClick={() => runNowMutation.mutate(id)}
-                  >
-                    <i data-lucide="play"></i>
-                    Run now
-                  </button>
+                );
+              })
+            ) : (
+              <div className="tcp-list-item">
+                <div className="font-medium">No scheduled automations saved yet</div>
+                <div className="tcp-subtle mt-1 text-xs">
+                  This section shows automation definitions, not execution history.
                 </div>
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
+      ) : null}
+
+      {viewMode === "list" ? (
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
+              Workflow Automations
+            </p>
+            <span className="tcp-subtle text-xs">{workflowAutomationCount} items</span>
+          </div>
+          {automationsV2.length > 0 ? (
+            automationsV2.map((automation: any) => {
+              const id = String(automation?.automation_id || automation?.automationId || "").trim();
+              const status = String(automation?.status || "draft").trim();
+              const paused = status.toLowerCase() === "paused";
+              return (
+                <div key={id} className="tcp-list-item">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span>🧩</span>
+                      <strong>{String(automation?.name || id || "Workflow automation")}</strong>
+                    </div>
+                    <span className={statusColor(status)}>{status}</span>
+                  </div>
+                  {String(automation?.description || "").trim() ? (
+                    <div className="tcp-subtle text-xs">{String(automation.description)}</div>
+                  ) : null}
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {formatAutomationV2ScheduleLabel(automation?.schedule)}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() =>
+                        client.automationsV2
+                          .runNow(id)
+                          .then(() => {
+                            toast("ok", "Workflow automation triggered.");
+                            return queryClient.invalidateQueries({ queryKey: ["automations"] });
+                          })
+                          .catch((error: any) =>
+                            toast("err", error instanceof Error ? error.message : String(error))
+                          )
+                      }
+                      disabled={!id}
+                    >
+                      <i data-lucide="play"></i>
+                      Run now
+                    </button>
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() =>
+                        automationActionMutation.mutate({
+                          action: paused ? "resume" : "pause",
+                          automationId: id,
+                          family: "v2",
+                        })
+                      }
+                      disabled={!id || automationActionMutation.isPending}
+                    >
+                      <i data-lucide={paused ? "play" : "pause"}></i>
+                      {paused ? "Resume" : "Pause"}
+                    </button>
+                    <button
+                      className="tcp-btn-danger h-7 px-2 text-xs"
+                      onClick={() =>
+                        automationActionMutation.mutate({
+                          action: "delete",
+                          automationId: id,
+                          family: "v2",
+                        })
+                      }
+                      disabled={!id || automationActionMutation.isPending}
+                    >
+                      <i data-lucide="trash-2"></i>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="tcp-list-item">
+              <div className="font-medium">No workflow automations saved yet</div>
+              <div className="tcp-subtle mt-1 text-xs">
+                This section is separate from run history and only shows workflow automation
+                definitions.
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {viewMode === "running" ? (
+        activeRuns.length > 0 ? (
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Active Running Tasks
+              </p>
+              <span className="tcp-badge-warn">{activeRuns.length} active</span>
+            </div>
+            {activeRuns.slice(0, 14).map((run: any, index: number) => {
+              const runId = String(run?.run_id || run?.id || index).trim();
+              return (
+                <div key={runId || index} className="tcp-list-item">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="grid gap-0.5">
+                      <span className="font-medium text-sm">
+                        {String(run?.name || run?.automation_id || run?.routine_id || "Run")}
+                      </span>
+                      <span className="tcp-subtle text-xs">
+                        {runId || "unknown run"} · running for {runTimeLabel(run)}
+                      </span>
+                    </div>
+                    <span className={statusColor(run?.status)}>
+                      {String(run?.status || "unknown")}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() => setSelectedRunId(runId)}
+                    >
+                      <i data-lucide="bug"></i>
+                      Inspect
+                    </button>
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() => runActionMutation.mutate({ action: "pause", runId })}
+                      disabled={!runId || runActionMutation.isPending}
+                    >
+                      <i data-lucide="pause"></i>
+                      Pause
+                    </button>
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() => runActionMutation.mutate({ action: "resume", runId })}
+                      disabled={!runId || runActionMutation.isPending}
+                    >
+                      <i data-lucide="play"></i>
+                      Resume
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="tcp-list-item">
+            <div className="font-medium">Active Running Tasks</div>
+            <div className="tcp-subtle mt-1 text-xs">
+              No active runs right now. Start a run to inspect live task execution.
+            </div>
+          </div>
+        )
       ) : null}
 
       {/* Recent run history */}
       {runs.length > 0 ? (
         <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">Recent Runs</p>
+          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
+            {viewMode === "running" ? "Run Log Explorer" : "Recent Runs"}
+          </p>
           {runs.slice(0, 12).map((run: any, index: number) => (
             <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
               <div className="flex items-center justify-between gap-2">
@@ -1055,15 +2328,628 @@ function MyAutomations({ client, toast }: { client: any; toast: any }) {
                 </span>
                 <span className={statusColor(run?.status)}>{String(run?.status || "unknown")}</span>
               </div>
-              <div className="tcp-subtle text-xs mt-1">{String(run?.run_id || run?.id || "")}</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="tcp-subtle text-xs">{String(run?.run_id || run?.id || "")}</span>
+                <button
+                  className="tcp-btn h-7 px-2 text-xs"
+                  onClick={() => setSelectedRunId(String(run?.run_id || run?.id || "").trim())}
+                >
+                  <i data-lucide="info"></i>
+                  {viewMode === "running" ? "View logs" : "Details"}
+                </button>
+              </div>
             </div>
           ))}
         </div>
       ) : null}
 
-      {!routines.length && !packs.length ? (
+      {!runs.length && viewMode === "running" ? (
+        <EmptyState text="Run one automation, then use View logs to inspect full execution events." />
+      ) : null}
+      {!totalSavedAutomations && !packs.length && !runs.length && viewMode === "list" ? (
         <EmptyState text="No automations yet. Create your first one with the wizard!" />
       ) : null}
+      <AnimatePresence>
+        {selectedRunId ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedRunId("")}
+          >
+            <motion.div
+              className="tcp-confirm-dialog max-h-[88vh] w-[min(110rem,97vw)] overflow-hidden"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div className="grid gap-1">
+                  <h3 className="tcp-confirm-title">Run Debugger</h3>
+                  <div className="tcp-subtle text-xs">
+                    automation:{" "}
+                    {String(selectedRun?.automation_id || selectedRun?.routine_id || "unknown")}
+                    {" · "}run: {selectedRunId}
+                    {" · "}running for {runTimeLabel(selectedRun)}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={statusColor(selectedRun?.status)}>
+                    {String(selectedRun?.status || "unknown")}
+                  </span>
+                  {availableSessionIds.length > 1 ? (
+                    <select
+                      className="tcp-input h-8 min-w-[16rem] text-xs"
+                      value={selectedSessionId}
+                      onInput={(e) => setSelectedSessionId((e.target as HTMLSelectElement).value)}
+                    >
+                      {availableSessionIds.map((sessionId) => (
+                        <option key={sessionId} value={sessionId}>
+                          {sessionId}
+                        </option>
+                      ))}
+                    </select>
+                  ) : selectedSessionId ? (
+                    <span className="tcp-badge-info">{selectedSessionId}</span>
+                  ) : (
+                    <span className="tcp-badge-warn">no session</span>
+                  )}
+                  <button
+                    className="tcp-btn h-8 px-2 text-xs"
+                    onClick={() => {
+                      void Promise.all([
+                        queryClient.invalidateQueries({
+                          queryKey: ["automations", "run", selectedRunId],
+                        }),
+                        queryClient.invalidateQueries({
+                          queryKey: ["automations", "run", "artifacts", selectedRunId],
+                        }),
+                        selectedSessionId
+                          ? queryClient.invalidateQueries({
+                              queryKey: [
+                                "automations",
+                                "run",
+                                "session",
+                                selectedRunId,
+                                selectedSessionId,
+                                "messages",
+                              ],
+                            })
+                          : Promise.resolve(),
+                      ]);
+                    }}
+                  >
+                    <i data-lucide="refresh-cw"></i>
+                    Refresh
+                  </button>
+                  <button className="tcp-btn h-8 px-2 text-xs" onClick={() => setSelectedRunId("")}>
+                    <i data-lucide="x"></i>
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="grid max-h-[calc(88vh-8rem)] gap-3 overflow-hidden xl:grid-cols-[1.62fr_1fr]">
+                <div className="grid min-h-0 gap-3 overflow-hidden">
+                  {blockers.length ? (
+                    <div className="tcp-list-item">
+                      <div className="mb-2 font-medium">Blockers</div>
+                      <div className="grid gap-2">
+                        {blockers.map((blocker) => (
+                          <div
+                            key={blocker.key}
+                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
+                          >
+                            <div className="mb-1 flex flex-wrap items-center gap-2">
+                              <strong>{blocker.title}</strong>
+                              <span className="tcp-badge-warn">{blocker.source}</span>
+                              {blocker.at ? (
+                                <span className="tcp-subtle text-[11px]">
+                                  {new Date(blocker.at).toLocaleTimeString()}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-sm text-amber-100/90">{blocker.reason}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium">Live Session Log</div>
+                        <div className="tcp-subtle text-xs">
+                          {selectedSessionId
+                            ? `Streaming session ${selectedSessionId}`
+                            : "This run does not expose a session transcript."}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          disabled={!sessionLogEntries.length}
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(
+                                sessionLogEntries
+                                  .map((entry) => {
+                                    const ts = new Date(entry.at).toLocaleTimeString();
+                                    return `[${ts}] ${entry.label}\n${entry.body || formatJson(entry.raw)}`;
+                                  })
+                                  .join("\n\n")
+                              );
+                              toast("ok", "Copied session log.");
+                            } catch (error) {
+                              toast("err", error instanceof Error ? error.message : "Copy failed.");
+                            }
+                          }}
+                        >
+                          <i data-lucide="copy"></i>
+                          Copy session log
+                        </button>
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => {
+                            setSessionLogPinnedToBottom(true);
+                            const el = sessionLogRef.current;
+                            if (el) el.scrollTop = el.scrollHeight;
+                          }}
+                        >
+                          <i data-lucide="arrow-down"></i>
+                          Jump to latest
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      ref={sessionLogRef}
+                      className="grid max-h-[30rem] min-h-[18rem] gap-2 overflow-auto pr-1"
+                      onScroll={(event) => {
+                        const el = event.currentTarget;
+                        const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
+                        setSessionLogPinnedToBottom(pinned);
+                      }}
+                    >
+                      {sessionLogEntries.length ? (
+                        sessionLogEntries.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className={`rounded-lg border p-3 ${
+                              entry.variant === "assistant"
+                                ? "border-sky-500/30 bg-sky-950/10"
+                                : entry.variant === "user"
+                                  ? "border-slate-600/60 bg-slate-900/35"
+                                  : entry.variant === "error"
+                                    ? "border-rose-500/35 bg-rose-950/20"
+                                    : "border-slate-700/50 bg-slate-900/25"
+                            }`}
+                          >
+                            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-medium uppercase tracking-wide text-slate-200">
+                                {entry.label}
+                              </span>
+                              <span className="tcp-subtle text-[11px]">
+                                {new Date(entry.at).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            {entry.body ? (
+                              <div className="whitespace-pre-wrap break-words text-sm text-slate-100">
+                                {entry.body}
+                              </div>
+                            ) : (
+                              <div className="tcp-subtle text-xs">No textual body.</div>
+                            )}
+                            {entry.kind === "message" &&
+                            entry.parts.some((part: any) => String(part?.type || "") === "tool") ? (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-xs text-slate-400">
+                                  Tool payloads
+                                </summary>
+                                <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                  {formatJson(entry.parts)}
+                                </pre>
+                              </details>
+                            ) : null}
+                            {entry.kind === "event" ? (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-xs text-slate-400">
+                                  Raw event
+                                </summary>
+                                <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                  {formatJson(entry.raw)}
+                                </pre>
+                              </details>
+                            ) : null}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="tcp-subtle text-xs">
+                          {selectedSessionId
+                            ? "Waiting for session transcript or live session events."
+                            : "This run does not expose a session transcript."}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="font-medium">Run Telemetry</div>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "all" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          onClick={() => setSelectedLogSource("all")}
+                        >
+                          all ({runEvents.length})
+                        </button>
+                        <button
+                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "automations" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          onClick={() => setSelectedLogSource("automations")}
+                        >
+                          automations
+                        </button>
+                        <button
+                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "global" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          onClick={() => setSelectedLogSource("global")}
+                        >
+                          global
+                        </button>
+                      </div>
+                    </div>
+                    {filteredRunEvents.length ? (
+                      <div className="grid max-h-[18rem] gap-2 overflow-auto pr-1">
+                        {filteredRunEvents
+                          .slice(-40)
+                          .reverse()
+                          .map((item) => (
+                            <details
+                              key={item.id}
+                              className="rounded-lg border border-slate-700/40 bg-slate-900/30 p-2"
+                            >
+                              <summary className="cursor-pointer list-none">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium text-slate-200">
+                                    {eventType(item.event) || "event"}
+                                  </span>
+                                  <span className="tcp-subtle text-[11px]">
+                                    {new Date(item.at).toLocaleTimeString()} · {item.source}
+                                  </span>
+                                </div>
+                                <div className="tcp-subtle mt-1 text-xs">
+                                  {eventReason(item.event) || "No summary available."}
+                                </div>
+                              </summary>
+                              <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                {formatJson(item.event?.properties || item.event)}
+                              </pre>
+                            </details>
+                          ))}
+                      </div>
+                    ) : (
+                      <div className="tcp-subtle text-xs">
+                        No automation/global telemetry captured for this run yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="grid min-h-0 gap-3 overflow-hidden">
+                  {runHints.length ? (
+                    <div className="tcp-list-item">
+                      <div className="mb-1 font-medium">Debug hints</div>
+                      <div className="grid gap-1 text-xs text-slate-300">
+                        {runHints.map((hint) => (
+                          <div key={hint}>{hint}</div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="tcp-list-item">
+                    <div className="font-medium">Run Summary</div>
+                    <div className="mt-2 grid gap-2 text-xs text-slate-300">
+                      <div>status: {String(selectedRun?.status || "unknown")}</div>
+                      <div>artifacts: {String(runArtifacts.length)}</div>
+                      <div>detail: {String(selectedRun?.detail || "n/a")}</div>
+                      <div>
+                        requires_approval: {String(selectedRun?.requires_approval ?? "unknown")}
+                      </div>
+                      <div>approval_reason: {String(selectedRun?.approval_reason || "none")}</div>
+                      <div>denial_reason: {String(selectedRun?.denial_reason || "none")}</div>
+                      <div>paused_reason: {String(selectedRun?.paused_reason || "none")}</div>
+                    </div>
+                  </div>
+                  <div className="tcp-list-item">
+                    <div className="font-medium">Mission Objective</div>
+                    <pre className="tcp-code mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">
+                      {String(
+                        selectedRun?.mission_snapshot?.objective || selectedRun?.detail || "n/a"
+                      )}
+                    </pre>
+                  </div>
+                  <div className="tcp-list-item">
+                    <div className="font-medium">Artifacts ({runArtifacts.length})</div>
+                    <pre className="tcp-code mt-2 max-h-40 overflow-auto">
+                      {formatJson(runArtifacts)}
+                    </pre>
+                  </div>
+                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                    <div className="font-medium">Persisted History</div>
+                    {runHistoryEvents.length ? (
+                      <div className="mt-2 grid max-h-[14rem] gap-2 overflow-auto pr-1">
+                        {runHistoryEvents.map((event: any, index: number) => (
+                          <details
+                            key={`${String(event?.event || event?.type || "history")}-${index}`}
+                            className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                          >
+                            <summary className="cursor-pointer list-none">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-medium text-slate-200">
+                                  {String(
+                                    event?.event || event?.type || event?.status || "history"
+                                  )}
+                                </span>
+                                <span className="tcp-subtle text-[11px]">
+                                  {new Date(
+                                    normalizeTimestamp(
+                                      event?.ts_ms ||
+                                        event?.tsMs ||
+                                        event?.at ||
+                                        event?.timestamp_ms
+                                    )
+                                  ).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              <div className="tcp-subtle mt-1 text-xs">
+                                {String(
+                                  event?.detail ||
+                                    event?.reason ||
+                                    event?.status ||
+                                    "No summary available."
+                                )}
+                              </div>
+                            </summary>
+                            <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
+                              {formatJson(event)}
+                            </pre>
+                          </details>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="tcp-subtle mt-2 text-xs">
+                        No persisted history rows returned for this automation.
+                      </div>
+                    )}
+                  </div>
+                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="font-medium">Raw Run Payload</div>
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(
+                              [
+                                "=== RUN ===",
+                                formatJson(selectedRun),
+                                "=== ARTIFACTS ===",
+                                formatJson(runArtifacts),
+                                "=== TELEMETRY ===",
+                                formatJson(filteredRunEvents.map((row) => row.event)),
+                                "=== SESSION MESSAGES ===",
+                                formatJson(sessionMessages),
+                              ].join("\n\n")
+                            );
+                            toast("ok", "Copied full debug context.");
+                          } catch (error) {
+                            toast("err", error instanceof Error ? error.message : "Copy failed.");
+                          }
+                        }}
+                      >
+                        <i data-lucide="copy-plus"></i>
+                        Copy all debug context
+                      </button>
+                    </div>
+                    <pre className="tcp-code max-h-[18rem] overflow-auto">
+                      {formatJson(selectedRun)}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+              <div className="tcp-confirm-actions mt-3">
+                <button className="tcp-btn" onClick={() => navigate("feed")}>
+                  <i data-lucide="radio"></i>
+                  Open Live Feed
+                </button>
+                <button className="tcp-btn" onClick={() => setSelectedRunId("")}>
+                  <i data-lucide="x"></i>
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+        {editDraft ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setEditDraft(null)}
+          >
+            <motion.div
+              className="tcp-confirm-dialog w-[min(40rem,96vw)]"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="tcp-confirm-title">Edit automation</h3>
+              <div className="grid gap-3">
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Name</label>
+                  <input
+                    className="tcp-input"
+                    value={editDraft.name}
+                    onInput={(e) =>
+                      setEditDraft((current) =>
+                        current
+                          ? { ...current, name: (e.target as HTMLInputElement).value }
+                          : current
+                      )
+                    }
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Objective</label>
+                  <textarea
+                    className="tcp-input min-h-[96px]"
+                    value={editDraft.objective}
+                    onInput={(e) =>
+                      setEditDraft((current) =>
+                        current
+                          ? { ...current, objective: (e.target as HTMLTextAreaElement).value }
+                          : current
+                      )
+                    }
+                  />
+                </div>
+                <div className="grid gap-1 sm:grid-cols-2 sm:gap-2">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Mode</label>
+                    <select
+                      className="tcp-input"
+                      value={editDraft.mode}
+                      onInput={(e) =>
+                        setEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                mode: (e.target as HTMLSelectElement).value as
+                                  | "standalone"
+                                  | "orchestrated",
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="standalone">standalone</option>
+                      <option value="orchestrated">orchestrated</option>
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Approval policy</label>
+                    <button
+                      className={`tcp-input flex h-10 items-center justify-between px-3 text-xs ${
+                        editDraft.requiresApproval ? "border-amber-400/60 bg-amber-400/10" : ""
+                      }`}
+                      role="switch"
+                      aria-checked={editDraft.requiresApproval}
+                      onClick={() =>
+                        setEditDraft((current) =>
+                          current
+                            ? { ...current, requiresApproval: !current.requiresApproval }
+                            : current
+                        )
+                      }
+                    >
+                      <span className="flex items-center gap-2">
+                        <i
+                          data-lucide={editDraft.requiresApproval ? "shield-alert" : "shield-check"}
+                        ></i>
+                        {editDraft.requiresApproval
+                          ? "Manual approvals enabled"
+                          : "Fully automated enabled"}
+                      </span>
+                      <span
+                        className={`relative h-5 w-9 rounded-full transition ${
+                          editDraft.requiresApproval ? "bg-amber-500/40" : "bg-emerald-500/30"
+                        }`}
+                      >
+                        <span
+                          className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-slate-100 transition ${
+                            editDraft.requiresApproval ? "" : "translate-x-4"
+                          }`}
+                        />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-1 sm:grid-cols-2 sm:gap-2">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Schedule type</label>
+                    <select
+                      className="tcp-input"
+                      value={editDraft.scheduleKind}
+                      onInput={(e) =>
+                        setEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                scheduleKind: (e.target as HTMLSelectElement).value as
+                                  | "cron"
+                                  | "interval",
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="interval">interval</option>
+                      <option value="cron">cron</option>
+                    </select>
+                  </div>
+                </div>
+                {editDraft.scheduleKind === "cron" ? (
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Cron expression</label>
+                    <input
+                      className="tcp-input font-mono"
+                      value={editDraft.cronExpression}
+                      onInput={(e) =>
+                        setEditDraft((current) =>
+                          current
+                            ? { ...current, cronExpression: (e.target as HTMLInputElement).value }
+                            : current
+                        )
+                      }
+                      placeholder="0 9 * * *"
+                    />
+                  </div>
+                ) : (
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Interval seconds</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className="tcp-input"
+                      value={editDraft.intervalSeconds}
+                      onInput={(e) =>
+                        setEditDraft((current) =>
+                          current
+                            ? { ...current, intervalSeconds: (e.target as HTMLInputElement).value }
+                            : current
+                        )
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="tcp-confirm-actions mt-3">
+                <button className="tcp-btn" onClick={() => setEditDraft(null)}>
+                  <i data-lucide="x-circle"></i>
+                  Cancel
+                </button>
+                <button
+                  className="tcp-btn-primary"
+                  onClick={() => editDraft && updateAutomationMutation.mutate(editDraft)}
+                  disabled={updateAutomationMutation.isPending}
+                >
+                  <i data-lucide="check"></i>
+                  Save
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1177,12 +3063,13 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
-export function AutomationsPage({ client, toast }: AppPageProps) {
+export function AutomationsPage({ client, toast, navigate, providerStatus }: AppPageProps) {
   const [tab, setTab] = useState<ActiveTab>("create");
 
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
     { id: "create", label: "Create New", icon: "sparkles" },
     { id: "list", label: "My Automations", icon: "clipboard-list" },
+    { id: "running", label: "Live Tasks", icon: "activity" },
     { id: "approvals", label: "Teams & Approvals", icon: "users" },
   ];
 
@@ -1220,11 +3107,24 @@ export function AutomationsPage({ client, toast }: AppPageProps) {
               title="Create an Automation"
               subtitle="Describe what you want, pick a schedule, and Tandem handles the rest"
             >
-              <CreateWizard client={client} toast={toast} />
+              <CreateWizard
+                client={client}
+                toast={toast}
+                navigate={navigate}
+                defaultProvider={providerStatus.defaultProvider}
+                defaultModel={providerStatus.defaultModel}
+              />
             </PageCard>
           ) : tab === "list" ? (
             <PageCard title="My Automations" subtitle="Installed packs, routines and run history">
-              <MyAutomations client={client} toast={toast} />
+              <MyAutomations client={client} toast={toast} navigate={navigate} viewMode="list" />
+            </PageCard>
+          ) : tab === "running" ? (
+            <PageCard
+              title="Live Running Tasks"
+              subtitle="Inspect active runs and open detailed event logs for each run"
+            >
+              <MyAutomations client={client} toast={toast} navigate={navigate} viewMode="running" />
             </PageCard>
           ) : (
             <PageCard

@@ -43,6 +43,24 @@ function statusBadgeClass(status: string) {
   return "tcp-badge-info";
 }
 
+function taskStateLabel(state: string) {
+  const normalized = String(state || "")
+    .trim()
+    .toLowerCase();
+  const labels: Record<string, string> = {
+    created: "Created",
+    pending: "Pending",
+    runnable: "Ready",
+    assigned: "Assigned",
+    in_progress: "In Progress",
+    blocked: "Blocked",
+    done: "Done",
+    failed: "Failed",
+    validated: "Validated",
+  };
+  return labels[normalized] || normalized || "Unknown";
+}
+
 function runLabelFromTimestamp(ts: unknown) {
   const ms = Number(ts || 0);
   if (!Number.isFinite(ms) || ms <= 0) return "Run";
@@ -210,7 +228,9 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
   const [selectedWorkflowRunId, setSelectedWorkflowRunId] = useState("");
   const [workflowEvents, setWorkflowEvents] = useState<Array<{ at: number; data: any }>>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
   const [selectedVerificationId, setSelectedVerificationId] = useState("");
+  const [workspacePreviewFullscreen, setWorkspacePreviewFullscreen] = useState(false);
   useEffect(() => {
     setComposeMode(true);
     clearSelectedRunId();
@@ -395,9 +415,18 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
   const selectedWorkspaceExt = fileExtension(selectedWorkspaceFile);
   const selectedIsMarkdown = ["md", "markdown", "mdx"].includes(selectedWorkspaceExt);
   const selectedIsHtml = ["html", "htm"].includes(selectedWorkspaceExt);
+  useEffect(() => {
+    if (workspacePreviewFullscreen && !selectedIsHtml) {
+      setWorkspacePreviewFullscreen(false);
+    }
+  }, [selectedIsHtml, workspacePreviewFullscreen]);
   const taskRenderSignature = useMemo(
     () => tasks.map((task) => `${task.id}:${task.state}:${task.error_message || ""}`).join("|"),
     [tasks]
+  );
+  const selectedKanbanTask = useMemo(
+    () => tasks.find((task) => task.id === selectedKanbanTaskId) || null,
+    [selectedKanbanTaskId, tasks]
   );
 
   const latestOutput = useMemo(() => {
@@ -608,13 +637,17 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
     [selectedVerificationId, verificationEvents]
   );
   useEffect(() => {
-    if (!selectedVerificationEvent || typeof document === "undefined") return undefined;
+    if (
+      (!selectedVerificationEvent && !selectedKanbanTask && !workspacePreviewFullscreen) ||
+      typeof document === "undefined"
+    )
+      return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [selectedVerificationEvent]);
+  }, [selectedVerificationEvent, selectedKanbanTask, workspacePreviewFullscreen]);
   const activeWorkflowSurfaceId = String(
     runQuery.data?.run?.workflowId ||
       runQuery.data?.run?.workflow_id ||
@@ -828,7 +861,9 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
     runWorkspaceFiles.length,
     selectedWorkspaceFile,
     selectedWorkspaceText,
+    selectedKanbanTaskId,
     selectedVerificationId,
+    workspacePreviewFullscreen,
     taskRenderSignature,
   ]);
 
@@ -1385,19 +1420,34 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                 <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="font-medium">File Preview</div>
-                    <span className="tcp-subtle text-[11px]" style={{ overflowWrap: "anywhere" }}>
-                      {selectedWorkspaceFile}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {selectedIsHtml ? (
+                        <button
+                          type="button"
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => setWorkspacePreviewFullscreen(true)}
+                        >
+                          <i data-lucide="fullscreen"></i>
+                          Fullscreen
+                        </button>
+                      ) : null}
+                      <span className="tcp-subtle text-[11px]" style={{ overflowWrap: "anywhere" }}>
+                        {selectedWorkspaceFile}
+                      </span>
+                    </div>
                   </div>
                   {runWorkspaceReadQuery.isLoading ? (
                     <div className="tcp-subtle text-xs">Loading file...</div>
                   ) : selectedIsHtml ? (
-                    <iframe
-                      className="h-[260px] w-full rounded-lg border border-slate-700/60 bg-black"
-                      sandbox="allow-scripts allow-forms allow-pointer-lock"
-                      srcDoc={selectedWorkspaceText}
-                      title={selectedWorkspaceFile}
-                    />
+                    <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-700/60 bg-black">
+                      <iframe
+                        className="h-[420px] w-full bg-black"
+                        sandbox="allow-scripts allow-forms allow-pointer-lock"
+                        srcDoc={selectedWorkspaceText}
+                        title={selectedWorkspaceFile}
+                        scrolling="yes"
+                      />
+                    </div>
                   ) : selectedIsMarkdown ? (
                     <div
                       className="tcp-markdown tcp-markdown-ai max-h-[260px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-950/40 p-3"
@@ -1412,6 +1462,146 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   )}
                 </div>
               ) : null}
+
+              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="font-medium">Executor Verification</div>
+                </div>
+                {verificationEvents.length ? (
+                  <div className="grid max-h-44 gap-2 overflow-auto">
+                    {verificationEvents.map((item) => (
+                      <div key={item.id} className="rounded border border-slate-700/60 p-2 text-xs">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span
+                            className={statusBadgeClass(
+                              item.type.includes("failed") ? "failed" : "running"
+                            )}
+                          >
+                            {item.type}
+                          </span>
+                          <span className="tcp-subtle">mode: {item.mode}</span>
+                        </div>
+                        <div className="font-medium">{item.title}</div>
+                        <div className="tcp-subtle whitespace-pre-wrap break-words">
+                          {item.reason || "No verification detail."}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={() => setSelectedVerificationId(item.id)}
+                          >
+                            <i data-lucide="search"></i>
+                            View details
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(
+                                  buildVerificationClipboardText(item)
+                                );
+                                toast("ok", "Copied verification feedback.");
+                              } catch (error) {
+                                toast(
+                                  "err",
+                                  error instanceof Error ? error.message : "Copy failed."
+                                );
+                              }
+                            }}
+                          >
+                            <i data-lucide="copy-plus"></i>
+                            Copy feedback
+                          </button>
+                        </div>
+                        {item.verification?.execution_trace ? (
+                          <div className="mt-2 rounded border border-slate-700/50 bg-slate-950/40 p-2 tcp-subtle">
+                            <div>
+                              session:{" "}
+                              {String(item.verification?.execution_trace?.session_id || "n/a")}
+                            </div>
+                            <div>
+                              model:{" "}
+                              {[
+                                String(
+                                  item.verification?.execution_trace?.model?.provider || ""
+                                ).trim(),
+                                String(
+                                  item.verification?.execution_trace?.model?.model_id || ""
+                                ).trim(),
+                              ]
+                                .filter(Boolean)
+                                .join(" / ") || "unknown"}
+                            </div>
+                            <div>
+                              source:{" "}
+                              {String(item.verification?.execution_trace?.model?.source || "n/a")}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="tcp-subtle text-xs">No verification telemetry yet.</div>
+                )}
+              </div>
+
+              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="font-medium">Live Activity</div>
+                    <span className="tcp-subtle text-xs">{eventTimeLabel(Date.now())}</span>
+                  </div>
+                  {activityEvents.length ? (
+                    <div className="grid max-h-40 gap-2 overflow-auto">
+                      {activityEvents.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded border border-slate-700/60 p-2 text-xs"
+                        >
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span
+                              className={statusBadgeClass(
+                                item.type.includes("failed") ? "failed" : "running"
+                              )}
+                            >
+                              {item.type}
+                            </span>
+                            <span className="tcp-subtle">{eventTimeLabel(item.at)}</span>
+                          </div>
+                          <div className="font-medium">{item.title}</div>
+                          <div className="tcp-subtle">{item.detail || "No additional detail."}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="tcp-subtle text-xs">No activity events yet.</div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="font-medium">Latest Output</div>
+                  </div>
+                  {liveSessionId ? (
+                    <>
+                      <div className="tcp-code max-h-28 overflow-auto whitespace-pre-wrap break-words">
+                        {latestAssistantOutput || "No assistant output text yet."}
+                      </div>
+                      <div className="mt-2 tcp-subtle text-xs">Recent tool calls</div>
+                      <div className="tcp-code mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words">
+                        {recentToolActivity.length
+                          ? recentToolActivity.join("\n")
+                          : "No tool call records found in current session yet."}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="tcp-subtle text-xs">No completed step output session yet.</div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex h-full min-h-0 w-full flex-col gap-3">
@@ -1428,9 +1618,11 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                 currentTaskId={taskProjection.currentTaskId}
                 selectedTaskId={selectedTaskId}
                 workflowSummaryByTaskId={workflowSummaryByTaskId}
-                onTaskSelect={(task) =>
-                  setSelectedTaskId((prev) => (prev === task.id ? "" : task.id))
-                }
+                onTaskSelect={(task) => {
+                  const nextTaskId = selectedTaskId === task.id ? "" : task.id;
+                  setSelectedTaskId(nextTaskId);
+                  setSelectedKanbanTaskId(task.id);
+                }}
                 onRetryTask={(task) =>
                   actionMutation.mutate({
                     path: "/api/orchestrator/retry",
@@ -1736,134 +1928,157 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                 )}
               </div>
 
-              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="font-medium">Executor Verification</div>
-                </div>
-                {verificationEvents.length ? (
-                  <div className="grid max-h-40 gap-2 overflow-auto">
-                    {verificationEvents.map((item) => (
-                      <div key={item.id} className="rounded border border-slate-700/60 p-2 text-xs">
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <span
-                            className={statusBadgeClass(
-                              item.type.includes("failed") ? "failed" : "running"
-                            )}
-                          >
-                            {item.type}
+              <AnimatePresence>
+                {selectedKanbanTask ? (
+                  <motion.div
+                    className="tcp-confirm-overlay"
+                    initial={reducedMotion ? false : { opacity: 0 }}
+                    animate={reducedMotion ? undefined : { opacity: 1 }}
+                    exit={reducedMotion ? undefined : { opacity: 0 }}
+                  >
+                    <button
+                      type="button"
+                      className="tcp-confirm-backdrop"
+                      aria-label="Close task details"
+                      onClick={() => setSelectedKanbanTaskId("")}
+                    />
+                    <motion.div
+                      className="tcp-confirm-dialog tcp-verification-modal"
+                      initial={reducedMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                      animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+                      exit={reducedMotion ? undefined : { opacity: 0, y: 6, scale: 0.98 }}
+                    >
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="tcp-confirm-title">Kanban Task Details</h3>
+                          <p className="tcp-confirm-message">
+                            Full task brief, dependencies, and runtime context for this kanban item.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="tcp-btn h-8 px-2"
+                          onClick={() => setSelectedKanbanTaskId("")}
+                        >
+                          <i data-lucide="x"></i>
+                        </button>
+                      </div>
+
+                      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                        <span className={statusBadgeClass(selectedKanbanTask.state)}>
+                          {taskStateLabel(selectedKanbanTask.state)}
+                        </span>
+                        <span className="tcp-badge-info">{selectedKanbanTask.id}</span>
+                        {selectedKanbanTask.assigned_role ? (
+                          <span className="tcp-subtle">
+                            role: {selectedKanbanTask.assigned_role}
                           </span>
-                          <span className="tcp-subtle">mode: {item.mode}</span>
+                        ) : null}
+                        {selectedKanbanTask.gate ? (
+                          <span className="tcp-subtle">gate: {selectedKanbanTask.gate}</span>
+                        ) : null}
+                        {selectedKanbanTask.workflow_id ? (
+                          <span className="tcp-subtle">
+                            workflow: {selectedKanbanTask.workflow_id}
+                          </span>
+                        ) : null}
+                        {selectedKanbanTask.session_id ? (
+                          <span className="tcp-subtle">
+                            session: {selectedKanbanTask.session_id}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="tcp-verification-content grid gap-3">
+                        <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                          <div className="mb-2 font-medium">Title</div>
+                          <div className="rounded-lg border border-slate-800/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100">
+                            {selectedKanbanTask.title || "Untitled task"}
+                          </div>
                         </div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="tcp-subtle whitespace-pre-wrap break-words">
-                          {item.reason || "No verification detail."}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="tcp-btn h-7 px-2 text-xs"
-                            onClick={() => setSelectedVerificationId(item.id)}
-                          >
-                            <i data-lucide="search"></i>
-                            View details
-                          </button>
-                          <button
-                            type="button"
-                            className="tcp-btn h-7 px-2 text-xs"
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(
-                                  buildVerificationClipboardText(item)
-                                );
-                                toast("ok", "Copied verification feedback.");
-                              } catch (error) {
-                                toast(
-                                  "err",
-                                  error instanceof Error ? error.message : "Copy failed."
-                                );
-                              }
-                            }}
-                          >
-                            <i data-lucide="copy-plus"></i>
-                            Copy feedback
-                          </button>
-                        </div>
-                        {item.verification?.execution_trace ? (
-                          <div className="mt-2 rounded border border-slate-700/50 bg-slate-950/40 p-2 tcp-subtle">
-                            <div>
-                              session:{" "}
-                              {String(item.verification?.execution_trace?.session_id || "n/a")}
-                            </div>
-                            <div>
-                              model:{" "}
-                              {[
-                                String(
-                                  item.verification?.execution_trace?.model?.provider || ""
-                                ).trim(),
-                                String(
-                                  item.verification?.execution_trace?.model?.model_id || ""
-                                ).trim(),
-                              ]
-                                .filter(Boolean)
-                                .join(" / ") || "unknown"}
-                            </div>
-                            <div>
-                              source:{" "}
-                              {String(item.verification?.execution_trace?.model?.source || "n/a")}
-                            </div>
-                            {Array.isArray(item.verification?.execution_trace?.attempts) ? (
-                              <div className="mt-2 grid gap-2">
-                                {item.verification.execution_trace.attempts.map(
-                                  (attempt: any, idx: number) => (
-                                    <div
-                                      key={`${item.id}-attempt-${idx}`}
-                                      className="rounded border border-slate-700/40 bg-slate-900/40 p-2"
-                                    >
-                                      <div className="font-medium">
-                                        {String(attempt?.name || `attempt-${idx + 1}`)}
-                                      </div>
-                                      <div>tool mode: {String(attempt?.tool_mode || "n/a")}</div>
-                                      <div>
-                                        allowlist:{" "}
-                                        {Array.isArray(attempt?.tool_allowlist) &&
-                                        attempt.tool_allowlist.length
-                                          ? attempt.tool_allowlist.join(", ")
-                                          : "none"}
-                                      </div>
-                                      <div>
-                                        tool calls: {Number(attempt?.total_tool_calls || 0)} total /{" "}
-                                        {Number(attempt?.write_tool_calls || 0)} write
-                                      </div>
-                                      <div>
-                                        tools:{" "}
-                                        {Array.isArray(attempt?.tool_names) &&
-                                        attempt.tool_names.length
-                                          ? attempt.tool_names.join(", ")
-                                          : "none"}
-                                      </div>
-                                      <div>
-                                        assistant:{" "}
-                                        {String(attempt?.assistant_excerpt || "").trim() || "none"}
-                                      </div>
-                                      {String(attempt?.error || "").trim() ? (
-                                        <div>attempt error: {String(attempt.error)}</div>
-                                      ) : null}
-                                    </div>
-                                  )
-                                )}
+
+                        {selectedKanbanTask.description ? (
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                            <div className="mb-2 font-medium">Description</div>
+                            <pre className="tcp-code tcp-verification-feedback whitespace-pre-wrap break-words">
+                              {selectedKanbanTask.description}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        <div className="grid gap-3 lg:grid-cols-2">
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                            <div className="mb-2 font-medium">Dependencies</div>
+                            {selectedKanbanTask.dependencies.length ? (
+                              <div className="flex flex-wrap gap-2">
+                                {selectedKanbanTask.dependencies.map((dependency) => (
+                                  <span
+                                    key={`${selectedKanbanTask.id}-${dependency}`}
+                                    className="rounded border border-slate-700/60 px-2 py-1 text-xs text-slate-200"
+                                  >
+                                    {"<-"} {dependency}
+                                  </span>
+                                ))}
                               </div>
-                            ) : null}
+                            ) : (
+                              <div className="tcp-subtle text-sm">No blocking dependencies.</div>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                            <div className="mb-2 font-medium">Runtime Context</div>
+                            <div className="grid gap-2 text-sm">
+                              <div className="tcp-subtle">
+                                runtime status: {selectedKanbanTask.runtime_status || "n/a"}
+                              </div>
+                              <div className="tcp-subtle">
+                                retry count: {Number(selectedKanbanTask.retry_count || 0)}
+                              </div>
+                              {workflowSummaryByTaskId?.[selectedKanbanTask.id] ? (
+                                <div className="tcp-subtle">
+                                  workflow runs:{" "}
+                                  {workflowSummaryByTaskId[selectedKanbanTask.id].runs}
+                                  {workflowSummaryByTaskId[selectedKanbanTask.id].failed
+                                    ? `, failed ${workflowSummaryByTaskId[selectedKanbanTask.id].failed}`
+                                    : ""}
+                                </div>
+                              ) : null}
+                              {selectedKanbanTask.runtime_detail ? (
+                                <div className="tcp-subtle whitespace-pre-wrap break-words">
+                                  detail: {selectedKanbanTask.runtime_detail}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        {String(selectedKanbanTask.error_message || "").trim() ? (
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                            <div className="mb-2 font-medium">Error</div>
+                            <pre className="tcp-code tcp-verification-feedback whitespace-pre-wrap break-words text-rose-100">
+                              {String(selectedKanbanTask.error_message || "").trim()}
+                            </pre>
                           </div>
                         ) : null}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="tcp-subtle text-xs">No verification telemetry yet.</div>
-                )}
-              </div>
 
-              <AnimatePresence>
+                      <div className="tcp-confirm-actions mt-4">
+                        <button
+                          className="tcp-btn"
+                          onClick={() => {
+                            setSelectedTaskId(selectedKanbanTask.id);
+                            setSelectedKanbanTaskId("");
+                          }}
+                        >
+                          Focus task
+                        </button>
+                        <button className="tcp-btn" onClick={() => setSelectedKanbanTaskId("")}>
+                          Close
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                ) : null}
                 {selectedVerificationEvent ? (
                   <motion.div
                     className="tcp-confirm-overlay"
@@ -1964,60 +2179,68 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
-
-              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="font-medium">Live Activity</div>
-                  <span className="tcp-subtle text-xs">{eventTimeLabel(Date.now())}</span>
-                </div>
-                {activityEvents.length ? (
-                  <div className="grid max-h-40 gap-2 overflow-auto">
-                    {activityEvents.map((item) => (
-                      <div key={item.id} className="rounded border border-slate-700/60 p-2 text-xs">
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <span
-                            className={statusBadgeClass(
-                              item.type.includes("failed") ? "failed" : "running"
-                            )}
-                          >
-                            {item.type}
-                          </span>
-                          <span className="tcp-subtle">{eventTimeLabel(item.at)}</span>
-                        </div>
-                        <div className="font-medium">{item.title}</div>
-                        <div className="tcp-subtle">{item.detail || "No additional detail."}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="tcp-subtle text-xs">No activity events yet.</div>
-                )}
-              </div>
-
-              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="font-medium">Latest Output</div>
-                </div>
-                {liveSessionId ? (
-                  <>
-                    <div className="tcp-code max-h-28 overflow-auto whitespace-pre-wrap break-words">
-                      {latestAssistantOutput || "No assistant output text yet."}
-                    </div>
-                    <div className="mt-2 tcp-subtle text-xs">Recent tool calls</div>
-                    <div className="tcp-code mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words">
-                      {recentToolActivity.length
-                        ? recentToolActivity.join("\n")
-                        : "No tool call records found in current session yet."}
-                    </div>
-                  </>
-                ) : (
-                  <div className="tcp-subtle text-xs">No completed step output session yet.</div>
-                )}
-              </div>
             </div>
           </div>
         </div>
       </div>
+      <AnimatePresence>
+        {workspacePreviewFullscreen && selectedWorkspaceFile && selectedIsHtml ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setWorkspacePreviewFullscreen(false)}
+          >
+            <motion.div
+              className="tcp-confirm-dialog max-h-[94vh] w-[min(118rem,98vw)] overflow-hidden p-0"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
+                <div className="min-w-0">
+                  <div className="text-lg font-semibold text-slate-100">Fullscreen Preview</div>
+                  <div className="tcp-subtle mt-1 text-xs" style={{ overflowWrap: "anywhere" }}>
+                    {selectedWorkspaceFile}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="tcp-btn h-8 px-3 text-xs"
+                    onClick={() => void runWorkspaceReadQuery.refetch()}
+                  >
+                    <i data-lucide="refresh-cw"></i>
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-icon-btn h-8 w-8"
+                    aria-label="Close preview"
+                    title="Close preview"
+                    onClick={() => setWorkspacePreviewFullscreen(false)}
+                  >
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-auto p-4">
+                <div className="h-[82vh] overflow-auto rounded-xl border border-slate-700/60 bg-black">
+                  <iframe
+                    className="h-[82vh] w-full bg-black"
+                    sandbox="allow-scripts allow-forms allow-pointer-lock"
+                    srcDoc={selectedWorkspaceText}
+                    title={`${selectedWorkspaceFile} fullscreen preview`}
+                    scrolling="yes"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {workspaceBrowserOpen ? (
         <div className="tcp-confirm-overlay">
           <div className="tcp-confirm-dialog max-w-2xl">

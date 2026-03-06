@@ -663,6 +663,9 @@ export interface RunRecord {
   status?: string;
   started_at_ms?: number;
   finished_at_ms?: number;
+  active_session_ids?: string[];
+  latest_session_id?: string | null;
+  attach_event_stream?: string | null;
   [key: string]: unknown;
 }
 

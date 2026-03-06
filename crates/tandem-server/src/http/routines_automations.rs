@@ -1091,6 +1091,13 @@ pub(super) fn routine_to_automation_wire(routine: RoutineSpec) -> Value {
 }
 
 pub(super) fn routine_run_to_automation_wire(run: RoutineRunRecord) -> Value {
+    let latest_session_id = run
+        .latest_session_id
+        .clone()
+        .or_else(|| run.active_session_ids.last().cloned());
+    let attach_event_stream = latest_session_id
+        .as_ref()
+        .map(|session_id| format!("/event?sessionID={session_id}&runID={}", run.run_id));
     json!({
         "run_id": run.run_id,
         "automation_id": run.routine_id,
@@ -1125,6 +1132,9 @@ pub(super) fn routine_run_to_automation_wire(run: RoutineRunRecord) -> Value {
         "output_targets": run.output_targets,
         "artifacts": run.artifacts,
         "correlation_id": run.run_id,
+        "active_session_ids": run.active_session_ids,
+        "latest_session_id": latest_session_id,
+        "attach_event_stream": attach_event_stream,
     })
 }
 
