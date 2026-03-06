@@ -19,13 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider catalog honesty in Settings and `/provider`**:
   - `GET /provider` now returns explicit provider catalog metadata (`catalog_source`, `catalog_status`, `catalog_message`) so clients can distinguish live remote catalogs from config-defined or unavailable catalogs
   - removed synthetic single-model fallback catalog entries for built-in providers from the provider catalog response
-  - provider catalog discovery now attempts live remote model lists for supported providers (`openrouter`, `openai`, `groq`, `mistral`, `together`) and reports manual-entry states for providers without reliable generic discovery
+  - provider catalog discovery now attempts live remote model lists for supported providers (`openrouter`, `openai`, `groq`, `mistral`, `together`, `anthropic`, `cohere`) and reports manual-entry states for providers without reliable generic discovery
+  - remote provider model discovery now reads runtime-auth and persisted provider auth stores in addition to config/env values, so authenticated catalogs can load honestly in Settings without forcing API keys into config files
   - control-panel Settings now labels provider catalogs accurately:
     - real remote counts for live catalogs
     - `configured models` for config-defined catalogs
     - `manual entry` for providers without live model discovery
   - unsupported/non-generic providers remain configurable in Settings without being misrepresented as one-model catalogs
   - added backend regression coverage for empty/manual providers and config-sourced provider catalogs
+
+- **Declarative workflow runtime, APIs, and pack extensions**:
+  - added a new `tandem-workflows` workspace crate for workflow schema definitions, YAML loading, source merge rules, and validation
+  - added engine-owned workflow runtime execution, hook dispatch, simulation, run persistence, and event streaming in `tandem-server`
+  - added workflow HTTP APIs:
+    - `GET /workflows`
+    - `GET /workflows/{id}`
+    - `POST /workflows/validate`
+    - `POST /workflows/simulate`
+    - `POST /workflows/{id}/run`
+    - `GET /workflows/runs`
+    - `GET /workflows/runs/{id}`
+    - `GET /workflow-hooks`
+    - `PATCH /workflow-hooks/{id}`
+    - `GET /workflows/events`
+  - pack inspection now surfaces declared workflow entrypoints, workflow files, and workflow hooks as first-class pack metadata and risk/permission-sheet signals
+  - added workflow runtime coverage for manual runs, hook dispatch/dedupe behavior, context-run blackboard projection, and provider/catalog-backed route handling
+
+- **Control-panel visual system and workflow operations refresh**:
+  - introduced a shared `tandem-theme-contract` package plus a richer control-panel theme system with curated theme metadata, CSS variables, and a dedicated theme picker surface
+  - added reusable animated UI primitives and refreshed page shells/cards/layouts across dashboard, orchestrator, packs, chat, feed, settings, and login flows
+  - packs/workflows operations now have a dedicated control-panel workflow lab for pack inspection, workflow runs, hook toggles, event simulation, and live workflow event streaming
+  - orchestration/swarm server routes now track per-run controller state more explicitly for status, revision requests, and run switching instead of relying on a single global active-run snapshot
 
 - **Headless-first Chromium browser automation with readiness diagnostics**:
   - added a new `tandem-browser` Rust sidecar crate for local Chromium automation over stdio with typed browser RPC methods (`browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.type`, `browser.press`, `browser.wait`, `browser.extract`, `browser.screenshot`, `browser.close`)

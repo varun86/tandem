@@ -17,7 +17,7 @@ export function AgentsPage({ client, toast }: AppPageProps) {
   });
   const runsQuery = useQuery({
     queryKey: ["agents", "runs"],
-    queryFn: () => client.routines.listRuns(undefined, 40).catch(() => ({ runs: [] })),
+    queryFn: () => client.routines.listRuns({ limit: 40 }).catch(() => ({ runs: [] })),
     refetchInterval: 9000,
   });
 

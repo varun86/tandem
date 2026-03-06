@@ -1,0 +1,18 @@
+workflow:
+  id: build_feature
+  name: Build Feature
+  description: Minimal workflow used to demonstrate workflow hooks.
+  steps:
+    - action: capability:planner
+      with:
+        stage: plan
+    - action: capability:executor
+      with:
+        stage: execute
+
+  hooks:
+    task_created:
+      - action: capability:kanban.update
+        with:
+          board: backlog
+          status: todo

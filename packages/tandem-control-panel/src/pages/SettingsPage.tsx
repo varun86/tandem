@@ -11,6 +11,7 @@ import {
   Toolbar,
 } from "../ui/index.tsx";
 import { ThemePicker } from "../ui/ThemePicker.tsx";
+import { providerHints } from "../app/store.js";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -322,6 +323,9 @@ export function SettingsPage({
                             .slice(0, 80);
                           const badge = providerCatalogBadge(provider, models.length);
                           const subtitle = providerCatalogSubtitle(provider, defaultModel);
+                          const providerHint =
+                            (providerHints as Record<string, any>)[providerId] || null;
+                          const keyUrl = String(providerHint?.keyUrl || "").trim();
 
                           return (
                             <motion.details key={providerId} layout className="tcp-list-item">
@@ -335,6 +339,19 @@ export function SettingsPage({
                                 </div>
                               </summary>
                               <div className="mt-3 grid gap-3">
+                                {keyUrl ? (
+                                  <div className="flex justify-end">
+                                    <a
+                                      className="tcp-btn h-8 px-3 text-xs"
+                                      href={keyUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <i data-lucide="external-link"></i>
+                                      Get API key
+                                    </a>
+                                  </div>
+                                ) : null}
                                 <form
                                   className="grid gap-2"
                                   onSubmit={(e) => {
@@ -405,7 +422,9 @@ export function SettingsPage({
                                   <input
                                     name="apiKey"
                                     className="tcp-input"
-                                    placeholder={`Set ${providerId} API key`}
+                                    placeholder={String(
+                                      providerHint?.placeholder || `Set ${providerId} API key`
+                                    )}
                                   />
                                   <button className="tcp-btn" type="submit">
                                     <i data-lucide="save"></i>

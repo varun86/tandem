@@ -13,4 +13,19 @@ export default defineConfig({
       "react/jsx-dev-runtime": "preact/jsx-dev-runtime",
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("@frumu/tandem-client")) return "tandem-client";
+          if (id.includes("@tanstack/react-query")) return "react-query";
+          if (id.includes("motion")) return "motion";
+          if (id.includes("marked") || id.includes("dompurify")) return "markdown";
+          if (id.includes("preact")) return "preact-vendor";
+          return "vendor";
+        },
+      },
+    },
+  },
 });

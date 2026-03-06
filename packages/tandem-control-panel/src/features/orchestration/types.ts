@@ -1,4 +1,13 @@
-export type TaskState = "pending" | "runnable" | "in_progress" | "blocked" | "done" | "failed";
+export type TaskState =
+  | "created"
+  | "pending"
+  | "runnable"
+  | "assigned"
+  | "in_progress"
+  | "blocked"
+  | "done"
+  | "failed"
+  | "validated";
 
 export interface OrchestrationTask {
   id: string;

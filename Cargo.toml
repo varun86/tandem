@@ -18,6 +18,7 @@ members = [
     "crates/tandem-orchestrator",
     "crates/tandem-channels",
     "crates/tandem-agent-teams",
+    "crates/tandem-workflows",
 ]
 resolver = "2"
 

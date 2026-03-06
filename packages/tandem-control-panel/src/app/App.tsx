@@ -9,8 +9,15 @@ import { useHashRoute } from "./useHashRoute";
 import { ToastProvider, useToast } from "./toast";
 import { HashRouteOutlet } from "./HashRouteOutlet";
 import { AppShell } from "./AppShell";
+import { deriveProviderState } from "./providerStatus";
 import { providerHints } from "./store.js";
-import { THEMES, applyTheme, getActiveThemeId, setControlPanelTheme } from "./themes.js";
+import {
+  THEMES,
+  applyTheme,
+  cycleThemeId,
+  getActiveThemeId,
+  setControlPanelTheme,
+} from "./themes.js";
 import { renderIcons } from "./icons.js";
 import { api } from "../lib/api";
 import { useSwarmStatus, useSystemHealth } from "../features/system/queries";
@@ -41,17 +48,8 @@ function clearSavedToken() {
   }
 }
 
-type ProviderState = {
-  ready: boolean;
-  defaultProvider: string;
-  defaultModel: string;
-  connected: string[];
-  error: string;
-  needsOnboarding: boolean;
-};
-
 function useProviderStatus(client: TandemClient | null, enabled: boolean) {
-  return useQuery<ProviderState>({
+  return useQuery({
     queryKey: ["provider", "status"],
     enabled: enabled && !!client,
     refetchInterval: enabled ? 15000 : false,
@@ -72,60 +70,7 @@ function useProviderStatus(client: TandemClient | null, enabled: boolean) {
           client.providers.catalog(),
           client.providers.authStatus().catch(() => ({})),
         ]);
-        const defaultProvider = String(config?.default || "").trim();
-        const defaultModel = String(
-          config?.providers?.[defaultProvider]?.default_model || ""
-        ).trim();
-        const connected = new Set(
-          (catalog?.connected || []).map((id: string) =>
-            String(id || "")
-              .trim()
-              .toLowerCase()
-          )
-        );
-        const providerNeedsApiKey = (providerId: string) => {
-          const id = String(providerId || "")
-            .trim()
-            .toLowerCase();
-          return !!id && id !== "ollama" && id !== "local";
-        };
-        const hasStoredKey = (() => {
-          const id = String(defaultProvider || "")
-            .trim()
-            .toLowerCase();
-          if (!id) return false;
-          if (authStatus && typeof authStatus === "object") {
-            const direct = (authStatus as any)[id];
-            if (direct && typeof direct === "object") {
-              if (direct.has_key === true || direct.hasKey === true) return true;
-              if (direct.configured === true && !providerNeedsApiKey(id)) return true;
-            }
-            const nested = (authStatus as any).providers?.[id];
-            if (nested && typeof nested === "object") {
-              if (nested.has_key === true || nested.hasKey === true) return true;
-              if (nested.configured === true && !providerNeedsApiKey(id)) return true;
-            }
-          }
-          return false;
-        })();
-        const ready =
-          !!defaultProvider &&
-          !!defaultModel &&
-          connected.has(
-            String(defaultProvider || "")
-              .trim()
-              .toLowerCase()
-          ) &&
-          (!providerNeedsApiKey(defaultProvider) || hasStoredKey);
-
-        return {
-          ready,
-          defaultProvider,
-          defaultModel,
-          connected: [...connected],
-          error: "",
-          needsOnboarding: !ready,
-        };
+        return deriveProviderState(config, catalog, authStatus);
       } catch (error) {
         return {
           ready: false,
@@ -150,9 +95,7 @@ function useIdentity(client: TandemClient | null, enabled: boolean) {
         return { botName: "Tandem", botAvatarUrl: "", controlPanelName: "Tandem Control Panel" };
       }
       try {
-        const payload = client?.identity?.get
-          ? await client.identity.get()
-          : await api("/api/engine/config/identity", { method: "GET" });
+        const payload = await api("/api/engine/config/identity", { method: "GET" });
         const identity = (payload as any)?.identity || {};
         const canonical = String(
           identity?.bot?.canonical_name || identity?.bot?.canonicalName || ""
@@ -393,12 +336,10 @@ function AppBody() {
         identity={identity}
         currentRoute={currentRoute}
         providerLocked={providerLocked}
-        navRoutes={APP_NAV_ROUTES}
+        navRoutes={APP_NAV_ROUTES as Array<[string, string, string]>}
         onNavigate={navigate}
         onPaletteOpen={() => setPaletteOpen(true)}
-        onThemeCycle={() =>
-          setTheme(THEMES[(THEMES.findIndex((t) => t.id === themeId) + 1) % THEMES.length].id)
-        }
+        onThemeCycle={() => setTheme(cycleThemeId(themeId))}
         onLogout={logout}
         statusBar={{
           engineHealthy: !!(healthQuery.data?.engine?.ready || healthQuery.data?.engine?.healthy),

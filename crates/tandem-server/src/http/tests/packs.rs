@@ -244,3 +244,102 @@ async fn packs_updates_endpoints_return_stub_payload() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn packs_get_reports_workflow_extensions() {
+    let state = test_state().await;
+    let root = std::env::temp_dir().join(format!("tandem-pack-inspect-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let pack_zip = root.join("inspect-pack.zip");
+    let file = std::fs::File::create(&pack_zip).expect("create zip");
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("tandempack.yaml", opts).expect("manifest");
+    std::io::Write::write_all(
+        &mut zip,
+        br#"name: workflow-inspect-pack
+version: 1.0.0
+type: workflow
+pack_id: workflow-inspect-pack
+entrypoints:
+  workflows:
+    - build_feature
+contents:
+  workflows:
+    - id: build_feature
+      path: workflows/build_feature.yaml
+  workflow_hooks:
+    - id: build_feature.task_completed.notify
+      path: hooks/notify.yaml
+"#,
+    )
+    .expect("write manifest");
+    zip.start_file("workflows/build_feature.yaml", opts)
+        .expect("workflow file");
+    std::io::Write::write_all(
+        &mut zip,
+        b"workflow:\n  id: build_feature\n  name: Build Feature\n  steps:\n    - planner\n",
+    )
+    .expect("write workflow file");
+    zip.start_file("hooks/notify.yaml", opts)
+        .expect("hook file");
+    std::io::Write::write_all(
+        &mut zip,
+        b"hooks:\n  - id: build_feature.task_completed.notify\n    workflow_id: build_feature\n    event: task_completed\n    actions:\n      - slack.notify\n",
+    )
+    .expect("write hook file");
+    zip.finish().expect("finish zip");
+
+    let app = app_router(state.clone());
+    let install_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/packs/install")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "path": pack_zip.to_string_lossy(),
+                        "source": {"kind":"test"}
+                    })
+                    .to_string(),
+                ))
+                .expect("install request"),
+        )
+        .await
+        .expect("install response");
+    assert_eq!(install_resp.status(), StatusCode::OK);
+
+    let inspect_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/packs/workflow-inspect-pack")
+                .body(Body::empty())
+                .expect("inspect request"),
+        )
+        .await
+        .expect("inspect response");
+    assert_eq!(inspect_resp.status(), StatusCode::OK);
+    let body = to_bytes(inspect_resp.into_body(), usize::MAX)
+        .await
+        .expect("inspect body");
+    let payload: Value = serde_json::from_slice(&body).expect("inspect json");
+    assert_eq!(
+        payload["pack"]["workflow_extensions"]["workflow_count"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        payload["pack"]["workflow_extensions"]["workflow_hook_count"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        payload["pack"]["workflow_extensions"]["workflow_entrypoints"]
+            .as_array()
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

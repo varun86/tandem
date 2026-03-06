@@ -7512,6 +7512,7 @@ dependencies = [
  "tandem-tools",
  "tandem-types",
  "tandem-wire",
+ "tandem-workflows",
  "tokio",
  "tokio-stream",
  "tower",
@@ -7614,6 +7615,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tandem-types",
+]
+
+[[package]]
+name = "tandem-workflows"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]

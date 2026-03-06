@@ -3,17 +3,18 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderIcons } from "../app/icons.js";
 import { normalizeMessages } from "../features/chat/messages";
-import { saveStoredSessionId } from "../features/chat/session";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { BudgetMeter } from "../features/orchestration/BudgetMeter";
 import { TaskBoard } from "../features/orchestration/TaskBoard";
-import type { BudgetUsage, OrchestrationTask, TaskState } from "../features/orchestration/types";
+import type { BudgetUsage } from "../features/orchestration/types";
+import { projectOrchestrationRun } from "../features/orchestrator/blackboardProjection";
 import { useRunRegistry } from "../features/orchestrator/runRegistry";
+import { useEngineStream } from "../features/stream/useEngineStream";
 import {
   buildCursorToken,
   useOrchestratorEvents,
 } from "../features/orchestrator/useOrchestratorEvents";
-import { EmptyState, PageCard } from "./ui";
+import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
 const DEFAULT_BUDGET: BudgetUsage = {
@@ -30,19 +31,6 @@ const DEFAULT_BUDGET: BudgetUsage = {
   limits_enforced: false,
   source: "derived",
 };
-
-function normalizeTaskState(status: string): TaskState {
-  const value = String(status || "")
-    .trim()
-    .toLowerCase();
-  if (value === "in_progress" || value === "running") return "in_progress";
-  if (value === "done" || value === "completed") return "done";
-  if (value === "failed" || value === "error" || value === "cancelled" || value === "canceled")
-    return "failed";
-  if (value === "blocked") return "blocked";
-  if (value === "runnable") return "runnable";
-  return "pending";
-}
 
 function statusBadgeClass(status: string) {
   const s = String(status || "")
@@ -145,51 +133,60 @@ function buildLatestAttemptSeqByTask(events: any[]) {
   return latest;
 }
 
-function normalizeTasks(payload: any): OrchestrationTask[] {
-  const blackboardTasks = Array.isArray(payload?.blackboard?.tasks) ? payload.blackboard.tasks : [];
-  if (blackboardTasks.length) {
-    return blackboardTasks.map((task: any, index: number) => {
-      const state = normalizeTaskState(String(task?.status || "pending"));
-      return {
-        id: String(task?.id || `task-${index}`),
-        title: String(task?.payload?.title || task?.task_type || task?.id || `Task ${index + 1}`),
-        description: String(task?.payload?.description || ""),
-        dependencies: Array.isArray(task?.depends_on_task_ids)
-          ? task.depends_on_task_ids.map((dep: unknown) => String(dep || "")).filter(Boolean)
-          : [],
-        state,
-        retry_count: Number(task?.retry_count || 0),
-        error_message:
-          state === "failed" || state === "blocked" ? String(task?.last_error || "") : "",
-        runtime_status: "",
-        runtime_detail: "",
-        assigned_role: String(task?.assigned_agent || task?.lease_owner || ""),
-        workflow_id: String(task?.workflow_id || ""),
-        session_id: "",
-      };
-    });
+function workflowEventType(event: any) {
+  return String(event?.event_type || event?.type || event?.event || "workflow.event")
+    .trim()
+    .toLowerCase();
+}
+
+function buildVerificationClipboardText(item: {
+  taskId: string;
+  title: string;
+  type: string;
+  reason: string;
+  mode: string;
+  at: number;
+  verification: any;
+}) {
+  const lines = [
+    `type: ${String(item.type || "").trim() || "unknown"}`,
+    `task: ${String(item.taskId || "").trim() || "n/a"}`,
+    `title: ${String(item.title || "").trim() || "n/a"}`,
+    `mode: ${String(item.mode || "").trim() || "strict"}`,
+    `at: ${eventTimeLabel(item.at)}`,
+    "",
+    "reason:",
+    String(item.reason || "").trim() || "No verification detail.",
+  ];
+
+  const trace = item.verification?.execution_trace;
+  if (trace && typeof trace === "object") {
+    lines.push(
+      "",
+      "execution_trace:",
+      `session: ${String(trace.session_id || "n/a")}`,
+      `model: ${
+        [String(trace?.model?.provider || "").trim(), String(trace?.model?.model_id || "").trim()]
+          .filter(Boolean)
+          .join(" / ") || "unknown"
+      }`,
+      `source: ${String(trace?.model?.source || "n/a")}`
+    );
   }
-  const steps = Array.isArray(payload?.tasks) ? payload.tasks : [];
-  return steps.map((step: any, index: number) => {
-    const state = normalizeTaskState(String(step?.stepStatus || step?.status || "pending"));
-    return {
-      id: String(step?.taskId || step?.step_id || `step-${index}`),
-      title: String(step?.title || step?.step_id || `Step ${index + 1}`),
-      description: String(step?.description || ""),
-      dependencies: Array.isArray(step?.dependsOn)
-        ? step.dependsOn.map((dep: unknown) => String(dep || "")).filter(Boolean)
-        : [],
-      state,
-      retry_count: Number(step?.retry_count || 0),
-      error_message:
-        state === "failed" || state === "blocked" ? String(step?.error_message || "") : "",
-      runtime_status: String(step?.runtime_status || ""),
-      runtime_detail: String(step?.runtime_detail || ""),
-      assigned_role: String(step?.assignedAgent || ""),
-      workflow_id: String(step?.workflowId || ""),
-      session_id: String(step?.sessionId || step?.session_id || ""),
-    };
-  });
+
+  lines.push("", "verification_json:", JSON.stringify(item.verification || {}, null, 2));
+  return lines.join("\n");
+}
+
+function linkedTaskIdFromWorkflow(source: any) {
+  const explicitTaskId = String(source?.task_id || source?.taskID || "").trim();
+  if (explicitTaskId) return explicitTaskId;
+  const sourceEventId = source?.source_event_id || source?.sourceEventID;
+  const value = String(sourceEventId || "").trim();
+  if (!value) return "";
+  const idx = value.lastIndexOf(":");
+  if (idx < 0) return "";
+  return value.slice(idx + 1).trim();
 }
 
 export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
@@ -210,6 +207,10 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
   const [revisionFeedback, setRevisionFeedback] = useState("");
   const [runWorkspaceDir, setRunWorkspaceDir] = useState("");
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState("");
+  const [selectedWorkflowRunId, setSelectedWorkflowRunId] = useState("");
+  const [workflowEvents, setWorkflowEvents] = useState<Array<{ at: number; data: any }>>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedVerificationId, setSelectedVerificationId] = useState("");
   useEffect(() => {
     setComposeMode(true);
     clearSelectedRunId();
@@ -299,7 +300,8 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
   )
     .trim()
     .toLowerCase();
-  const tasks = useMemo(() => normalizeTasks(runQuery.data), [runQuery.data]);
+  const taskProjection = useMemo(() => projectOrchestrationRun(runQuery.data), [runQuery.data]);
+  const tasks = taskProjection.tasks;
   const budget = useMemo(
     () => ({ ...DEFAULT_BUDGET, ...(runQuery.data?.budget || {}) }),
     [runQuery.data?.budget]
@@ -559,6 +561,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
       reason: string;
       mode: string;
       at: number;
+      verification: any;
     }> = [];
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const evt = events[i];
@@ -594,11 +597,144 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
         reason,
         mode,
         at: Number(evt?.ts_ms || 0),
+        verification,
       });
       if (rows.length >= 8) break;
     }
     return rows;
   }, [runQuery.data?.events]);
+  const selectedVerificationEvent = useMemo(
+    () => verificationEvents.find((item) => item.id === selectedVerificationId) || null,
+    [selectedVerificationId, verificationEvents]
+  );
+  useEffect(() => {
+    if (!selectedVerificationEvent || typeof document === "undefined") return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selectedVerificationEvent]);
+  const activeWorkflowSurfaceId = String(
+    runQuery.data?.run?.workflowId ||
+      runQuery.data?.run?.workflow_id ||
+      selectedRunEntry?.workflowId ||
+      selectedRunEntry?.workflow_id ||
+      workflowId ||
+      ""
+  ).trim();
+  const workflowDetailQuery = useQuery({
+    queryKey: ["workflow", "detail", activeWorkflowSurfaceId],
+    enabled: !!activeWorkflowSurfaceId,
+    queryFn: () => api(`/api/engine/workflows/${encodeURIComponent(activeWorkflowSurfaceId)}`),
+    refetchInterval: 15000,
+  });
+  const workflowRunsQuery = useQuery({
+    queryKey: ["workflow", "runs", activeWorkflowSurfaceId],
+    enabled: !!activeWorkflowSurfaceId,
+    queryFn: () =>
+      api(
+        `/api/engine/workflows/runs?workflow_id=${encodeURIComponent(activeWorkflowSurfaceId)}&limit=12`
+      ).catch(() => ({ runs: [] })),
+    refetchInterval: 5000,
+  });
+  const workflowRuns = Array.isArray(workflowRunsQuery.data?.runs)
+    ? workflowRunsQuery.data.runs
+    : [];
+  const workflowSummaryByTaskId = useMemo(() => {
+    const summary: Record<string, { runs: number; failed: number }> = {};
+    for (const run of workflowRuns) {
+      const taskId = linkedTaskIdFromWorkflow(run);
+      if (!taskId) continue;
+      const current = summary[taskId] || { runs: 0, failed: 0 };
+      current.runs += 1;
+      if (
+        String(run?.status || "")
+          .trim()
+          .toLowerCase() === "failed"
+      )
+        current.failed += 1;
+      summary[taskId] = current;
+    }
+    return summary;
+  }, [workflowRuns]);
+  const relatedWorkflowRuns = useMemo(() => {
+    if (!selectedTaskId) return workflowRuns;
+    return workflowRuns.filter((run: any) => linkedTaskIdFromWorkflow(run) === selectedTaskId);
+  }, [selectedTaskId, workflowRuns]);
+  const selectedTaskWorkflowArtifacts = useMemo(() => {
+    const rows: Array<{
+      id: string;
+      runId: string;
+      action: string;
+      status: string;
+      detail: string;
+      output: any;
+      updatedAt: number;
+      taskId: string;
+    }> = [];
+    for (const run of relatedWorkflowRuns) {
+      const runId = String(run?.run_id || "").trim();
+      const fallbackTaskId = linkedTaskIdFromWorkflow(run);
+      for (const action of Array.isArray(run?.actions) ? run.actions : []) {
+        rows.push({
+          id: `${runId}:${String(action?.action_id || action?.action || rows.length)}`,
+          runId,
+          action: String(action?.action || "unknown action"),
+          status: String(action?.status || "unknown"),
+          detail: String(action?.detail || ""),
+          output: action?.output,
+          updatedAt: Number(action?.updated_at_ms || run?.updated_at_ms || 0),
+          taskId: String(action?.task_id || fallbackTaskId || "").trim(),
+        });
+      }
+    }
+    rows.sort((a, b) => b.updatedAt - a.updatedAt);
+    return rows;
+  }, [relatedWorkflowRuns]);
+  useEffect(() => {
+    const targetRuns = relatedWorkflowRuns;
+    if (!targetRuns.length) {
+      setSelectedWorkflowRunId("");
+      return;
+    }
+    const hasCurrent = targetRuns.some((run: any) => {
+      const runId = String(run?.run_id || "").trim();
+      return runId && runId === selectedWorkflowRunId;
+    });
+    if (!hasCurrent) {
+      setSelectedWorkflowRunId(String(targetRuns[0]?.run_id || "").trim());
+    }
+  }, [relatedWorkflowRuns, selectedWorkflowRunId]);
+  const workflowRunDetailQuery = useQuery({
+    queryKey: ["workflow", "run", selectedWorkflowRunId],
+    enabled: !!selectedWorkflowRunId,
+    queryFn: () => api(`/api/engine/workflows/runs/${encodeURIComponent(selectedWorkflowRunId)}`),
+    refetchInterval: 5000,
+  });
+  const selectedWorkflowRun = workflowRunDetailQuery.data?.run || null;
+  useEffect(() => {
+    const linkedTaskId = linkedTaskIdFromWorkflow(selectedWorkflowRun);
+    if (linkedTaskId) setSelectedTaskId(linkedTaskId);
+  }, [selectedWorkflowRun?.run_id, selectedWorkflowRun?.source_event_id]);
+  useEffect(() => {
+    setWorkflowEvents([]);
+  }, [activeWorkflowSurfaceId]);
+  useEngineStream(
+    `/api/engine/workflows/events${activeWorkflowSurfaceId ? `?workflow_id=${encodeURIComponent(activeWorkflowSurfaceId)}` : ""}`,
+    (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.status === "ready") return;
+        setWorkflowEvents((prev) => [...prev.slice(-79), { at: Date.now(), data }]);
+      } catch {
+        // ignore malformed workflow stream events
+      }
+    },
+    {
+      enabled: !!activeWorkflowSurfaceId,
+    }
+  );
 
   const startMutation = useMutation({
     mutationFn: () => {
@@ -692,6 +828,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
     runWorkspaceFiles.length,
     selectedWorkspaceFile,
     selectedWorkspaceText,
+    selectedVerificationId,
     taskRenderSignature,
   ]);
 
@@ -796,12 +933,12 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
       String(prompt || "").trim().length > 0 && String(workspaceRoot || "").trim().length > 0;
     return (
       <>
-        <div ref={rootRef} className="chat-layout min-w-0 min-h-0 h-full flex-1">
+        <div ref={rootRef} className="chat-layout min-w-0 min-h-0 h-full w-full flex-1">
           {historyPanel}
-          <div className="chat-workspace min-h-0 min-w-0">
-            <PageCard
-              title={
-                <span className="inline-flex items-center gap-2">
+          <div className="min-h-0 min-w-0 w-full">
+            <div className="flex h-full min-h-0 w-full flex-col gap-4 p-4 md:p-5">
+              <div className="mb-3">
+                <div className="inline-flex items-center gap-2 text-sm font-semibold">
                   <button
                     type="button"
                     className="chat-icon-btn h-8 w-8"
@@ -811,11 +948,11 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                     <i data-lucide="history"></i>
                   </button>
                   <span>Orchestrator</span>
-                </span>
-              }
-              subtitle="Describe the goal. The planner will build a task board."
-              className="flex h-full min-h-0 flex-col"
-            >
+                </div>
+                <div className="tcp-subtle mt-1 text-sm">
+                  Describe the goal. The planner will build a task board.
+                </div>
+              </div>
               <div className="grid min-h-0 flex-1 w-full content-start gap-3">
                 <textarea
                   className="tcp-input min-h-[360px] md:min-h-[52vh]"
@@ -901,7 +1038,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   </div>
                 ) : null}
               </div>
-            </PageCard>
+            </div>
           </div>
         </div>
         {workspaceBrowserOpen ? (
@@ -984,13 +1121,13 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
 
   return (
     <>
-      <div ref={rootRef} className="chat-layout min-w-0 min-h-0 h-full flex-1">
+      <div ref={rootRef} className="chat-layout min-w-0 min-h-0 h-full w-full flex-1">
         {historyPanel}
-        <div className="chat-workspace min-h-0 min-w-0">
-          <div className="grid h-full min-h-[calc(100vh-240px)] min-w-0 gap-4 xl:grid-cols-[1.05fr_1fr]">
-            <PageCard
-              title={
-                <span className="inline-flex items-center gap-2">
+        <div className="min-h-0 min-w-0 w-full">
+          <div className="grid h-full min-h-[calc(100vh-240px)] min-w-0 w-full gap-5 p-4 md:p-5 xl:grid-cols-[1.05fr_1fr]">
+            <div className="flex h-full min-h-0 w-full flex-col gap-3">
+              <div className="mb-3">
+                <div className="inline-flex items-center gap-2 text-sm font-semibold">
                   <button
                     type="button"
                     className="chat-icon-btn h-8 w-8"
@@ -1008,11 +1145,9 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                     <i data-lucide="arrow-left-to-line"></i>
                   </button>
                   <span>Orchestration Run</span>
-                </span>
-              }
-              subtitle="Plan review and execution"
-              className="flex h-full min-h-0 flex-col"
-            >
+                </div>
+                <div className="tcp-subtle mt-1 text-sm">Plan review and execution</div>
+              </div>
               <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
                 <span className={statusBadgeClass(runStatus)}>{runStatus || "unknown"}</span>
                 <span className="inline-flex items-center gap-1 tcp-subtle">
@@ -1277,32 +1412,329 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   )}
                 </div>
               ) : null}
-            </PageCard>
+            </div>
 
-            <PageCard
-              title="Kanban + Budget"
-              subtitle="Tasks activate after execute"
-              className="flex h-full min-h-0 flex-col"
-            >
+            <div className="flex h-full min-h-0 w-full flex-col gap-3">
+              <div className="mb-3">
+                <div className="text-sm font-semibold">Kanban + Budget</div>
+                <div className="tcp-subtle mt-1 text-sm">Tasks activate after execute</div>
+              </div>
               <div className="mb-3">
                 <BudgetMeter budget={budget} />
               </div>
 
               <TaskBoard
                 tasks={tasks}
-                currentTaskId={String(runQuery.data?.run?.current_step_id || "")}
+                currentTaskId={taskProjection.currentTaskId}
+                selectedTaskId={selectedTaskId}
+                workflowSummaryByTaskId={workflowSummaryByTaskId}
+                onTaskSelect={(task) =>
+                  setSelectedTaskId((prev) => (prev === task.id ? "" : task.id))
+                }
                 onRetryTask={(task) =>
                   actionMutation.mutate({
                     path: "/api/orchestrator/retry",
                     body: { runId, stepId: task.id },
                   })
                 }
-                onTaskClick={(task) => {
-                  if (!task.session_id) return;
-                  saveStoredSessionId(task.session_id);
-                  navigate("chat");
-                }}
               />
+
+              {selectedTaskId ? (
+                <div className="mt-3 rounded-xl border border-cyan-700/50 bg-cyan-950/20 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="font-medium">Selected Task Workflow Link</div>
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() => setSelectedTaskId("")}
+                    >
+                      Clear task focus
+                    </button>
+                  </div>
+                  <div className="tcp-subtle text-xs">
+                    Task <strong>{selectedTaskId}</strong> is filtering workflow runs and event
+                    stream.
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedTaskId ? (
+                <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="font-medium">Task Workflow Artifacts</div>
+                    <span className="tcp-subtle text-xs">
+                      {selectedTaskWorkflowArtifacts.length} actions
+                    </span>
+                  </div>
+                  {selectedTaskWorkflowArtifacts.length ? (
+                    <div className="grid max-h-56 gap-2 overflow-auto">
+                      {selectedTaskWorkflowArtifacts.map((artifact) => (
+                        <div
+                          key={artifact.id}
+                          className="rounded border border-slate-700/60 p-2 text-xs"
+                        >
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="font-medium">{artifact.action}</span>
+                            <span className={statusBadgeClass(artifact.status)}>
+                              {artifact.status}
+                            </span>
+                          </div>
+                          <div className="tcp-subtle">run: {artifact.runId}</div>
+                          <div className="tcp-subtle">
+                            updated: {eventTimeLabel(artifact.updatedAt)}
+                          </div>
+                          {artifact.detail ? (
+                            <div className="mt-1 text-rose-200">{artifact.detail}</div>
+                          ) : null}
+                          {artifact.output ? (
+                            <pre className="tcp-code mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words">
+                              {JSON.stringify(artifact.output, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="tcp-subtle text-xs">
+                      No workflow action artifacts are linked to this task yet.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="font-medium">Workflow Automation</div>
+                  <button
+                    className="tcp-btn h-7 px-2 text-xs"
+                    onClick={() => navigate("packs-detail")}
+                  >
+                    Open Workflow Lab
+                  </button>
+                </div>
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="tcp-badge-info">
+                    {activeWorkflowSurfaceId || "no workflow id"}
+                  </span>
+                  <span className="tcp-subtle">
+                    {Array.isArray(workflowDetailQuery.data?.workflow?.steps)
+                      ? `${workflowDetailQuery.data.workflow.steps.length} steps`
+                      : "workflow metadata pending"}
+                  </span>
+                  <span className="tcp-subtle">
+                    {Array.isArray(workflowDetailQuery.data?.hooks)
+                      ? `${workflowDetailQuery.data.hooks.length} hooks`
+                      : ""}
+                  </span>
+                </div>
+                <div className="grid gap-3 xl:grid-cols-[0.85fr_1.15fr]">
+                  <div className="grid gap-2">
+                    <div className="tcp-subtle text-xs uppercase tracking-[0.24em]">
+                      Workflow Runs
+                    </div>
+                    <div className="grid max-h-48 gap-2 overflow-auto">
+                      {relatedWorkflowRuns.length ? (
+                        relatedWorkflowRuns.map((workflowRun: any, index: number) => {
+                          const workflowRunId = String(
+                            workflowRun?.run_id || `workflow-run-${index}`
+                          ).trim();
+                          const active = workflowRunId === selectedWorkflowRunId;
+                          const status = String(workflowRun?.status || "unknown").trim();
+                          const linkedTaskId = linkedTaskIdFromWorkflow(workflowRun);
+                          return (
+                            <button
+                              key={workflowRunId}
+                              type="button"
+                              className={`tcp-list-item text-left ${active ? "border-amber-400/70" : ""}`}
+                              onClick={() => setSelectedWorkflowRunId(workflowRunId)}
+                            >
+                              <div className="mb-1 flex items-center justify-between gap-2">
+                                <strong>{workflowRunId}</strong>
+                                <span className={statusBadgeClass(status)}>{status}</span>
+                              </div>
+                              <div className="tcp-subtle text-xs">
+                                trigger:{" "}
+                                {String(workflowRun?.trigger_event || "manual").trim() || "manual"}
+                              </div>
+                              <div className="tcp-subtle text-xs">
+                                task: {linkedTaskId || "n/a"}
+                              </div>
+                              <div className="tcp-subtle text-xs">
+                                actions:{" "}
+                                {Array.isArray(workflowRun?.actions)
+                                  ? workflowRun.actions.length
+                                  : 0}
+                              </div>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <EmptyState
+                          text={
+                            selectedTaskId
+                              ? "No workflow runs are linked to the selected task yet."
+                              : "No workflow runs recorded for this orchestration workflow yet."
+                          }
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <div className="tcp-subtle text-xs uppercase tracking-[0.24em]">
+                      Workflow Run Drilldown
+                    </div>
+                    {selectedWorkflowRun ? (
+                      <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                          <span
+                            className={statusBadgeClass(
+                              String(selectedWorkflowRun?.status || "unknown")
+                            )}
+                          >
+                            {String(selectedWorkflowRun?.status || "unknown")}
+                          </span>
+                          <span className="tcp-subtle">
+                            trigger: {String(selectedWorkflowRun?.trigger_event || "manual")}
+                          </span>
+                          <span className="tcp-subtle">
+                            source: {String(selectedWorkflowRun?.source_event_id || "n/a")}
+                          </span>
+                        </div>
+                        <div className="grid max-h-48 gap-2 overflow-auto">
+                          {Array.isArray(selectedWorkflowRun?.actions) &&
+                          selectedWorkflowRun.actions.length ? (
+                            selectedWorkflowRun.actions.map((action: any, index: number) => (
+                              <div
+                                key={`${String(action?.action || "action")}-${index}`}
+                                className="rounded border border-slate-700/60 p-2 text-xs"
+                              >
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <span className="font-medium">
+                                    {String(action?.action || "unknown action")}
+                                  </span>
+                                  <span
+                                    className={statusBadgeClass(
+                                      String(action?.status || "unknown")
+                                    )}
+                                  >
+                                    {String(action?.status || "unknown")}
+                                  </span>
+                                </div>
+                                <div className="mb-1 flex flex-wrap items-center gap-2">
+                                  <span className="tcp-subtle">
+                                    task:{" "}
+                                    {String(
+                                      action?.task_id || selectedWorkflowRun?.task_id || "n/a"
+                                    )}
+                                  </span>
+                                  {String(
+                                    action?.task_id || selectedWorkflowRun?.task_id || ""
+                                  ).trim() ? (
+                                    <button
+                                      className="tcp-btn h-7 px-2 text-xs"
+                                      onClick={() =>
+                                        setSelectedTaskId(
+                                          String(
+                                            action?.task_id || selectedWorkflowRun?.task_id || ""
+                                          ).trim()
+                                        )
+                                      }
+                                    >
+                                      Focus task
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <div className="tcp-subtle">
+                                  started: {eventTimeLabel(action?.started_at_ms)}
+                                </div>
+                                <div className="tcp-subtle">
+                                  finished: {eventTimeLabel(action?.finished_at_ms)}
+                                </div>
+                                {String(action?.error || "").trim() ? (
+                                  <div className="mt-1 text-rose-200">{String(action.error)}</div>
+                                ) : null}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="tcp-subtle text-xs">
+                              No recorded workflow actions for this run.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <EmptyState text="Select a workflow run to inspect its action timeline." />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="font-medium">Workflow Event Stream</div>
+                  <button
+                    type="button"
+                    className="chat-icon-btn h-7 w-7"
+                    title="Clear workflow events"
+                    aria-label="Clear workflow events"
+                    onClick={() => setWorkflowEvents([])}
+                  >
+                    <i data-lucide="trash-2"></i>
+                  </button>
+                </div>
+                {workflowEvents.length ? (
+                  <div className="grid max-h-48 gap-2 overflow-auto">
+                    {[...workflowEvents]
+                      .filter((item) => {
+                        const linkedTaskId = linkedTaskIdFromWorkflow(item.data?.properties || {});
+                        if (selectedTaskId && linkedTaskId && linkedTaskId !== selectedTaskId)
+                          return false;
+                        if (!selectedWorkflowRunId) return true;
+                        const runId = String(item.data?.properties?.runID || "").trim();
+                        return !runId || runId === selectedWorkflowRunId;
+                      })
+                      .reverse()
+                      .map((item, index) => {
+                        const type = workflowEventType(item.data);
+                        return (
+                          <div
+                            key={`${item.at}-${index}`}
+                            className="rounded border border-slate-700/60 p-2 text-xs"
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-2">
+                              <span
+                                className={statusBadgeClass(
+                                  type.endsWith(".failed")
+                                    ? "failed"
+                                    : type.endsWith(".completed")
+                                      ? "completed"
+                                      : "running"
+                                )}
+                              >
+                                {type}
+                              </span>
+                              <span className="tcp-subtle">{eventTimeLabel(item.at)}</span>
+                            </div>
+                            <div className="tcp-subtle">
+                              run: {String(item.data?.properties?.runID || "n/a")}
+                            </div>
+                            <div className="tcp-subtle">
+                              action:{" "}
+                              {String(
+                                item.data?.properties?.action ||
+                                  item.data?.properties?.actionID ||
+                                  "-"
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                ) : (
+                  <div className="tcp-subtle text-xs">
+                    No workflow events streamed for this run yet.
+                  </div>
+                )}
+              </div>
 
               <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -1323,7 +1755,106 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                           <span className="tcp-subtle">mode: {item.mode}</span>
                         </div>
                         <div className="font-medium">{item.title}</div>
-                        <div className="tcp-subtle">{item.reason || "No verification detail."}</div>
+                        <div className="tcp-subtle whitespace-pre-wrap break-words">
+                          {item.reason || "No verification detail."}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={() => setSelectedVerificationId(item.id)}
+                          >
+                            <i data-lucide="search"></i>
+                            View details
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(
+                                  buildVerificationClipboardText(item)
+                                );
+                                toast("ok", "Copied verification feedback.");
+                              } catch (error) {
+                                toast(
+                                  "err",
+                                  error instanceof Error ? error.message : "Copy failed."
+                                );
+                              }
+                            }}
+                          >
+                            <i data-lucide="copy-plus"></i>
+                            Copy feedback
+                          </button>
+                        </div>
+                        {item.verification?.execution_trace ? (
+                          <div className="mt-2 rounded border border-slate-700/50 bg-slate-950/40 p-2 tcp-subtle">
+                            <div>
+                              session:{" "}
+                              {String(item.verification?.execution_trace?.session_id || "n/a")}
+                            </div>
+                            <div>
+                              model:{" "}
+                              {[
+                                String(
+                                  item.verification?.execution_trace?.model?.provider || ""
+                                ).trim(),
+                                String(
+                                  item.verification?.execution_trace?.model?.model_id || ""
+                                ).trim(),
+                              ]
+                                .filter(Boolean)
+                                .join(" / ") || "unknown"}
+                            </div>
+                            <div>
+                              source:{" "}
+                              {String(item.verification?.execution_trace?.model?.source || "n/a")}
+                            </div>
+                            {Array.isArray(item.verification?.execution_trace?.attempts) ? (
+                              <div className="mt-2 grid gap-2">
+                                {item.verification.execution_trace.attempts.map(
+                                  (attempt: any, idx: number) => (
+                                    <div
+                                      key={`${item.id}-attempt-${idx}`}
+                                      className="rounded border border-slate-700/40 bg-slate-900/40 p-2"
+                                    >
+                                      <div className="font-medium">
+                                        {String(attempt?.name || `attempt-${idx + 1}`)}
+                                      </div>
+                                      <div>tool mode: {String(attempt?.tool_mode || "n/a")}</div>
+                                      <div>
+                                        allowlist:{" "}
+                                        {Array.isArray(attempt?.tool_allowlist) &&
+                                        attempt.tool_allowlist.length
+                                          ? attempt.tool_allowlist.join(", ")
+                                          : "none"}
+                                      </div>
+                                      <div>
+                                        tool calls: {Number(attempt?.total_tool_calls || 0)} total /{" "}
+                                        {Number(attempt?.write_tool_calls || 0)} write
+                                      </div>
+                                      <div>
+                                        tools:{" "}
+                                        {Array.isArray(attempt?.tool_names) &&
+                                        attempt.tool_names.length
+                                          ? attempt.tool_names.join(", ")
+                                          : "none"}
+                                      </div>
+                                      <div>
+                                        assistant:{" "}
+                                        {String(attempt?.assistant_excerpt || "").trim() || "none"}
+                                      </div>
+                                      {String(attempt?.error || "").trim() ? (
+                                        <div>attempt error: {String(attempt.error)}</div>
+                                      ) : null}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -1331,6 +1862,108 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   <div className="tcp-subtle text-xs">No verification telemetry yet.</div>
                 )}
               </div>
+
+              <AnimatePresence>
+                {selectedVerificationEvent ? (
+                  <motion.div
+                    className="tcp-confirm-overlay"
+                    initial={reducedMotion ? false : { opacity: 0 }}
+                    animate={reducedMotion ? undefined : { opacity: 1 }}
+                    exit={reducedMotion ? undefined : { opacity: 0 }}
+                  >
+                    <button
+                      type="button"
+                      className="tcp-confirm-backdrop"
+                      aria-label="Close verification details"
+                      onClick={() => setSelectedVerificationId("")}
+                    />
+                    <motion.div
+                      className="tcp-confirm-dialog tcp-verification-modal"
+                      initial={reducedMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                      animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+                      exit={reducedMotion ? undefined : { opacity: 0, y: 6, scale: 0.98 }}
+                    >
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="tcp-confirm-title">Executor Verification Details</h3>
+                          <p className="tcp-confirm-message">
+                            Raw verification and execution trace for debugging task feedback.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="tcp-btn h-8 px-2"
+                          onClick={() => setSelectedVerificationId("")}
+                        >
+                          <i data-lucide="x"></i>
+                        </button>
+                      </div>
+
+                      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={statusBadgeClass(
+                            selectedVerificationEvent.type.includes("failed") ? "failed" : "running"
+                          )}
+                        >
+                          {selectedVerificationEvent.type}
+                        </span>
+                        <span className="tcp-badge-info">{selectedVerificationEvent.title}</span>
+                        <span className="tcp-subtle">
+                          task: {selectedVerificationEvent.taskId || "n/a"}
+                        </span>
+                        <span className="tcp-subtle">mode: {selectedVerificationEvent.mode}</span>
+                        <span className="tcp-subtle">
+                          time: {eventTimeLabel(selectedVerificationEvent.at)}
+                        </span>
+                      </div>
+
+                      <div className="tcp-verification-content grid gap-3">
+                        <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="font-medium">Feedback</div>
+                            <button
+                              type="button"
+                              className="tcp-btn h-7 px-2 text-xs"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(
+                                    buildVerificationClipboardText(selectedVerificationEvent)
+                                  );
+                                  toast("ok", "Copied verification feedback.");
+                                } catch (error) {
+                                  toast(
+                                    "err",
+                                    error instanceof Error ? error.message : "Copy failed."
+                                  );
+                                }
+                              }}
+                            >
+                              <i data-lucide="copy-plus"></i>
+                              Copy feedback
+                            </button>
+                          </div>
+                          <pre className="tcp-code tcp-verification-feedback whitespace-pre-wrap break-words">
+                            {selectedVerificationEvent.reason || "No verification detail."}
+                          </pre>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+                          <div className="mb-2 font-medium">Verification JSON</div>
+                          <pre className="tcp-code tcp-verification-code whitespace-pre-wrap break-words">
+                            {JSON.stringify(selectedVerificationEvent.verification || {}, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+
+                      <div className="tcp-confirm-actions mt-4">
+                        <button className="tcp-btn" onClick={() => setSelectedVerificationId("")}>
+                          Close
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
 
               <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -1364,17 +1997,6 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
               <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <div className="font-medium">Latest Output</div>
-                  {liveSessionId ? (
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => {
-                        saveStoredSessionId(String(liveSessionId));
-                        navigate("chat");
-                      }}
-                    >
-                      Open Session
-                    </button>
-                  ) : null}
                 </div>
                 {liveSessionId ? (
                   <>
@@ -1392,7 +2014,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   <div className="tcp-subtle text-xs">No completed step output session yet.</div>
                 )}
               </div>
-            </PageCard>
+            </div>
           </div>
         </div>
       </div>

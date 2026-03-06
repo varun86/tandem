@@ -2,23 +2,27 @@ import { useMemo, useState } from "preact/hooks";
 import type { OrchestrationTask, TaskState } from "./types";
 
 const LABELS: Record<TaskState, string> = {
+  created: "Created",
   pending: "Pending",
   runnable: "Runnable",
+  assigned: "Assigned",
   in_progress: "In Progress",
   blocked: "Blocked",
   done: "Done",
   failed: "Failed",
+  validated: "Validated",
 };
 
 function statusClass(state: TaskState) {
-  if (state === "done") return "tcp-badge-ok";
+  if (state === "done" || state === "validated") return "tcp-badge-ok";
   if (state === "failed") return "tcp-badge-err";
-  if (state === "in_progress" || state === "runnable") return "tcp-badge-warn";
+  if (state === "in_progress" || state === "runnable" || state === "assigned")
+    return "tcp-badge-warn";
   return "tcp-badge-info";
 }
 
 function statusIcon(state: TaskState) {
-  if (state === "in_progress") {
+  if (state === "in_progress" || state === "assigned") {
     return (
       <i data-lucide="loader-circle" className="h-3.5 w-3.5 animate-spin" aria-hidden="true"></i>
     );
@@ -29,12 +33,16 @@ function statusIcon(state: TaskState) {
 function TaskCard({
   task,
   isCurrent,
-  onTaskClick,
+  isSelected,
+  workflowSummary,
+  onTaskSelect,
   onRetryTask,
 }: {
   task: OrchestrationTask;
   isCurrent: boolean;
-  onTaskClick?: (task: OrchestrationTask) => void;
+  isSelected?: boolean;
+  workflowSummary?: { runs: number; failed: number };
+  onTaskSelect?: (task: OrchestrationTask) => void;
   onRetryTask?: (task: OrchestrationTask) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -44,8 +52,14 @@ function TaskCard({
       : "";
   return (
     <div
-      className={`rounded-lg border p-2 ${isCurrent ? "border-amber-400/70" : "border-slate-700/60 bg-slate-900/20"}`}
-      onClick={() => onTaskClick?.(task)}
+      className={`rounded-lg border p-2 ${
+        isSelected
+          ? "border-cyan-400/70 bg-cyan-950/20"
+          : isCurrent
+            ? "border-amber-400/70"
+            : "border-slate-700/60 bg-slate-900/20"
+      }`}
+      onClick={() => onTaskSelect?.(task)}
     >
       <div className="mb-1 flex items-start justify-between gap-2">
         <div className="text-xs font-medium leading-snug" title={task.title}>
@@ -69,6 +83,18 @@ function TaskCard({
           {task.gate ? (
             <span className="rounded border border-amber-600/50 bg-amber-950/30 px-1.5 py-0.5">
               gate: {task.gate}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {workflowSummary && workflowSummary.runs > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-300">
+          <span className="rounded border border-indigo-600/50 bg-indigo-950/30 px-1.5 py-0.5">
+            workflow runs: {workflowSummary.runs}
+          </span>
+          {workflowSummary.failed > 0 ? (
+            <span className="rounded border border-rose-600/50 bg-rose-950/30 px-1.5 py-0.5 text-rose-200">
+              workflow failed: {workflowSummary.failed}
             </span>
           ) : null}
         </div>
@@ -116,28 +142,35 @@ function TaskCard({
 export function TaskBoard({
   tasks,
   currentTaskId,
-  onTaskClick,
+  selectedTaskId,
+  workflowSummaryByTaskId,
+  onTaskSelect,
   onRetryTask,
 }: {
   tasks: OrchestrationTask[];
   currentTaskId?: string;
-  onTaskClick?: (task: OrchestrationTask) => void;
+  selectedTaskId?: string;
+  workflowSummaryByTaskId?: Record<string, { runs: number; failed: number }>;
+  onTaskSelect?: (task: OrchestrationTask) => void;
   onRetryTask?: (task: OrchestrationTask) => void;
 }) {
   const grouped = useMemo(() => {
     const rows: Record<TaskState, OrchestrationTask[]> = {
+      created: [],
       pending: [],
       runnable: [],
+      assigned: [],
       in_progress: [],
       blocked: [],
       done: [],
       failed: [],
+      validated: [],
     };
     for (const task of tasks) rows[task.state].push(task);
-    const doneIds = new Set(rows.done.map((task) => task.id));
+    const doneIds = new Set([...rows.done, ...rows.validated].map((task) => task.id));
     const runnable = [...rows.runnable];
     const waiting: OrchestrationTask[] = [];
-    for (const task of rows.pending) {
+    for (const task of [...rows.created, ...rows.pending]) {
       const ready =
         task.dependencies.length === 0 || task.dependencies.every((dep) => doneIds.has(dep));
       if (ready) runnable.push(task);
@@ -146,16 +179,18 @@ export function TaskBoard({
     return {
       runnable,
       waiting,
+      assigned: rows.assigned,
       in_progress: rows.in_progress,
       blocked: rows.blocked,
-      done: rows.done,
+      done: [...rows.done, ...rows.validated],
       failed: rows.failed,
     };
   }, [tasks]);
 
   const columns: Array<{ key: string; label: string; tasks: OrchestrationTask[] }> = [
-    { key: "runnable", label: "Runnable", tasks: grouped.runnable },
+    { key: "runnable", label: "Ready", tasks: grouped.runnable },
     { key: "waiting", label: "Waiting on deps", tasks: grouped.waiting },
+    { key: "assigned", label: "Assigned", tasks: grouped.assigned },
     { key: "in_progress", label: "In Progress", tasks: grouped.in_progress },
     { key: "blocked", label: "Blocked", tasks: grouped.blocked },
     { key: "done", label: "Done", tasks: grouped.done },
@@ -184,7 +219,9 @@ export function TaskBoard({
                 key={task.id}
                 task={task}
                 isCurrent={task.id === currentTaskId}
-                onTaskClick={onTaskClick}
+                isSelected={task.id === selectedTaskId}
+                workflowSummary={workflowSummaryByTaskId?.[task.id]}
+                onTaskSelect={onTaskSelect}
                 onRetryTask={onRetryTask}
               />
             ))}

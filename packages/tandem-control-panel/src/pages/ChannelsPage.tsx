@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ChannelName } from "@frumu/tandem-client";
 import { PageCard, EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -20,7 +21,7 @@ export function ChannelsPage({ client, toast }: AppPageProps) {
       const config = (configQuery.data || {}) as Record<string, any>;
       const payload = config[channel];
       if (!payload) throw new Error(`No config found for ${channel}`);
-      await client.channels.put(channel, payload);
+      await client.channels.put(channel as ChannelName, payload);
     },
     onSuccess: async () => {
       toast("ok", "Channel reconfigured.");

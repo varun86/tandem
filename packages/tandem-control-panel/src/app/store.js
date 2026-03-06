@@ -42,10 +42,40 @@ export const providerHints = {
   },
   groq: { label: "Groq", keyUrl: "https://console.groq.com/keys", placeholder: "gsk_..." },
   mistral: { label: "Mistral", keyUrl: "https://console.mistral.ai/api-keys/", placeholder: "..." },
+  together: {
+    label: "Together",
+    keyUrl: "https://api.together.xyz/settings/api-keys",
+    placeholder: "...",
+  },
+  cohere: {
+    label: "Cohere",
+    keyUrl: "https://dashboard.cohere.com/api-keys",
+    placeholder: "...",
+  },
   openrouter: {
     label: "OpenRouter",
     keyUrl: "https://openrouter.ai/settings/keys",
     placeholder: "sk-or-v1-...",
+  },
+  azure: {
+    label: "Azure OpenAI",
+    keyUrl: "https://portal.azure.com/",
+    placeholder: "...",
+  },
+  bedrock: {
+    label: "Bedrock",
+    keyUrl: "https://console.aws.amazon.com/bedrock/",
+    placeholder: "...",
+  },
+  vertex: {
+    label: "Vertex",
+    keyUrl: "https://console.cloud.google.com/vertex-ai",
+    placeholder: "...",
+  },
+  copilot: {
+    label: "GitHub Copilot",
+    keyUrl: "https://github.com/settings/tokens",
+    placeholder: "ghp_...",
   },
   ollama: { label: "Ollama", keyUrl: "", placeholder: "No key required" },
 };

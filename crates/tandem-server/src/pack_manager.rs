@@ -41,6 +41,8 @@ pub struct PackManifest {
     pub capabilities: Value,
     #[serde(default)]
     pub entrypoints: Value,
+    #[serde(default)]
+    pub contents: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,7 @@ pub struct PackInspection {
     pub trust: Value,
     pub risk: Value,
     pub permission_sheet: Value,
+    pub workflow_extensions: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,12 +161,14 @@ impl PackManager {
         let trust = inspect_trust(&manifest, &installed.install_path);
         let risk = inspect_risk(&manifest, &installed);
         let permission_sheet = inspect_permission_sheet(&manifest, &risk);
+        let workflow_extensions = inspect_workflow_extensions(&manifest);
         Ok(PackInspection {
             installed,
             manifest,
             trust,
             risk,
             permission_sheet,
+            workflow_extensions,
         })
     }
 
@@ -750,6 +755,16 @@ fn inspect_risk(manifest: &Value, installed: &PackInstallRecord) -> Value {
         .and_then(|v| v.as_array())
         .map(|rows| !rows.is_empty())
         .unwrap_or(false);
+    let workflows_declared = manifest
+        .pointer("/contents/workflows")
+        .and_then(|v| v.as_array())
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    let workflow_hooks_declared = manifest
+        .pointer("/contents/workflow_hooks")
+        .and_then(|v| v.as_array())
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
     let non_portable_dependencies = manifest
         .pointer("/capabilities/provider_specific")
         .map(|v| match v {
@@ -762,6 +777,8 @@ fn inspect_risk(manifest: &Value, installed: &PackInstallRecord) -> Value {
     serde_json::json!({
         "routines_enabled": installed.routines_enabled,
         "routines_declared": routines_declared,
+        "workflows_declared": workflows_declared,
+        "workflow_hooks_declared": workflow_hooks_declared,
         "required_capabilities_count": required_capabilities_count,
         "optional_capabilities_count": optional_capabilities_count,
         "non_portable_dependencies": non_portable_dependencies,
@@ -791,13 +808,50 @@ fn inspect_permission_sheet(manifest: &Value, risk: &Value) -> Value {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    let workflows = manifest
+        .pointer("/contents/workflows")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let workflow_hooks = manifest
+        .pointer("/contents/workflow_hooks")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     serde_json::json!({
         "required_capabilities": required_capabilities,
         "optional_capabilities": optional_capabilities,
         "provider_specific_dependencies": provider_specific,
         "routines_declared": routines,
+        "workflows_declared": workflows,
+        "workflow_hooks_declared": workflow_hooks,
         "routines_enabled": risk.get("routines_enabled").cloned().unwrap_or(Value::Bool(false)),
         "risk_level": if !provider_specific.is_empty() { "elevated" } else { "standard" },
+    })
+}
+
+fn inspect_workflow_extensions(manifest: &Value) -> Value {
+    let workflow_entrypoints = manifest
+        .pointer("/entrypoints/workflows")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let workflows = manifest
+        .pointer("/contents/workflows")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let workflow_hooks = manifest
+        .pointer("/contents/workflow_hooks")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    serde_json::json!({
+        "workflow_entrypoints": workflow_entrypoints,
+        "workflows": workflows,
+        "workflow_hooks": workflow_hooks,
+        "workflow_count": workflows.len(),
+        "workflow_hook_count": workflow_hooks.len(),
     })
 }
 
@@ -905,7 +959,7 @@ mod tests {
             &[
                 (
                     "tandempack.yaml",
-                    "name: inspect-pack\nversion: 1.0.0\ntype: workflow\npack_id: inspect-pack\npublisher:\n  verification: verified\ncapabilities:\n  required:\n    - github.create_pull_request\n  optional:\n    - slack.post_message\ncontents:\n  routines:\n    - routines/nightly.yaml\n",
+                    "name: inspect-pack\nversion: 1.0.0\ntype: workflow\npack_id: inspect-pack\npublisher:\n  verification: verified\nentrypoints:\n  workflows:\n    - build_feature\ncapabilities:\n  required:\n    - github.create_pull_request\n  optional:\n    - slack.post_message\ncontents:\n  routines:\n    - routines/nightly.yaml\n  workflows:\n    - id: build_feature\n      path: workflows/build_feature.yaml\n  workflow_hooks:\n    - id: build_feature.task_completed.notify\n      path: hooks/notify.yaml\n",
                 ),
                 ("tandempack.sig", "fake-signature"),
                 ("routines/nightly.yaml", "id: nightly\n"),
@@ -967,6 +1021,58 @@ mod tests {
                 .get("routines_declared")
                 .and_then(|v| v.as_array())
                 .map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .risk
+                .get("workflows_declared")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            inspection
+                .risk
+                .get("workflow_hooks_declared")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            inspection
+                .permission_sheet
+                .get("workflows_declared")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .permission_sheet
+                .get("workflow_hooks_declared")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .workflow_extensions
+                .get("workflow_entrypoints")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .workflow_extensions
+                .get("workflow_count")
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            inspection
+                .workflow_extensions
+                .get("workflow_hook_count")
+                .and_then(|v| v.as_u64()),
             Some(1)
         );
         let _ = std::fs::remove_dir_all(root);

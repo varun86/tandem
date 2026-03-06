@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { renderMarkdownSafe } from "../lib/markdown";
-import { PageCard, EmptyState } from "./ui";
+import { AnimatedPage, Badge, PanelCard, Toolbar } from "../ui/index.tsx";
+import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
 function toArray(input: any, key: string) {
@@ -53,11 +54,24 @@ export function MemoryPage({ client, toast }: AppPageProps) {
   );
 
   return (
-    <div className="grid gap-4">
-      <PageCard title="Memory" subtitle="Search and manage memory records">
-        <div className="mb-3 flex gap-2">
+    <AnimatedPage className="grid gap-4">
+      <PanelCard
+        title="Memory"
+        subtitle="Search recent records and open full entry details inline."
+        actions={
+          <>
+            <Badge tone="info">{rendered.length} results</Badge>
+            {query.trim() ? (
+              <Badge tone="ghost">Filter: {query}</Badge>
+            ) : (
+              <Badge tone="ghost">Browsing latest memory</Badge>
+            )}
+          </>
+        }
+      >
+        <Toolbar className="mb-3">
           <input
-            className="tcp-input"
+            className="tcp-input flex-1"
             value={query}
             onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
             placeholder="Search memory"
@@ -66,7 +80,7 @@ export function MemoryPage({ client, toast }: AppPageProps) {
             <i data-lucide="search"></i>
             Search
           </button>
-        </div>
+        </Toolbar>
 
         <div className="grid gap-2">
           {rendered.length ? (
@@ -76,15 +90,15 @@ export function MemoryPage({ client, toast }: AppPageProps) {
                 <motion.article
                   key={item.id}
                   layout
-                  className={`tcp-list-item cursor-pointer transition-colors ${expanded ? "border-amber-500/60" : ""}`}
+                  className={`tcp-list-item cursor-pointer ${expanded ? "border-amber-500/60" : ""}`}
                   onClick={() => setExpandedId(expanded ? null : item.id)}
                 >
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <strong className="truncate">{item.id}</strong>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[11px] ${expanded ? "tcp-badge-info" : "tcp-subtle"}`}>
+                      <Badge tone={expanded ? "info" : "ghost"}>
                         {expanded ? "expanded" : "compact"}
-                      </span>
+                      </Badge>
                       <button
                         className="tcp-btn-danger h-7 px-2 text-xs"
                         onClick={(event) => {
@@ -120,7 +134,7 @@ export function MemoryPage({ client, toast }: AppPageProps) {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.14, ease: "easeOut" }}
-                        className="tcp-subtle text-xs whitespace-pre-wrap"
+                        className="tcp-subtle whitespace-pre-wrap text-xs"
                       >
                         {item.compact || "(empty)"}
                       </motion.div>
@@ -133,7 +147,7 @@ export function MemoryPage({ client, toast }: AppPageProps) {
             <EmptyState text="No memory records found." />
           )}
         </div>
-      </PageCard>
-    </div>
+      </PanelCard>
+    </AnimatedPage>
   );
 }

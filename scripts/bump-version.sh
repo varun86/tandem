@@ -34,6 +34,8 @@ const jsonFiles = [
 const cargoFiles = [
   "src-tauri/Cargo.toml",
   "engine/Cargo.toml",
+  "crates/tandem-agent-teams/Cargo.toml",
+  "crates/tandem-browser/Cargo.toml",
   "crates/tandem-channels/Cargo.toml",
   "crates/tandem-core/Cargo.toml",
   "crates/tandem-document/Cargo.toml",
@@ -48,7 +50,7 @@ const cargoFiles = [
   "crates/tandem-tui/Cargo.toml",
   "crates/tandem-types/Cargo.toml",
   "crates/tandem-wire/Cargo.toml",
-  "crates/tandem-agent-teams/Cargo.toml",
+  "crates/tandem-workflows/Cargo.toml",
 ];
 
 const pyprojectFiles = [

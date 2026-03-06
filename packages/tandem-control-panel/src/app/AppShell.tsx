@@ -1,5 +1,55 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { MOTION_TOKENS, prefersReducedMotion } from "./themes.js";
+import { renderIcons } from "./icons.js";
+import { GlowLayer, IconButton, StatusPulse } from "../ui/index.tsx";
+
+const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
+  dashboard: {
+    title: "Overview",
+    subtitle: "Command status, activity, and fast paths into the system.",
+  },
+  chat: {
+    title: "Chat",
+    subtitle: "Session-driven conversation, tools, uploads, and live responses.",
+  },
+  automations: {
+    title: "Automations",
+    subtitle: "Templates, routines, approvals, and execution history.",
+  },
+  orchestrator: {
+    title: "Orchestrator",
+    subtitle: "Plan-driven task execution with workspace visibility and approvals.",
+  },
+  memory: {
+    title: "Memory",
+    subtitle: "Searchable memory records and operational context snapshots.",
+  },
+  feed: {
+    title: "Live Feed",
+    subtitle: "Global event stream with pack-aware actions and debugging detail.",
+  },
+  settings: {
+    title: "Settings",
+    subtitle: "Provider defaults, identity, themes, and runtime diagnostics.",
+  },
+  mcp: {
+    title: "MCP",
+    subtitle: "Catalog, readiness, and generated integration details.",
+  },
+  files: {
+    title: "Files",
+    subtitle: "Uploaded assets and workspace-adjacent file management.",
+  },
+  "packs-detail": {
+    title: "Packs",
+    subtitle: "Starter packs, installation paths, and detected attachments.",
+  },
+  "teams-detail": {
+    title: "Teams",
+    subtitle: "Team instances, approvals, and shared execution state.",
+  },
+};
 
 export function AppShell({
   identity,
@@ -15,7 +65,7 @@ export function AppShell({
   children,
   providerGate,
 }: {
-  identity: { botName: string; botAvatarUrl: string };
+  identity: { botName: string; botAvatarUrl: string; controlPanelName?: string };
   currentRoute: string;
   providerLocked: boolean;
   navRoutes: Array<[string, string, string]>;
@@ -34,19 +84,51 @@ export function AppShell({
   providerGate?: any;
 }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const avatarUrl = String(identity.botAvatarUrl || "").trim();
   const [avatarErrored, setAvatarErrored] = useState(false);
+  const avatarUrl = String(identity.botAvatarUrl || "").trim();
+  const reducedMotion = prefersReducedMotion();
 
   useEffect(() => {
-    if (!mobileNavOpen) return;
     setMobileNavOpen(false);
   }, [currentRoute]);
+
+  useEffect(() => {
+    try {
+      renderIcons();
+    } catch {}
+  }, [currentRoute, mobileNavOpen]);
 
   useEffect(() => {
     setAvatarErrored(false);
   }, [avatarUrl]);
 
-  const renderNavItems = (onDone?: () => void) =>
+  const routeMeta = ROUTE_META[currentRoute] || {
+    title: String(navRoutes.find(([id]) => id === currentRoute)?.[1] || "Control Panel"),
+    subtitle: "Desktop-inspired operations UI for Tandem.",
+  };
+
+  const currentNav = useMemo(
+    () => navRoutes.find(([id]) => id === currentRoute) || navRoutes[0],
+    [currentRoute, navRoutes]
+  );
+
+  const renderAvatar = () =>
+    avatarUrl && !avatarErrored ? (
+      <img
+        src={avatarUrl}
+        alt={identity.botName}
+        className="block h-full w-full object-cover"
+        onError={() => setAvatarErrored(true)}
+      />
+    ) : (
+      <span className="text-sm font-semibold uppercase">
+        {String(identity.botName || "T")
+          .trim()
+          .slice(0, 1) || "T"}
+      </span>
+    );
+
+  const renderIconRailItems = () =>
     navRoutes.map(([id, label, icon]) => {
       const active = currentRoute === id;
       const locked = providerLocked && id !== "settings";
@@ -54,133 +136,221 @@ export function AppShell({
         <button
           key={id}
           type="button"
-          data-route={id}
+          title={label}
           disabled={locked}
-          onClick={() => {
-            onNavigate(id);
-            onDone?.();
-          }}
-          className={`nav-item ${active ? "active" : ""} ${locked ? "locked" : ""} relative`}
+          className={`tcp-rail-icon ${active ? "active" : ""} ${locked ? "locked" : ""}`}
+          onClick={() => onNavigate(id)}
         >
           {active ? (
-            <motion.span
-              layoutId="nav-active-indicator"
-              className="absolute inset-0 rounded-lg border border-amber-400/40 bg-amber-400/10"
-              transition={{ type: "spring", stiffness: 500, damping: 38 }}
-            />
+            <motion.span layoutId="tcp-icon-indicator" className="tcp-rail-icon-indicator" />
           ) : null}
-          <span className="relative z-10 inline-flex items-center gap-2">
-            <i data-lucide={icon}></i>
-            <span>{label}</span>
-          </span>
+          <i data-lucide={icon}></i>
         </button>
       );
     });
 
-  const renderSidebarBody = (mobile = false) => (
-    <>
-      <div className="tcp-brand-tile mb-4 flex items-center gap-3 rounded-xl p-3">
-        <div className="tcp-brand-avatar grid h-10 w-10 place-items-center overflow-hidden rounded-xl">
-          {avatarUrl && !avatarErrored ? (
-            <img
-              key="brand-avatar-image"
-              src={avatarUrl}
-              alt={identity.botName}
-              className="block h-full w-full object-cover"
-              onError={() => setAvatarErrored(true)}
-            />
-          ) : (
-            <span key="brand-avatar-fallback" className="text-xs font-semibold uppercase">
-              {String(identity.botName || "T")
-                .trim()
-                .slice(0, 1) || "T"}
-            </span>
-          )}
-        </div>
-        <div>
-          <div className="text-base font-semibold">{identity.botName}</div>
-          <div className="tcp-subtle text-xs uppercase tracking-wider">Control Center</div>
-        </div>
-      </div>
-      <nav id="nav" className="grid gap-1">
-        {renderNavItems(mobile ? () => setMobileNavOpen(false) : undefined)}
-      </nav>
-      <div className="mt-3 grid gap-2">
+  const renderContextNav = (mobile = false) =>
+    navRoutes.map(([id, label, icon]) => {
+      const active = currentRoute === id;
+      const locked = providerLocked && id !== "settings";
+      return (
         <button
+          key={id}
           type="button"
-          className="tcp-btn w-full justify-start"
+          disabled={locked}
+          className={`tcp-context-link ${active ? "active" : ""} ${locked ? "locked" : ""}`}
           onClick={() => {
-            onPaletteOpen();
+            onNavigate(id);
             if (mobile) setMobileNavOpen(false);
           }}
         >
-          <span className="inline-flex items-center gap-1.5">
-            <i data-lucide="search"></i>
-            <span>Command Palette</span>
+          <span className="inline-flex items-center gap-2">
+            <i data-lucide={icon}></i>
+            <span>{label}</span>
           </span>
-          <kbd className="text-[10px] text-slate-400">Ctrl/Cmd+K</kbd>
+          {active ? <span className="tcp-context-link-dot"></span> : null}
         </button>
-        <button
-          type="button"
-          className="tcp-btn w-full justify-start"
-          onClick={() => {
-            onThemeCycle();
-            if (mobile) setMobileNavOpen(false);
-          }}
-        >
-          <i data-lucide="sparkles"></i>
-          Cycle Theme
-        </button>
-        <button
-          type="button"
-          className="tcp-btn w-full justify-start"
-          onClick={() => {
-            onLogout();
-            if (mobile) setMobileNavOpen(false);
-          }}
-        >
-          <i data-lucide="log-out"></i>
-          Logout
-        </button>
+      );
+    });
+
+  const contextRail = (mobile = false) => (
+    <>
+      {mobile ? (
+        <div className="tcp-context-hero">
+          <GlowLayer className="tcp-context-hero-glow" />
+          <div className="relative z-10 flex items-center gap-3">
+            <div className="tcp-brand-avatar h-11 w-11">{renderAvatar()}</div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">
+                {identity.controlPanelName || `${identity.botName} Control Panel`}
+              </div>
+              <div className="tcp-subtle text-xs">Workspace navigation and system status</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className={`tcp-context-section ${mobile ? "" : "xl:hidden"}`.trim()}>
+        <div className="tcp-context-section-label">Navigation</div>
+        <nav className="grid gap-1">{renderContextNav(mobile)}</nav>
+      </div>
+
+      {mobile ? (
+        <div className="tcp-context-section">
+          <div className="tcp-context-section-label">System</div>
+          <div className="grid gap-2">
+            <div className="tcp-context-stat">
+              <span className="tcp-subtle text-xs">Engine</span>
+              {statusBar.engineHealthy ? (
+                <StatusPulse tone="ok" text="healthy" />
+              ) : (
+                <StatusPulse tone="warn" text="checking" />
+              )}
+            </div>
+            <div className="tcp-context-stat">
+              <span className="tcp-subtle text-xs">Provider</span>
+              <span className={statusBar.providerBadge}>{statusBar.providerText}</span>
+            </div>
+            <div className="tcp-context-stat">
+              <span className="tcp-subtle text-xs">Active runs</span>
+              {statusBar.activeRuns > 0 ? (
+                <StatusPulse tone="live" text={String(statusBar.activeRuns)} />
+              ) : (
+                <span className="tcp-badge tcp-badge-ghost">idle</span>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="tcp-context-section mt-auto">
+        <div className="tcp-context-section-label">Actions</div>
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className="tcp-btn w-full justify-start"
+            onClick={() => {
+              onPaletteOpen();
+              if (mobile) setMobileNavOpen(false);
+            }}
+          >
+            <i data-lucide="search"></i>
+            Command palette
+          </button>
+          <button
+            type="button"
+            className="tcp-btn w-full justify-start"
+            onClick={() => {
+              onThemeCycle();
+              if (mobile) setMobileNavOpen(false);
+            }}
+          >
+            <i data-lucide="sparkles"></i>
+            Cycle theme
+          </button>
+          <button
+            type="button"
+            className="tcp-btn w-full justify-start"
+            onClick={() => {
+              onLogout();
+              if (mobile) setMobileNavOpen(false);
+            }}
+          >
+            <i data-lucide="log-out"></i>
+            Logout
+          </button>
+        </div>
       </div>
     </>
   );
 
   return (
-    <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[270px_1fr]">
-      <aside className="tcp-sidebar hidden p-4 lg:block">{renderSidebarBody(false)}</aside>
-      <main className="flex h-screen min-w-0 flex-col p-3 md:p-5">
-        <section className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-slate-700/40 bg-slate-950/30 p-3 lg:hidden">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{identity.botName}</div>
-            <div className="tcp-subtle text-[11px] uppercase tracking-wider">Control Center</div>
+    <div className="tcp-shell">
+      <GlowLayer className="tcp-shell-background">
+        <div className="tcp-shell-glow tcp-shell-glow-a"></div>
+        <div className="tcp-shell-glow tcp-shell-glow-b"></div>
+      </GlowLayer>
+
+      <aside className="tcp-icon-rail hidden xl:flex">
+        <button type="button" className="tcp-rail-brand" onClick={() => onNavigate("dashboard")}>
+          <div className="tcp-brand-avatar h-10 w-10">{renderAvatar()}</div>
+        </button>
+        <nav className="tcp-rail-nav">{renderIconRailItems()}</nav>
+        <div className="tcp-rail-footer">
+          <IconButton title="Command palette" onClick={onPaletteOpen}>
+            <i data-lucide="search"></i>
+          </IconButton>
+          <IconButton title="Cycle theme" onClick={onThemeCycle}>
+            <i data-lucide="sparkles"></i>
+          </IconButton>
+          <IconButton title="Logout" onClick={onLogout}>
+            <i data-lucide="log-out"></i>
+          </IconButton>
+          <div className="mt-2 flex justify-center">
+            {statusBar.engineHealthy ? <StatusPulse tone="ok" /> : <StatusPulse tone="warn" />}
           </div>
-          <button type="button" className="tcp-btn h-9 px-3" onClick={() => setMobileNavOpen(true)}>
+        </div>
+      </aside>
+
+      <aside className="tcp-context-rail hidden lg:flex xl:hidden">{contextRail(false)}</aside>
+
+      <main className="tcp-main-shell">
+        <section className="tcp-mobile-topbar lg:hidden">
+          <button
+            type="button"
+            className="tcp-btn h-10 px-3"
+            onClick={() => setMobileNavOpen(true)}
+          >
             <i data-lucide="menu"></i>
             Menu
           </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold">{routeMeta.title}</div>
+            <div className="tcp-subtle truncate text-xs">
+              {currentNav?.[1] || routeMeta.subtitle}
+            </div>
+          </div>
+          {statusBar.activeRuns > 0 ? (
+            <StatusPulse tone="live" text={String(statusBar.activeRuns)} />
+          ) : null}
         </section>
-        <section className="mb-3 grid shrink-0 gap-3 rounded-xl border border-slate-700/40 bg-slate-950/30 p-3 md:grid-cols-3">
-          <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/20 p-2">
-            <span className="tcp-subtle text-xs">Engine</span>
-            <span className={statusBar.engineHealthy ? "tcp-badge-ok" : "tcp-badge-warn"}>
-              {statusBar.engineHealthy ? "healthy" : "unknown"}
-            </span>
+
+        <section className="tcp-topbar">
+          <div className="min-w-0">
+            <div className="tcp-page-eyebrow">Tandem Control</div>
+            <h1 className="tcp-main-title">{routeMeta.title}</h1>
+            <p className="tcp-subtle mt-1 max-w-2xl">{routeMeta.subtitle}</p>
           </div>
-          <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/20 p-2">
-            <span className="tcp-subtle text-xs">Provider</span>
+          <div className="tcp-topbar-status">
             <span className={statusBar.providerBadge}>{statusBar.providerText}</span>
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/20 p-2">
-            <span className="tcp-subtle text-xs">Active Runs</span>
-            <span className="tcp-badge-info">{String(statusBar.activeRuns)}</span>
+            {statusBar.engineHealthy ? (
+              <StatusPulse tone="ok" text="Engine healthy" />
+            ) : (
+              <StatusPulse tone="warn" text="Checking engine" />
+            )}
+            {statusBar.activeRuns > 0 ? (
+              <StatusPulse tone="live" text={`${statusBar.activeRuns} run`} />
+            ) : (
+              <span className="tcp-badge tcp-badge-ghost">No active runs</span>
+            )}
           </div>
         </section>
 
         <AnimatePresence mode="wait">
           <motion.section
             key={routeKey}
-            className="flex min-h-0 flex-1 flex-col gap-4 tcp-view-surface"
+            className="tcp-main-content"
+            initial={reducedMotion ? false : { opacity: 0, y: 18 }}
+            animate={reducedMotion ? undefined : { opacity: 1, y: 0 }}
+            exit={reducedMotion ? undefined : { opacity: 0, y: -14 }}
+            transition={
+              reducedMotion
+                ? undefined
+                : {
+                    duration: MOTION_TOKENS.duration.normal,
+                    ease: MOTION_TOKENS.easing.standard,
+                  }
+            }
           >
             {children}
           </motion.section>
@@ -190,35 +360,34 @@ export function AppShell({
       <AnimatePresence>
         {mobileNavOpen ? (
           <motion.div
-            className="fixed inset-0 z-50 lg:hidden"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            className="tcp-mobile-drawer lg:hidden"
+            initial={reducedMotion ? false : { opacity: 0 }}
+            animate={reducedMotion ? undefined : { opacity: 1 }}
+            exit={reducedMotion ? undefined : { opacity: 0 }}
           >
             <button
               type="button"
-              className="absolute inset-0 bg-black/45"
-              aria-label="Close menu"
+              className="tcp-mobile-drawer-backdrop"
+              aria-label="Close navigation"
               onClick={() => setMobileNavOpen(false)}
             />
             <motion.aside
-              className="tcp-sidebar absolute inset-y-0 left-0 w-[min(84vw,320px)] overflow-auto p-4"
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", stiffness: 320, damping: 34 }}
+              className="tcp-mobile-drawer-panel"
+              initial={reducedMotion ? false : { x: "-100%" }}
+              animate={reducedMotion ? undefined : { x: 0 }}
+              exit={reducedMotion ? undefined : { x: "-100%" }}
+              transition={reducedMotion ? undefined : MOTION_TOKENS.spring.drawer}
             >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-sm font-semibold">Menu</div>
-                <button
-                  type="button"
-                  className="tcp-btn h-8 px-2"
-                  onClick={() => setMobileNavOpen(false)}
-                >
+                <div>
+                  <div className="text-sm font-semibold">{identity.botName}</div>
+                  <div className="tcp-subtle text-xs">{routeMeta.title}</div>
+                </div>
+                <IconButton title="Close" onClick={() => setMobileNavOpen(false)}>
                   <i data-lucide="x"></i>
-                </button>
+                </IconButton>
               </div>
-              {renderSidebarBody(true)}
+              {contextRail(true)}
             </motion.aside>
           </motion.div>
         ) : null}

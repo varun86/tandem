@@ -197,6 +197,8 @@ pub(super) async fn list_providers(State(state): State<AppState>) -> Json<Value>
     let all = state.providers.list().await;
     let mut wire = WireProviderCatalog::from_providers(all, connected);
     let effective_cfg = state.config.get_effective_value().await;
+    let persisted_auth = tandem_core::load_provider_auth();
+    let runtime_auth = state.auth.read().await.clone();
     let config_model_provider_set = merge_provider_models_from_config(&mut wire, &effective_cfg)
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
@@ -211,7 +213,14 @@ pub(super) async fn list_providers(State(state): State<AppState>) -> Json<Value>
     ensure_known_provider_entries(&mut wire);
 
     for entry in &mut wire.all {
-        match fetch_remote_provider_models(&entry.id, &effective_cfg).await {
+        match fetch_remote_provider_models(
+            &entry.id,
+            &effective_cfg,
+            &runtime_auth,
+            &persisted_auth,
+        )
+        .await
+        {
             ProviderCatalogFetchResult::Remote { models } => {
                 entry.models = models;
                 entry.catalog_source = Some("remote".to_string());
@@ -643,13 +652,34 @@ fn remote_catalog_support_message(provider_id: &str) -> String {
     }
 }
 
-fn provider_config_api_key(cfg: &Value, provider_id: &str) -> Option<String> {
+fn provider_config_api_key(
+    cfg: &Value,
+    provider_id: &str,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
+) -> Option<String> {
     provider_config_value(cfg, provider_id)
         .and_then(|entry| entry.get("api_key").or_else(|| entry.get("apiKey")))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "x")
         .map(str::to_string)
+        .or_else(|| {
+            runtime_auth
+                .get(&provider_id.to_ascii_lowercase())
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            persisted_auth
+                .get(&provider_id.to_ascii_lowercase())
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
         .or_else(|| {
             provider_env_candidates(provider_id)
                 .into_iter()
@@ -756,8 +786,10 @@ fn parse_openai_compatible_model_payload(
 
 async fn fetch_openrouter_models(
     cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let api_key = provider_config_api_key(cfg, "openrouter")
+    let api_key = provider_config_api_key(cfg, "openrouter", runtime_auth, persisted_auth)
         .or_else(|| std::env::var("OPENCODE_OPENROUTER_API_KEY").ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -793,8 +825,11 @@ async fn fetch_openrouter_models(
 async fn fetch_openai_compatible_models(
     provider_id: &str,
     cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let Some(api_key) = provider_config_api_key(cfg, provider_id) else {
+    let Some(api_key) = provider_config_api_key(cfg, provider_id, runtime_auth, persisted_auth)
+    else {
         return Err(format!(
             "{} requires an API key before live model discovery is available.",
             known_provider_name(provider_id).unwrap_or(provider_id)
@@ -827,12 +862,144 @@ async fn fetch_openai_compatible_models(
     })
 }
 
+fn normalize_cohere_catalog_base(input: &str) -> String {
+    let mut base = input.trim().trim_end_matches('/').to_string();
+    for suffix in ["/v1", "/v2", "/models"] {
+        if let Some(stripped) = base.strip_suffix(suffix) {
+            base = stripped.trim_end_matches('/').to_string();
+            break;
+        }
+    }
+    format!("{}/v1", base.trim_end_matches('/'))
+}
+
+fn parse_anthropic_model_payload(body: &Value) -> Option<HashMap<String, WireProviderModel>> {
+    let data = body.get("data").and_then(|v| v.as_array())?;
+    let mut out = HashMap::new();
+    for item in data {
+        let Some(model_id) = item.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = item
+            .get("display_name")
+            .or_else(|| item.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| Some(model_id.to_string()));
+        out.insert(
+            model_id.to_string(),
+            WireProviderModel { name, limit: None },
+        );
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+async fn fetch_anthropic_models(
+    cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
+) -> Result<HashMap<String, WireProviderModel>, String> {
+    let Some(api_key) = provider_config_api_key(cfg, "anthropic", runtime_auth, persisted_auth)
+    else {
+        return Err(
+            "Anthropic requires an API key before live model discovery is available.".to_string(),
+        );
+    };
+    let resp = reqwest::Client::new()
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch Anthropic models: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Anthropic model catalog request failed with status {}",
+            resp.status()
+        ));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|err| format!("Failed to decode Anthropic models: {err}"))?;
+    parse_anthropic_model_payload(&body)
+        .ok_or_else(|| "Anthropic returned an empty or invalid model catalog.".to_string())
+}
+
+fn parse_cohere_model_payload(body: &Value) -> Option<HashMap<String, WireProviderModel>> {
+    let data = body
+        .get("models")
+        .and_then(|v| v.as_array())
+        .or_else(|| body.get("data").and_then(|v| v.as_array()))?;
+    let mut out = HashMap::new();
+    for item in data {
+        let Some(model_id) = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("id").and_then(|v| v.as_str()))
+        else {
+            continue;
+        };
+        let context = item
+            .get("context_length")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+        out.insert(
+            model_id.to_string(),
+            WireProviderModel {
+                name: Some(model_id.to_string()),
+                limit: context.map(|ctx| WireProviderModelLimit { context: Some(ctx) }),
+            },
+        );
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+async fn fetch_cohere_models(
+    cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
+) -> Result<HashMap<String, WireProviderModel>, String> {
+    let Some(api_key) = provider_config_api_key(cfg, "cohere", runtime_auth, persisted_auth) else {
+        return Err(
+            "Cohere requires an API key before live model discovery is available.".to_string(),
+        );
+    };
+    let base_url = provider_config_value(cfg, "cohere")
+        .and_then(|entry| entry.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or("https://api.cohere.com/v2");
+    let url = format!("{}/models", normalize_cohere_catalog_base(base_url));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(api_key)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch Cohere models: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Cohere model catalog request failed with status {}",
+            resp.status()
+        ));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|err| format!("Failed to decode Cohere models: {err}"))?;
+    parse_cohere_model_payload(&body)
+        .ok_or_else(|| "Cohere returned an empty or invalid model catalog.".to_string())
+}
+
 async fn fetch_remote_provider_models(
     provider_id: &str,
     cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
 ) -> ProviderCatalogFetchResult {
     match provider_id {
-        "openrouter" => match fetch_openrouter_models(cfg).await {
+        "openrouter" => match fetch_openrouter_models(cfg, runtime_auth, persisted_auth).await {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {
                 if message.contains("requires an API key") {
@@ -844,7 +1011,9 @@ async fn fetch_remote_provider_models(
             }
         },
         "openai" | "groq" | "mistral" | "together" => {
-            match fetch_openai_compatible_models(provider_id, cfg).await {
+            match fetch_openai_compatible_models(provider_id, cfg, runtime_auth, persisted_auth)
+                .await
+            {
                 Ok(models) => ProviderCatalogFetchResult::Remote { models },
                 Err(message) => {
                     if message.contains("requires an API key") {
@@ -856,7 +1025,29 @@ async fn fetch_remote_provider_models(
                 }
             }
         }
-        "anthropic" | "cohere" | "azure" | "vertex" | "bedrock" | "copilot" | "ollama" => {
+        "anthropic" => match fetch_anthropic_models(cfg, runtime_auth, persisted_auth).await {
+            Ok(models) => ProviderCatalogFetchResult::Remote { models },
+            Err(message) => {
+                if message.contains("requires an API key") {
+                    ProviderCatalogFetchResult::Unavailable { message }
+                } else {
+                    tracing::warn!("anthropic catalog discovery failed: {message}");
+                    ProviderCatalogFetchResult::Error { message }
+                }
+            }
+        },
+        "cohere" => match fetch_cohere_models(cfg, runtime_auth, persisted_auth).await {
+            Ok(models) => ProviderCatalogFetchResult::Remote { models },
+            Err(message) => {
+                if message.contains("requires an API key") {
+                    ProviderCatalogFetchResult::Unavailable { message }
+                } else {
+                    tracing::warn!("cohere catalog discovery failed: {message}");
+                    ProviderCatalogFetchResult::Error { message }
+                }
+            }
+        },
+        "azure" | "vertex" | "bedrock" | "copilot" | "ollama" => {
             ProviderCatalogFetchResult::Unavailable {
                 message: remote_catalog_support_message(provider_id),
             }

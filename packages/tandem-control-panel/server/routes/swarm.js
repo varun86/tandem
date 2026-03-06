@@ -8,6 +8,9 @@ export function createSwarmApiHandler(deps) {
     REPO_ROOT,
     ENGINE_URL,
     swarmState,
+    getSwarmRunController,
+    upsertSwarmRunController,
+    setActiveSwarmRunId,
     isLocalEngineUrl,
     sendJson,
     readJsonBody,
@@ -29,6 +32,15 @@ export function createSwarmApiHandler(deps) {
   return async function handleSwarmApi(req, res, session) {
     const url = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`);
     const routePath = mapOrchestratorPath(url.pathname);
+    const resolveRunId = (...values) =>
+      values
+        .map((value) => String(value || "").trim())
+        .find((value) => value.length > 0) || "";
+    const controllerFor = (runId = "") => getSwarmRunController(resolveRunId(runId));
+    const readRunSetting = (runId, key, fallback) => {
+      const controller = controllerFor(runId);
+      return controller?.[key] ?? fallback;
+    };
     const statusFromRun = async (runId) => {
       if (!runId) return null;
       try {
@@ -40,51 +52,59 @@ export function createSwarmApiHandler(deps) {
     };
 
     if (routePath === "/api/swarm/status" && req.method === "GET") {
-      const run = await statusFromRun(swarmState.runId);
+      const statusRunId = resolveRunId(url.searchParams.get("runId"), swarmState.runId);
+      const run = await statusFromRun(statusRunId);
       if (run) {
         let status = contextRunStatusToSwarmStatus(run.status);
         if (status === "planning") {
           const eventsPayload = await engineRequestJson(
             session,
-            `/context/runs/${encodeURIComponent(String(run?.run_id || swarmState.runId || ""))}/events?tail=60`
+            `/context/runs/${encodeURIComponent(String(run?.run_id || statusRunId || ""))}/events?tail=60`
           ).catch(() => ({ events: [] }));
           status = contextRunStatusToSwarmStatus(inferStatusFromEvents(status, eventsPayload?.events));
         }
-        swarmState.status = status;
-        swarmState.objective = String(run.objective || swarmState.objective || "");
-        swarmState.workspaceRoot = String(run.workspace?.canonical_path || swarmState.workspaceRoot || REPO_ROOT);
-        swarmState.repoRoot = swarmState.workspaceRoot;
-      } else if (swarmState.runId) {
-        swarmState.status = "idle";
-        swarmState.stoppedAt = Date.now();
+        if (statusRunId) {
+          upsertSwarmRunController(statusRunId, {
+            status,
+            objective: String(run.objective || ""),
+            workspaceRoot: String(run.workspace?.canonical_path || swarmState.workspaceRoot || REPO_ROOT),
+            repoRoot: String(run.workspace?.canonical_path || swarmState.workspaceRoot || REPO_ROOT),
+          });
+        }
+      } else if (statusRunId) {
+        upsertSwarmRunController(statusRunId, {
+          status: "idle",
+          stoppedAt: Date.now(),
+        });
       }
+      const controller = controllerFor(statusRunId);
       sendJson(res, 200, {
         ok: true,
-        status: swarmState.status,
-        objective: swarmState.objective,
-        workspaceRoot: swarmState.workspaceRoot,
-        maxTasks: swarmState.maxTasks,
-        maxAgents: swarmState.maxAgents,
-        workflowId: swarmState.workflowId || "",
-        modelProvider: swarmState.modelProvider || "",
-        modelId: swarmState.modelId || "",
-        resolvedModelProvider: swarmState.resolvedModelProvider || "",
-        resolvedModelId: swarmState.resolvedModelId || "",
-        modelResolutionSource: swarmState.modelResolutionSource || "none",
-        mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
-        repoRoot: swarmState.repoRoot || "",
+        status: controller?.status || swarmState.status,
+        objective: controller?.objective || swarmState.objective,
+        workspaceRoot: controller?.workspaceRoot || swarmState.workspaceRoot,
+        maxTasks: controller?.maxTasks ?? swarmState.maxTasks,
+        maxAgents: controller?.maxAgents ?? swarmState.maxAgents,
+        workflowId: controller?.workflowId || swarmState.workflowId || "",
+        modelProvider: controller?.modelProvider || swarmState.modelProvider || "",
+        modelId: controller?.modelId || swarmState.modelId || "",
+        resolvedModelProvider: controller?.resolvedModelProvider || swarmState.resolvedModelProvider || "",
+        resolvedModelId: controller?.resolvedModelId || swarmState.resolvedModelId || "",
+        modelResolutionSource: controller?.modelResolutionSource || swarmState.modelResolutionSource || "none",
+        mcpServers: Array.isArray(controller?.mcpServers) ? controller.mcpServers : Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
+        repoRoot: controller?.repoRoot || swarmState.repoRoot || "",
         preflight: swarmState.preflight || null,
-        startedAt: swarmState.startedAt,
-        stoppedAt: swarmState.stoppedAt,
-        runId: swarmState.runId || "",
-        attachedPid: swarmState.attachedPid || null,
+        startedAt: controller?.startedAt ?? swarmState.startedAt,
+        stoppedAt: controller?.stoppedAt ?? swarmState.stoppedAt,
+        runId: statusRunId || swarmState.runId || "",
+        attachedPid: controller?.attachedPid || swarmState.attachedPid || null,
         localEngine: isLocalEngineUrl(ENGINE_URL),
-        lastError: swarmState.lastError || null,
-        executorState: swarmState.executorState || "idle",
-        executorReason: swarmState.executorReason || null,
-        executorMode: swarmState.executorMode || "context_steps",
-        verificationMode: swarmState.verificationMode || "strict",
-        currentRunId: swarmState.runId || "",
+        lastError: controller?.lastError || swarmState.lastError || null,
+        executorState: controller?.executorState || swarmState.executorState || "idle",
+        executorReason: controller?.executorReason || swarmState.executorReason || null,
+        executorMode: controller?.executorMode || swarmState.executorMode || "context_steps",
+        verificationMode: controller?.verificationMode || swarmState.verificationMode || "strict",
+        currentRunId: statusRunId || swarmState.runId || "",
         buildVersion: swarmState.buildVersion || "",
         buildFingerprint: swarmState.buildFingerprint || "",
         buildStartedAt: swarmState.buildStartedAt || null,
@@ -243,7 +263,7 @@ export function createSwarmApiHandler(deps) {
         for (const runId of runIds) hidden.add(runId);
         await saveHiddenSwarmRunIds(hidden);
         if (runIds.includes(String(swarmState.runId || "").trim())) {
-          swarmState.runId = "";
+          setActiveSwarmRunId("");
         }
         sendJson(res, 200, { ok: true, hiddenCount: hidden.size, hiddenRunIds: runIds });
       } catch (e) {
@@ -288,7 +308,7 @@ export function createSwarmApiHandler(deps) {
         for (const runId of completedRunIds) hidden.add(runId);
         await saveHiddenSwarmRunIds(hidden);
         if (completedRunIds.includes(String(swarmState.runId || "").trim())) {
-          swarmState.runId = "";
+          setActiveSwarmRunId("");
         }
         sendJson(res, 200, { ok: true, hiddenCount: hidden.size, hiddenNow: completedRunIds.length });
       } catch (e) {
@@ -311,7 +331,8 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/request_revision" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
+        const controller = controllerFor(runId);
         const feedback = String(body?.feedback || "").trim();
         if (!runId) throw new Error("Missing runId");
         if (!feedback) throw new Error("Missing revision feedback");
@@ -319,7 +340,11 @@ export function createSwarmApiHandler(deps) {
         const run = payload?.run || {};
         const objective = String(run?.objective || "").trim();
         const workspaceRoot = String(
-          run?.workspace?.canonical_path || run?.workspace_root || swarmState.workspaceRoot || ""
+          run?.workspace?.canonical_path ||
+            run?.workspace_root ||
+            controller?.workspaceRoot ||
+            swarmState.workspaceRoot ||
+            ""
         ).trim();
         if (!objective || !workspaceRoot) {
           throw new Error("Cannot request revision: missing objective/workspace from existing run.");
@@ -331,13 +356,29 @@ export function createSwarmApiHandler(deps) {
         const revisedRunId = await startSwarm(session, {
           workspaceRoot,
           objective: revisedObjective,
-          maxTasks: Number(body?.maxTasks || swarmState.maxTasks || 3),
-          maxAgents: Number(body?.maxAgents || swarmState.maxAgents || 3),
-          workflowId: String(body?.workflowId || swarmState.workflowId || "swarm.blackboard.default"),
-          modelProvider: String(run?.model_provider || swarmState.modelProvider || ""),
-          modelId: String(run?.model_id || swarmState.modelId || ""),
-          mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
-          verificationMode: String(body?.verificationMode || swarmState.verificationMode || "strict"),
+          maxTasks: Number(body?.maxTasks || controller?.maxTasks || swarmState.maxTasks || 3),
+          maxAgents: Number(body?.maxAgents || controller?.maxAgents || swarmState.maxAgents || 3),
+          workflowId: String(
+            body?.workflowId ||
+              controller?.workflowId ||
+              swarmState.workflowId ||
+              "swarm.blackboard.default"
+          ),
+          modelProvider: String(
+            run?.model_provider || controller?.modelProvider || swarmState.modelProvider || ""
+          ),
+          modelId: String(run?.model_id || controller?.modelId || swarmState.modelId || ""),
+          mcpServers: Array.isArray(controller?.mcpServers)
+            ? controller.mcpServers
+            : Array.isArray(swarmState.mcpServers)
+              ? swarmState.mcpServers
+              : [],
+          verificationMode: String(
+            body?.verificationMode ||
+              controller?.verificationMode ||
+              swarmState.verificationMode ||
+              "strict"
+          ),
           allowLocalPlannerFallback: body?.allowLocalPlannerFallback === true,
         });
         sendJson(res, 200, { ok: true, runId: revisedRunId, previousRunId: runId });
@@ -350,14 +391,16 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/approve" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
+        const controller = controllerFor(runId);
         if (!runId) throw new Error("Missing runId");
+        setActiveSwarmRunId(runId);
         await appendContextRunEvent(session, runId, "plan_approved", "running", {});
         const mode = await detectExecutorMode(session, runId);
         void startRunExecutor(session, runId, {
           mode,
-          maxAgents: swarmState.maxAgents,
-          workflowId: swarmState.workflowId,
+          maxAgents: controller?.maxAgents ?? swarmState.maxAgents,
+          workflowId: controller?.workflowId || swarmState.workflowId,
         });
         sendJson(res, 200, { ok: true, runId });
       } catch (e) {
@@ -369,8 +412,9 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/pause" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         if (!runId) throw new Error("Missing runId");
+        setActiveSwarmRunId(runId);
         await appendContextRunEvent(session, runId, "run_paused", "paused", {});
         sendJson(res, 200, { ok: true, runId });
       } catch (e) {
@@ -382,15 +426,17 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/resume" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
+        const controller = controllerFor(runId);
         if (!runId) throw new Error("Missing runId");
+        setActiveSwarmRunId(runId);
         await appendContextRunEvent(session, runId, "run_resumed", "running", {});
         const requeued = await requeueInProgressSteps(session, runId);
         const mode = await detectExecutorMode(session, runId);
         const started = await startRunExecutor(session, runId, {
           mode,
-          maxAgents: swarmState.maxAgents,
-          workflowId: swarmState.workflowId,
+          maxAgents: controller?.maxAgents ?? swarmState.maxAgents,
+          workflowId: controller?.workflowId || swarmState.workflowId,
         });
         const preview = await engineRequestJson(
           session,
@@ -405,9 +451,9 @@ export function createSwarmApiHandler(deps) {
           sessionDispatchOutcome: started ? "started" : "already_running",
           selectedStepId: preview?.selected_step_id || null,
           whyNextStep: preview?.why_next_step || null,
-          executorMode: swarmState.executorMode || mode,
-          executorState: swarmState.executorState || "idle",
-          executorReason: swarmState.executorReason || null,
+          executorMode: readRunSetting(runId, "executorMode", mode),
+          executorState: readRunSetting(runId, "executorState", "idle"),
+          executorReason: readRunSetting(runId, "executorReason", null),
         });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -418,8 +464,10 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/continue" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
+        const controller = controllerFor(runId);
         if (!runId) throw new Error("Missing runId");
+        setActiveSwarmRunId(runId);
         await appendContextRunEvent(session, runId, "run_resumed", "running", {
           why_next_step: "manual continue requested",
         });
@@ -427,8 +475,8 @@ export function createSwarmApiHandler(deps) {
         const mode = await detectExecutorMode(session, runId);
         const started = await startRunExecutor(session, runId, {
           mode,
-          maxAgents: swarmState.maxAgents,
-          workflowId: swarmState.workflowId,
+          maxAgents: controller?.maxAgents ?? swarmState.maxAgents,
+          workflowId: controller?.workflowId || swarmState.workflowId,
         });
         const preview = await engineRequestJson(
           session,
@@ -443,9 +491,9 @@ export function createSwarmApiHandler(deps) {
           sessionDispatchOutcome: started ? "started" : "already_running",
           selectedStepId: preview?.selected_step_id || null,
           whyNextStep: preview?.why_next_step || null,
-          executorMode: swarmState.executorMode || mode,
-          executorState: swarmState.executorState || "idle",
-          executorReason: swarmState.executorReason || null,
+          executorMode: readRunSetting(runId, "executorMode", mode),
+          executorState: readRunSetting(runId, "executorState", "idle"),
+          executorReason: readRunSetting(runId, "executorReason", null),
         });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -456,12 +504,15 @@ export function createSwarmApiHandler(deps) {
     if ((routePath === "/api/swarm/cancel" || routePath === "/api/swarm/stop") && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         if (!runId) throw new Error("Missing runId");
+        setActiveSwarmRunId(runId);
         await appendContextRunEvent(session, runId, "run_cancelled", "cancelled", {});
         if (swarmState.runId === runId) {
-          swarmState.status = "cancelled";
-          swarmState.stoppedAt = Date.now();
+          upsertSwarmRunController(runId, {
+            status: "cancelled",
+            stoppedAt: Date.now(),
+          });
         }
         sendJson(res, 200, { ok: true, runId });
       } catch (e) {
@@ -473,18 +524,22 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/retry" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         const stepId = String(body?.stepId || "").trim();
         if (!runId || !stepId) throw new Error("Missing runId or stepId");
-        await transitionBlackboardTask(session, runId, { id: stepId }, { status: "runnable" }).catch(() => null);
+        const controller = controllerFor(runId);
+        setActiveSwarmRunId(runId);
+        await transitionBlackboardTask(session, runId, { id: stepId }, { action: "retry" }).catch(
+          () => null
+        );
         await appendContextRunEvent(session, runId, "task_retry_requested", "running", {
           why_next_step: `manual retry requested for ${stepId}`,
         }, stepId);
         const mode = await detectExecutorMode(session, runId);
         const started = await startRunExecutor(session, runId, {
           mode,
-          maxAgents: swarmState.maxAgents,
-          workflowId: swarmState.workflowId,
+          maxAgents: controller?.maxAgents ?? swarmState.maxAgents,
+          workflowId: controller?.workflowId || swarmState.workflowId,
         });
         sendJson(res, 200, {
           ok: true,
@@ -492,9 +547,9 @@ export function createSwarmApiHandler(deps) {
           stepId,
           started,
           sessionDispatchOutcome: started ? "started" : "already_running",
-          executorMode: swarmState.executorMode || mode,
-          executorState: swarmState.executorState || "idle",
-          executorReason: swarmState.executorReason || null,
+          executorMode: readRunSetting(runId, "executorMode", mode),
+          executorState: readRunSetting(runId, "executorState", "idle"),
+          executorReason: readRunSetting(runId, "executorReason", null),
         });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -505,7 +560,7 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/tasks/create" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         const tasks = Array.isArray(body?.tasks) ? body.tasks : [];
         if (!runId || !tasks.length) throw new Error("Missing runId or tasks");
         const payload = await engineRequestJson(
@@ -526,13 +581,14 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/tasks/claim" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         if (!runId) throw new Error("Missing runId");
+        const controller = controllerFor(runId);
         const claimBody = {
           agent_id: String(body?.agentId || "control_panel").trim(),
           command_id: body?.commandId || undefined,
           task_type: body?.taskType || undefined,
-          workflow_id: body?.workflowId || undefined,
+          workflow_id: body?.workflowId || controller?.workflowId || undefined,
           lease_ms: Number(body?.leaseMs || 30000),
         };
         const payload = await engineRequestJson(
@@ -553,7 +609,7 @@ export function createSwarmApiHandler(deps) {
     if (routePath === "/api/swarm/tasks/transition" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const runId = String(body?.runId || swarmState.runId || "").trim();
+        const runId = resolveRunId(body?.runId, swarmState.runId);
         const taskId = String(body?.taskId || "").trim();
         if (!runId || !taskId) throw new Error("Missing runId or taskId");
         const transitionBody = {
@@ -589,17 +645,43 @@ export function createSwarmApiHandler(deps) {
       }
       try {
         const snapshot = await contextRunSnapshot(session, runId);
-        const boardTasks = Array.isArray(snapshot?.blackboard?.tasks) ? snapshot.blackboard.tasks : [];
+        const boardTasks = Array.isArray(snapshot?.run?.tasks)
+          ? snapshot.run.tasks
+          : Array.isArray(snapshot?.blackboard?.tasks)
+            ? snapshot.blackboard.tasks
+            : [];
+        const controller = controllerFor(runId);
         if (boardTasks.length) {
           const workflow = String(boardTasks[0]?.workflow_id || "").trim();
-          if (workflow) swarmState.workflowId = workflow;
-          swarmState.executorMode = "blackboard";
+          upsertSwarmRunController(runId, {
+            workflowId: workflow || controller?.workflowId || swarmState.workflowId,
+            executorMode: "blackboard",
+          });
         } else {
-          swarmState.executorMode = "context_steps";
+          upsertSwarmRunController(runId, { executorMode: "context_steps" });
         }
         const effectiveRunStatus = contextRunStatusToSwarmStatus(
           inferStatusFromEvents(snapshot.run?.status, snapshot.events)
         );
+        upsertSwarmRunController(runId, {
+          status: effectiveRunStatus,
+          objective: String(snapshot.run?.objective || controller?.objective || ""),
+          workspaceRoot: String(
+            snapshot.run?.workspace?.canonical_path ||
+              controller?.workspaceRoot ||
+              swarmState.workspaceRoot ||
+              ""
+          ),
+          repoRoot: String(
+            snapshot.run?.workspace?.canonical_path ||
+              controller?.repoRoot ||
+              swarmState.workspaceRoot ||
+              ""
+          ),
+          stoppedAt: ["completed", "failed", "cancelled"].includes(effectiveRunStatus)
+            ? Number(snapshot.run?.updated_at_ms || Date.now())
+            : null,
+        });
         sendJson(res, 200, {
           ok: true,
           run: snapshot.run,
@@ -610,6 +692,7 @@ export function createSwarmApiHandler(deps) {
           replay: snapshot.replay,
           budget: deriveRunBudget(snapshot.run, snapshot.events, boardTasks),
           tasks: contextRunToTasks(snapshot.run),
+          controller: getSwarmRunController(runId),
         });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -618,7 +701,7 @@ export function createSwarmApiHandler(deps) {
     }
 
     if (routePath === "/api/swarm/snapshot" && req.method === "GET") {
-      const runId = String(url.searchParams.get("runId") || swarmState.runId || "").trim();
+      const runId = resolveRunId(url.searchParams.get("runId"), swarmState.runId);
       if (!runId) {
         sendJson(res, 200, {
           ok: true,
@@ -634,22 +717,34 @@ export function createSwarmApiHandler(deps) {
       }
       try {
         const snapshot = await contextRunSnapshot(session, runId);
-        swarmState.registryCache = snapshot.registry;
-        swarmState.logs = snapshot.logs;
-        swarmState.reasons = snapshot.reasons;
-        swarmState.status = contextRunStatusToSwarmStatus(snapshot.run?.status);
+        const effectiveStatus = contextRunStatusToSwarmStatus(snapshot.run?.status);
+        upsertSwarmRunController(runId, {
+          registryCache: snapshot.registry,
+          logs: snapshot.logs,
+          reasons: snapshot.reasons,
+          status: effectiveStatus,
+          objective: String(snapshot.run?.objective || ""),
+          workspaceRoot: String(
+            snapshot.run?.workspace?.canonical_path || swarmState.workspaceRoot || ""
+          ),
+          repoRoot: String(snapshot.run?.workspace?.canonical_path || swarmState.workspaceRoot || ""),
+        });
         sendJson(res, 200, {
           ok: true,
-          status: swarmState.status,
+          status: effectiveStatus,
           registry: snapshot.registry,
           reasons: snapshot.reasons,
           logs: snapshot.logs,
           run: snapshot.run,
-          startedAt: Number(snapshot.run?.started_at_ms || swarmState.startedAt || Date.now()),
+          startedAt: Number(
+            snapshot.run?.started_at_ms ||
+              readRunSetting(runId, "startedAt", swarmState.startedAt) ||
+              Date.now()
+          ),
           stoppedAt: isRunTerminalStatus(snapshot.run?.status)
             ? Number(snapshot.run?.updated_at_ms || Date.now())
             : null,
-          lastError: swarmState.lastError || null,
+          lastError: readRunSetting(runId, "lastError", swarmState.lastError) || null,
         });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -788,7 +883,12 @@ export function createSwarmApiHandler(deps) {
       };
       req.on("close", close);
       res.write(
-        `data: ${JSON.stringify({ kind: "hello", ts: Date.now(), status: swarmState.status, runId })}\n\n`
+        `data: ${JSON.stringify({
+          kind: "hello",
+          ts: Date.now(),
+          status: readRunSetting(runId, "status", swarmState.status),
+          runId,
+        })}\n\n`
       );
       const tick = async () => {
         if (closed || !runId) return;
@@ -803,13 +903,27 @@ export function createSwarmApiHandler(deps) {
           const events = Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
           for (const event of events) {
             sinceSeq = Math.max(sinceSeq, Number(event?.seq || 0));
-            res.write(`data: ${JSON.stringify({ kind: "event", ts: Date.now(), runId, event })}\n\n`);
+            res.write(
+              `data: ${JSON.stringify({
+                kind: "context_run_event",
+                run_id: runId,
+                seq: Number(event?.seq || 0),
+                ts_ms: Date.now(),
+                payload: event,
+              })}\n\n`
+            );
           }
           const patches = Array.isArray(patchesPayload?.patches) ? patchesPayload.patches : [];
           for (const patch of patches) {
             sincePatchSeq = Math.max(sincePatchSeq, Number(patch?.seq || 0));
             res.write(
-              `data: ${JSON.stringify({ kind: "blackboard_patch", ts: Date.now(), runId, patch })}\n\n`
+              `data: ${JSON.stringify({
+                kind: "blackboard_patch",
+                run_id: runId,
+                seq: Number(patch?.seq || 0),
+                ts_ms: Date.now(),
+                payload: patch,
+              })}\n\n`
             );
           }
         } catch {

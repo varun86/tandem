@@ -27,7 +27,9 @@ export function TeamsPage({ client, toast }: AppPageProps) {
 
   const replyMutation = useMutation({
     mutationFn: ({ requestId, decision }: { requestId: string; decision: "approve" | "deny" }) =>
-      client?.agentTeams?.replyApproval?.(requestId, decision),
+      decision === "approve"
+        ? client?.agentTeams?.approveSpawn?.(requestId)
+        : client?.agentTeams?.denySpawn?.(requestId),
     onSuccess: async () => {
       toast("ok", "Approval updated.");
       await queryClient.invalidateQueries({ queryKey: ["teams"] });

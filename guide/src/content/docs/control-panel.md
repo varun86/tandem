@@ -3,7 +3,7 @@ title: Control Panel (Web Admin)
 description: Install and run the Tandem web control panel from npm.
 ---
 
-Use the control panel when you want a browser UI for chat, routines, automations, channels, memory, and ops.
+Use the control panel when you want a browser UI for chat, orchestrator, automations, memory, live feed, packs, and runtime ops.
 
 ## Install
 
@@ -66,9 +66,19 @@ Cost estimation uses the engine rate:
 
 - `TANDEM_TOKEN_COST_PER_1K_USD` (USD per 1,000 tokens, default `0`).
 
+## Control Panel Shell
+
+The control panel now uses a shell with:
+
+- an icon rail for primary navigation
+- a context rail for system status and actions
+- a main workspace with animated route transitions and page headers
+
+The web app intentionally pushes motion a bit further than the Tauri app while keeping the same overall visual language.
+
 ## Automations Workspace (Tabbed + Wizard)
 
-The left nav `Automations` page (`#/agents`) now uses task-focused tabs:
+The left nav `Automations` page (`#/automations`) now uses task-focused tabs:
 
 - `Overview`
 - `Routines`
@@ -78,7 +88,9 @@ The left nav `Automations` page (`#/agents`) now uses task-focused tabs:
 
 A built-in walkthrough wizard can be launched from the page header and also auto-opens for first-time empty workspaces.
 
-Deep-link query state is supported on `#/agents`:
+Legacy `#/agents` links continue to redirect for backwards compatibility.
+
+Deep-link query state is supported on `#/automations`:
 
 - `tab`
 - `wizard`

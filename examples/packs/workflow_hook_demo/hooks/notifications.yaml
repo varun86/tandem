@@ -1,0 +1,10 @@
+hooks:
+  - id: build_feature.task_completed.notify
+    workflow_id: build_feature
+    event: task_completed
+    enabled: true
+    actions:
+      - action: capability:slack.notify
+        with:
+          channel: engineering
+          text: Workflow task completed

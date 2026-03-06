@@ -18,15 +18,39 @@
     - `groq`
     - `mistral`
     - `together`
-  - Providers without reliable generic discovery in this pass now remain configurable but are shown as manual-entry providers instead of fake one-model catalogs:
     - `anthropic`
     - `cohere`
+  - Remote catalog discovery now also reads runtime-auth and persisted provider-auth stores, so authenticated providers can surface real model lists without forcing secrets into config files.
+  - Providers without reliable generic discovery in this pass now remain configurable but are shown as manual-entry providers instead of fake one-model catalogs:
     - `azure`
     - `vertex`
     - `bedrock`
     - `copilot`
     - `ollama`
   - Control-panel Settings now displays provider catalog state honestly with remote counts, `configured models`, or `manual entry` labels as appropriate.
+
+- **Declarative workflows and pack extensions**:
+  - Added a new `tandem-workflows` workspace crate for workflow schema definitions, YAML loading, merge rules, and validation.
+  - Added engine-owned workflow runtime execution, hook dispatch, simulation, run persistence, and event streaming in `tandem-server`.
+  - Added workflow HTTP APIs:
+    - `GET /workflows`
+    - `GET /workflows/{id}`
+    - `POST /workflows/validate`
+    - `POST /workflows/simulate`
+    - `POST /workflows/{id}/run`
+    - `GET /workflows/runs`
+    - `GET /workflows/runs/{id}`
+    - `GET /workflow-hooks`
+    - `PATCH /workflow-hooks/{id}`
+    - `GET /workflows/events`
+  - Installed packs can now declare workflow entrypoints, workflow files, and workflow hooks as first-class manifest content; pack inspection now exposes those extensions in risk, permission-sheet, and workflow-extension views.
+  - Added workflow runtime coverage for manual runs, hook dispatch/dedupe behavior, and context-run blackboard projection of workflow actions and artifacts.
+
+- **Control-panel visual system and workflow operations refresh**:
+  - Added a shared `tandem-theme-contract` package and refreshed the control-panel theme system with richer curated themes, shared CSS variables, and a dedicated theme picker.
+  - Introduced reusable motion/UI primitives and refreshed page shells/cards/layouts across dashboard, login, packs, chat, feed, settings, and orchestrator surfaces.
+  - Added a workflow operations view in Packs so users can inspect workflow definitions, toggle hooks, simulate events, run workflows, and watch live workflow events from the control panel.
+  - Swarm/control-panel server routing now tracks per-run controller state more explicitly for status, run switching, and revision requests instead of relying only on a single active run snapshot.
 
 - **Headless-first Chromium browser automation with readiness diagnostics**:
   - Added a new `tandem-browser` sidecar for local Chromium automation over stdio, with typed browser actions for open, navigate, snapshot, click, type, press, wait, extract, screenshot, and close.

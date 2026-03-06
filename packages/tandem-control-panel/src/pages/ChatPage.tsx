@@ -219,7 +219,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     try {
       const cfg = await client.providers.config();
       const providerID = String(cfg?.default || "").trim();
-      const modelID = String(cfg?.providers?.[providerID]?.default_model || "").trim();
+      const modelID = String(cfg?.providers?.[providerID]?.defaultModel || "").trim();
       if (providerID && modelID) return { providerID, modelID };
     } catch {
       // use known fallback
@@ -416,7 +416,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         const rec = item || {};
         return String(rec.name || rec.id || rec.tool || "").trim();
       })
-      .filter(Boolean);
+      .filter(Boolean) as string[];
   }, []);
 
   const refreshAvailableTools = useCallback(async () => {
@@ -715,7 +715,10 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
       }, MAX_STREAM_WINDOW_MS);
 
       try {
-        for await (const event of client.stream(sessionId, runId, { signal: streamAbort.signal })) {
+        for await (const rawEvent of client.stream(sessionId, runId, {
+          signal: streamAbort.signal,
+        })) {
+          const event: any = rawEvent;
           if (isRunSignalEvent(event.type)) resetNoEventTimer();
 
           if (
@@ -1076,7 +1079,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   const attachedCount = uploads.length;
 
   return (
-    <div ref={rootRef} className="chat-layout min-w-0 min-h-0 h-full flex-1">
+    <div ref={rootRef} className="chat-layout chat-layout-fill min-w-0 min-h-0 h-full flex-1">
       <motion.aside
         className={`chat-sessions-panel ${sessionsOpen ? "open" : ""}`}
         initial={false}
@@ -1521,9 +1524,12 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                           className="tcp-btn h-6 px-1.5 text-[10px]"
                           onClick={async () => {
                             try {
-                              const payload = await client.packs.install({
-                                path: event.path,
-                                source: { kind: "control_panel_chat", event: "pack.detected" },
+                              const payload = await api("/api/engine/packs/install", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  path: event.path,
+                                  source: { kind: "control_panel_chat", event: "pack.detected" },
+                                }),
                               });
                               toast(
                                 "ok",
@@ -1544,13 +1550,19 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                           className="tcp-btn h-6 px-1.5 text-[10px]"
                           onClick={async () => {
                             try {
-                              const payload = await client.packs.installFromAttachment({
-                                attachment_id: event.attachmentId,
-                                path: event.path,
-                                connector: event.connector || undefined,
-                                channel_id: event.channelId || undefined,
-                                sender_id: event.senderId || undefined,
-                              });
+                              const payload = await api(
+                                "/api/engine/packs/install-from-attachment",
+                                {
+                                  method: "POST",
+                                  body: JSON.stringify({
+                                    attachment_id: event.attachmentId,
+                                    path: event.path,
+                                    connector: event.connector || undefined,
+                                    channel_id: event.channelId || undefined,
+                                    sender_id: event.senderId || undefined,
+                                  }),
+                                }
+                              );
                               toast(
                                 "ok",
                                 `Installed ${payload?.installed?.name || "pack"} ${payload?.installed?.version || ""}`.trim()

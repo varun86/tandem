@@ -1,0 +1,25 @@
+manifest_schema_version: 1
+pack_id: "workflow-hook-demo"
+name: workflow-hook-demo
+version: 1.0.0
+type: workflow
+engine:
+  requires: ">=0.4.1 <2.0.0"
+
+entrypoints:
+  workflows: ["build_feature"]
+
+capabilities:
+  required:
+    - kanban.update
+    - slack.notify
+  optional: []
+  non_portable: []
+
+contents:
+  workflows:
+    - id: build_feature
+      path: workflows/build_feature.yaml
+  workflow_hooks:
+    - id: build_feature.task_completed.notify
+      path: hooks/notifications.yaml

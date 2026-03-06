@@ -31,11 +31,12 @@
   }
 
   body {
-    @apply bg-canvas antialiased;
+    @apply antialiased;
     color: var(--color-text);
     font-family: var(--font-sans);
     letter-spacing: 0.003em;
-    background-image: none;
+    background: var(--color-background);
+    min-height: 100vh;
   }
 
   ::-webkit-scrollbar {
@@ -53,6 +54,411 @@
 }
 
 @layer components {
+  .tcp-shell {
+    position: relative;
+    display: grid;
+    min-height: 100vh;
+    overflow: clip;
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--tcp-glow-a) 70%, transparent), transparent 32%),
+      radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--tcp-glow-b) 72%, transparent), transparent 28%),
+      linear-gradient(180deg, color-mix(in srgb, var(--color-background) 94%, black 6%), color-mix(in srgb, var(--color-background) 100%, black 0%));
+  }
+
+  @screen lg {
+    .tcp-shell {
+      grid-template-columns: 300px minmax(0, 1fr);
+    }
+  }
+
+  @screen xl {
+    .tcp-shell {
+      grid-template-columns: 76px minmax(0, 1fr);
+    }
+  }
+
+  .tcp-glow-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .tcp-shell-background {
+    overflow: hidden;
+  }
+
+  .tcp-shell-glow {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(90px);
+    opacity: 0.85;
+    animation: tcpFloatGlow 11s ease-in-out infinite alternate;
+  }
+
+  .tcp-shell-glow-a {
+    top: -8rem;
+    left: -5rem;
+    width: 22rem;
+    height: 22rem;
+    background: var(--tcp-glow-a);
+  }
+
+  .tcp-shell-glow-b {
+    right: -6rem;
+    top: 8rem;
+    width: 20rem;
+    height: 20rem;
+    background: var(--tcp-glow-b);
+    animation-duration: 14s;
+  }
+
+  .tcp-icon-rail,
+  .tcp-context-rail,
+  .tcp-main-shell {
+    position: relative;
+    z-index: 1;
+  }
+
+  .tcp-icon-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0.9rem;
+    border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 92%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 82%, #000 18%)
+    );
+    backdrop-filter: blur(18px);
+  }
+
+  .tcp-rail-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 0.1rem 0;
+  }
+
+  .tcp-rail-nav {
+    display: grid;
+    gap: 0.55rem;
+    width: 100%;
+    justify-items: center;
+  }
+
+  .tcp-rail-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.9rem;
+    height: 2.9rem;
+    border-radius: 1rem;
+    color: var(--color-text-muted);
+    transition: transform 180ms ease, color 180ms ease, border-color 180ms ease;
+    border: 1px solid transparent;
+    background: transparent;
+  }
+
+  .tcp-rail-icon:hover {
+    transform: translateY(-1px);
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-primary) 26%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 72%, var(--color-primary) 8%);
+  }
+
+  .tcp-rail-icon.active {
+    color: var(--color-text);
+  }
+
+  .tcp-rail-icon-indicator {
+    position: absolute;
+    inset: 0;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-primary) 18%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%)
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 8px 24px color-mix(in srgb, var(--tcp-glow-a) 34%, transparent);
+  }
+
+  .tcp-rail-icon svg,
+  .tcp-icon-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .tcp-rail-footer {
+    margin-top: auto;
+    display: grid;
+    gap: 0.55rem;
+    justify-items: center;
+    width: 100%;
+  }
+
+  .tcp-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.85rem;
+    color: var(--color-text-muted);
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%);
+    transition: transform 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+
+  .tcp-icon-btn:hover {
+    transform: translateY(-1px);
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  }
+
+  .tcp-context-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.15rem;
+    border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 94%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%)
+    );
+    backdrop-filter: blur(22px);
+  }
+
+  .tcp-context-hero,
+  .tcp-page-header,
+  .tcp-panel-card,
+  .tcp-mobile-topbar,
+  .tcp-topbar {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 92%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%)
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 18px 50px rgba(0, 0, 0, 0.18);
+  }
+
+  .tcp-context-hero {
+    border-radius: 1.35rem;
+    padding: 1rem;
+  }
+
+  .tcp-context-hero-glow {
+    background:
+      radial-gradient(circle at top right, color-mix(in srgb, var(--tcp-glow-a) 48%, transparent), transparent 42%),
+      linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 42%);
+  }
+
+  .tcp-context-section {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .tcp-context-section-label,
+  .tcp-page-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-text-subtle);
+  }
+
+  .tcp-context-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-height: 2.8rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 0.95rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--color-text-muted);
+    transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  }
+
+  .tcp-context-link:hover {
+    transform: translateX(2px);
+    border-color: color-mix(in srgb, var(--color-primary) 24%, transparent);
+    color: var(--color-text);
+    background: color-mix(in srgb, var(--color-surface-elevated) 80%, var(--color-primary) 8%);
+  }
+
+  .tcp-context-link.active {
+    border-color: color-mix(in srgb, var(--color-primary) 42%, transparent);
+    color: var(--color-text);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-primary) 16%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%)
+    );
+  }
+
+  .tcp-context-link-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: var(--color-primary);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 58%, transparent);
+  }
+
+  .tcp-context-stat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    border-radius: 1rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%);
+  }
+
+  .tcp-main-shell {
+    display: grid;
+    align-content: start;
+    gap: 1rem;
+    min-width: 0;
+    padding: 1rem;
+  }
+
+  .tcp-mobile-topbar,
+  .tcp-topbar {
+    border-radius: 1.4rem;
+    padding: 1rem 1.1rem;
+  }
+
+  .tcp-mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+  }
+
+  .tcp-topbar {
+    display: none;
+  }
+
+  @screen lg {
+    .tcp-topbar {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.15rem 1.25rem;
+    }
+  }
+
+  .tcp-main-title,
+  .tcp-page-title {
+    font-family: var(--font-display);
+    font-size: clamp(1.75rem, 3vw, 2.7rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--color-text);
+  }
+
+  .tcp-topbar-status {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.55rem;
+  }
+
+  .tcp-main-content {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    gap: 1rem;
+    align-content: start;
+    padding-bottom: 1rem;
+  }
+
+  .tcp-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .tcp-panel-card {
+    border-radius: 1.4rem;
+    padding: 1.15rem;
+  }
+
+  .tcp-panel-card-head {
+    margin-bottom: 0.9rem;
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 0.9rem;
+  }
+
+  .tcp-page-header {
+    border-radius: 1.6rem;
+    padding: 1.2rem;
+  }
+
+  .tcp-page-header-glow {
+    background:
+      radial-gradient(circle at top right, color-mix(in srgb, var(--tcp-glow-a) 46%, transparent), transparent 36%),
+      radial-gradient(circle at bottom left, color-mix(in srgb, var(--tcp-glow-b) 34%, transparent), transparent 42%);
+  }
+
+  .tcp-status-pulse {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border-radius: 9999px;
+    padding: 0.34rem 0.62rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%);
+  }
+
+  .tcp-status-pulse-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 9999px;
+    background: currentColor;
+    box-shadow: 0 0 0 0 currentColor;
+    animation: tcpPulseDot 2.4s ease-out infinite;
+  }
+
+  .tcp-status-pulse.ok {
+    color: #86efac;
+  }
+
+  .tcp-status-pulse.warn {
+    color: #fcd34d;
+  }
+
+  .tcp-status-pulse.live {
+    color: color-mix(in srgb, var(--color-primary) 78%, white 22%);
+  }
+
+  .tcp-status-pulse.info {
+    color: var(--color-text);
+  }
+
   .tcp-card {
     @apply rounded-2xl p-5 shadow-soft backdrop-blur-sm;
     border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
@@ -138,6 +544,12 @@
     color: color-mix(in srgb, var(--color-primary) 76%, var(--color-text) 24%);
   }
 
+  .tcp-badge-ghost {
+    border-color: color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+    color: var(--color-text-muted);
+    background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%);
+  }
+
   .tcp-title {
     @apply text-lg font-semibold tracking-tight text-slate-100;
   }
@@ -155,6 +567,13 @@
     @apply min-w-0 overflow-hidden rounded-xl p-3;
     border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
     background: color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%);
+    transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+  }
+
+  .tcp-list-item:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--color-primary) 28%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 82%, var(--color-primary) 6%);
   }
 
   .tcp-code {
@@ -198,10 +617,245 @@
   .toast-err {
     @apply border-rose-700 text-rose-300;
   }
+
+  .tcp-empty-state {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1.2rem;
+    padding: 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%),
+      color-mix(in srgb, var(--color-surface) 94%, #000 6%)
+    );
+  }
+
+  .tcp-empty-state-orb {
+    position: absolute;
+    top: -1rem;
+    right: -1rem;
+    width: 7rem;
+    height: 7rem;
+    border-radius: 9999px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--tcp-glow-a) 72%, transparent), transparent 70%);
+    filter: blur(12px);
+    opacity: 0.65;
+  }
+
+  .tcp-empty-state-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    color: var(--color-text);
+  }
+
+  .tcp-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2rem;
+    border-radius: 9999px;
+    padding: 0.35rem 0.82rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%);
+    transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease;
+  }
+
+  .tcp-filter-chip.active {
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-primary) 42%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface-elevated) 86%);
+  }
+
+  .tcp-split-view {
+    display: grid;
+    gap: 1rem;
+  }
+
+  @screen xl {
+    .tcp-split-view {
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.84fr);
+    }
+  }
+
+  .tcp-drawer-root {
+    position: fixed;
+    inset: 0;
+    z-index: 160;
+  }
+
+  .tcp-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+  }
+
+  .tcp-drawer-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(520px, 94vw);
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 92%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%)
+    );
+    backdrop-filter: blur(22px);
+  }
+
+  .tcp-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    padding: 1rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+  }
+
+  .tcp-theme-tile {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    gap: 0.9rem;
+    border-radius: 1.2rem;
+    padding: 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 92%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 92%, #000 8%)
+    );
+    text-align: left;
+  }
+
+  .tcp-theme-tile.active {
+    border-color: color-mix(in srgb, var(--color-primary) 42%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .tcp-theme-tile-top {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 0.8rem;
+  }
+
+  .tcp-theme-tile-title {
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .tcp-theme-swatch {
+    width: 0.9rem;
+    height: 0.9rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+  }
+
+  .tcp-theme-preview {
+    border-radius: 1rem;
+    overflow: hidden;
+  }
+
+  .tcp-theme-preview-bg {
+    min-height: 5.8rem;
+    padding: 0.85rem;
+  }
+
+  .tcp-theme-preview-card {
+    display: grid;
+    gap: 0.45rem;
+    width: 72%;
+    border-radius: 0.8rem;
+    padding: 0.7rem;
+    border: 1px solid;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .tcp-theme-preview-line {
+    display: block;
+    width: 100%;
+    height: 0.42rem;
+    border-radius: 9999px;
+    opacity: 0.6;
+  }
+
+  .tcp-theme-preview-line.short {
+    width: 58%;
+    opacity: 1;
+  }
+
+  .tcp-theme-preview-pill {
+    width: 3.4rem;
+    height: 1rem;
+    border-radius: 9999px;
+  }
+
+  .tcp-theme-active {
+    position: absolute;
+    right: 0.85rem;
+    bottom: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 9999px;
+    padding: 0.35rem 0.62rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #101010;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-primary) 88%, white 12%),
+      color-mix(in srgb, var(--color-primary-hover) 92%, black 8%)
+    );
+  }
+
+  .tcp-mobile-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+  }
+
+  .tcp-mobile-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.56);
+    backdrop-filter: blur(4px);
+  }
+
+  .tcp-mobile-drawer-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(92vw, 360px);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 92%, transparent),
+      color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%)
+    );
+    border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+    backdrop-filter: blur(22px);
+  }
 }
 
 .nav-item.locked,
-.nav-item:disabled {
+.nav-item:disabled,
+.tcp-context-link.locked,
+.tcp-context-link:disabled,
+.tcp-rail-icon.locked,
+.tcp-rail-icon:disabled {
   opacity: 0.42;
   cursor: not-allowed;
 }
@@ -234,6 +888,9 @@
 }
 
 .tcp-brand-avatar {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
   background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
   color: var(--color-text);
@@ -302,6 +959,38 @@
   }
 }
 
+@keyframes tcpFloatGlow {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(1.5rem, 1rem, 0) scale(1.08);
+  }
+}
+
+@keyframes tcpPulseDot {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 0.95;
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+    opacity: 0.82;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 0.95;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tcp-shell-glow,
+  .tcp-status-pulse-dot,
+  .tcp-skeleton {
+    animation: none !important;
+  }
+}
+
 .tcp-markdown {
   color: var(--color-text-muted);
   font-size: 13px;
@@ -341,17 +1030,67 @@
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: rgba(3, 7, 18, 0.62);
-  backdrop-filter: blur(2px);
+  overflow-y: auto;
+  background: rgba(3, 7, 18, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.tcp-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(2, 6, 16, 0.32);
 }
 
 .tcp-confirm-dialog {
+  position: relative;
+  z-index: 1;
   width: min(28rem, 100%);
   border-radius: 0.9rem;
   border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
-  background: color-mix(in srgb, var(--color-surface-elevated) 96%, #000 4%);
-  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.42);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-surface) 97%, transparent),
+    color-mix(in srgb, var(--color-surface-elevated) 96%, #000 4%)
+  );
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.48);
   padding: 1rem;
+}
+
+.tcp-verification-modal {
+  width: min(72rem, 96vw);
+  max-width: min(72rem, 96vw);
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  border-radius: 1.1rem;
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border) 78%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-surface) 98%, transparent),
+    color-mix(in srgb, var(--color-surface-elevated) 94%, #000 6%)
+  );
+}
+
+.tcp-verification-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.tcp-verification-feedback {
+  max-height: 16rem;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tcp-verification-code {
+  max-height: 56vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background: color-mix(in srgb, var(--color-surface) 84%, #000 16%);
+  color: var(--color-text);
+  border-color: color-mix(in srgb, var(--color-border) 88%, transparent);
 }
 
 .tcp-confirm-title {
@@ -599,6 +1338,16 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     @apply relative min-h-0 overflow-hidden rounded-xl;
     border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
     background: color-mix(in srgb, var(--color-surface) 92%, #000 8%);
+  }
+
+  .chat-layout-fill {
+    min-height: calc(100vh - 10.5rem);
+  }
+
+  @media (max-width: 1023px) {
+    .chat-layout-fill {
+      min-height: calc(100vh - 7.5rem);
+    }
   }
 
   .chat-workspace {

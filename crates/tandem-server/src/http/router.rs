@@ -1,5 +1,4 @@
 use axum::middleware as axum_middleware;
-use axum::routing::{get, post, put};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -29,9 +28,8 @@ pub(super) fn build_router(state: AppState) -> Router {
     router = super::routes_presets::apply(router);
     router = super::routes_pack_builder::apply(router);
     router = super::routes_packs::apply(router);
+    router = super::routes_workflows::apply(router);
     router = super::routes_global::apply(router);
-
-    router = router;
 
     if state.web_ui_enabled() {
         router = router.merge(crate::webui::web_ui_router(&state.web_ui_prefix()));
