@@ -172,6 +172,9 @@ export interface ProviderEntry {
   id: string;
   name?: string;
   models?: Record<string, ProviderModelEntry>;
+  catalog_source?: string;
+  catalog_status?: string;
+  catalog_message?: string;
 }
 
 export interface ProviderCatalog {

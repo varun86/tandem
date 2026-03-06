@@ -1,6 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { PageCard, EmptyState } from "./ui";
+import {
+  AnimatedPage,
+  Badge,
+  DetailDrawer,
+  PanelCard,
+  SplitView,
+  StaggerGroup,
+  Toolbar,
+} from "../ui/index.tsx";
+import { ThemePicker } from "../ui/ThemePicker.tsx";
+import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
 type BrowserBlockingIssue = {
@@ -27,6 +38,25 @@ type BrowserStatusResponse = {
   last_error?: string | null;
 };
 
+function providerCatalogBadge(provider: any, modelCount: number) {
+  const source = String(provider?.catalog_source || "")
+    .trim()
+    .toLowerCase();
+  if (source === "remote" && modelCount > 0) {
+    return { tone: "ok" as const, text: `${modelCount} models` };
+  }
+  if (source === "config" && modelCount > 0) {
+    return { tone: "info" as const, text: "configured models" };
+  }
+  return { tone: "warn" as const, text: "manual entry" };
+}
+
+function providerCatalogSubtitle(provider: any, defaultModel: string) {
+  const catalogMessage = String(provider?.catalog_message || "").trim();
+  if (catalogMessage) return catalogMessage;
+  return `Default model: ${defaultModel || "none"}`;
+}
+
 export function SettingsPage({
   client,
   api,
@@ -43,6 +73,8 @@ export function SettingsPage({
   const [botName, setBotName] = useState(String(identity?.botName || "Tandem"));
   const [botAvatarUrl, setBotAvatarUrl] = useState(String(identity?.botAvatarUrl || ""));
   const [botControlPanelAlias, setBotControlPanelAlias] = useState("Control Center");
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadIdentityConfig = async () => {
@@ -77,23 +109,22 @@ export function SettingsPage({
     setBotAvatarUrl(avatar);
     setBotControlPanelAlias(controlPanelAlias || "Control Center");
   }, [identity?.botAvatarUrl, identity?.botName, identityConfig.data]);
+
   const providersCatalog = useQuery({
     queryKey: ["settings", "providers", "catalog"],
     queryFn: () => client.providers.catalog().catch(() => ({ all: [], connected: [] })),
   });
+
   const providersConfig = useQuery({
     queryKey: ["settings", "providers", "config"],
     queryFn: () => client.providers.config().catch(() => ({ default: "", providers: {} })),
   });
+
   const browserStatus = useQuery<BrowserStatusResponse | null>({
     queryKey: ["settings", "browser", "status"],
     queryFn: () => api("/api/engine/browser/status", { method: "GET" }).catch(() => null),
     refetchInterval: 30_000,
   });
-  const [selectedProvider, setSelectedProvider] = [
-    String(providersConfig.data?.default || ""),
-    () => undefined,
-  ] as any;
 
   const setDefaultsMutation = useMutation({
     mutationFn: async ({ providerId, modelId }: { providerId: string; modelId: string }) =>
@@ -186,228 +217,361 @@ export function SettingsPage({
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      <PageCard title="Provider Setup" subtitle="Default provider/model and API keys">
-        <div className="grid gap-2">
-          {providers.length ? (
-            providers.map((provider: any) => {
-              const providerId = String(provider?.id || "");
-              const models = Object.keys(provider?.models || {});
-              const defaultModel = String(
-                providersConfig.data?.providers?.[providerId]?.default_model || models[0] || ""
-              );
-              const typedModel = String(modelSearchByProvider[providerId] ?? defaultModel).trim();
-              const normalizedTyped = typedModel.toLowerCase();
-              const filteredModels = models
-                .filter((modelId) =>
-                  normalizedTyped ? modelId.toLowerCase().includes(normalizedTyped) : true
-                )
-                .slice(0, 80);
-              return (
-                <details key={providerId} className="tcp-list-item">
-                  <summary className="cursor-pointer font-medium">{providerId}</summary>
-                  <div className="mt-2 grid gap-2">
-                    <form
-                      className="grid gap-2"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        applyDefaultModel(providerId, typedModel);
-                      }}
-                    >
-                      <div className="flex gap-2">
-                        <input
-                          className="tcp-input"
-                          value={typedModel}
-                          placeholder={`Type model id for ${providerId}`}
-                          onInput={(e) =>
-                            setModelSearchByProvider((prev) => ({
-                              ...prev,
-                              [providerId]: (e.target as HTMLInputElement).value,
-                            }))
-                          }
-                        />
-                        <button className="tcp-btn" type="submit">
-                          <i data-lucide="badge-check"></i>
-                          Apply
-                        </button>
-                      </div>
-                      <div className="max-h-48 overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-1">
-                        {filteredModels.length ? (
-                          filteredModels.map((modelId) => (
-                            <button
-                              key={modelId}
-                              type="button"
-                              className={`block w-full rounded px-2 py-1 text-left text-sm hover:bg-slate-700/30 ${
-                                modelId === defaultModel ? "bg-slate-700/40" : ""
-                              }`}
-                              onClick={() => {
-                                setModelSearchByProvider((prev) => ({
-                                  ...prev,
-                                  [providerId]: modelId,
-                                }));
-                                applyDefaultModel(providerId, modelId);
-                              }}
-                            >
-                              {modelId}
-                            </button>
-                          ))
-                        ) : (
-                          <div className="tcp-subtle px-2 py-1 text-xs">No matching models.</div>
-                        )}
-                      </div>
-                    </form>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const input = e.currentTarget.elements.namedItem(
-                          "apiKey"
-                        ) as HTMLInputElement;
-                        const value = String(input?.value || "").trim();
-                        if (!value) return;
-                        setApiKeyMutation.mutate({ providerId, apiKey: value });
-                        input.value = "";
-                      }}
-                      className="flex gap-2"
-                    >
-                      <input
-                        name="apiKey"
-                        className="tcp-input"
-                        placeholder={`Set ${providerId} API key`}
-                      />
-                      <button className="tcp-btn" type="submit">
-                        <i data-lucide="save"></i>
-                        Save
-                      </button>
-                    </form>
-                  </div>
-                </details>
-              );
-            })
-          ) : (
-            <EmptyState text="No providers detected." />
-          )}
-        </div>
-      </PageCard>
-
-      <PageCard title="Theme + Identity" subtitle="Control panel look and bot identity">
-        <div className="grid gap-3">
-          <label className="text-sm tcp-subtle">Theme</label>
-          <select
-            className="tcp-select"
-            value={themeId}
-            onChange={(e) => setTheme((e.target as HTMLSelectElement).value)}
-          >
-            {themes.map((theme: any) => (
-              <option key={theme.id} value={theme.id}>
-                {theme.name}
-              </option>
-            ))}
-          </select>
-          <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-3">
-            <div className="mb-2 text-sm font-medium">Bot Identity</div>
-            <div className="grid gap-2">
-              <div className="mb-1 flex items-center justify-between gap-2 rounded-lg border border-slate-700/60 bg-slate-950/30 p-2">
-                <div className="inline-flex items-center gap-2">
-                  <span className="tcp-brand-avatar inline-grid h-9 w-9 place-items-center overflow-hidden rounded-lg">
-                    {botAvatarUrl ? (
-                      <img
-                        src={botAvatarUrl}
-                        alt={botName || "Bot"}
-                        className="block h-full w-full object-cover"
-                      />
-                    ) : (
-                      <i data-lucide="cpu"></i>
-                    )}
-                  </span>
-                  <span className="tcp-subtle text-xs">{botName || "Tandem"}</span>
-                </div>
-                <div className="inline-flex items-center gap-1">
-                  <button
-                    className="chat-icon-btn h-8 w-8"
-                    title="Upload avatar"
-                    aria-label="Upload avatar"
-                    onClick={() => avatarInputRef.current?.click()}
-                  >
-                    <i data-lucide="pencil"></i>
+    <AnimatedPage className="grid gap-4">
+      <SplitView
+        main={
+          <StaggerGroup className="grid gap-4">
+            <PanelCard
+              title="Provider defaults"
+              subtitle="Provider catalog, model selection, and API key entry."
+              actions={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Badge tone={String(providersConfig.data?.default || "").trim() ? "ok" : "warn"}>
+                    Default: {String(providersConfig.data?.default || "none")}
+                  </Badge>
+                  <Badge tone={browserStatus.data?.runnable ? "ok" : "warn"}>
+                    Browser:{" "}
+                    {browserStatus.data
+                      ? browserStatus.data.runnable
+                        ? "ready"
+                        : "attention"
+                      : "unknown"}
+                  </Badge>
+                  <Badge tone="info">
+                    {String(providersCatalog.data?.connected?.length || 0)} connected
+                  </Badge>
+                  <button className="tcp-btn" onClick={() => setDiagnosticsOpen(true)}>
+                    <i data-lucide="activity"></i>
+                    Diagnostics
                   </button>
                   <button
-                    className="chat-icon-btn h-8 w-8"
-                    title="Save identity"
-                    aria-label="Save identity"
+                    className="tcp-btn"
+                    onClick={() =>
+                      refreshProviderStatus().then(() => toast("ok", "Provider status refreshed."))
+                    }
+                  >
+                    <i data-lucide="refresh-cw"></i>
+                    Refresh provider
+                  </button>
+                  <button
+                    className="tcp-btn-primary"
                     onClick={() => saveIdentityMutation.mutate()}
+                    disabled={saveIdentityMutation.isPending}
                   >
                     <i data-lucide="save"></i>
-                  </button>
-                  <button
-                    className="chat-icon-btn h-8 w-8"
-                    title="Clear avatar"
-                    aria-label="Clear avatar"
-                    onClick={() => setBotAvatarUrl("")}
-                  >
-                    <i data-lucide="trash-2"></i>
+                    Save identity
                   </button>
                 </div>
-              </div>
-              <input
-                className="tcp-input"
-                value={botName}
-                onInput={(e) => setBotName((e.target as HTMLInputElement).value)}
-                placeholder="Bot name"
-              />
-              <input
-                className="tcp-input"
-                value={botControlPanelAlias}
-                onInput={(e) => setBotControlPanelAlias((e.target as HTMLInputElement).value)}
-                placeholder="Control panel alias"
-              />
-              <input
-                className="tcp-input"
-                value={botAvatarUrl}
-                onInput={(e) => setBotAvatarUrl((e.target as HTMLInputElement).value)}
-                placeholder="Avatar URL or data URL"
-              />
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) =>
-                  handleAvatarUpload((e.target as HTMLInputElement).files?.[0] || null)
-                }
-              />
-            </div>
-          </div>
-          <button
-            className="tcp-btn"
-            onClick={() => refreshIdentityStatus().then(() => toast("ok", "Identity refreshed."))}
-          >
-            <i data-lucide="refresh-cw"></i>
-            Refresh Identity
-          </button>
-          <button
-            className="tcp-btn"
-            onClick={() =>
-              refreshProviderStatus().then(() => toast("ok", "Provider status refreshed."))
-            }
-          >
-            <i data-lucide="refresh-cw"></i>
-            Refresh Provider Status
-          </button>
-          <div className="tcp-list-item">
-            <div className="text-sm">
-              Connected providers: {String(providersCatalog.data?.connected?.length || 0)}
-            </div>
-            <div className="tcp-subtle text-xs">
-              Default: {String(providersConfig.data?.default || "none")}
-            </div>
-          </div>
-        </div>
-      </PageCard>
+              }
+            >
+              <div className="grid gap-3">
+                <button
+                  type="button"
+                  className="tcp-list-item text-left"
+                  onClick={() => setProviderDefaultsOpen((prev) => !prev)}
+                  aria-expanded={providerDefaultsOpen}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium inline-flex items-center gap-2">
+                        <i
+                          data-lucide={providerDefaultsOpen ? "chevron-down" : "chevron-right"}
+                        ></i>
+                        <span>
+                          {providerDefaultsOpen ? "Hide provider catalog" : "Show provider catalog"}
+                        </span>
+                      </div>
+                      <div className="tcp-subtle mt-1 text-xs">
+                        {providers.length} providers available for configuration. Expand to change
+                        models and API keys.
+                      </div>
+                    </div>
+                    <Badge tone="info">
+                      {String(providersCatalog.data?.connected?.length || 0)} connected
+                    </Badge>
+                  </div>
+                </button>
 
-      <PageCard
-        title="Browser Diagnostics"
-        subtitle="Headless Chromium readiness, detected binaries, and install guidance"
-        className="xl:col-span-2"
+                <AnimatePresence initial={false}>
+                  {providerDefaultsOpen ? (
+                    <motion.div
+                      className="grid gap-3"
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                    >
+                      {providers.length ? (
+                        providers.map((provider: any) => {
+                          const providerId = String(provider?.id || "");
+                          const models = Object.keys(provider?.models || {});
+                          const defaultModel = String(
+                            providersConfig.data?.providers?.[providerId]?.default_model ||
+                              models[0] ||
+                              ""
+                          );
+                          const typedModel = String(
+                            modelSearchByProvider[providerId] ?? defaultModel
+                          ).trim();
+                          const normalizedTyped = typedModel.toLowerCase();
+                          const filteredModels = models
+                            .filter((modelId) =>
+                              normalizedTyped
+                                ? modelId.toLowerCase().includes(normalizedTyped)
+                                : true
+                            )
+                            .slice(0, 80);
+                          const badge = providerCatalogBadge(provider, models.length);
+                          const subtitle = providerCatalogSubtitle(provider, defaultModel);
+
+                          return (
+                            <motion.details key={providerId} layout className="tcp-list-item">
+                              <summary className="cursor-pointer list-none">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <div className="font-medium">{providerId}</div>
+                                    <div className="tcp-subtle text-xs">{subtitle}</div>
+                                  </div>
+                                  <Badge tone={badge.tone}>{badge.text}</Badge>
+                                </div>
+                              </summary>
+                              <div className="mt-3 grid gap-3">
+                                <form
+                                  className="grid gap-2"
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    applyDefaultModel(providerId, typedModel);
+                                  }}
+                                >
+                                  <div className="flex gap-2">
+                                    <input
+                                      className="tcp-input"
+                                      value={typedModel}
+                                      placeholder={`Type model id for ${providerId}`}
+                                      onInput={(e) =>
+                                        setModelSearchByProvider((prev) => ({
+                                          ...prev,
+                                          [providerId]: (e.target as HTMLInputElement).value,
+                                        }))
+                                      }
+                                    />
+                                    <button className="tcp-btn" type="submit">
+                                      <i data-lucide="badge-check"></i>
+                                      Apply
+                                    </button>
+                                  </div>
+                                  <div className="max-h-48 overflow-auto rounded-xl border border-slate-700/60 bg-slate-900/20 p-1">
+                                    {filteredModels.length ? (
+                                      filteredModels.map((modelId) => (
+                                        <button
+                                          key={modelId}
+                                          type="button"
+                                          className={`block w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-700/30 ${
+                                            modelId === defaultModel ? "bg-slate-700/40" : ""
+                                          }`}
+                                          onClick={() => {
+                                            setModelSearchByProvider((prev) => ({
+                                              ...prev,
+                                              [providerId]: modelId,
+                                            }));
+                                            applyDefaultModel(providerId, modelId);
+                                          }}
+                                        >
+                                          {modelId}
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <div className="tcp-subtle px-2 py-1 text-xs">
+                                        {models.length
+                                          ? "No matching models."
+                                          : "No live catalog available. Type a model ID manually."}
+                                      </div>
+                                    )}
+                                  </div>
+                                </form>
+
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    const input = e.currentTarget.elements.namedItem(
+                                      "apiKey"
+                                    ) as HTMLInputElement;
+                                    const value = String(input?.value || "").trim();
+                                    if (!value) return;
+                                    setApiKeyMutation.mutate({ providerId, apiKey: value });
+                                    input.value = "";
+                                  }}
+                                  className="flex gap-2"
+                                >
+                                  <input
+                                    name="apiKey"
+                                    className="tcp-input"
+                                    placeholder={`Set ${providerId} API key`}
+                                  />
+                                  <button className="tcp-btn" type="submit">
+                                    <i data-lucide="save"></i>
+                                    Save
+                                  </button>
+                                </form>
+                              </div>
+                            </motion.details>
+                          );
+                        })
+                      ) : (
+                        <EmptyState text="No providers were detected from the engine catalog." />
+                      )}
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+            </PanelCard>
+
+            <PanelCard
+              title="Theme studio"
+              subtitle="Preview tiles with richer feedback and immediate switching."
+            >
+              <ThemePicker themes={themes} themeId={themeId} onChange={setTheme} />
+            </PanelCard>
+          </StaggerGroup>
+        }
+        aside={
+          <div className="grid gap-4">
+            <PanelCard
+              title="Identity preview"
+              subtitle="Live preview of how the assistant appears across the panel."
+            >
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex items-center gap-3">
+                      <span className="tcp-brand-avatar inline-grid h-12 w-12 rounded-xl">
+                        {botAvatarUrl ? (
+                          <img
+                            src={botAvatarUrl}
+                            alt={botName || "Bot"}
+                            className="block h-full w-full object-cover"
+                          />
+                        ) : (
+                          <i data-lucide="cpu"></i>
+                        )}
+                      </span>
+                      <div>
+                        <div className="font-semibold">{botName || "Tandem"}</div>
+                        <div className="tcp-subtle text-xs">
+                          {botControlPanelAlias || "Control Center"}
+                        </div>
+                      </div>
+                    </div>
+                    <Toolbar>
+                      <button
+                        className="tcp-icon-btn"
+                        title="Upload avatar"
+                        aria-label="Upload avatar"
+                        onClick={() => avatarInputRef.current?.click()}
+                      >
+                        <i data-lucide="pencil"></i>
+                      </button>
+                      <button
+                        className="tcp-icon-btn"
+                        title="Clear avatar"
+                        aria-label="Clear avatar"
+                        onClick={() => setBotAvatarUrl("")}
+                      >
+                        <i data-lucide="trash-2"></i>
+                      </button>
+                    </Toolbar>
+                  </div>
+                </div>
+
+                <input
+                  className="tcp-input"
+                  value={botName}
+                  onInput={(e) => setBotName((e.target as HTMLInputElement).value)}
+                  placeholder="Bot name"
+                />
+                <input
+                  className="tcp-input"
+                  value={botControlPanelAlias}
+                  onInput={(e) => setBotControlPanelAlias((e.target as HTMLInputElement).value)}
+                  placeholder="Control panel alias"
+                />
+                <input
+                  className="tcp-input"
+                  value={botAvatarUrl}
+                  onInput={(e) => setBotAvatarUrl((e.target as HTMLInputElement).value)}
+                  placeholder="Avatar URL or data URL"
+                />
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) =>
+                    handleAvatarUpload((e.target as HTMLInputElement).files?.[0] || null)
+                  }
+                />
+
+                <Toolbar>
+                  <button
+                    className="tcp-btn"
+                    onClick={() =>
+                      refreshIdentityStatus().then(() => toast("ok", "Identity refreshed."))
+                    }
+                  >
+                    <i data-lucide="refresh-cw"></i>
+                    Refresh identity
+                  </button>
+                  <button
+                    className="tcp-btn-primary"
+                    onClick={() => saveIdentityMutation.mutate()}
+                    disabled={saveIdentityMutation.isPending}
+                  >
+                    <i data-lucide="save"></i>
+                    Save
+                  </button>
+                </Toolbar>
+              </div>
+            </PanelCard>
+
+            <PanelCard
+              title="Readiness snapshot"
+              subtitle="High-signal operational summary for this configuration state."
+            >
+              <div className="grid gap-2">
+                <div className="tcp-list-item">
+                  <div className="font-medium">Connected providers</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {String(providersCatalog.data?.connected?.length || 0)} connected, default{" "}
+                    {String(providersConfig.data?.default || "none")}
+                  </div>
+                </div>
+                <div className="tcp-list-item">
+                  <div className="font-medium">Browser automation</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {browserStatus.data
+                      ? browserStatus.data.runnable
+                        ? "Ready"
+                        : browserStatus.data.enabled
+                          ? "Enabled but blocked"
+                          : "Disabled"
+                      : "Unknown"}
+                  </div>
+                </div>
+                <div className="tcp-list-item">
+                  <div className="font-medium">Theme</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {themes.find((theme: any) => theme.id === themeId)?.name || themeId}
+                  </div>
+                </div>
+              </div>
+            </PanelCard>
+          </div>
+        }
+      />
+
+      <DetailDrawer
+        open={diagnosticsOpen}
+        onClose={() => setDiagnosticsOpen(false)}
+        title="Browser diagnostics"
       >
         <div className="grid gap-3">
           <div className="grid gap-2 md:grid-cols-3">
@@ -448,10 +612,10 @@ export function SettingsPage({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <Toolbar>
             <button className="tcp-btn" onClick={() => void browserStatus.refetch()}>
               <i data-lucide="refresh-cw"></i>
-              Refresh Browser Status
+              Refresh browser status
             </button>
             <button
               className="tcp-btn"
@@ -463,31 +627,29 @@ export function SettingsPage({
                   )
               }
             >
-              <i data-lucide="stethoscope"></i>
-              Re-run Diagnostics
+              <i data-lucide="activity"></i>
+              Re-run diagnostics
             </button>
-          </div>
+          </Toolbar>
 
           {browserStatus.isLoading ? (
             <EmptyState text="Loading browser diagnostics..." />
           ) : browserStatus.data ? (
             <>
               {browserIssues.length ? (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                  <div className="mb-2 text-sm font-medium">Blocking issues</div>
-                  <div className="grid gap-2">
-                    {browserIssues.map((issue, index) => (
-                      <div key={`${issue.code || "issue"}-${index}`} className="tcp-list-item">
-                        <div className="text-sm font-medium">{issue.code || "browser_issue"}</div>
-                        <div className="tcp-subtle text-xs">
-                          {issue.message || "Unknown browser issue."}
-                        </div>
+                <div className="grid gap-2">
+                  <div className="text-sm font-medium">Blocking issues</div>
+                  {browserIssues.map((issue, index) => (
+                    <div key={`${issue.code || "issue"}-${index}`} className="tcp-list-item">
+                      <div className="text-sm font-medium">{issue.code || "browser_issue"}</div>
+                      <div className="tcp-subtle text-xs">
+                        {issue.message || "Unknown browser issue."}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
                   Browser automation is ready on this machine.
                 </div>
               )}
@@ -524,7 +686,7 @@ export function SettingsPage({
             <EmptyState text="Browser diagnostics are unavailable." />
           )}
         </div>
-      </PageCard>
-    </div>
+      </DetailDrawer>
+    </AnimatedPage>
   );
 }

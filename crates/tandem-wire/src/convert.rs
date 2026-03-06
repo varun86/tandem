@@ -127,6 +127,9 @@ impl WireProviderCatalog {
                     id: provider.id,
                     name: Some(provider.name),
                     models,
+                    catalog_source: None,
+                    catalog_status: None,
+                    catalog_message: None,
                 }
             })
             .collect();

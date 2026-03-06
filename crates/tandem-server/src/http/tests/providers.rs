@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn provider_route_returns_catalog_shape() {
+async fn provider_route_returns_known_providers_without_synthetic_default_models() {
     let state = test_state().await;
     let app = app_router(state);
     let req = Request::builder()
@@ -15,22 +15,92 @@ async fn provider_route_returns_catalog_shape() {
     let payload: Value = serde_json::from_slice(&body).expect("json");
     let all = payload
         .get("all")
-        .and_then(|v| v.as_array())
+        .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    assert!(!all.is_empty());
-    let first = all.first().cloned().unwrap_or_else(|| json!({}));
-    assert!(first.get("id").and_then(|v| v.as_str()).is_some());
+    let openai = all
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some("openai"))
+        .cloned()
+        .expect("openai entry");
+
+    assert_eq!(
+        openai
+            .get("models")
+            .and_then(Value::as_object)
+            .map(|m| m.len()),
+        Some(0)
+    );
+    assert_eq!(
+        openai.get("catalog_source").and_then(Value::as_str),
+        Some("empty")
+    );
+    assert_eq!(
+        openai.get("catalog_status").and_then(Value::as_str),
+        Some("unavailable")
+    );
 }
 
-#[test]
-fn merge_known_provider_defaults_does_not_mark_all_connected() {
-    let mut wire = WireProviderCatalog {
-        all: Vec::new(),
-        connected: Vec::new(),
-    };
-    merge_known_provider_defaults(&mut wire);
+#[tokio::test]
+async fn provider_route_marks_config_models_as_config_catalogs() {
+    let state = test_state().await;
+    state
+        .config
+        .patch_project(json!({
+            "providers": {
+                "openai": {
+                    "url": "https://api.openai.com/v1",
+                    "models": {
+                        "gpt-4.1-mini": {
+                            "name": "GPT 4.1 Mini",
+                            "context_length": 128000
+                        }
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("patch project");
+    state
+        .providers
+        .reload(state.config.get().await.into())
+        .await;
 
-    assert!(wire.all.iter().any(|p| p.id == "openrouter"));
-    assert!(wire.connected.is_empty());
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/provider")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let all = payload
+        .get("all")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let openai = all
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some("openai"))
+        .cloned()
+        .expect("openai entry");
+
+    assert_eq!(
+        openai.get("catalog_source").and_then(Value::as_str),
+        Some("config")
+    );
+    assert_eq!(
+        openai.get("catalog_status").and_then(Value::as_str),
+        Some("ok")
+    );
+    assert!(
+        openai
+            .get("models")
+            .and_then(Value::as_object)
+            .and_then(|models| models.get("gpt-4.1-mini"))
+            .is_some(),
+        "expected configured model to appear in catalog"
+    );
 }

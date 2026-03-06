@@ -15,8 +15,8 @@ pub(super) mod providers;
 pub(super) mod resources;
 pub(super) mod routines;
 pub(super) mod sessions;
+pub(super) mod workflows;
 
-use super::*;
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
@@ -29,12 +29,10 @@ use tandem_core::{
 use tandem_providers::ProviderRegistry;
 use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
 use tandem_tools::ToolRegistry;
-use tandem_wire::WireProviderCatalog;
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::http::config_providers::merge_known_provider_defaults;
 use crate::http::global::sanitize_relative_subpath;
 
 pub(super) async fn test_state() -> AppState {

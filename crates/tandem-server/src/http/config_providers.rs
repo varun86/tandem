@@ -197,16 +197,60 @@ pub(super) async fn list_providers(State(state): State<AppState>) -> Json<Value>
     let all = state.providers.list().await;
     let mut wire = WireProviderCatalog::from_providers(all, connected);
     let effective_cfg = state.config.get_effective_value().await;
+    let config_model_provider_set = merge_provider_models_from_config(&mut wire, &effective_cfg)
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
 
-    merge_known_provider_defaults(&mut wire);
+    for entry in &mut wire.all {
+        entry.models.clear();
+        entry.catalog_source = None;
+        entry.catalog_status = None;
+        entry.catalog_message = None;
+    }
+    wire.all.retain(|entry| entry.id != "local");
+    ensure_known_provider_entries(&mut wire);
+
+    for entry in &mut wire.all {
+        match fetch_remote_provider_models(&entry.id, &effective_cfg).await {
+            ProviderCatalogFetchResult::Remote { models } => {
+                entry.models = models;
+                entry.catalog_source = Some("remote".to_string());
+                entry.catalog_status = Some("ok".to_string());
+            }
+            ProviderCatalogFetchResult::Unavailable { message } => {
+                entry.catalog_source = Some("empty".to_string());
+                entry.catalog_status = Some("unavailable".to_string());
+                entry.catalog_message = Some(message);
+            }
+            ProviderCatalogFetchResult::Error { message } => {
+                entry.catalog_source = Some("empty".to_string());
+                entry.catalog_status = Some("error".to_string());
+                entry.catalog_message = Some(message);
+            }
+        }
+    }
+
     merge_provider_models_from_config(&mut wire, &effective_cfg);
-    if let Some(openrouter_models) = fetch_openrouter_models(&effective_cfg).await {
-        merge_provider_model_map(
-            &mut wire,
-            "openrouter",
-            Some("OpenRouter"),
-            openrouter_models,
-        );
+
+    for entry in &mut wire.all {
+        if config_model_provider_set.contains(&entry.id)
+            && entry.catalog_source.as_deref() != Some("remote")
+        {
+            entry.catalog_source = Some("config".to_string());
+            entry.catalog_status = Some("ok".to_string());
+            entry.catalog_message = None;
+            continue;
+        }
+        if entry.models.is_empty() && entry.catalog_status.is_none() {
+            entry.catalog_source = Some("empty".to_string());
+            entry.catalog_status = Some("unavailable".to_string());
+            entry.catalog_message =
+                Some("Live model discovery is unavailable. Enter a model ID manually.".to_string());
+        } else if entry.catalog_source.is_none() {
+            entry.catalog_source = Some("config".to_string());
+            entry.catalog_status = Some("ok".to_string());
+            entry.catalog_message = None;
+        }
     }
 
     Json(json!({
@@ -436,41 +480,17 @@ pub(super) async fn generate_api_token(State(state): State<AppState>) -> Json<Va
     }))
 }
 
-pub(crate) fn merge_known_provider_defaults(wire: &mut WireProviderCatalog) {
-    let known = [
-        ("openrouter", "OpenRouter", "openai/gpt-4o-mini"),
-        ("openai", "OpenAI", "gpt-5.2"),
-        ("anthropic", "Anthropic", "claude-sonnet-4-6"),
-        ("ollama", "Ollama", "llama3.1:8b"),
-        ("groq", "Groq", "llama-3.1-8b-instant"),
-        ("mistral", "Mistral", "mistral-small-latest"),
-        (
-            "together",
-            "Together",
-            "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-        ),
-        ("cohere", "Cohere", "command-r-plus"),
-        ("azure", "Azure OpenAI-Compatible", "gpt-4o-mini"),
-        (
-            "bedrock",
-            "Bedrock-Compatible",
-            "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        ),
-        ("vertex", "Vertex-Compatible", "gemini-1.5-flash"),
-        ("copilot", "GitHub Copilot-Compatible", "gpt-4o-mini"),
-    ];
-
-    for (provider_id, provider_name, default_model) in known {
-        let mut models = HashMap::new();
-        models.insert(
-            default_model.to_string(),
-            WireProviderModel {
-                name: Some(default_model.to_string()),
-                limit: None,
-            },
-        );
-        merge_provider_model_map(wire, provider_id, Some(provider_name), models);
-    }
+#[derive(Debug)]
+enum ProviderCatalogFetchResult {
+    Remote {
+        models: HashMap<String, WireProviderModel>,
+    },
+    Unavailable {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 fn ensure_provider_entry<'a>(
@@ -486,8 +506,48 @@ fn ensure_provider_entry<'a>(
         id: provider_id.to_string(),
         name: provider_name.map(|s| s.to_string()),
         models: HashMap::new(),
+        catalog_source: None,
+        catalog_status: None,
+        catalog_message: None,
     });
     wire.all.last_mut().expect("provider entry just inserted")
+}
+
+fn known_provider_name(provider_id: &str) -> Option<&'static str> {
+    match provider_id {
+        "openrouter" => Some("OpenRouter"),
+        "openai" => Some("OpenAI"),
+        "anthropic" => Some("Anthropic"),
+        "ollama" => Some("Ollama"),
+        "groq" => Some("Groq"),
+        "mistral" => Some("Mistral"),
+        "together" => Some("Together"),
+        "cohere" => Some("Cohere"),
+        "azure" => Some("Azure OpenAI-Compatible"),
+        "bedrock" => Some("Bedrock-Compatible"),
+        "vertex" => Some("Vertex-Compatible"),
+        "copilot" => Some("GitHub Copilot-Compatible"),
+        _ => None,
+    }
+}
+
+fn ensure_known_provider_entries(wire: &mut WireProviderCatalog) {
+    for provider_id in [
+        "openrouter",
+        "openai",
+        "anthropic",
+        "ollama",
+        "groq",
+        "mistral",
+        "together",
+        "cohere",
+        "azure",
+        "bedrock",
+        "vertex",
+        "copilot",
+    ] {
+        ensure_provider_entry(wire, provider_id, known_provider_name(provider_id));
+    }
 }
 
 fn merge_provider_model_map(
@@ -502,11 +562,22 @@ fn merge_provider_model_map(
     }
 }
 
-fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value) {
-    let Some(provider_root) = cfg.get("provider").and_then(|v| v.as_object()) else {
-        return;
+fn config_provider_root<'a>(cfg: &'a Value) -> Option<&'a serde_json::Map<String, Value>> {
+    cfg.get("providers")
+        .and_then(Value::as_object)
+        .or_else(|| cfg.get("provider").and_then(Value::as_object))
+}
+
+fn provider_config_value<'a>(cfg: &'a Value, provider_id: &str) -> Option<&'a Value> {
+    config_provider_root(cfg).and_then(|root| root.get(provider_id))
+}
+
+fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value) -> Vec<String> {
+    let Some(provider_root) = config_provider_root(cfg) else {
+        return Vec::new();
     };
 
+    let mut merged = Vec::new();
     for (provider_id, provider_value) in provider_root {
         let provider_name = provider_value
             .get("name")
@@ -540,61 +611,88 @@ fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value
 
         if !model_map.is_empty() {
             merge_provider_model_map(wire, provider_id, provider_name, model_map);
+            merged.push(provider_id.to_string());
         }
+    }
+
+    merged
+}
+
+fn provider_default_url(provider_id: &str) -> Option<&'static str> {
+    match provider_id {
+        "openrouter" => Some("https://openrouter.ai/api/v1"),
+        "openai" => Some("https://api.openai.com/v1"),
+        "groq" => Some("https://api.groq.com/openai/v1"),
+        "mistral" => Some("https://api.mistral.ai/v1"),
+        "together" => Some("https://api.together.xyz/v1"),
+        _ => None,
     }
 }
 
-async fn fetch_openrouter_models(cfg: &Value) -> Option<HashMap<String, WireProviderModel>> {
-    let api_key = cfg
-        .get("provider")
-        .and_then(|v| v.get("openrouter"))
-        .and_then(|v| v.get("api_key"))
-        .and_then(|v| v.as_str())
-        .filter(|k| !k.trim().is_empty() && *k != "x")
-        .map(|k| k.to_string())
+fn remote_catalog_support_message(provider_id: &str) -> String {
+    match provider_id {
+        "azure" | "vertex" | "bedrock" | "copilot" | "ollama" => {
+            "Live model discovery is unavailable for this provider. Enter a model ID manually."
+                .to_string()
+        }
+        "anthropic" | "cohere" => {
+            "This provider does not currently expose a reliable live model catalog here. Enter a model ID manually."
+                .to_string()
+        }
+        _ => "Live model discovery is unavailable. Enter a model ID manually.".to_string(),
+    }
+}
+
+fn provider_config_api_key(cfg: &Value, provider_id: &str) -> Option<String> {
+    provider_config_value(cfg, provider_id)
+        .and_then(|entry| entry.get("api_key").or_else(|| entry.get("apiKey")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "x")
+        .map(str::to_string)
         .or_else(|| {
-            cfg.get("providers")
-                .and_then(|v| v.get("openrouter"))
-                .and_then(|v| v.get("api_key"))
-                .and_then(|v| v.as_str())
-                .filter(|k| !k.trim().is_empty() && *k != "x")
-                .map(|k| k.to_string())
+            provider_env_candidates(provider_id)
+                .into_iter()
+                .find_map(|key| std::env::var(&key).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
         })
-        .or_else(|| std::env::var("OPENCODE_OPENROUTER_API_KEY").ok())
-        .filter(|k| !k.trim().is_empty())
-        .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-        .filter(|k| !k.trim().is_empty());
+}
 
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get("https://openrouter.ai/api/v1/models")
-        .timeout(Duration::from_secs(20));
-    if let Some(api_key) = api_key {
-        req = req.bearer_auth(api_key);
-    }
-    let resp = match req.send().await {
-        Ok(resp) => resp,
-        Err(err) => {
-            tracing::debug!("Failed to fetch OpenRouter models: {}", err);
-            return None;
+fn provider_base_url(cfg: &Value, provider_id: &str) -> Option<String> {
+    provider_config_value(cfg, provider_id)
+        .and_then(|entry| entry.get("url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| provider_default_url(provider_id).map(str::to_string))
+}
+
+fn normalize_openai_catalog_base(input: &str) -> String {
+    let mut base = input.trim().trim_end_matches('/').to_string();
+    for suffix in ["/chat/completions", "/completions", "/models"] {
+        if let Some(stripped) = base.strip_suffix(suffix) {
+            base = stripped.trim_end_matches('/').to_string();
+            break;
         }
-    };
-
-    if !resp.status().is_success() {
-        tracing::debug!("OpenRouter models request returned {}", resp.status());
-        return None;
     }
-
-    let body: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(err) => {
-            tracing::debug!("Failed to decode OpenRouter models: {}", err);
-            return None;
+    while let Some(prefix) = base.strip_suffix("/v1") {
+        if prefix.ends_with("/v1") {
+            base = prefix.to_string();
+            continue;
         }
-    };
+        break;
+    }
+    if base.ends_with("/v1") {
+        base
+    } else {
+        format!("{}/v1", base.trim_end_matches('/'))
+    }
+}
 
+fn parse_openrouter_model_payload(body: &Value) -> Option<HashMap<String, WireProviderModel>> {
     let data = body.get("data").and_then(|v| v.as_array())?;
-
     let mut out = HashMap::new();
     for item in data {
         let Some(model_id) = item.get("id").and_then(|v| v.as_str()) else {
@@ -623,11 +721,149 @@ async fn fetch_openrouter_models(cfg: &Value) -> Option<HashMap<String, WireProv
             },
         );
     }
+    (!out.is_empty()).then_some(out)
+}
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
+fn parse_openai_compatible_model_payload(
+    body: &Value,
+) -> Option<HashMap<String, WireProviderModel>> {
+    let data = body.get("data").and_then(|v| v.as_array())?;
+    let mut out = HashMap::new();
+    for item in data {
+        let Some(model_id) = item.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| Some(model_id.to_string()));
+        let context = item
+            .get("context_window")
+            .and_then(|v| v.as_u64())
+            .or_else(|| item.get("context_length").and_then(|v| v.as_u64()))
+            .map(|v| v as u32);
+        out.insert(
+            model_id.to_string(),
+            WireProviderModel {
+                name,
+                limit: context.map(|ctx| WireProviderModelLimit { context: Some(ctx) }),
+            },
+        );
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+async fn fetch_openrouter_models(
+    cfg: &Value,
+) -> Result<HashMap<String, WireProviderModel>, String> {
+    let api_key = provider_config_api_key(cfg, "openrouter")
+        .or_else(|| std::env::var("OPENCODE_OPENROUTER_API_KEY").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(api_key) = api_key else {
+        return Err(
+            "OpenRouter requires an API key before live model discovery is available.".to_string(),
+        );
+    };
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get("https://openrouter.ai/api/v1/models")
+        .timeout(Duration::from_secs(20));
+    req = req.bearer_auth(api_key);
+    let resp = req
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch OpenRouter models: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "OpenRouter model catalog request failed with status {}",
+            resp.status()
+        ));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|err| format!("Failed to decode OpenRouter models: {err}"))?;
+    parse_openrouter_model_payload(&body)
+        .ok_or_else(|| "OpenRouter returned an empty or invalid model catalog.".to_string())
+}
+
+async fn fetch_openai_compatible_models(
+    provider_id: &str,
+    cfg: &Value,
+) -> Result<HashMap<String, WireProviderModel>, String> {
+    let Some(api_key) = provider_config_api_key(cfg, provider_id) else {
+        return Err(format!(
+            "{} requires an API key before live model discovery is available.",
+            known_provider_name(provider_id).unwrap_or(provider_id)
+        ));
+    };
+    let Some(base_url) = provider_base_url(cfg, provider_id) else {
+        return Err("No provider base URL is configured for live model discovery.".to_string());
+    };
+    let url = format!("{}/models", normalize_openai_catalog_base(&base_url));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(api_key)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch model catalog from {provider_id}: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "{} model catalog request failed with status {}",
+            provider_id,
+            resp.status()
+        ));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|err| format!("Failed to decode model catalog from {provider_id}: {err}"))?;
+    parse_openai_compatible_model_payload(&body).ok_or_else(|| {
+        format!("{provider_id} returned an empty or invalid OpenAI-compatible model catalog.")
+    })
+}
+
+async fn fetch_remote_provider_models(
+    provider_id: &str,
+    cfg: &Value,
+) -> ProviderCatalogFetchResult {
+    match provider_id {
+        "openrouter" => match fetch_openrouter_models(cfg).await {
+            Ok(models) => ProviderCatalogFetchResult::Remote { models },
+            Err(message) => {
+                if message.contains("requires an API key") {
+                    ProviderCatalogFetchResult::Unavailable { message }
+                } else {
+                    tracing::debug!("openrouter catalog discovery failed: {message}");
+                    ProviderCatalogFetchResult::Error { message }
+                }
+            }
+        },
+        "openai" | "groq" | "mistral" | "together" => {
+            match fetch_openai_compatible_models(provider_id, cfg).await {
+                Ok(models) => ProviderCatalogFetchResult::Remote { models },
+                Err(message) => {
+                    if message.contains("requires an API key") {
+                        ProviderCatalogFetchResult::Unavailable { message }
+                    } else {
+                        tracing::warn!("{provider_id} catalog discovery failed: {message}");
+                        ProviderCatalogFetchResult::Error { message }
+                    }
+                }
+            }
+        }
+        "anthropic" | "cohere" | "azure" | "vertex" | "bedrock" | "copilot" | "ollama" => {
+            ProviderCatalogFetchResult::Unavailable {
+                message: remote_catalog_support_message(provider_id),
+            }
+        }
+        _ => ProviderCatalogFetchResult::Unavailable {
+            message: "Live model discovery is unavailable. Enter a model ID manually.".to_string(),
+        },
     }
 }
 

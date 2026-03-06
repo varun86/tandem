@@ -162,6 +162,9 @@ class ProviderEntry(BaseModel):
     id: str
     name: Optional[str] = None
     models: Optional[dict[str, ProviderModelEntry]] = None
+    catalog_source: Optional[str] = None
+    catalog_status: Optional[str] = None
+    catalog_message: Optional[str] = None
 
 
 class ProviderCatalog(BaseModel):

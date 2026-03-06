@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Provider catalog honesty in Settings and `/provider`**:
+  - `GET /provider` now returns explicit provider catalog metadata (`catalog_source`, `catalog_status`, `catalog_message`) so clients can distinguish live remote catalogs from config-defined or unavailable catalogs
+  - removed synthetic single-model fallback catalog entries for built-in providers from the provider catalog response
+  - provider catalog discovery now attempts live remote model lists for supported providers (`openrouter`, `openai`, `groq`, `mistral`, `together`) and reports manual-entry states for providers without reliable generic discovery
+  - control-panel Settings now labels provider catalogs accurately:
+    - real remote counts for live catalogs
+    - `configured models` for config-defined catalogs
+    - `manual entry` for providers without live model discovery
+  - unsupported/non-generic providers remain configurable in Settings without being misrepresented as one-model catalogs
+  - added backend regression coverage for empty/manual providers and config-sourced provider catalogs
+
 - **Headless-first Chromium browser automation with readiness diagnostics**:
   - added a new `tandem-browser` Rust sidecar crate for local Chromium automation over stdio with typed browser RPC methods (`browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.type`, `browser.press`, `browser.wait`, `browser.extract`, `browser.screenshot`, `browser.close`)
   - added browser readiness and install diagnostics with real launch smoke tests, distro-aware Linux install hints, and sidecar/browser detection for headless VPS hosts and desktops

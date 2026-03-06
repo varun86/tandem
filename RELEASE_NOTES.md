@@ -4,6 +4,15 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.1 (Unreleased)
 
+- Provider catalog honesty in Settings and `/provider`
+  - `GET /provider` now returns explicit catalog metadata so clients can distinguish live remote model catalogs from config-defined catalogs and manual-entry-only providers.
+  - Removed the synthetic single-model fallback behavior that made most non-OpenRouter providers appear to have exactly one available model.
+  - Live remote model discovery is now attempted for supported providers (`openrouter`, `openai`, `groq`, `mistral`, `together`), while unsupported/non-generic providers stay configurable through manual model entry.
+  - Control-panel Settings now renders provider rows more honestly:
+    - real counts for remote catalogs
+    - `configured models` for config-defined catalogs
+    - `manual entry` when live discovery is unavailable
+
 - Headless-first Chromium browser automation with readiness diagnostics
   - Added a new `tandem-browser` sidecar for local Chromium automation over stdio, with typed browser actions for open, navigate, snapshot, click, type, press, wait, extract, screenshot, and close.
   - Browser automation is now explicitly headless-first: it works on a VPS with no GUI as long as the sidecar and a Chromium-based browser are installed on the same host as `tandem-engine`.
