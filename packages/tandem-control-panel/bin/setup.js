@@ -2103,15 +2103,7 @@ async function persistClaimedWorkspaceDocArtifact(
       parts: [
         {
           type: "text",
-          text: [
-            "Persist the generated workspace artifact exactly once via the write tool.",
-            "Use the provided path and content exactly as given.",
-            "Do not add commentary.",
-            "",
-            `Original task prompt:\n${String(originalPrompt || "").trim()}`,
-            "",
-            writeCommand,
-          ].join("\n"),
+          text: writeCommand,
         },
       ],
       tool_mode: "required",
