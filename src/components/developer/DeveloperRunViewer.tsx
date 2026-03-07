@@ -988,6 +988,18 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     []
   );
 
+  const openArtifactRecord = useCallback((artifact: CoderArtifactRecord) => {
+    setSelectedArtifactPath(artifact.path);
+    setDetailTab(artifactCategory(artifact) === "validation" ? "validation" : "artifacts");
+  }, []);
+
+  const resetRunFilters = useCallback(() => {
+    setRunQuery("");
+    setStatusFilter("all");
+    setWorkflowFilter("all");
+    setRunSortMode("updated");
+  }, []);
+
   const openArtifactRecordContext = useCallback(
     (artifact: CoderArtifactRecord, target: "task" | "event") => {
       if (target === "task") {
@@ -1155,6 +1167,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                     Adjust the filters or wait for the engine to create a run.
                   </p>
                 </div>
+                <Button variant="secondary" size="sm" onClick={resetRunFilters}>
+                  Reset filters
+                </Button>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2183,10 +2198,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                             <button
                                               key={artifact.id}
                                               type="button"
-                                              onClick={() => {
-                                                setSelectedArtifactPath(artifact.path);
-                                                setDetailTab("artifacts");
-                                              }}
+                                              onClick={() => openArtifactRecord(artifact)}
                                               className="w-full rounded-2xl border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-surface-elevated"
                                             >
                                               <div className="flex items-center justify-between gap-3">
@@ -3219,10 +3231,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 {candidate.artifact?.artifact_type ? (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      setSelectedArtifactPath(candidate.artifact?.path ?? null);
-                                      setDetailTab("artifacts");
-                                    }}
+                                    onClick={() =>
+                                      candidate.artifact && openArtifactRecord(candidate.artifact)
+                                    }
                                     className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
                                   >
                                     {candidate.artifact.artifact_type}
@@ -3232,10 +3243,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               {candidate.artifact ? (
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setSelectedArtifactPath(candidate.artifact?.path ?? null);
-                                    setDetailTab("artifacts");
-                                  }}
+                                  onClick={() =>
+                                    candidate.artifact && openArtifactRecord(candidate.artifact)
+                                  }
                                   className="mt-3 w-full rounded-2xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-elevated"
                                 >
                                   <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
