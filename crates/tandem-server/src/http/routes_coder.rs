@@ -18,4 +18,8 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/coder/runs/{id}/memory-candidates",
             get(coder_memory_candidate_list).post(coder_memory_candidate_create),
         )
+        .route(
+            "/coder/runs/{id}/memory-candidates/{candidate_id}/promote",
+            post(coder_memory_candidate_promote),
+        )
 }
