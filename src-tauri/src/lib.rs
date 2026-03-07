@@ -683,6 +683,7 @@ pub fn run() {
             commands::mcp_list_tools,
             commands::mcp_catalog,
             commands::capability_readiness,
+            commands::setup_understand,
             commands::pack_builder_preview,
             commands::pack_builder_apply,
             commands::pack_builder_cancel,

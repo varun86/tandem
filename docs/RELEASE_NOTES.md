@@ -1,3 +1,40 @@
+# Tandem v0.4.2 Release Notes (Unreleased)
+
+### Highlights
+
+- **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
+  - added a shared backend setup-understanding endpoint at `POST /setup/understand`
+  - setup messages are now classified into:
+    - provider setup
+    - MCP / integration setup
+    - automation creation
+    - channel setup help
+    - broad setup help / clarification
+    - normal chat pass-through
+  - the resolver is deterministic and state-aware: it uses setup verbs, provider/model names, integration targets, MCP catalog hits, schedule/delivery patterns, and current missing configuration to decide whether to intercept, clarify, or pass through
+
+- **Channels now understand setup requests structurally**:
+  - Telegram, Discord, and Slack channel dispatch now call setup understanding before normal LLM prompt routing
+  - clear automation requests such as “Monitor GitHub issues and post a daily digest to Slack” now go straight to Pack Builder preview instead of relying on the older narrow pack-intent string matcher
+  - provider and integration setup requests now return deterministic setup guidance in-channel instead of wasting a normal assistant turn
+  - ambiguous setup asks now use a scoped clarification flow so the follow-up answer is resolved inside the same room/thread/topic conversation
+  - existing slash commands and Pack Builder `confirm` / `cancel` shortcuts still take precedence
+
+- **Desktop and control-panel chat now surface setup cards**:
+  - desktop chat now preflights outgoing prompts through setup understanding and shows setup cards that open the right surface for the detected task:
+    - Settings for provider setup
+    - Extensions / MCP for tool connections
+    - Pack Builder preview for automation creation
+  - control-panel chat now uses the same preflight and presents setup cards that route into:
+    - Settings
+    - MCP
+    - Automations
+  - added a Tauri bridge for setup understanding so desktop chat consumes the same backend contract as channels and the web control panel
+
+- **Regression coverage added for the new interpretation layer**:
+  - added backend tests for provider/integration/automation interception, broad-setup clarification, and pass-through chat
+  - added channel dispatcher validation to keep the new interception layer compatible with existing scoped session and Pack Builder reply behavior
+
 # Tandem v0.4.1 Release Notes (Unreleased)
 
 ### Highlights

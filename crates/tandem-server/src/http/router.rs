@@ -29,6 +29,7 @@ pub(super) fn build_router(state: AppState) -> Router {
     router = super::routes_pack_builder::apply(router);
     router = super::routes_packs::apply(router);
     router = super::routes_workflows::apply(router);
+    router = super::routes_setup_understanding::apply(router);
     router = super::routes_global::apply(router);
 
     if state.web_ui_enabled() {

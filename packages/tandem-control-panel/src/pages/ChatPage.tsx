@@ -61,6 +61,38 @@ type UploadProgressRow = {
 
 type ConfirmDeleteState = { id: string; title: string } | null;
 
+type SetupDecision = "pass_through" | "intercept" | "clarify";
+type SetupIntentKind =
+  | "provider_setup"
+  | "integration_setup"
+  | "automation_create"
+  | "channel_setup_help"
+  | "setup_help"
+  | "general";
+
+type SetupUnderstandResponse = {
+  decision: SetupDecision;
+  intent_kind: SetupIntentKind;
+  clarifier?: { question: string; options: { id: string; label: string }[] } | null;
+  slots: {
+    provider_ids: string[];
+    model_ids: string[];
+    integration_targets: string[];
+    channel_targets: string[];
+    goal?: string | null;
+  };
+  proposed_action: { type: string; payload: Record<string, unknown> };
+};
+
+type SetupCard = {
+  title: string;
+  body: string;
+  cta: string;
+  actionType: string;
+  payload: Record<string, unknown>;
+  clarifier?: { question: string; options: { id: string; label: string }[] };
+};
+
 function inferMime(name = "") {
   const ext = String(name).toLowerCase().split(".").pop() || "";
   return EXT_MIME[ext] || "application/octet-stream";
@@ -116,6 +148,45 @@ function toTextError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | null {
+  if (response.decision === "pass_through") return null;
+  if (response.intent_kind === "provider_setup") {
+    return {
+      title: "Provider setup",
+      body: `Configure ${response.slots.provider_ids[0] || "a provider"} in Settings.`,
+      cta: "Open Settings",
+      actionType: "open_provider_setup",
+      payload: response.proposed_action.payload || {},
+    };
+  }
+  if (response.intent_kind === "integration_setup") {
+    return {
+      title: "Tool connection",
+      body: `Connect ${response.slots.integration_targets[0] || "the matching tool"} through MCP.`,
+      cta: "Open MCP",
+      actionType: "open_mcp_setup",
+      payload: response.proposed_action.payload || {},
+    };
+  }
+  if (response.intent_kind === "automation_create") {
+    return {
+      title: "Automation setup",
+      body: response.slots.goal || "Create an automation from this request.",
+      cta: "Open Automations",
+      actionType: "open_automations",
+      payload: response.proposed_action.payload || {},
+    };
+  }
+  return {
+    title: "Setup help",
+    body: response.clarifier?.question || "Choose a setup path.",
+    cta: "Open Settings",
+    actionType: "open_provider_setup",
+    payload: response.proposed_action.payload || {},
+    clarifier: response.clarifier || undefined,
+  };
+}
+
 export function ChatPage({ client, api, toast, providerStatus, identity, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const reducedMotion = !!useReducedMotion();
@@ -149,6 +220,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   const [autoApproveInFlight, setAutoApproveInFlight] = useState(false);
   const [availableTools, setAvailableTools] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<ConfirmDeleteState>(null);
+  const [setupCard, setSetupCard] = useState<SetupCard | null>(null);
 
   const sessionTitle = useMemo(() => {
     const hit = sessions.find((x) => x.id === selectedSessionId);
@@ -565,6 +637,38 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
       promptRaw || (attached.length ? "Please analyze the attached file(s)." : "");
     if (!resolvedPrompt) return;
 
+    try {
+      const setup = (await api("/api/engine/setup/understand", {
+        method: "POST",
+        body: JSON.stringify({
+          surface: "control_panel_chat",
+          session_id: selectedSessionId || undefined,
+          text: resolvedPrompt,
+          channel: null,
+          trigger: {
+            source: "direct_message",
+            is_direct_message: true,
+            was_explicitly_mentioned: false,
+            is_reply_to_bot: false,
+          },
+          scope: {
+            kind: "direct",
+            id: selectedSessionId || "control-panel-chat",
+          },
+        }),
+      })) as SetupUnderstandResponse;
+      if (setup.decision !== "pass_through") {
+        const card = setupCardFromResponse(setup);
+        if (card) {
+          setSetupCard(card);
+          setPrompt("");
+          return;
+        }
+      }
+    } catch {
+      // continue with normal chat flow
+    }
+
     setPrompt("");
     setSending(true);
     appendTransientUserMessage(resolvedPrompt, attached.length);
@@ -584,7 +688,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         );
       }
 
-      const parts = attached.map((file) => ({
+      const parts: Array<Record<string, string>> = attached.map((file) => ({
         type: "file",
         mime: file.mime || inferMime(file.name || file.path),
         filename: file.name || file.path || "attachment",
@@ -1184,6 +1288,77 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
               <span className="chat-main-tools">{availableTools.length} tools</span>
             ) : null}
           </header>
+
+          {setupCard ? (
+            <div className="mx-3 mb-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-3">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div>
+                  <div className="tcp-title text-sm">{setupCard.title}</div>
+                  <div className="tcp-subtle text-sm">{setupCard.body}</div>
+                </div>
+                <button
+                  type="button"
+                  className="tcp-btn tcp-btn-ghost"
+                  onClick={() => setSetupCard(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+              {setupCard.clarifier ? (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {setupCard.clarifier.options.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className="tcp-btn tcp-btn-ghost"
+                      onClick={() =>
+                        setSetupCard({
+                          title:
+                            option.id === "provider_setup"
+                              ? "Provider setup"
+                              : option.id === "integration_setup"
+                                ? "Tool connection"
+                                : "Automation setup",
+                          body:
+                            option.id === "provider_setup"
+                              ? "Open Settings to configure a provider."
+                              : option.id === "integration_setup"
+                                ? "Open MCP to connect the tool you need."
+                                : "Open Automations to build the workflow.",
+                          cta:
+                            option.id === "provider_setup"
+                              ? "Open Settings"
+                              : option.id === "integration_setup"
+                                ? "Open MCP"
+                                : "Open Automations",
+                          actionType:
+                            option.id === "provider_setup"
+                              ? "open_provider_setup"
+                              : option.id === "integration_setup"
+                                ? "open_mcp_setup"
+                                : "open_automations",
+                          payload: setupCard.payload,
+                        })
+                      }
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="tcp-btn"
+                onClick={() => {
+                  if (setupCard.actionType === "open_provider_setup") navigate("settings");
+                  else if (setupCard.actionType === "open_mcp_setup") navigate("mcp");
+                  else if (setupCard.actionType === "open_automations") navigate("automations");
+                }}
+              >
+                {setupCard.cta}
+              </button>
+            </div>
+          ) : null}
 
           <div
             ref={messagesRef}

@@ -4483,6 +4483,21 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn setup_understand(&self, request: serde_json::Value) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/setup/understand", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to evaluate setup understanding: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
     pub async fn pack_builder_apply(
         &self,
         request: serde_json::Value,

@@ -1017,6 +1017,53 @@ export interface PackBuilderWorkflowResponse {
   [key: string]: unknown;
 }
 
+export type SetupDecision = "pass_through" | "intercept" | "clarify";
+export type SetupIntentKind =
+  | "provider_setup"
+  | "integration_setup"
+  | "automation_create"
+  | "channel_setup_help"
+  | "setup_help"
+  | "general";
+
+export interface SetupClarifierOption {
+  id: string;
+  label: string;
+}
+
+export interface SetupClarifier {
+  question: string;
+  options: SetupClarifierOption[];
+}
+
+export interface SetupProposedAction {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+export interface SetupUnderstandResponse {
+  decision: SetupDecision;
+  intent_kind: SetupIntentKind;
+  confidence: number;
+  slots: {
+    provider_ids: string[];
+    model_ids: string[];
+    integration_targets: string[];
+    channel_targets: string[];
+    goal?: string | null;
+    schedule_hint?: string | null;
+    delivery_target?: string | null;
+  };
+  clarifier?: SetupClarifier | null;
+  proposed_action: SetupProposedAction;
+}
+
+export async function setupUnderstand(
+  request: Record<string, unknown>
+): Promise<SetupUnderstandResponse> {
+  return invoke("setup_understand", { request });
+}
+
 export async function packBuilderPreview(
   request: Record<string, unknown>
 ): Promise<PackBuilderWorkflowResponse> {

@@ -74,6 +74,117 @@ pub struct SessionRecord {
 
 /// `{channel_name}:{sender_id}` → Tandem `SessionRecord`
 pub type SessionMap = Arc<Mutex<HashMap<String, SessionRecord>>>;
+type SetupClarifierMap = Arc<Mutex<HashMap<String, PendingSetupClarifier>>>;
+
+#[derive(Debug, Clone)]
+struct PendingSetupClarifier {
+    intent_options: Vec<String>,
+    original_text: String,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SetupUnderstandRequest<'a> {
+    surface: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<&'a str>,
+    text: &'a str,
+    channel: &'a str,
+    trigger: SetupTriggerPayload<'a>,
+    scope: SetupScopePayload<'a>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SetupTriggerPayload<'a> {
+    source: &'a str,
+    is_direct_message: bool,
+    was_explicitly_mentioned: bool,
+    is_reply_to_bot: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SetupScopePayload<'a> {
+    kind: &'a str,
+    id: &'a str,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SetupUnderstandResponse {
+    decision: SetupDecision,
+    intent_kind: SetupIntentKind,
+    #[allow(dead_code)]
+    confidence: f32,
+    #[allow(dead_code)]
+    slots: SetupUnderstandSlots,
+    #[allow(dead_code)]
+    evidence: Vec<SetupEvidence>,
+    clarifier: Option<SetupClarifier>,
+    proposed_action: SetupProposedAction,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SetupDecision {
+    PassThrough,
+    Intercept,
+    Clarify,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SetupIntentKind {
+    ProviderSetup,
+    IntegrationSetup,
+    AutomationCreate,
+    ChannelSetupHelp,
+    SetupHelp,
+    General,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+struct SetupUnderstandSlots {
+    #[serde(default)]
+    provider_ids: Vec<String>,
+    #[serde(default)]
+    model_ids: Vec<String>,
+    #[serde(default)]
+    integration_targets: Vec<String>,
+    #[serde(default)]
+    channel_targets: Vec<String>,
+    goal: Option<String>,
+    schedule_hint: Option<String>,
+    delivery_target: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SetupEvidence {
+    kind: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SetupClarifier {
+    question: String,
+    options: Vec<SetupClarifierOption>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SetupClarifierOption {
+    id: String,
+    label: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+struct SetupProposedAction {
+    #[serde(rename = "type")]
+    action_type: String,
+    #[serde(default)]
+    payload: serde_json::Value,
+}
 
 fn session_scope_kind_label(msg: &ChannelMessage) -> &'static str {
     match msg.scope.kind {
@@ -287,32 +398,36 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
     );
 
     let session_map: SessionMap = Arc::new(Mutex::new(initial_map));
+    let setup_clarifiers: SetupClarifierMap = Arc::new(Mutex::new(HashMap::new()));
     let mut set = JoinSet::new();
 
     if let Some(tg) = config.telegram {
         let channel = Arc::new(TelegramChannel::new(tg));
         let map = session_map.clone();
+        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map));
+        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
         info!("tandem-channels: Telegram listener started");
     }
 
     if let Some(dc) = config.discord {
         let channel = Arc::new(DiscordChannel::new(dc));
         let map = session_map.clone();
+        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map));
+        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
         info!("tandem-channels: Discord listener started");
     }
 
     if let Some(sl) = config.slack {
         let channel = Arc::new(SlackChannel::new(sl));
         let map = session_map.clone();
+        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map));
+        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
         info!("tandem-channels: Slack listener started");
     }
 
@@ -329,6 +444,7 @@ async fn supervise(
     base_url: String,
     api_token: String,
     session_map: SessionMap,
+    setup_clarifiers: SetupClarifierMap,
 ) {
     let mut backoff_secs: u64 = 1;
     loop {
@@ -346,8 +462,9 @@ async fn supervise(
             let base = base_url.clone();
             let tok = api_token.clone();
             let map = session_map.clone();
+            let clarifiers = setup_clarifiers.clone();
             tokio::spawn(async move {
-                process_channel_message(msg, ch, &base, &tok, &map).await;
+                process_channel_message(msg, ch, &base, &tok, &map, &clarifiers).await;
             });
         }
 
@@ -379,6 +496,7 @@ async fn process_channel_message(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    setup_clarifiers: &SetupClarifierMap,
 ) {
     // --- Slash command intercept ---
     if msg.content.starts_with('/') {
@@ -401,20 +519,18 @@ async fn process_channel_message(
         }
     }
 
-    // --- Normal message → Tandem session ---
-    let map_key = session_map_key(&msg);
-    let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
-
-    let session_id = match session_id {
-        Some(id) => id,
-        None => {
-            error!("failed to get or create session for {}", map_key);
-            return;
-        }
-    };
     let thread_key = format!("{}:{}", msg.channel, msg.reply_target);
 
     if let Some(cmd) = parse_pack_builder_reply_command(&msg.content) {
+        let map_key = session_map_key(&msg);
+        let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
+        let session_id = match session_id {
+            Some(id) => id,
+            None => {
+                error!("failed to get or create session for {}", map_key);
+                return;
+            }
+        };
         let response = match cmd {
             PackBuilderReplyCommand::Confirm => {
                 apply_pending_pack_builder(
@@ -460,13 +576,140 @@ async fn process_channel_message(
         }
     }
 
+    let conversation_key = session_map_key(&msg);
+    let clarified_text =
+        consume_setup_clarifier_reply(&conversation_key, &msg.content, setup_clarifiers).await;
+    let effective_text = clarified_text.as_deref().unwrap_or(&msg.content);
+    let setup_response =
+        match understand_setup_request(base_url, api_token, &msg, None, effective_text).await {
+            Ok(response) => response,
+            Err(err) => {
+                warn!(
+                    "setup understanding failed for channel '{}': {err}",
+                    channel.name()
+                );
+                SetupUnderstandResponse {
+                    decision: SetupDecision::PassThrough,
+                    intent_kind: SetupIntentKind::General,
+                    confidence: 0.0,
+                    slots: SetupUnderstandSlots::default(),
+                    evidence: Vec::new(),
+                    clarifier: None,
+                    proposed_action: SetupProposedAction::default(),
+                }
+            }
+        };
+
+    if setup_response.decision == SetupDecision::Clarify {
+        if let Some(clarifier) = &setup_response.clarifier {
+            remember_setup_clarifier(
+                conversation_key.clone(),
+                clarifier,
+                effective_text.to_string(),
+                setup_clarifiers,
+            )
+            .await;
+            let reply = format_setup_clarifier_message(clarifier);
+            if let Err(e) = channel
+                .send(&SendMessage {
+                    content: reply,
+                    recipient: msg.reply_target,
+                    image_urls: Vec::new(),
+                })
+                .await
+            {
+                error!(
+                    "failed to send setup clarifier via '{}': {e}",
+                    channel.name()
+                );
+            }
+            return;
+        }
+    }
+
+    if setup_response.decision == SetupDecision::Intercept {
+        match setup_response.intent_kind {
+            SetupIntentKind::AutomationCreate => {
+                let map_key = session_map_key(&msg);
+                let session_id =
+                    get_or_create_session(&msg, base_url, api_token, session_map).await;
+                let session_id = match session_id {
+                    Some(id) => id,
+                    None => {
+                        error!("failed to get or create session for {}", map_key);
+                        return;
+                    }
+                };
+                match preview_setup_automation(
+                    base_url,
+                    api_token,
+                    &session_id,
+                    &thread_key,
+                    effective_text,
+                )
+                .await
+                {
+                    Some(reply) => {
+                        if let Err(e) = channel
+                            .send(&SendMessage {
+                                content: reply,
+                                recipient: msg.reply_target,
+                                image_urls: Vec::new(),
+                            })
+                            .await
+                        {
+                            error!(
+                                "failed to send setup automation preview via '{}': {e}",
+                                channel.name()
+                            );
+                        }
+                    }
+                    None => warn!("pack builder preview did not return a reply"),
+                }
+                return;
+            }
+            SetupIntentKind::ProviderSetup
+            | SetupIntentKind::IntegrationSetup
+            | SetupIntentKind::ChannelSetupHelp
+            | SetupIntentKind::SetupHelp => {
+                let reply = format_setup_guidance_message(&setup_response);
+                if let Err(e) = channel
+                    .send(&SendMessage {
+                        content: reply,
+                        recipient: msg.reply_target,
+                        image_urls: Vec::new(),
+                    })
+                    .await
+                {
+                    error!(
+                        "failed to send setup guidance via '{}': {e}",
+                        channel.name()
+                    );
+                }
+                return;
+            }
+            SetupIntentKind::General => {}
+        }
+    }
+
     if let Err(e) = channel.start_typing(&msg.reply_target).await {
         warn!(
             "failed to start typing indicator for channel '{}': {e}",
             channel.name()
         );
     }
-    let mut prompt_content = msg.content.clone();
+
+    let map_key = session_map_key(&msg);
+    let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
+    let session_id = match session_id {
+        Some(id) => id,
+        None => {
+            error!("failed to get or create session for {}", map_key);
+            let _ = channel.stop_typing(&msg.reply_target).await;
+            return;
+        }
+    };
+    let mut prompt_content = effective_text.to_string();
     if let Some(attachment) = msg.attachment.as_deref() {
         if is_zip_attachment(&msg) {
             if let Some(pack_reply) =
@@ -505,7 +748,7 @@ async fn process_channel_message(
         prompt_content = synthesize_attachment_prompt(
             &msg.channel,
             attachment,
-            &msg.content,
+            effective_text,
             persisted.as_deref(),
             msg.attachment_path.as_deref(),
             msg.attachment_url.as_deref(),
@@ -514,7 +757,7 @@ async fn process_channel_message(
         );
     }
 
-    let route = route_agent_for_channel_message(&msg.content);
+    let route = route_agent_for_channel_message(effective_text);
 
     let response = run_in_session(
         &session_id,
@@ -592,6 +835,262 @@ fn parse_pack_builder_reply_command(content: &str) -> Option<PackBuilderReplyCom
         }
     }
     None
+}
+
+fn trigger_source_label(source: &crate::traits::TriggerSource) -> &'static str {
+    match source {
+        crate::traits::TriggerSource::SlashCommand => "slash_command",
+        crate::traits::TriggerSource::DirectMessage => "direct_message",
+        crate::traits::TriggerSource::Mention => "mention",
+        crate::traits::TriggerSource::ReplyToBot => "reply_to_bot",
+        crate::traits::TriggerSource::Ambient => "ambient",
+    }
+}
+
+fn scope_kind_label(scope: &crate::traits::ConversationScopeKind) -> &'static str {
+    match scope {
+        crate::traits::ConversationScopeKind::Direct => "direct",
+        crate::traits::ConversationScopeKind::Room => "room",
+        crate::traits::ConversationScopeKind::Thread => "thread",
+        crate::traits::ConversationScopeKind::Topic => "topic",
+    }
+}
+
+async fn understand_setup_request(
+    base_url: &str,
+    api_token: &str,
+    msg: &ChannelMessage,
+    session_id: Option<&str>,
+    text: &str,
+) -> anyhow::Result<SetupUnderstandResponse> {
+    let client = reqwest::Client::new();
+    let request = SetupUnderstandRequest {
+        surface: "channel",
+        session_id,
+        text,
+        channel: &msg.channel,
+        trigger: SetupTriggerPayload {
+            source: trigger_source_label(&msg.trigger.source),
+            is_direct_message: msg.trigger.is_direct_message,
+            was_explicitly_mentioned: msg.trigger.was_explicitly_mentioned,
+            is_reply_to_bot: msg.trigger.is_reply_to_bot,
+        },
+        scope: SetupScopePayload {
+            kind: scope_kind_label(&msg.scope.kind),
+            id: &msg.scope.id,
+        },
+    };
+    let resp = add_auth(
+        client
+            .post(format!("{base_url}/setup/understand"))
+            .json(&request),
+        api_token,
+    )
+    .send()
+    .await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("setup/understand failed ({}): {}", status, body);
+    }
+    Ok(serde_json::from_str(&body)?)
+}
+
+async fn remember_setup_clarifier(
+    conversation_key: String,
+    clarifier: &SetupClarifier,
+    original_text: String,
+    setup_clarifiers: &SetupClarifierMap,
+) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let pending = PendingSetupClarifier {
+        intent_options: clarifier.options.iter().map(|row| row.id.clone()).collect(),
+        original_text,
+        expires_at_ms: now + 5 * 60 * 1000,
+    };
+    let mut guard = setup_clarifiers.lock().await;
+    guard.insert(conversation_key, pending);
+}
+
+async fn consume_setup_clarifier_reply(
+    conversation_key: &str,
+    reply: &str,
+    setup_clarifiers: &SetupClarifierMap,
+) -> Option<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let mut guard = setup_clarifiers.lock().await;
+    guard.retain(|_, value| value.expires_at_ms > now);
+    let pending = guard.get(conversation_key)?.clone();
+    let selected = parse_setup_clarifier_selection(reply, &pending.intent_options)?;
+    guard.remove(conversation_key);
+    Some(format!("{} {}", pending.original_text, selected))
+}
+
+fn parse_setup_clarifier_selection(reply: &str, options: &[String]) -> Option<String> {
+    let normalized = reply.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    match normalized.as_str() {
+        "1" => return options.first().cloned(),
+        "2" => return options.get(1).cloned(),
+        "3" => return options.get(2).cloned(),
+        _ => {}
+    }
+    options.iter().find_map(|option| {
+        let normalized_option = option.to_ascii_lowercase();
+        if normalized == normalized_option
+            || normalized.contains(&normalized_option.replace('_', " "))
+        {
+            Some(option.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn format_setup_clarifier_message(clarifier: &SetupClarifier) -> String {
+    let mut lines = vec![clarifier.question.clone()];
+    for (index, option) in clarifier.options.iter().enumerate() {
+        lines.push(format!("{}. {}", index + 1, option.label));
+    }
+    lines.join("\n")
+}
+
+async fn preview_setup_automation(
+    base_url: &str,
+    api_token: &str,
+    session_id: &str,
+    thread_key: &str,
+    goal: &str,
+) -> Option<String> {
+    let client = reqwest::Client::new();
+    let resp = add_auth(
+        client
+            .post(format!("{base_url}/pack-builder/preview"))
+            .json(&serde_json::json!({
+                "session_id": session_id,
+                "thread_key": thread_key,
+                "goal": goal,
+                "auto_apply": false
+            })),
+        api_token,
+    )
+    .send()
+    .await
+    .ok()?;
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Some("I understood that as an automation setup request, but I couldn't build a preview right now.".to_string());
+    }
+    Some(format_pack_builder_preview_message(&payload))
+}
+
+fn format_pack_builder_preview_message(payload: &serde_json::Value) -> String {
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("preview_pending");
+    let goal = payload
+        .get("goal")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Create a useful automation");
+    let connectors = payload
+        .get("selected_connectors")
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let next_actions = payload
+        .get("next_actions")
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut lines = vec![
+        "Automation setup preview".to_string(),
+        format!("Goal: {goal}"),
+        format!("Status: {status}"),
+    ];
+    if !connectors.is_empty() {
+        lines.push(format!("Connectors: {}", connectors.join(", ")));
+    }
+    if !next_actions.is_empty() {
+        lines.push("Next steps:".to_string());
+        for action in next_actions {
+            lines.push(format!("- {action}"));
+        }
+    } else {
+        lines.push("Reply `confirm` to apply this preview or `cancel` to discard it.".to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_setup_guidance_message(response: &SetupUnderstandResponse) -> String {
+    match response.intent_kind {
+        SetupIntentKind::ProviderSetup => {
+            let provider = response
+                .slots
+                .provider_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "a provider".to_string());
+            let model = response.slots.model_ids.first().cloned();
+            if let Some(model_id) = model {
+                format!(
+                    "This looks like provider setup. Configure `{provider}` and set the model to `{model_id}` in Settings. Do not paste API keys into channel chat."
+                )
+            } else {
+                format!(
+                    "This looks like provider setup. Configure `{provider}` in Settings. Do not paste API keys into channel chat."
+                )
+            }
+        }
+        SetupIntentKind::IntegrationSetup => {
+            let target = response
+                .slots
+                .integration_targets
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "that integration".to_string());
+            format!(
+                "This looks like an MCP or integration setup request. Open the MCP settings for `{target}` and connect or authorize it there."
+            )
+        }
+        SetupIntentKind::ChannelSetupHelp => {
+            let target = response
+                .slots
+                .channel_targets
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "the channel".to_string());
+            format!(
+                "This looks like channel setup help. Open the channel settings for `{target}` and confirm the bot token, allowed users, and mention-only settings."
+            )
+        }
+        SetupIntentKind::SetupHelp => {
+            "I can help with three setup paths here: provider setup, connecting external tools, or creating an automation. Reply with `1`, `2`, or `3`.".to_string()
+        }
+        SetupIntentKind::AutomationCreate | SetupIntentKind::General => {
+            "I couldn't map that setup request cleanly.".to_string()
+        }
+    }
 }
 
 async fn apply_pending_pack_builder(

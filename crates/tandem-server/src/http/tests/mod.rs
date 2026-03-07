@@ -15,6 +15,7 @@ pub(super) mod providers;
 pub(super) mod resources;
 pub(super) mod routines;
 pub(super) mod sessions;
+pub(super) mod setup_understanding;
 pub(super) mod workflows;
 
 use std::sync::Arc;

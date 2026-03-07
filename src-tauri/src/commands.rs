@@ -5757,6 +5757,14 @@ pub async fn pack_builder_preview(
 }
 
 #[tauri::command]
+pub async fn setup_understand(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.setup_understand(request).await
+}
+
+#[tauri::command]
 pub async fn pack_builder_apply(
     state: State<'_, AppState>,
     request: serde_json::Value,

@@ -55,7 +55,10 @@ import {
   setProvidersConfig,
   packBuilderApply,
   packBuilderCancel,
+  packBuilderPreview,
   packBuilderPending,
+  setupUnderstand,
+  type SetupUnderstandResponse,
   type StreamEvent,
   type StreamEventEnvelopeV2,
   type PackBuilderWorkflowResponse,
@@ -354,6 +357,20 @@ interface PackBuilderCard {
   updatedAt: number;
 }
 
+interface SetupActionCard {
+  id: string;
+  intentKind: string;
+  title: string;
+  body: string;
+  ctaLabel: string;
+  actionType: string;
+  payload: Record<string, unknown>;
+  clarifier?: {
+    question: string;
+    options: { id: string; label: string }[];
+  };
+}
+
 function extractPackBuilderPayload(input: unknown): PackBuilderWorkflowResponse | null {
   if (!input || typeof input !== "object") return null;
   const row = input as Record<string, unknown>;
@@ -395,6 +412,52 @@ function normalizePackBuilderCard(payload: PackBuilderWorkflowResponse): PackBui
     requiredSecrets,
     nextActions,
     updatedAt: Date.now(),
+  };
+}
+
+function normalizeSetupActionCard(payload: SetupUnderstandResponse): SetupActionCard | null {
+  if (payload.decision === "pass_through") return null;
+  const titleMap: Record<string, string> = {
+    provider_setup: "Provider setup",
+    integration_setup: "Tool connection",
+    automation_create: "Automation setup",
+    channel_setup_help: "Channel setup",
+    setup_help: "Setup help",
+  };
+  const ctaMap: Record<string, string> = {
+    open_provider_setup: "Open Settings",
+    open_mcp_setup: "Open Extensions",
+    pack_builder_preview: "Create Preview",
+    show_setup_help: "Review options",
+  };
+  let body = "";
+  if (payload.intent_kind === "provider_setup") {
+    const provider = payload.slots.provider_ids[0] || "a provider";
+    const model = payload.slots.model_ids[0];
+    body = model ? `Configure ${provider} and use ${model}.` : `Configure ${provider}.`;
+  } else if (payload.intent_kind === "integration_setup") {
+    body = `Connect ${payload.slots.integration_targets[0] || "the matching tool"} through MCP.`;
+  } else if (payload.intent_kind === "automation_create") {
+    body = payload.slots.goal || "Create an automation from this request.";
+  } else if (payload.intent_kind === "channel_setup_help") {
+    body = `Review ${payload.slots.channel_targets[0] || "channel"} settings.`;
+  } else {
+    body = payload.clarifier?.question || "Choose a setup path.";
+  }
+  return {
+    id: `${payload.intent_kind}:${Date.now()}`,
+    intentKind: payload.intent_kind,
+    title: titleMap[payload.intent_kind] || "Setup",
+    body,
+    ctaLabel: ctaMap[payload.proposed_action.type] || "Continue",
+    actionType: payload.proposed_action.type,
+    payload: payload.proposed_action.payload || {},
+    clarifier: payload.clarifier
+      ? {
+          question: payload.clarifier.question,
+          options: payload.clarifier.options,
+        }
+      : undefined,
   };
 }
 
@@ -513,6 +576,7 @@ export function Chat({
   const [engineReady, setEngineReady] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [packBuilderCards, setPackBuilderCards] = useState<PackBuilderCard[]>([]);
+  const [setupCard, setSetupCard] = useState<SetupActionCard | null>(null);
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isGitRepository, setIsGitRepository] = useState(false);
@@ -663,6 +727,57 @@ export function Chat({
       }
     },
     [threadKeyForSession, upsertPackBuilderCard]
+  );
+
+  const runSetupCardAction = useCallback(
+    async (card: SetupActionCard) => {
+      if (card.actionType === "open_provider_setup") {
+        onOpenSettings?.();
+        return;
+      }
+      if (card.actionType === "open_mcp_setup") {
+        onOpenExtensions?.("mcp");
+        return;
+      }
+      if (card.actionType === "pack_builder_preview") {
+        let session = currentSessionIdRef.current;
+        if (!session) {
+          const created = await createSession(
+            undefined,
+            undefined,
+            undefined,
+            allowAllTools,
+            "immediate"
+          );
+          session = created.id;
+          setCurrentSessionId(created.id);
+          currentSessionIdRef.current = created.id;
+          onSessionCreated?.(created.id);
+        }
+        const thread = threadKeyForSession(session);
+        const payload = await packBuilderPreview({
+          session_id: session,
+          thread_key: thread,
+          goal: String(card.payload.goal || card.body || "Create a useful automation"),
+          auto_apply: false,
+        });
+        upsertPackBuilderCard(payload);
+        setSetupCard(null);
+        return;
+      }
+      if (card.actionType === "show_setup_help") {
+        onOpenSettings?.();
+      }
+    },
+    [
+      allowAllTools,
+      createSession,
+      onOpenExtensions,
+      onOpenSettings,
+      onSessionCreated,
+      threadKeyForSession,
+      upsertPackBuilderCard,
+    ]
   );
 
   const waitForSidecarRunning = useCallback(
@@ -2777,6 +2892,36 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
             ? "general"
             : effectiveModeId;
 
+      if (content.trim()) {
+        try {
+          const setup = await setupUnderstand({
+            surface: "desktop_chat",
+            session_id: currentSessionIdRef.current,
+            text: content,
+            channel: null,
+            trigger: {
+              source: "direct_message",
+              is_direct_message: true,
+              was_explicitly_mentioned: false,
+              is_reply_to_bot: false,
+            },
+            scope: {
+              kind: "direct",
+              id: currentSessionIdRef.current || "desktop-chat",
+            },
+          });
+          if (setup.decision !== "pass_through") {
+            const card = normalizeSetupActionCard(setup);
+            if (card) {
+              setSetupCard(card);
+              return;
+            }
+          }
+        } catch {
+          // fall back to normal chat send
+        }
+      }
+
       // Create session if needed
       let sessionId = currentSessionId;
       let selectedModelForDispatch = selectedModelRef.current;
@@ -3613,6 +3758,91 @@ ${g.example}
           <button onClick={() => setError(null)} className="ml-auto text-error/70 hover:text-error">
             Ã—
           </button>
+        </div>
+      )}
+
+      {setupCard && (
+        <div className="border-b border-border bg-amber-500/5 px-4 py-3">
+          <div className="mx-auto w-full max-w-5xl rounded-lg border border-amber-500/30 bg-surface-elevated/80 px-4 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-medium text-text">{setupCard.title}</div>
+                <div className="mt-1 text-text-subtle">{setupCard.body}</div>
+              </div>
+              <button
+                type="button"
+                className="text-text-muted hover:text-text"
+                onClick={() => setSetupCard(null)}
+              >
+                x
+              </button>
+            </div>
+            {setupCard.clarifier && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {setupCard.clarifier.options.map((option) => (
+                  <Button
+                    key={option.id}
+                    variant="ghost"
+                    className="h-8 px-3"
+                    onClick={() =>
+                      setSetupCard((current) =>
+                        current
+                          ? {
+                              ...current,
+                              intentKind: option.id,
+                              title:
+                                option.id === "provider_setup"
+                                  ? "Provider setup"
+                                  : option.id === "integration_setup"
+                                    ? "Tool connection"
+                                    : "Automation setup",
+                              body:
+                                option.id === "provider_setup"
+                                  ? "Open Settings to configure a provider and model."
+                                  : option.id === "integration_setup"
+                                    ? "Open Extensions to connect the tool you need."
+                                    : "Create a Pack Builder preview from your request.",
+                              ctaLabel:
+                                option.id === "automation_create"
+                                  ? "Create Preview"
+                                  : option.id === "integration_setup"
+                                    ? "Open Extensions"
+                                    : "Open Settings",
+                              actionType:
+                                option.id === "automation_create"
+                                  ? "pack_builder_preview"
+                                  : option.id === "integration_setup"
+                                    ? "open_mcp_setup"
+                                    : "open_provider_setup",
+                            }
+                          : current
+                      )
+                    }
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-2">
+              <Button
+                variant="primary"
+                className="h-8 px-3"
+                onClick={() => void runSetupCardAction(setupCard)}
+              >
+                {setupCard.ctaLabel}
+              </Button>
+              {setupCard.actionType === "open_provider_setup" && onOpenExtensions && (
+                <Button
+                  variant="ghost"
+                  className="h-8 px-3"
+                  onClick={() => onOpenExtensions("modes")}
+                >
+                  View modes
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

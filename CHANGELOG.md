@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - Unreleased
+
+### Added
+
+- **Setup-understanding across channels and chat surfaces**:
+  - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
+  - setup understanding now classifies provider setup, MCP/integration setup, automation creation, channel setup help, broad setup help, and normal pass-through chat
+  - resolver scoring now uses explicit setup/workflow language, provider/model and integration entity matches, MCP catalog presence, and current state gaps such as missing providers or disconnected integrations
+  - added backend regression coverage for provider setup interception, integration interception, automation interception, clarification of broad setup requests, and normal-chat pass-through
+
+- **Channel setup interception and scoped clarification**:
+  - `tandem-channels` now calls the shared setup-understanding endpoint before normal prompt routing
+  - clear automation setup requests in Telegram, Discord, and Slack now launch Pack Builder preview directly instead of relying on the brittle pack-intent matcher alone
+  - provider and integration setup requests in channels now return deterministic setup guidance instead of spending a full LLM turn on ordinary chat
+  - ambiguous setup requests now create a scoped pending clarifier so the next reply resolves within the same channel conversation/thread/topic
+  - existing slash commands and Pack Builder confirm/cancel reply handling remain the highest-priority deterministic paths
+
+- **Desktop and control-panel chat setup cards**:
+  - desktop chat now preflights outgoing messages through setup understanding and renders setup cards that route users into Settings, MCP/Extensions, or Pack Builder preview
+  - control-panel chat now performs the same setup preflight and surfaces setup cards that route users into Settings, MCP, or Automations
+  - added a Tauri sidecar bridge for setup understanding so desktop chat uses the same backend interpretation contract as channels and the control panel
+
 ## [0.4.1] - Unreleased
 
 ### Added
