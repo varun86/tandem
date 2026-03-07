@@ -314,6 +314,8 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [error, setError] = useState<string | null>(null);
   const kanbanRef = useRef<HTMLDivElement | null>(null);
   const blackboardRef = useRef<HTMLDivElement | null>(null);
+  const blackboardLineageRef = useRef<HTMLDivElement | null>(null);
+  const blackboardQuestionsRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const memorySnapshotRef = useRef<HTMLDivElement | null>(null);
   const validationTasksRef = useRef<HTMLDivElement | null>(null);
@@ -846,6 +848,16 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     },
     []
   );
+
+  const focusBlackboardSection = useCallback((section: "lineage" | "questions") => {
+    setDetailTab("overview");
+    globalThis.setTimeout(() => {
+      (section === "lineage"
+        ? blackboardLineageRef
+        : blackboardQuestionsRef
+      ).current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
 
   const focusTabSection = useCallback(
     (
@@ -1531,9 +1543,22 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       : 0,
                                   ],
                                 ].map(([label, value]) => (
-                                  <div
+                                  <button
                                     key={label}
-                                    className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                    type="button"
+                                    onClick={() => {
+                                      if (label === "Decisions") {
+                                        focusBlackboardSection("lineage");
+                                      } else if (label === "Open questions") {
+                                        focusBlackboardSection("questions");
+                                      } else {
+                                        if (latestTriageArtifact) {
+                                          setSelectedArtifactPath(latestTriageArtifact.path);
+                                        }
+                                        setDetailTab("artifacts");
+                                      }
+                                    }}
+                                    className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                                   >
                                     <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                       {label}
@@ -1541,7 +1566,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                     <p className="mt-1 text-lg font-semibold text-text">
                                       {String(value)}
                                     </p>
-                                  </div>
+                                  </button>
                                 ))}
                               </div>
                               {latestDecision ? (
@@ -1579,7 +1604,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               )}
                               {blackboardTimeline.length > 0 ? (
                                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                  <div
+                                    ref={blackboardLineageRef}
+                                    className="rounded-3xl border border-border bg-surface-elevated/30 p-4"
+                                  >
                                     <div className="mb-4 flex items-center justify-between gap-3">
                                       <div>
                                         <p className="text-sm font-medium text-text">
@@ -1651,7 +1679,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                   </div>
 
                                   <div className="space-y-3">
-                                    <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                    <div
+                                      ref={blackboardQuestionsRef}
+                                      className="rounded-3xl border border-border bg-surface-elevated/30 p-4"
+                                    >
                                       <p className="text-sm font-medium text-text">
                                         Open questions
                                       </p>
