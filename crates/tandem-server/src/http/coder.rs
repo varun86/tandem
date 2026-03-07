@@ -1275,11 +1275,9 @@ async fn write_coder_memory_candidate_artifact(
         record,
         Some("artifact_write"),
         {
-            let mut extra = serde_json::Map::new();
+            let mut extra = coder_artifact_event_fields(&artifact, Some("memory_candidate"));
             extra.insert("candidate_id".to_string(), json!(candidate_id));
             extra.insert("candidate_kind".to_string(), json!(kind));
-            extra.insert("artifact_id".to_string(), json!(artifact.id));
-            extra.insert("artifact_path".to_string(), json!(artifact.path));
             extra
         },
     );
@@ -1374,6 +1372,20 @@ fn coder_event_base(record: &CoderRunRecord) -> serde_json::Map<String, Value> {
     payload
 }
 
+fn coder_artifact_event_fields(
+    artifact: &ContextBlackboardArtifact,
+    kind: Option<&str>,
+) -> serde_json::Map<String, Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("artifact_id".to_string(), json!(artifact.id));
+    payload.insert("artifact_type".to_string(), json!(artifact.artifact_type));
+    payload.insert("artifact_path".to_string(), json!(artifact.path));
+    if let Some(kind) = kind.map(str::trim).filter(|value| !value.is_empty()) {
+        payload.insert("kind".to_string(), json!(kind));
+    }
+    payload
+}
+
 fn publish_coder_run_event(
     state: &AppState,
     event_type: &str,
@@ -1398,10 +1410,11 @@ fn publish_coder_artifact_added(
     phase: Option<&str>,
     extra: serde_json::Map<String, Value>,
 ) {
-    let mut payload = serde_json::Map::new();
-    payload.insert("artifact_id".to_string(), json!(artifact.id));
-    payload.insert("artifact_type".to_string(), json!(artifact.artifact_type));
-    payload.insert("artifact_path".to_string(), json!(artifact.path));
+    let kind = extra
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let mut payload = coder_artifact_event_fields(artifact, kind.as_deref());
     payload.extend(extra);
     publish_coder_run_event(state, "coder.artifact.added", record, phase, payload);
 }
@@ -3006,13 +3019,11 @@ pub(super) async fn coder_memory_candidate_promote(
         &record,
         Some("artifact_write"),
         {
-            let mut extra = serde_json::Map::new();
+            let mut extra = coder_artifact_event_fields(&artifact, Some("memory_promotion"));
             extra.insert("candidate_id".to_string(), json!(candidate_id));
             extra.insert("memory_id".to_string(), json!(put_response.id));
             extra.insert("promoted".to_string(), json!(promoted));
             extra.insert("to_tier".to_string(), json!(to_tier));
-            extra.insert("artifact_id".to_string(), json!(artifact.id));
-            extra.insert("artifact_path".to_string(), json!(artifact.path));
             extra
         },
     );
@@ -3379,6 +3390,46 @@ pub(super) async fn coder_issue_fix_summary_create(
         extra
     });
 
+    let validation_artifact =
+        if !input.validation_steps.is_empty() || !input.validation_results.is_empty() {
+            let validation_id = format!("issue-fix-validation-{}", Uuid::new_v4().simple());
+            let validation_payload = json!({
+                "coder_run_id": record.coder_run_id,
+                "linked_context_run_id": record.linked_context_run_id,
+                "workflow_mode": record.workflow_mode,
+                "repo_binding": record.repo_binding,
+                "github_ref": record.github_ref,
+                "validation_steps": input.validation_steps,
+                "validation_results": input.validation_results,
+                "summary_artifact_path": artifact.path,
+                "created_at_ms": crate::now_ms(),
+            });
+            let validation_artifact = write_coder_artifact(
+                &state,
+                &record.linked_context_run_id,
+                &validation_id,
+                "coder_validation_report",
+                "artifacts/issue_fix.validation.json",
+                &validation_payload,
+            )
+            .await?;
+            publish_coder_artifact_added(
+                &state,
+                &record,
+                &validation_artifact,
+                Some("artifact_write"),
+                {
+                    let mut extra = serde_json::Map::new();
+                    extra.insert("kind".to_string(), json!("validation_report"));
+                    extra.insert("workflow_mode".to_string(), json!("issue_fix"));
+                    extra
+                },
+            );
+            Some(validation_artifact)
+        } else {
+            None
+        };
+
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
         .summary
@@ -3449,6 +3500,7 @@ pub(super) async fn coder_issue_fix_summary_create(
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
+        "validation_artifact": validation_artifact,
         "generated_candidates": generated_candidates,
     })))
 }
