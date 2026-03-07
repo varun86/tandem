@@ -262,6 +262,25 @@ function runRecencyTone(label: "fresh" | "recent" | "stale"): string {
   }
 }
 
+function phaseDetailTab(phase?: string | null): "overview" | "artifacts" | "validation" {
+  const normalized = (phase ?? "").toLowerCase();
+  if (
+    normalized.includes("validation") ||
+    normalized.includes("approve") ||
+    normalized.includes("approval")
+  ) {
+    return "validation";
+  }
+  if (
+    normalized.includes("artifact") ||
+    normalized.includes("fix") ||
+    normalized.includes("report")
+  ) {
+    return "artifacts";
+  }
+  return "overview";
+}
+
 function relatedArtifactsForEvent(
   artifacts: CoderArtifactRecord[],
   stepId: string,
@@ -1049,6 +1068,23 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     [openArtifactRecordContext, selectedArtifactRecord]
   );
 
+  const focusRunStatus = useCallback((run: CoderRunRecord) => {
+    const status = (run.status ?? "unknown").toLowerCase();
+    setSelectedRunId(run.coder_run_id);
+    if (status === "running" || status === "planning") {
+      setStatusFilter("active");
+      setRunSortMode("updated");
+      return;
+    }
+    setStatusFilter(status);
+    setRunSortMode(status === "awaiting_approval" ? "approval" : "updated");
+  }, []);
+
+  const openRunPhase = useCallback((run: CoderRunRecord) => {
+    setSelectedRunId(run.coder_run_id);
+    setDetailTab(phaseDetailTab(run.phase));
+  }, []);
+
   const openDuplicateArtifactContext = useCallback(() => {
     const duplicateArtifact = latestArtifactByCategory.get("duplicate");
     if (duplicateArtifact) {
@@ -1224,19 +1260,31 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               {run.repo_binding?.repo_slug} • {run.workflow_mode}
                             </p>
                           </div>
-                          <span
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              focusRunStatus(run);
+                            }}
                             className={cn(
                               "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]",
                               statusTone(run.status)
                             )}
                           >
                             {run.status ?? "unknown"}
-                          </span>
+                          </button>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openRunPhase(run);
+                            }}
+                            className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                          >
                             {run.phase ?? "analysis"}
-                          </span>
+                          </button>
                           <span
                             className={cn(
                               "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]",
@@ -2582,7 +2630,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             {selectedDuplicateMatches.length > 0 ? (
                               <button
                                 type="button"
-                                onClick={openDuplicateArtifactContext}
+                                onClick={() => {
+                                  openDuplicateArtifactContext();
+                                }}
                                 className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition-colors hover:bg-amber-500/15"
                               >
                                 {selectedDuplicateMatches.length} duplicate matches
@@ -2591,7 +2641,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             {selectedValidationSummary?.outcome ? (
                               <button
                                 type="button"
-                                onClick={() => setDetailTab("validation")}
+                                onClick={() =>
+                                  focusTabSection("validation", "validation_inspector")
+                                }
                                 className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200 transition-colors hover:bg-violet-500/15"
                               >
                                 {selectedValidationSummary.outcome}
@@ -2600,7 +2652,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             {selectedValidationSummary?.validationsAttempted ? (
                               <button
                                 type="button"
-                                onClick={() => setDetailTab("validation")}
+                                onClick={() => focusTabSection("validation", "validation_tasks")}
                                 className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200 transition-colors hover:bg-violet-500/15"
                               >
                                 {selectedValidationSummary.validationsAttempted} checks
