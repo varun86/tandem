@@ -468,19 +468,65 @@ fn default_spine_bindings() -> Vec<CapabilityBinding> {
             "github.create_issue",
             "mcp",
             "mcp.github.create_issue",
-            &["mcp.github_create_issue"],
+            &[
+                "mcp.github_create_issue",
+                "mcp.github.create_an_issue",
+                "mcp.github_create_an_issue",
+                "github_create_issue",
+                "github_create_an_issue",
+            ],
         ),
         make_binding(
             "github.list_issues",
             "composio",
             "mcp.composio.github_list_issues",
-            &["mcp.composio.github.list_issues"],
+            &[
+                "mcp.composio.github.list_issues",
+                "mcp.github.list_repository_issues",
+                "mcp.github_list_repository_issues",
+                "github_list_repository_issues",
+            ],
+        ),
+        make_binding(
+            "github.list_issues",
+            "mcp",
+            "mcp.github.list_repository_issues",
+            &[
+                "mcp.github_list_repository_issues",
+                "github_list_repository_issues",
+            ],
         ),
         make_binding(
             "github.get_issue",
             "composio",
             "mcp.composio.github_get_issue",
-            &["mcp.composio.github.get_issue"],
+            &[
+                "mcp.composio.github.get_issue",
+                "mcp.github.get_issue",
+                "mcp.github_get_issue",
+                "mcp.github.find_issues",
+                "mcp.github_find_issues",
+                "mcp.github.list_repository_issues",
+                "mcp.github_list_repository_issues",
+                "github_get_issue",
+                "github_find_issues",
+                "github_list_repository_issues",
+            ],
+        ),
+        make_binding(
+            "github.get_issue",
+            "mcp",
+            "mcp.github.get_issue",
+            &[
+                "mcp.github_get_issue",
+                "mcp.github.find_issues",
+                "mcp.github_find_issues",
+                "mcp.github.list_repository_issues",
+                "mcp.github_list_repository_issues",
+                "github_get_issue",
+                "github_find_issues",
+                "github_list_repository_issues",
+            ],
         ),
         make_binding(
             "github.close_issue",
@@ -510,7 +556,27 @@ fn default_spine_bindings() -> Vec<CapabilityBinding> {
             "github.comment_on_issue",
             "composio",
             "mcp.composio.github_create_issue_comment",
-            &["mcp.composio.github.comment_on_issue"],
+            &[
+                "mcp.composio.github.comment_on_issue",
+                "mcp.github.create_issue_comment",
+                "mcp.github_create_issue_comment",
+                "mcp.github.create_an_issue_comment",
+                "mcp.github_create_an_issue_comment",
+                "github_create_issue_comment",
+                "github_create_an_issue_comment",
+            ],
+        ),
+        make_binding(
+            "github.comment_on_issue",
+            "mcp",
+            "mcp.github.create_issue_comment",
+            &[
+                "mcp.github_create_issue_comment",
+                "mcp.github.create_an_issue_comment",
+                "mcp.github_create_an_issue_comment",
+                "github_create_issue_comment",
+                "github_create_an_issue_comment",
+            ],
         ),
         make_binding(
             "github.comment_on_pull_request",
@@ -608,9 +674,20 @@ fn binding_matches_available(
     for alias in &binding.tool_name_aliases {
         names.push(alias.as_str());
     }
-    names.into_iter().any(|tool_name| {
-        available_set.contains(&(provider.to_string(), canonical_tool_name(tool_name)))
-    })
+    let expected = names
+        .into_iter()
+        .map(canonical_tool_name)
+        .collect::<Vec<_>>();
+    available_set
+        .iter()
+        .any(|(available_provider, available_tool)| {
+            if available_provider != provider {
+                return false;
+            }
+            expected.iter().any(|candidate| {
+                available_tool == candidate || available_tool.ends_with(&format!("_{candidate}"))
+            })
+        })
 }
 
 #[cfg(test)]
@@ -737,6 +814,50 @@ mod tests {
         assert_eq!(result.missing_required, Vec::<String>::new());
         assert_eq!(result.resolved.len(), 1);
         assert_eq!(result.resolved[0].provider, "arcade");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn resolve_matches_official_github_mcp_issue_tools() {
+        let root =
+            std::env::temp_dir().join(format!("tandem-cap-resolver-{}", uuid::Uuid::new_v4()));
+        let resolver = CapabilityResolver::new(root.clone());
+        let result = resolver
+            .resolve(
+                CapabilityResolveInput {
+                    workflow_id: Some("wf-github-only".to_string()),
+                    required_capabilities: vec![
+                        "github.list_issues".to_string(),
+                        "github.get_issue".to_string(),
+                        "github.create_issue".to_string(),
+                        "github.comment_on_issue".to_string(),
+                    ],
+                    optional_capabilities: vec![],
+                    provider_preference: vec!["mcp".to_string()],
+                    available_tools: vec![
+                        CapabilityToolAvailability {
+                            provider: "mcp".to_string(),
+                            tool_name: "mcp.github_only.github_list_repository_issues".to_string(),
+                            schema: Value::Null,
+                        },
+                        CapabilityToolAvailability {
+                            provider: "mcp".to_string(),
+                            tool_name: "mcp.github_only.github_create_an_issue".to_string(),
+                            schema: Value::Null,
+                        },
+                        CapabilityToolAvailability {
+                            provider: "mcp".to_string(),
+                            tool_name: "mcp.github_only.github_create_an_issue_comment".to_string(),
+                            schema: Value::Null,
+                        },
+                    ],
+                },
+                Vec::new(),
+            )
+            .await
+            .expect("resolve");
+        assert_eq!(result.missing_required, Vec::<String>::new());
+        assert_eq!(result.resolved.len(), 4);
         let _ = std::fs::remove_dir_all(root);
     }
 }

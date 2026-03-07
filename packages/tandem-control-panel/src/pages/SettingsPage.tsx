@@ -443,24 +443,6 @@ export function SettingsPage({
     if (currentRoute === "failure-reporter") setActiveSection("failure_reporter");
   }, [currentRoute]);
 
-  useEffect(() => {
-    const config =
-      (failureReporterConfigQuery.data as any)?.failure_reporter &&
-      typeof (failureReporterConfigQuery.data as any)?.failure_reporter === "object"
-        ? ((failureReporterConfigQuery.data as any).failure_reporter as FailureReporterConfigRow)
-        : {};
-    setFailureReporterEnabled(!!config.enabled);
-    setFailureReporterRepo(String(config.repo || "").trim());
-    setFailureReporterMcpServer(String(config.mcp_server || "").trim());
-    setFailureReporterProviderPreference(
-      String(config.provider_preference || "auto").trim() || "auto"
-    );
-    setFailureReporterProviderId(
-      String(config.model_policy?.default_model?.provider_id || "").trim()
-    );
-    setFailureReporterModelId(String(config.model_policy?.default_model?.model_id || "").trim());
-  }, [failureReporterConfigQuery.data]);
-
   const providersCatalog = useQuery({
     queryKey: ["settings", "providers", "catalog"],
     queryFn: () => client.providers.catalog().catch(() => ({ all: [], connected: [] })),
@@ -897,6 +879,24 @@ export function SettingsPage({
 
   useEffect(() => {
     const config =
+      (failureReporterConfigQuery.data as any)?.failure_reporter &&
+      typeof (failureReporterConfigQuery.data as any)?.failure_reporter === "object"
+        ? ((failureReporterConfigQuery.data as any).failure_reporter as FailureReporterConfigRow)
+        : {};
+    setFailureReporterEnabled(!!config.enabled);
+    setFailureReporterRepo(String(config.repo || "").trim());
+    setFailureReporterMcpServer(String(config.mcp_server || "").trim());
+    setFailureReporterProviderPreference(
+      String(config.provider_preference || "auto").trim() || "auto"
+    );
+    setFailureReporterProviderId(
+      String(config.model_policy?.default_model?.provider_id || "").trim()
+    );
+    setFailureReporterModelId(String(config.model_policy?.default_model?.model_id || "").trim());
+  }, [failureReporterConfigQuery.data]);
+
+  useEffect(() => {
+    const config =
       channelsConfigQuery.data && typeof channelsConfigQuery.data === "object"
         ? (channelsConfigQuery.data as Record<string, ChannelConfigRow>)
         : {};
@@ -908,17 +908,6 @@ export function SettingsPage({
       return next;
     });
   }, [channelsConfigQuery.data]);
-
-  useEffect(() => {
-    if (!failureReporterProviderId) {
-      setFailureReporterModelId("");
-      return;
-    }
-    if (failureReporterModelId && failureReporterProviderModels.includes(failureReporterModelId)) {
-      return;
-    }
-    setFailureReporterModelId(failureReporterProviderModels[0] || "");
-  }, [failureReporterModelId, failureReporterProviderId, failureReporterProviderModels]);
 
   const applyDefaultModel = (providerId: string, modelId: string) => {
     const next = String(modelId || "").trim();
@@ -1768,7 +1757,11 @@ export function SettingsPage({
                       <select
                         className="tcp-input"
                         value={failureReporterProviderId}
-                        onChange={(event) => setFailureReporterProviderId(event.target.value)}
+                        onChange={(event) => {
+                          const nextProvider = event.target.value;
+                          setFailureReporterProviderId(nextProvider);
+                          setFailureReporterModelId("");
+                        }}
                       >
                         <option value="">Select a provider</option>
                         {providers.map((provider: any) => (
@@ -1784,21 +1777,31 @@ export function SettingsPage({
 
                     <label className="grid gap-2">
                       <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Model</span>
-                      <select
+                      <input
                         className="tcp-input"
                         value={failureReporterModelId}
                         onChange={(event) => setFailureReporterModelId(event.target.value)}
+                        list="failure-reporter-models"
                         disabled={!failureReporterProviderId}
-                      >
-                        <option value="">
-                          {failureReporterProviderId ? "Select a model" : "Choose a provider first"}
-                        </option>
+                        placeholder={
+                          failureReporterProviderId
+                            ? "Type or paste a model id"
+                            : "Choose a provider first"
+                        }
+                        spellCheck={false}
+                      />
+                      <datalist id="failure-reporter-models">
                         {failureReporterProviderModels.map((modelId) => (
-                          <option key={modelId} value={modelId}>
-                            {modelId}
-                          </option>
+                          <option key={modelId} value={modelId} />
                         ))}
-                      </select>
+                      </datalist>
+                      <div className="tcp-subtle text-xs">
+                        {failureReporterProviderId
+                          ? failureReporterProviderModels.length
+                            ? `${failureReporterProviderModels.length} suggested models from provider catalog`
+                            : "No provider catalog models available. Manual model ids are allowed."
+                          : "Select a provider to load model suggestions."}
+                      </div>
                     </label>
                   </div>
 

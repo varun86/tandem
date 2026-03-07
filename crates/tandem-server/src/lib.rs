@@ -2035,28 +2035,74 @@ impl AppState {
             .as_ref()
             .map(|spec| provider_catalog_has_model(&provider_catalog, spec))
             .unwrap_or(false);
-        let capability_bindings = self
+        let selected_server_tools = if let Some(server_name) = config.mcp_server.as_ref() {
+            self.mcp.server_tools(server_name).await
+        } else {
+            Vec::new()
+        };
+        let discovered_tools = self
             .capability_resolver
-            .list_bindings()
+            .discover_from_runtime(selected_server_tools, Vec::new())
+            .await;
+        let provider_preference = match config.provider_preference {
+            FailureReporterProviderPreference::OfficialGithub => {
+                vec![
+                    "mcp".to_string(),
+                    "composio".to_string(),
+                    "arcade".to_string(),
+                ]
+            }
+            FailureReporterProviderPreference::Composio => {
+                vec![
+                    "composio".to_string(),
+                    "mcp".to_string(),
+                    "arcade".to_string(),
+                ]
+            }
+            FailureReporterProviderPreference::Arcade => {
+                vec![
+                    "arcade".to_string(),
+                    "mcp".to_string(),
+                    "composio".to_string(),
+                ]
+            }
+            FailureReporterProviderPreference::Auto => {
+                vec![
+                    "mcp".to_string(),
+                    "composio".to_string(),
+                    "arcade".to_string(),
+                ]
+            }
+        };
+        let capability_resolution = self
+            .capability_resolver
+            .resolve(
+                crate::capability_resolver::CapabilityResolveInput {
+                    workflow_id: Some("failure_reporter".to_string()),
+                    required_capabilities: vec![
+                        "github.list_issues".to_string(),
+                        "github.get_issue".to_string(),
+                        "github.create_issue".to_string(),
+                        "github.comment_on_issue".to_string(),
+                    ],
+                    optional_capabilities: Vec::new(),
+                    provider_preference,
+                    available_tools: discovered_tools,
+                },
+                Vec::new(),
+            )
             .await
-            .map(|value| value.bindings)
-            .unwrap_or_default();
-        let allowed_server = config.mcp_server.as_ref().map(|v| v.to_lowercase());
+            .ok();
         let capability_ready = |capability_id: &str| -> bool {
-            capability_bindings.iter().any(|binding| {
-                if binding.capability_id != capability_id {
-                    return false;
-                }
-                if let Some(server) = allowed_server.as_ref() {
-                    let tool_name = binding.tool_name.to_lowercase();
-                    tool_name.starts_with(&format!("mcp.{server}."))
-                        || tool_name.starts_with(&format!("mcp.{server}_"))
-                        || tool_name.contains(&format!(".{server}."))
-                        || binding.provider.eq_ignore_ascii_case(server)
-                } else {
-                    true
-                }
-            })
+            capability_resolution
+                .as_ref()
+                .map(|resolved| {
+                    resolved
+                        .resolved
+                        .iter()
+                        .any(|row| row.capability_id == capability_id)
+                })
+                .unwrap_or(false)
         };
         status.required_capabilities = FailureReporterCapabilityReadiness {
             github_list_issues: capability_ready("github.list_issues"),
