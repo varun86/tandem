@@ -11,6 +11,7 @@ export type RouteId =
   | "agents"
   | "channels"
   | "mcp"
+  | "failure-reporter"
   | "packs"
   | "files"
   | "memory"

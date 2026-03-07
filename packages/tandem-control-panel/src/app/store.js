@@ -13,6 +13,7 @@ export const ROUTES = [
   ["teams", "Teams", "users"],
   ["channels", "Channels", "message-circle"],
   ["mcp", "MCP", "link"],
+  ["failure-reporter", "Failure Reporter", "siren"],
   ["files", "Files", "folder-open"],
   // Internal detail routes (not in primary nav)
   ["packs-detail", "Packs", "package"],

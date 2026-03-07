@@ -698,6 +698,118 @@ pub struct AutomationV2RunRecord {
     pub estimated_cost_usd: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReporterProviderPreference {
+    Auto,
+    OfficialGithub,
+    Composio,
+    Arcade,
+}
+
+impl Default for FailureReporterProviderPreference {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureReporterConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<String>,
+    #[serde(default)]
+    pub provider_preference: FailureReporterProviderPreference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_policy: Option<Value>,
+    #[serde(default = "default_true")]
+    pub require_approval_for_new_issues: bool,
+    #[serde(default = "default_true")]
+    pub auto_comment_on_matched_open_issues: bool,
+    #[serde(default)]
+    pub updated_at_ms: u64,
+}
+
+impl Default for FailureReporterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            repo: None,
+            mcp_server: None,
+            provider_preference: FailureReporterProviderPreference::Auto,
+            model_policy: None,
+            require_approval_for_new_issues: true,
+            auto_comment_on_matched_open_issues: true,
+            updated_at_ms: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailureReporterDraftRecord {
+    pub draft_id: String,
+    pub fingerprint: String,
+    pub repo: String,
+    pub status: String,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailureReporterCapabilityReadiness {
+    #[serde(default)]
+    pub github_list_issues: bool,
+    #[serde(default)]
+    pub github_get_issue: bool,
+    #[serde(default)]
+    pub github_create_issue: bool,
+    #[serde(default)]
+    pub github_comment_on_issue: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailureReporterReadiness {
+    #[serde(default)]
+    pub config_valid: bool,
+    #[serde(default)]
+    pub repo_valid: bool,
+    #[serde(default)]
+    pub mcp_server_present: bool,
+    #[serde(default)]
+    pub mcp_connected: bool,
+    #[serde(default)]
+    pub github_read_ready: bool,
+    #[serde(default)]
+    pub github_write_ready: bool,
+    #[serde(default)]
+    pub selected_model_ready: bool,
+    #[serde(default)]
+    pub runtime_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailureReporterStatus {
+    pub config: FailureReporterConfig,
+    pub readiness: FailureReporterReadiness,
+    pub required_capabilities: FailureReporterCapabilityReadiness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_model: Option<ModelSpec>,
+    #[serde(default)]
+    pub pending_drafts: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceConflict {
     pub key: String,
@@ -766,6 +878,9 @@ pub struct AppState {
     pub routine_runs: Arc<RwLock<std::collections::HashMap<String, RoutineRunRecord>>>,
     pub automations_v2: Arc<RwLock<std::collections::HashMap<String, AutomationV2Spec>>>,
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
+    pub failure_reporter_config: Arc<RwLock<FailureReporterConfig>>,
+    pub failure_reporter_drafts:
+        Arc<RwLock<std::collections::HashMap<String, FailureReporterDraftRecord>>>,
     pub workflows: Arc<RwLock<WorkflowRegistry>>,
     pub workflow_runs: Arc<RwLock<std::collections::HashMap<String, WorkflowRunRecord>>>,
     pub workflow_hook_overrides: Arc<RwLock<std::collections::HashMap<String, bool>>>,
@@ -779,6 +894,8 @@ pub struct AppState {
     pub routine_runs_path: PathBuf,
     pub automations_v2_path: PathBuf,
     pub automation_v2_runs_path: PathBuf,
+    pub failure_reporter_config_path: PathBuf,
+    pub failure_reporter_drafts_path: PathBuf,
     pub workflow_runs_path: PathBuf,
     pub workflow_hook_overrides_path: PathBuf,
     pub agent_teams: AgentTeamRuntime,
@@ -824,6 +941,8 @@ impl AppState {
             routine_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automations_v2: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_v2_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            failure_reporter_config: Arc::new(RwLock::new(resolve_failure_reporter_env_config())),
+            failure_reporter_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflows: Arc::new(RwLock::new(WorkflowRegistry::default())),
             workflow_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_hook_overrides: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -835,6 +954,8 @@ impl AppState {
             routine_runs_path: resolve_routine_runs_path(),
             automations_v2_path: resolve_automations_v2_path(),
             automation_v2_runs_path: resolve_automation_v2_runs_path(),
+            failure_reporter_config_path: resolve_failure_reporter_config_path(),
+            failure_reporter_drafts_path: resolve_failure_reporter_drafts_path(),
             workflow_runs_path: resolve_workflow_runs_path(),
             workflow_hook_overrides_path: resolve_workflow_hook_overrides_path(),
             agent_teams: AgentTeamRuntime::new(resolve_agent_team_audit_path()),
@@ -980,6 +1101,8 @@ impl AppState {
         let _ = self.load_routine_runs().await;
         self.load_automations_v2().await?;
         let _ = self.load_automation_v2_runs().await;
+        let _ = self.load_failure_reporter_config().await;
+        let _ = self.load_failure_reporter_drafts().await;
         let _ = self.load_workflow_runs().await;
         let _ = self.load_workflow_hook_overrides().await;
         let _ = self.reload_workflows().await;
@@ -1782,6 +1905,219 @@ impl AppState {
         Ok(())
     }
 
+    pub async fn load_failure_reporter_config(&self) -> anyhow::Result<()> {
+        if !self.failure_reporter_config_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.failure_reporter_config_path).await?;
+        let parsed = serde_json::from_str::<FailureReporterConfig>(&raw)
+            .unwrap_or_else(|_| resolve_failure_reporter_env_config());
+        *self.failure_reporter_config.write().await = parsed;
+        Ok(())
+    }
+
+    pub async fn persist_failure_reporter_config(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.failure_reporter_config_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.failure_reporter_config.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        fs::write(&self.failure_reporter_config_path, payload).await?;
+        Ok(())
+    }
+
+    pub async fn failure_reporter_config(&self) -> FailureReporterConfig {
+        self.failure_reporter_config.read().await.clone()
+    }
+
+    pub async fn put_failure_reporter_config(
+        &self,
+        mut config: FailureReporterConfig,
+    ) -> anyhow::Result<FailureReporterConfig> {
+        if let Some(repo) = config.repo.as_ref() {
+            if !repo.is_empty() && !is_valid_owner_repo_slug(repo) {
+                anyhow::bail!("repo must be in owner/repo format");
+            }
+        }
+        if let Some(server) = config.mcp_server.as_ref() {
+            let servers = self.mcp.list().await;
+            if !servers.contains_key(server) {
+                anyhow::bail!("unknown mcp server `{server}`");
+            }
+        }
+        if let Some(model_policy) = config.model_policy.as_ref() {
+            crate::http::routines_automations::validate_model_policy(model_policy)
+                .map_err(anyhow::Error::msg)?;
+        }
+        config.updated_at_ms = now_ms();
+        *self.failure_reporter_config.write().await = config.clone();
+        self.persist_failure_reporter_config().await?;
+        Ok(config)
+    }
+
+    pub async fn load_failure_reporter_drafts(&self) -> anyhow::Result<()> {
+        if !self.failure_reporter_drafts_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.failure_reporter_drafts_path).await?;
+        let parsed = serde_json::from_str::<
+            std::collections::HashMap<String, FailureReporterDraftRecord>,
+        >(&raw)
+        .unwrap_or_default();
+        *self.failure_reporter_drafts.write().await = parsed;
+        Ok(())
+    }
+
+    pub async fn persist_failure_reporter_drafts(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.failure_reporter_drafts_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.failure_reporter_drafts.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        fs::write(&self.failure_reporter_drafts_path, payload).await?;
+        Ok(())
+    }
+
+    pub async fn list_failure_reporter_drafts(
+        &self,
+        limit: usize,
+    ) -> Vec<FailureReporterDraftRecord> {
+        let mut rows = self
+            .failure_reporter_drafts
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+        rows.truncate(limit.clamp(1, 200));
+        rows
+    }
+
+    pub async fn failure_reporter_status(&self) -> FailureReporterStatus {
+        let config = self.failure_reporter_config().await;
+        let drafts = self.failure_reporter_drafts.read().await;
+        let pending_drafts = drafts
+            .values()
+            .filter(|row| row.status.eq_ignore_ascii_case("approval_required"))
+            .count();
+        let last_activity_at_ms = drafts.values().map(|row| row.created_at_ms).max();
+        drop(drafts);
+
+        let mut status = FailureReporterStatus {
+            config: config.clone(),
+            pending_drafts,
+            last_activity_at_ms,
+            ..FailureReporterStatus::default()
+        };
+        let repo_valid = config
+            .repo
+            .as_ref()
+            .map(|repo| is_valid_owner_repo_slug(repo))
+            .unwrap_or(false);
+        let servers = self.mcp.list().await;
+        let selected_server = config
+            .mcp_server
+            .as_ref()
+            .and_then(|name| servers.get(name))
+            .cloned();
+        let provider_catalog = self.providers.list().await;
+        let selected_model = config
+            .model_policy
+            .as_ref()
+            .and_then(|policy| policy.get("default_model"))
+            .and_then(parse_model_spec);
+        let selected_model_ready = selected_model
+            .as_ref()
+            .map(|spec| provider_catalog_has_model(&provider_catalog, spec))
+            .unwrap_or(false);
+        let capability_bindings = self
+            .capability_resolver
+            .list_bindings()
+            .await
+            .map(|value| value.bindings)
+            .unwrap_or_default();
+        let allowed_server = config.mcp_server.as_ref().map(|v| v.to_lowercase());
+        let capability_ready = |capability_id: &str| -> bool {
+            capability_bindings.iter().any(|binding| {
+                if binding.capability_id != capability_id {
+                    return false;
+                }
+                if let Some(server) = allowed_server.as_ref() {
+                    let tool_name = binding.tool_name.to_lowercase();
+                    tool_name.starts_with(&format!("mcp.{server}."))
+                        || tool_name.starts_with(&format!("mcp.{server}_"))
+                        || tool_name.contains(&format!(".{server}."))
+                        || binding.provider.eq_ignore_ascii_case(server)
+                } else {
+                    true
+                }
+            })
+        };
+        status.required_capabilities = FailureReporterCapabilityReadiness {
+            github_list_issues: capability_ready("github.list_issues"),
+            github_get_issue: capability_ready("github.get_issue"),
+            github_create_issue: capability_ready("github.create_issue"),
+            github_comment_on_issue: capability_ready("github.comment_on_issue"),
+        };
+        status.selected_model = selected_model;
+        status.readiness = FailureReporterReadiness {
+            config_valid: repo_valid
+                && selected_server.is_some()
+                && status.required_capabilities.github_list_issues
+                && status.required_capabilities.github_get_issue
+                && status.required_capabilities.github_create_issue
+                && status.required_capabilities.github_comment_on_issue
+                && selected_model_ready,
+            repo_valid,
+            mcp_server_present: selected_server.is_some(),
+            mcp_connected: selected_server
+                .as_ref()
+                .map(|row| row.connected)
+                .unwrap_or(false),
+            github_read_ready: status.required_capabilities.github_list_issues
+                && status.required_capabilities.github_get_issue,
+            github_write_ready: status.required_capabilities.github_create_issue
+                && status.required_capabilities.github_comment_on_issue,
+            selected_model_ready,
+            runtime_ready: config.enabled
+                && repo_valid
+                && selected_server
+                    .as_ref()
+                    .map(|row| row.connected)
+                    .unwrap_or(false)
+                && status.required_capabilities.github_list_issues
+                && status.required_capabilities.github_get_issue
+                && status.required_capabilities.github_create_issue
+                && status.required_capabilities.github_comment_on_issue
+                && selected_model_ready,
+        };
+        if config.enabled {
+            if !repo_valid {
+                status.last_error = Some("Target repo is missing or invalid.".to_string());
+            } else if selected_server.is_none() {
+                status.last_error = Some("Selected MCP server is missing.".to_string());
+            } else if !status.readiness.mcp_connected {
+                status.last_error = Some("Selected MCP server is disconnected.".to_string());
+            } else if !selected_model_ready {
+                status.last_error = Some(
+                    "Selected provider/model is unavailable. Failure reporter is fail-closed."
+                        .to_string(),
+                );
+            } else if !status.readiness.github_read_ready || !status.readiness.github_write_ready {
+                status.last_error = Some(
+                    "Selected MCP server is missing one or more required GitHub capabilities."
+                        .to_string(),
+                );
+            }
+        }
+        status
+    }
+
     pub async fn load_workflow_runs(&self) -> anyhow::Result<()> {
         if !self.workflow_runs_path.exists() {
             return Ok(());
@@ -2364,6 +2700,93 @@ fn resolve_token_cost_per_1k_usd() -> f64 {
         .max(0.0)
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn parse_bool_env(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
+}
+
+fn resolve_failure_reporter_env_config() -> FailureReporterConfig {
+    let provider_preference = match std::env::var("TANDEM_FAILURE_REPORTER_PROVIDER_PREFERENCE")
+        .ok()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "official_github" | "official-github" | "github" => {
+            FailureReporterProviderPreference::OfficialGithub
+        }
+        "composio" => FailureReporterProviderPreference::Composio,
+        "arcade" => FailureReporterProviderPreference::Arcade,
+        _ => FailureReporterProviderPreference::Auto,
+    };
+    let provider_id = std::env::var("TANDEM_FAILURE_REPORTER_PROVIDER_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let model_id = std::env::var("TANDEM_FAILURE_REPORTER_MODEL_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let model_policy = match (provider_id, model_id) {
+        (Some(provider_id), Some(model_id)) => Some(json!({
+            "default_model": {
+                "provider_id": provider_id,
+                "model_id": model_id,
+            }
+        })),
+        _ => None,
+    };
+    FailureReporterConfig {
+        enabled: parse_bool_env("TANDEM_FAILURE_REPORTER_ENABLED", false),
+        repo: std::env::var("TANDEM_FAILURE_REPORTER_REPO")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        mcp_server: std::env::var("TANDEM_FAILURE_REPORTER_MCP_SERVER")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
+        provider_preference,
+        model_policy,
+        require_approval_for_new_issues: parse_bool_env(
+            "TANDEM_FAILURE_REPORTER_REQUIRE_APPROVAL_FOR_NEW_ISSUES",
+            true,
+        ),
+        auto_comment_on_matched_open_issues: parse_bool_env(
+            "TANDEM_FAILURE_REPORTER_AUTO_COMMENT_ON_MATCHED_OPEN_ISSUES",
+            true,
+        ),
+        updated_at_ms: 0,
+    }
+}
+
+fn is_valid_owner_repo_slug(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.ends_with('/') {
+        return false;
+    }
+    let mut parts = trimmed.split('/');
+    let Some(owner) = parts.next() else {
+        return false;
+    };
+    let Some(repo) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none() && !owner.trim().is_empty() && !repo.trim().is_empty()
+}
+
 fn resolve_shared_resources_path() -> PathBuf {
     if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = dir.trim();
@@ -2432,6 +2855,26 @@ fn resolve_workflow_runs_path() -> PathBuf {
         }
     }
     default_state_dir().join("workflow_runs.json")
+}
+
+fn resolve_failure_reporter_config_path() -> PathBuf {
+    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("failure_reporter_config.json");
+        }
+    }
+    default_state_dir().join("failure_reporter_config.json")
+}
+
+fn resolve_failure_reporter_drafts_path() -> PathBuf {
+    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("failure_reporter_drafts.json");
+        }
+    }
+    default_state_dir().join("failure_reporter_drafts.json")
 }
 
 fn resolve_workflow_hook_overrides_path() -> PathBuf {

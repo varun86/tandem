@@ -2,6 +2,26 @@
 
 ### Highlights
 
+- **Failure reporter settings foundation and runtime config surface**:
+  - added persisted failure-reporter config/state in `tandem-server` with explicit repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
+  - added fail-closed readiness evaluation for:
+    - selected provider/model availability
+    - selected MCP server presence/connectivity
+    - required GitHub read/write capability coverage
+  - added new reporter endpoints:
+    - `GET /config/failure-reporter`
+    - `PATCH /config/failure-reporter`
+    - `GET /failure-reporter/status`
+    - `GET /failure-reporter/drafts`
+    - `GET /failure-reporter/drafts/{id}`
+  - control-panel Settings now includes a dedicated `Failure Reporter` tab with:
+    - enable/disable control
+    - target repo input
+    - reuse of existing MCP server config
+    - dedicated provider/model selection for a cheaper reporter route
+    - readiness and capability coverage summaries
+  - added a direct `#/failure-reporter` route alias for opening the Settings reporter tab
+
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`
   - setup messages are now classified into:
@@ -35,7 +55,7 @@
   - added backend tests for provider/integration/automation interception, broad-setup clarification, and pass-through chat
   - added channel dispatcher validation to keep the new interception layer compatible with existing scoped session and Pack Builder reply behavior
 
-# Tandem v0.4.1 Release Notes (Unreleased)
+# Tandem v0.4.1 Release Notes (2026-03-07)
 
 ### Highlights
 

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Failure reporter settings foundation and server config/status surface**:
+  - added persisted failure-reporter config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
+  - added fail-closed readiness validation for the selected provider/model, required GitHub capabilities, and selected MCP server connectivity
+  - added new HTTP endpoints for reporter configuration and operator visibility:
+    - `GET /config/failure-reporter`
+    - `PATCH /config/failure-reporter`
+    - `GET /failure-reporter/status`
+    - `GET /failure-reporter/drafts`
+    - `GET /failure-reporter/drafts/{id}`
+  - control-panel Settings now includes a dedicated `Failure Reporter` tab with:
+    - enable/disable toggle
+    - target repo configuration
+    - reuse of existing MCP server connections
+    - dedicated provider/model selection for a cheap/fast reporter route
+    - readiness, capability coverage, and draft summary cards
+  - added a direct `#/failure-reporter` control-panel route alias that opens the Settings reporter tab
+
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
   - setup understanding now classifies provider setup, MCP/integration setup, automation creation, channel setup help, broad setup help, and normal pass-through chat
@@ -27,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - control-panel chat now performs the same setup preflight and surfaces setup cards that route users into Settings, MCP, or Automations
   - added a Tauri sidecar bridge for setup understanding so desktop chat uses the same backend interpretation contract as channels and the control panel
 
-## [0.4.1] - Unreleased
+## [0.4.1] - 2026-03-07
 
 ### Added
 

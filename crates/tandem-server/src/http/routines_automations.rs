@@ -1034,7 +1034,7 @@ pub(super) fn validate_model_spec_object(value: &Value, path: &str) -> Result<()
     Ok(())
 }
 
-pub(super) fn validate_model_policy(value: &Value) -> Result<(), String> {
+pub(crate) fn validate_model_policy(value: &Value) -> Result<(), String> {
     let obj = value
         .as_object()
         .ok_or_else(|| "model_policy must be an object".to_string())?;

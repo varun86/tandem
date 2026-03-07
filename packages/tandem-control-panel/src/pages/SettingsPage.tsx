@@ -50,7 +50,53 @@ type BrowserSmokeTestResponse = {
   closed?: boolean;
 };
 
-type SettingsSection = "providers" | "identity" | "theme" | "channels" | "mcp" | "browser";
+type SettingsSection =
+  | "providers"
+  | "identity"
+  | "theme"
+  | "channels"
+  | "mcp"
+  | "failure_reporter"
+  | "browser";
+
+type FailureReporterConfigRow = {
+  enabled?: boolean;
+  repo?: string | null;
+  mcp_server?: string | null;
+  provider_preference?: string | null;
+  model_policy?: {
+    default_model?: {
+      provider_id?: string | null;
+      model_id?: string | null;
+    };
+  } | null;
+  require_approval_for_new_issues?: boolean;
+  auto_comment_on_matched_open_issues?: boolean;
+};
+
+type FailureReporterStatusRow = {
+  config?: FailureReporterConfigRow;
+  readiness?: Record<string, boolean>;
+  required_capabilities?: Record<string, boolean>;
+  selected_model?: {
+    provider_id?: string | null;
+    model_id?: string | null;
+  } | null;
+  pending_drafts?: number;
+  last_activity_at_ms?: number | null;
+  last_error?: string | null;
+};
+
+type FailureReporterDraftRow = {
+  draft_id: string;
+  fingerprint: string;
+  repo: string;
+  status: string;
+  created_at_ms: number;
+  issue_number?: number | null;
+  title?: string | null;
+  detail?: string | null;
+};
 
 type ChannelConfigRow = {
   has_token?: boolean;
@@ -349,6 +395,13 @@ export function SettingsPage({
   const [mcpEditingName, setMcpEditingName] = useState("");
   const [mcpModalTab, setMcpModalTab] = useState<"manual" | "catalog">("manual");
   const [mcpCatalogSearch, setMcpCatalogSearch] = useState("");
+  const [failureReporterEnabled, setFailureReporterEnabled] = useState(false);
+  const [failureReporterRepo, setFailureReporterRepo] = useState("");
+  const [failureReporterMcpServer, setFailureReporterMcpServer] = useState("");
+  const [failureReporterProviderPreference, setFailureReporterProviderPreference] =
+    useState("auto");
+  const [failureReporterProviderId, setFailureReporterProviderId] = useState("");
+  const [failureReporterModelId, setFailureReporterModelId] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadIdentityConfig = async () => {
@@ -387,7 +440,26 @@ export function SettingsPage({
   useEffect(() => {
     if (currentRoute === "mcp") setActiveSection("mcp");
     if (currentRoute === "channels") setActiveSection("channels");
+    if (currentRoute === "failure-reporter") setActiveSection("failure_reporter");
   }, [currentRoute]);
+
+  useEffect(() => {
+    const config =
+      (failureReporterConfigQuery.data as any)?.failure_reporter &&
+      typeof (failureReporterConfigQuery.data as any)?.failure_reporter === "object"
+        ? ((failureReporterConfigQuery.data as any).failure_reporter as FailureReporterConfigRow)
+        : {};
+    setFailureReporterEnabled(!!config.enabled);
+    setFailureReporterRepo(String(config.repo || "").trim());
+    setFailureReporterMcpServer(String(config.mcp_server || "").trim());
+    setFailureReporterProviderPreference(
+      String(config.provider_preference || "auto").trim() || "auto"
+    );
+    setFailureReporterProviderId(
+      String(config.model_policy?.default_model?.provider_id || "").trim()
+    );
+    setFailureReporterModelId(String(config.model_policy?.default_model?.model_id || "").trim());
+  }, [failureReporterConfigQuery.data]);
 
   const providersCatalog = useQuery({
     queryKey: ["settings", "providers", "catalog"],
@@ -446,6 +518,29 @@ export function SettingsPage({
     queryFn: () => api("/api/engine/mcp/catalog", { method: "GET" }).catch(() => null),
     refetchInterval: 60_000,
   });
+  const failureReporterConfigQuery = useQuery({
+    queryKey: ["settings", "failure-reporter", "config"],
+    queryFn: () =>
+      api("/api/engine/config/failure-reporter", { method: "GET" }).catch(() => ({
+        failure_reporter: {},
+      })),
+  });
+  const failureReporterStatusQuery = useQuery({
+    queryKey: ["settings", "failure-reporter", "status"],
+    queryFn: () =>
+      api("/api/engine/failure-reporter/status", { method: "GET" }).catch(() => ({
+        status: {},
+      })),
+    refetchInterval: 10_000,
+  });
+  const failureReporterDraftsQuery = useQuery({
+    queryKey: ["settings", "failure-reporter", "drafts"],
+    queryFn: () =>
+      api("/api/engine/failure-reporter/drafts?limit=10", { method: "GET" }).catch(() => ({
+        drafts: [],
+      })),
+    refetchInterval: 15_000,
+  });
   const channelsConfigQuery = useQuery({
     queryKey: ["settings", "channels", "config"],
     queryFn: () => client.channels.config().catch(() => ({})),
@@ -468,6 +563,42 @@ export function SettingsPage({
       ]);
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const saveFailureReporterMutation = useMutation({
+    mutationFn: async () =>
+      api("/api/engine/config/failure-reporter", {
+        method: "PATCH",
+        body: JSON.stringify({
+          failure_reporter: {
+            enabled: failureReporterEnabled,
+            repo: String(failureReporterRepo || "").trim() || null,
+            mcp_server: String(failureReporterMcpServer || "").trim() || null,
+            provider_preference: String(failureReporterProviderPreference || "auto").trim(),
+            model_policy:
+              failureReporterProviderId && failureReporterModelId
+                ? {
+                    default_model: {
+                      provider_id: failureReporterProviderId,
+                      model_id: failureReporterModelId,
+                    },
+                  }
+                : null,
+            require_approval_for_new_issues: true,
+            auto_comment_on_matched_open_issues: true,
+          },
+        }),
+      }),
+    onSuccess: async () => {
+      toast("ok", "Failure reporter settings saved.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+      ]);
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
   });
 
   const setApiKeyMutation = useMutation({
@@ -710,6 +841,46 @@ export function SettingsPage({
       .slice(0, 36);
   }, [mcpCatalog.servers, mcpCatalogSearch]);
   const connectedMcpCount = mcpServers.filter((server) => server.connected).length;
+  const failureReporterStatus = useMemo(
+    () => ((failureReporterStatusQuery.data as any)?.status || {}) as FailureReporterStatusRow,
+    [failureReporterStatusQuery.data]
+  );
+  const failureReporterDrafts = useMemo(
+    () =>
+      Array.isArray((failureReporterDraftsQuery.data as any)?.drafts)
+        ? ((failureReporterDraftsQuery.data as any).drafts as FailureReporterDraftRow[]) || []
+        : [],
+    [failureReporterDraftsQuery.data]
+  );
+  const selectedFailureReporterServer = useMemo(
+    () =>
+      mcpServers.find(
+        (server) =>
+          server.name.toLowerCase() ===
+          String(failureReporterMcpServer || "")
+            .trim()
+            .toLowerCase()
+      ) || null,
+    [failureReporterMcpServer, mcpServers]
+  );
+  const selectedFailureReporterProvider = useMemo(
+    () =>
+      providers.find(
+        (provider: any) =>
+          String(provider?.id || "").toLowerCase() ===
+          String(failureReporterProviderId || "")
+            .trim()
+            .toLowerCase()
+      ) || null,
+    [failureReporterProviderId, providers]
+  );
+  const failureReporterProviderModels = useMemo(() => {
+    const modelMap =
+      selectedFailureReporterProvider && typeof selectedFailureReporterProvider === "object"
+        ? selectedFailureReporterProvider.models || {}
+        : {};
+    return Object.keys(modelMap).sort((a, b) => a.localeCompare(b));
+  }, [selectedFailureReporterProvider]);
   const browserIssues = Array.isArray(browserStatus.data?.blocking_issues)
     ? browserStatus.data?.blocking_issues || []
     : [];
@@ -737,6 +908,17 @@ export function SettingsPage({
       return next;
     });
   }, [channelsConfigQuery.data]);
+
+  useEffect(() => {
+    if (!failureReporterProviderId) {
+      setFailureReporterModelId("");
+      return;
+    }
+    if (failureReporterModelId && failureReporterProviderModels.includes(failureReporterModelId)) {
+      return;
+    }
+    setFailureReporterModelId(failureReporterProviderModels[0] || "");
+  }, [failureReporterModelId, failureReporterProviderId, failureReporterProviderModels]);
 
   const applyDefaultModel = (providerId: string, modelId: string) => {
     const next = String(modelId || "").trim();
@@ -795,6 +977,7 @@ export function SettingsPage({
     { id: "theme", label: "Themes", icon: "palette" },
     { id: "channels", label: "Channels", icon: "message-circle" },
     { id: "mcp", label: "MCP", icon: "plug-zap" },
+    { id: "failure_reporter", label: "Failure Reporter", icon: "siren" },
     { id: "browser", label: "Browser", icon: "monitor-cog" },
   ];
   const mcpAuthPreviewText = useMemo(
@@ -1481,6 +1664,295 @@ export function SettingsPage({
               </PanelCard>
             ) : null}
 
+            {activeSection === "failure_reporter" ? (
+              <PanelCard
+                title="Failure reporter"
+                subtitle="Enable failure-to-issue reporting, choose a GitHub MCP backend, and pin a dedicated model route."
+                actions={
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Badge tone={failureReporterStatus.readiness?.runtime_ready ? "ok" : "warn"}>
+                      {failureReporterStatus.readiness?.runtime_ready ? "Ready" : "Not ready"}
+                    </Badge>
+                    <Badge tone="info">
+                      {Number(failureReporterStatus.pending_drafts || 0)} pending drafts
+                    </Badge>
+                    <button
+                      className="tcp-btn"
+                      onClick={() =>
+                        Promise.all([
+                          failureReporterStatusQuery.refetch(),
+                          failureReporterDraftsQuery.refetch(),
+                        ]).then(() => toast("ok", "Failure reporter status refreshed."))
+                      }
+                    >
+                      <i data-lucide="refresh-cw"></i>
+                      Reload status
+                    </button>
+                  </div>
+                }
+              >
+                <div className="grid gap-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        Reporter state
+                      </span>
+                      <button
+                        type="button"
+                        className={`tcp-list-item text-left ${failureReporterEnabled ? "ring-1 ring-emerald-400/40" : ""}`}
+                        onClick={() => setFailureReporterEnabled((prev) => !prev)}
+                      >
+                        <div className="font-medium">
+                          {failureReporterEnabled ? "Enabled" : "Disabled"}
+                        </div>
+                        <div className="tcp-subtle text-xs">
+                          {failureReporterEnabled
+                            ? "Failure events can be analyzed once readiness is green."
+                            : "No reporter work will execute."}
+                        </div>
+                      </button>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        Target repo
+                      </span>
+                      <input
+                        className="tcp-input"
+                        value={failureReporterRepo}
+                        onChange={(event) => setFailureReporterRepo(event.target.value)}
+                        placeholder="owner/repo"
+                      />
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        MCP server
+                      </span>
+                      <select
+                        className="tcp-input"
+                        value={failureReporterMcpServer}
+                        onChange={(event) => setFailureReporterMcpServer(event.target.value)}
+                      >
+                        <option value="">Select an MCP server</option>
+                        {mcpServers.map((server) => (
+                          <option key={server.name} value={server.name}>
+                            {server.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        Provider preference
+                      </span>
+                      <select
+                        className="tcp-input"
+                        value={failureReporterProviderPreference}
+                        onChange={(event) =>
+                          setFailureReporterProviderPreference(event.target.value)
+                        }
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="official_github">Official GitHub</option>
+                        <option value="composio">Composio</option>
+                        <option value="arcade">Arcade</option>
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        Provider
+                      </span>
+                      <select
+                        className="tcp-input"
+                        value={failureReporterProviderId}
+                        onChange={(event) => setFailureReporterProviderId(event.target.value)}
+                      >
+                        <option value="">Select a provider</option>
+                        {providers.map((provider: any) => (
+                          <option
+                            key={String(provider?.id || "")}
+                            value={String(provider?.id || "")}
+                          >
+                            {String(provider?.id || "")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Model</span>
+                      <select
+                        className="tcp-input"
+                        value={failureReporterModelId}
+                        onChange={(event) => setFailureReporterModelId(event.target.value)}
+                        disabled={!failureReporterProviderId}
+                      >
+                        <option value="">
+                          {failureReporterProviderId ? "Select a model" : "Choose a provider first"}
+                        </option>
+                        {failureReporterProviderModels.map((modelId) => (
+                          <option key={modelId} value={modelId}>
+                            {modelId}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="tcp-btn-primary"
+                      disabled={saveFailureReporterMutation.isPending}
+                      onClick={() => saveFailureReporterMutation.mutate()}
+                    >
+                      <i data-lucide="save"></i>
+                      {saveFailureReporterMutation.isPending ? "Saving..." : "Save"}
+                    </button>
+                    <button className="tcp-btn" onClick={() => openMcpModal()}>
+                      <i data-lucide="plus"></i>
+                      Add MCP server
+                    </button>
+                    {selectedFailureReporterServer ? (
+                      <button
+                        className="tcp-btn"
+                        disabled={mcpActionMutation.isPending}
+                        onClick={() =>
+                          mcpActionMutation.mutate({
+                            action: selectedFailureReporterServer.connected ? "refresh" : "connect",
+                            server: selectedFailureReporterServer,
+                          })
+                        }
+                      >
+                        <i
+                          data-lucide={
+                            selectedFailureReporterServer.connected ? "refresh-cw" : "plug-zap"
+                          }
+                        ></i>
+                        {selectedFailureReporterServer.connected
+                          ? "Refresh selected MCP"
+                          : "Connect selected MCP"}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="tcp-list-item">
+                      <div className="text-sm font-medium">Readiness</div>
+                      <div className="mt-1 text-sm">
+                        {failureReporterStatus.readiness?.runtime_ready ? "Ready" : "Blocked"}
+                      </div>
+                      <div className="tcp-subtle text-xs">
+                        {failureReporterStatus.last_error || "No blocking issue reported."}
+                      </div>
+                    </div>
+                    <div className="tcp-list-item">
+                      <div className="text-sm font-medium">Selected MCP</div>
+                      <div className="mt-1 text-sm">
+                        {selectedFailureReporterServer?.name || "None selected"}
+                      </div>
+                      <div className="tcp-subtle text-xs">
+                        {selectedFailureReporterServer
+                          ? selectedFailureReporterServer.connected
+                            ? "Connected"
+                            : "Disconnected"
+                          : "No server selected"}
+                      </div>
+                    </div>
+                    <div className="tcp-list-item">
+                      <div className="text-sm font-medium">Model route</div>
+                      <div className="mt-1 break-all text-sm">
+                        {failureReporterStatus.selected_model?.provider_id &&
+                        failureReporterStatus.selected_model?.model_id
+                          ? `${failureReporterStatus.selected_model.provider_id} / ${failureReporterStatus.selected_model.model_id}`
+                          : "No dedicated model selected"}
+                      </div>
+                      <div className="tcp-subtle text-xs">
+                        {failureReporterStatus.readiness?.selected_model_ready
+                          ? "Available"
+                          : "Fail-closed when unavailable"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="tcp-list-item">
+                      <div className="font-medium">Capability readiness</div>
+                      <div className="tcp-subtle mt-2 grid gap-1 text-xs">
+                        <div>
+                          github.list_issues:{" "}
+                          {failureReporterStatus.required_capabilities?.github_list_issues
+                            ? "ready"
+                            : "missing"}
+                        </div>
+                        <div>
+                          github.get_issue:{" "}
+                          {failureReporterStatus.required_capabilities?.github_get_issue
+                            ? "ready"
+                            : "missing"}
+                        </div>
+                        <div>
+                          github.create_issue:{" "}
+                          {failureReporterStatus.required_capabilities?.github_create_issue
+                            ? "ready"
+                            : "missing"}
+                        </div>
+                        <div>
+                          github.comment_on_issue:{" "}
+                          {failureReporterStatus.required_capabilities?.github_comment_on_issue
+                            ? "ready"
+                            : "missing"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="tcp-list-item">
+                      <div className="font-medium">Posting policy</div>
+                      <div className="tcp-subtle mt-2 grid gap-1 text-xs">
+                        <div>New issues: Draft + approval</div>
+                        <div>Matched open issues: Auto-comment</div>
+                        <div>Dedupe: Fingerprint marker + label</div>
+                        <div>Workspace write tools: Disabled</div>
+                        <div>Model fallback: Fail closed</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+                    <div className="mb-2 font-medium">Recent reporter drafts</div>
+                    {failureReporterDrafts.length ? (
+                      <div className="grid gap-2">
+                        {failureReporterDrafts.map((draft) => (
+                          <div key={draft.draft_id} className="tcp-list-item">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="font-medium">{draft.title || draft.fingerprint}</div>
+                              <Badge tone={draft.status === "approval_required" ? "warn" : "info"}>
+                                {draft.status}
+                              </Badge>
+                            </div>
+                            <div className="tcp-subtle mt-1 text-xs">
+                              {draft.repo} ·{" "}
+                              {draft.issue_number ? `issue #${draft.issue_number}` : "draft only"} ·{" "}
+                              {draft.created_at_ms
+                                ? new Date(draft.created_at_ms).toLocaleString()
+                                : "time unavailable"}
+                            </div>
+                            {draft.detail ? (
+                              <div className="tcp-subtle mt-1 text-xs">{draft.detail}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState text="No failure reporter drafts yet." />
+                    )}
+                  </div>
+                </div>
+              </PanelCard>
+            ) : null}
+
             {activeSection === "browser" ? (
               <PanelCard
                 title="Browser readiness"
@@ -1628,6 +2100,18 @@ export function SettingsPage({
                   <div className="font-medium">MCP</div>
                   <div className="tcp-subtle mt-1 text-xs">
                     {connectedMcpCount} connected, {mcpToolIds.length} discovered tools
+                  </div>
+                </div>
+                <div className="tcp-list-item">
+                  <div className="font-medium">Failure reporter</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {failureReporterStatus.readiness?.runtime_ready
+                      ? "Ready"
+                      : failureReporterEnabled
+                        ? "Enabled but blocked"
+                        : "Disabled"}
+                    {" · "}
+                    {Number(failureReporterStatus.pending_drafts || 0)} pending drafts
                   </div>
                 </div>
                 <div className="tcp-list-item">

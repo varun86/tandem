@@ -2,7 +2,21 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.4.1 (Unreleased)
+## v0.4.2 (Unreleased)
+
+- Failure reporter settings foundation and server config/status surface
+  - Added persisted failure-reporter config in `tandem-server` for repo, selected MCP server, provider preference, and dedicated `model_policy.default_model` routing.
+  - Added fail-closed readiness/status evaluation for selected model availability, MCP connectivity, and required GitHub capabilities.
+  - Added reporter HTTP endpoints:
+    - `GET /config/failure-reporter`
+    - `PATCH /config/failure-reporter`
+    - `GET /failure-reporter/status`
+    - `GET /failure-reporter/drafts`
+    - `GET /failure-reporter/drafts/{id}`
+  - Control-panel Settings now has a dedicated `Failure Reporter` tab with repo/MCP/provider/model selection, readiness indicators, and recent draft visibility.
+  - Added `#/failure-reporter` route alias for direct access to the reporter settings surface.
+
+## v0.4.1 (2026-03-07)
 
 - Strict swarm write reliability and cross-client engine retries
   - Fixed streamed OpenAI/OpenRouter tool-call parsing so multi-chunk `write` args keep the correct tool-call identity and no longer lose later argument chunks when the provider omits the tool name on follow-up deltas.
