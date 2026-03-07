@@ -496,6 +496,111 @@ async fn persist_bug_monitor_failure_pattern_memory(
     }))
 }
 
+async fn persist_bug_monitor_failure_pattern_from_approved_draft(
+    state: &AppState,
+    draft: &BugMonitorDraftRecord,
+) -> Result<Value, StatusCode> {
+    let summary_text = draft
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            draft
+                .detail
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("Bug Monitor approved a failure draft without triage details.")
+        .to_string();
+    let detail = draft.detail.as_deref().unwrap_or_default();
+    let canonical_markers = detail
+        .lines()
+        .filter_map(normalize_issue_draft_line)
+        .take(5)
+        .collect::<Vec<_>>();
+    let duplicate_matches = super::coder::find_failure_pattern_duplicates(
+        state,
+        &draft.repo,
+        None,
+        &["bug_monitor".to_string(), "default".to_string()],
+        &format!("{summary_text} {detail}"),
+        Some(&draft.fingerprint),
+        3,
+    )
+    .await?;
+    if duplicate_matches.iter().any(|row| {
+        row.get("source").and_then(Value::as_str) == Some("governed_memory")
+            && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
+    }) {
+        return Ok(json!({
+            "stored": false,
+            "reason": "governed_failure_pattern_exists",
+            "fingerprint": draft.fingerprint,
+            "duplicate_matches": duplicate_matches,
+        }));
+    }
+
+    let run_id = format!("bug-monitor-approval-{}", draft.draft_id);
+    let partition = MemoryPartition {
+        org_id: draft.repo.clone(),
+        workspace_id: draft.repo.clone(),
+        project_id: draft.repo.clone(),
+        tier: GovernedMemoryTier::Session,
+    };
+    let capability = Some(super::skills_memory::issue_run_memory_capability(
+        &run_id,
+        Some("bug_monitor"),
+        &partition,
+        super::skills_memory::RunMemoryCapabilityPolicy::CoderWorkflow,
+    ));
+    let metadata = json!({
+        "kind": "failure_pattern",
+        "repo_slug": draft.repo,
+        "failure_pattern_fingerprint": draft.fingerprint,
+        "linked_issue_numbers": draft.issue_number.into_iter().collect::<Vec<_>>(),
+        "affected_components": [draft
+            .repo
+            .rsplit('/')
+            .next()
+            .unwrap_or(draft.repo.as_str())],
+        "artifact_refs": [],
+        "canonical_markers": canonical_markers,
+        "symptoms": [summary_text],
+        "draft_id": draft.draft_id,
+        "source": "bug_monitor_approval",
+    });
+    let put_response = super::skills_memory::memory_put_impl(
+        state,
+        MemoryPutRequest {
+            run_id,
+            partition: partition.clone(),
+            kind: MemoryContentKind::Fact,
+            content: summary_text.clone(),
+            artifact_refs: Vec::new(),
+            classification: MemoryClassification::Internal,
+            metadata: Some(metadata.clone()),
+        },
+        capability,
+    )
+    .await?;
+    Ok(json!({
+        "stored": true,
+        "memory_id": put_response.id,
+        "fingerprint": draft.fingerprint,
+        "content": summary_text,
+        "metadata": metadata,
+        "partition": {
+            "org_id": partition.org_id,
+            "workspace_id": partition.workspace_id,
+            "project_id": partition.project_id,
+            "tier": partition.tier,
+        },
+        "duplicate_matches": duplicate_matches,
+    }))
+}
+
 async fn latest_bug_monitor_incident_for_draft(
     state: &AppState,
     draft_id: &str,
@@ -1258,6 +1363,13 @@ pub(super) async fn approve_bug_monitor_draft(
     {
         Ok(draft) => {
             let approved_draft = draft.clone();
+            let approval_failure_pattern_memory = if approved_draft.triage_run_id.is_none() {
+                persist_bug_monitor_failure_pattern_from_approved_draft(&state, &approved_draft)
+                    .await
+                    .ok()
+            } else {
+                None
+            };
             match bug_monitor_github::publish_draft(
                 &state,
                 &draft.draft_id,
@@ -1270,6 +1382,7 @@ pub(super) async fn approve_bug_monitor_draft(
                     "ok": true,
                     "draft": outcome.draft,
                     "action": outcome.action,
+                    "failure_pattern_memory": approval_failure_pattern_memory,
                     "post": outcome.post,
                 }))
                 .into_response(),
@@ -1291,6 +1404,7 @@ pub(super) async fn approve_bug_monitor_draft(
                         "ok": true,
                         "draft": updated_draft,
                         "action": "approved",
+                        "failure_pattern_memory": approval_failure_pattern_memory,
                         "publish_error": detail,
                     }))
                     .into_response()

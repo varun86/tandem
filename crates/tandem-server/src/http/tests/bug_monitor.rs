@@ -565,6 +565,57 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
             .and_then(Value::as_str),
         Some("draft_ready")
     );
+    assert_eq!(
+        approve_payload
+            .get("failure_pattern_memory")
+            .and_then(|row| row.get("stored"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        approve_payload
+            .get("failure_pattern_memory")
+            .and_then(|row| row.get("metadata"))
+            .and_then(|row| row.get("source"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_approval")
+    );
+
+    let duplicate_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "desktop_logs",
+                    "fingerprint": approve_payload
+                        .get("draft")
+                        .and_then(|row| row.get("fingerprint"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    "excerpt": ["boom"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("duplicate request");
+    let duplicate_resp = app
+        .clone()
+        .oneshot(duplicate_req)
+        .await
+        .expect("duplicate response");
+    assert_eq!(duplicate_resp.status(), StatusCode::OK);
+    let duplicate_payload: Value = serde_json::from_slice(
+        &to_bytes(duplicate_resp.into_body(), usize::MAX)
+            .await
+            .expect("duplicate body"),
+    )
+    .expect("duplicate json");
+    assert_eq!(
+        duplicate_payload.get("suppressed").and_then(Value::as_bool),
+        Some(true)
+    );
 
     let deny_req = Request::builder()
         .method("POST")
@@ -583,8 +634,9 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
             json!({
                 "report": {
                     "source": "desktop_logs",
-                    "title": "another failure",
-                    "excerpt": ["oops"],
+                    "title": "billing worker checksum mismatch 0xdeadbeef",
+                    "detail": "billing worker checksum mismatch 0xdeadbeef while loading monthly ledger",
+                    "excerpt": ["billing-worker", "checksum mismatch 0xdeadbeef", "monthly ledger"],
                     "fingerprint": "manual-second"
                 }
             })

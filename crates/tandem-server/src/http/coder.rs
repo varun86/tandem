@@ -950,6 +950,47 @@ pub(crate) async fn find_failure_pattern_duplicates(
                 }));
             }
         }
+        if let Some(target_fingerprint) =
+            fingerprint.map(str::trim).filter(|value| !value.is_empty())
+        {
+            for subject in subjects {
+                let Ok(records) = db.list_global_memory(subject, None, 200, 0).await else {
+                    continue;
+                };
+                for record in records {
+                    if !seen_memory_ids.insert(record.id.clone()) {
+                        continue;
+                    }
+                    if record.project_tag.as_deref() != project_id.or(Some(repo_slug)) {
+                        continue;
+                    }
+                    let Some(metadata) = record.metadata.as_ref() else {
+                        continue;
+                    };
+                    let stored_fingerprint = metadata
+                        .get("failure_pattern_fingerprint")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if stored_fingerprint != Some(target_fingerprint) {
+                        continue;
+                    }
+                    hits.push(json!({
+                        "source": "governed_memory",
+                        "memory_id": record.id,
+                        "score": 1.0,
+                        "content": record.content,
+                        "metadata": record.metadata,
+                        "memory_visibility": record.visibility,
+                        "source_type": record.source_type,
+                        "run_id": record.run_id,
+                        "project_tag": record.project_tag,
+                        "subject": subject,
+                        "created_at_ms": record.created_at_ms,
+                    }));
+                }
+            }
+        }
     }
     Ok(derive_failure_pattern_duplicate_matches(
         &hits,
