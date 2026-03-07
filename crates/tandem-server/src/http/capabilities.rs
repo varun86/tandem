@@ -1,123 +1,10 @@
 use super::*;
 use std::collections::HashMap;
 
-pub(super) async fn capabilities_bindings_get(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
-    let bindings = state
-        .capability_resolver
-        .list_bindings()
-        .await
-        .map_err(|err| {
-            tracing::warn!("capability bindings get failed: {}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(json!({ "bindings": bindings })))
-}
-
-pub(super) async fn capabilities_bindings_put(
-    State(state): State<AppState>,
-    Json(file): Json<CapabilityBindingsFile>,
-) -> Result<Json<Value>, StatusCode> {
-    state
-        .capability_resolver
-        .set_bindings(file)
-        .await
-        .map_err(|err| {
-            tracing::warn!("capability bindings put failed: {}", err);
-            StatusCode::BAD_REQUEST
-        })?;
-    Ok(Json(json!({ "ok": true })))
-}
-
-pub(super) async fn capabilities_bindings_refresh_builtins(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
-    let summary = state
-        .capability_resolver
-        .refresh_builtin_bindings()
-        .await
-        .map_err(|err| {
-            tracing::warn!("capability bindings refresh failed: {}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(json!({ "ok": true, "summary": summary })))
-}
-
-pub(super) async fn capabilities_bindings_reset_to_builtins(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
-    let summary = state
-        .capability_resolver
-        .reset_to_builtin_bindings()
-        .await
-        .map_err(|err| {
-            tracing::warn!("capability bindings reset failed: {}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(json!({ "ok": true, "summary": summary })))
-}
-
-pub(super) async fn capabilities_discovery(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
-    let discovered = state
-        .capability_resolver
-        .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
-        .await;
-    Ok(Json(json!({ "tools": discovered })))
-}
-
-pub(super) async fn capabilities_resolve(
-    State(state): State<AppState>,
-    Json(input): Json<CapabilityResolveInput>,
-) -> Result<Response, StatusCode> {
-    let discovered = state
-        .capability_resolver
-        .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
-        .await;
-    let result = state
-        .capability_resolver
-        .resolve(input.clone(), discovered)
-        .await
-        .map_err(|err| {
-            tracing::warn!("capability resolve failed: {}", err);
-            StatusCode::BAD_REQUEST
-        })?;
-    if !result.missing_required.is_empty() {
-        let bindings = state
-            .capability_resolver
-            .list_bindings()
-            .await
-            .unwrap_or_else(|_| CapabilityBindingsFile::default());
-        let mut suggestions = HashMap::<String, Vec<String>>::new();
-        for missing in &result.missing_required {
-            let rows = bindings
-                .bindings
-                .iter()
-                .filter(|row| row.capability_id == *missing)
-                .map(|row| format!("{}:{}", row.provider, row.tool_name))
-                .collect::<Vec<_>>();
-            suggestions.insert(missing.clone(), rows);
-        }
-        let workflow_id = input
-            .workflow_id
-            .clone()
-            .unwrap_or_else(|| "unknown_workflow".to_string());
-        let payload = crate::capability_resolver::CapabilityResolver::missing_capability_error(
-            &workflow_id,
-            &result.missing_required,
-            &suggestions,
-        );
-        return Ok((StatusCode::CONFLICT, Json(payload)).into_response());
-    }
-    Ok(Json(json!({ "resolution": result })).into_response())
-}
-
-pub(super) async fn capabilities_readiness(
-    State(state): State<AppState>,
-    Json(input): Json<CapabilityReadinessInput>,
-) -> Result<Response, StatusCode> {
+pub(super) async fn evaluate_capability_readiness(
+    state: &AppState,
+    input: &CapabilityReadinessInput,
+) -> Result<CapabilityReadinessOutput, StatusCode> {
     let discovered = state
         .capability_resolver
         .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
@@ -287,13 +174,12 @@ pub(super) async fn capabilities_readiness(
         );
     }
 
-    let runnable = blocking_issues.is_empty() || input.allow_unbound;
-    let output = CapabilityReadinessOutput {
+    Ok(CapabilityReadinessOutput {
         workflow_id: input
             .workflow_id
             .clone()
             .unwrap_or_else(|| "unknown_workflow".to_string()),
-        runnable,
+        runnable: blocking_issues.is_empty() || input.allow_unbound,
         resolved: result.resolved,
         missing_required_capabilities,
         unbound_capabilities,
@@ -305,7 +191,127 @@ pub(super) async fn capabilities_readiness(
         considered_bindings: result.considered_bindings,
         recommendations,
         blocking_issues,
-    };
+    })
+}
+
+pub(super) async fn capabilities_bindings_get(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let bindings = state
+        .capability_resolver
+        .list_bindings()
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability bindings get failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(json!({ "bindings": bindings })))
+}
+
+pub(super) async fn capabilities_bindings_put(
+    State(state): State<AppState>,
+    Json(file): Json<CapabilityBindingsFile>,
+) -> Result<Json<Value>, StatusCode> {
+    state
+        .capability_resolver
+        .set_bindings(file)
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability bindings put failed: {}", err);
+            StatusCode::BAD_REQUEST
+        })?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub(super) async fn capabilities_bindings_refresh_builtins(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let summary = state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability bindings refresh failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(json!({ "ok": true, "summary": summary })))
+}
+
+pub(super) async fn capabilities_bindings_reset_to_builtins(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let summary = state
+        .capability_resolver
+        .reset_to_builtin_bindings()
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability bindings reset failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(json!({ "ok": true, "summary": summary })))
+}
+
+pub(super) async fn capabilities_discovery(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let discovered = state
+        .capability_resolver
+        .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
+        .await;
+    Ok(Json(json!({ "tools": discovered })))
+}
+
+pub(super) async fn capabilities_resolve(
+    State(state): State<AppState>,
+    Json(input): Json<CapabilityResolveInput>,
+) -> Result<Response, StatusCode> {
+    let discovered = state
+        .capability_resolver
+        .discover_from_runtime(state.mcp.list_tools().await, state.tools.list().await)
+        .await;
+    let result = state
+        .capability_resolver
+        .resolve(input.clone(), discovered)
+        .await
+        .map_err(|err| {
+            tracing::warn!("capability resolve failed: {}", err);
+            StatusCode::BAD_REQUEST
+        })?;
+    if !result.missing_required.is_empty() {
+        let bindings = state
+            .capability_resolver
+            .list_bindings()
+            .await
+            .unwrap_or_else(|_| CapabilityBindingsFile::default());
+        let mut suggestions = HashMap::<String, Vec<String>>::new();
+        for missing in &result.missing_required {
+            let rows = bindings
+                .bindings
+                .iter()
+                .filter(|row| row.capability_id == *missing)
+                .map(|row| format!("{}:{}", row.provider, row.tool_name))
+                .collect::<Vec<_>>();
+            suggestions.insert(missing.clone(), rows);
+        }
+        let workflow_id = input
+            .workflow_id
+            .clone()
+            .unwrap_or_else(|| "unknown_workflow".to_string());
+        let payload = crate::capability_resolver::CapabilityResolver::missing_capability_error(
+            &workflow_id,
+            &result.missing_required,
+            &suggestions,
+        );
+        return Ok((StatusCode::CONFLICT, Json(payload)).into_response());
+    }
+    Ok(Json(json!({ "resolution": result })).into_response())
+}
+
+pub(super) async fn capabilities_readiness(
+    State(state): State<AppState>,
+    Json(input): Json<CapabilityReadinessInput>,
+) -> Result<Response, StatusCode> {
+    let output = evaluate_capability_readiness(&state, &input).await?;
     let status = if output.runnable {
         StatusCode::OK
     } else {

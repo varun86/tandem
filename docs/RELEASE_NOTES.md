@@ -54,6 +54,8 @@
   - added `POST /coder/runs/{id}/memory-candidates/{candidate_id}/promote` so reviewed coder memory candidates can be stored in governed memory and optionally promoted to shared visibility with reviewer metadata
   - added `POST /coder/runs/{id}/approve` and `POST /coder/runs/{id}/cancel` as thin coder control endpoints over the existing context-run transition model
   - those control endpoints now emit `coder.run.phase_changed`, and cancelled coder runs now project a dedicated `cancelled` phase
+  - `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so coder run creation blocks on the same missing/unbound/disconnected/auth-pending conditions surfaced by `/capabilities/readiness`
+  - explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`

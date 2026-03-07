@@ -633,26 +633,27 @@ async fn coder_issue_triage_readiness(
     state: &AppState,
     input: &CoderRunCreateInput,
 ) -> Result<CapabilityReadinessOutput, StatusCode> {
-    let required_capabilities = vec![
-        "github.list_issues".to_string(),
-        "github.get_issue".to_string(),
-    ];
-    let bindings = state
-        .capability_resolver
-        .list_bindings()
-        .await
-        .unwrap_or_default();
-    let mut missing_required_capabilities = Vec::new();
-    for capability_id in &required_capabilities {
-        let has_binding = bindings
-            .bindings
-            .iter()
-            .any(|row| row.capability_id == *capability_id);
-        if !has_binding {
-            missing_required_capabilities.push(capability_id.clone());
-        }
-    }
-    let unbound_capabilities = missing_required_capabilities.clone();
+    let mut readiness = super::capabilities::evaluate_capability_readiness(
+        state,
+        &CapabilityReadinessInput {
+            workflow_id: Some("coder_issue_triage".to_string()),
+            required_capabilities: vec![
+                "github.list_issues".to_string(),
+                "github.get_issue".to_string(),
+            ],
+            optional_capabilities: Vec::new(),
+            provider_preference: input
+                .mcp_servers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|row| row.to_ascii_lowercase())
+                .collect(),
+            available_tools: Vec::new(),
+            allow_unbound: false,
+        },
+    )
+    .await?;
     let mcp_servers = state.mcp.list().await;
     let enabled_servers = mcp_servers
         .values()
@@ -663,86 +664,55 @@ async fn coder_issue_triage_readiness(
         .filter(|server| server.connected)
         .map(|server| server.name.to_ascii_lowercase())
         .collect::<std::collections::HashSet<_>>();
-    let provider_preference = input
+    let preferred_servers = input
         .mcp_servers
         .clone()
         .unwrap_or_default()
         .into_iter()
         .map(|row| row.to_ascii_lowercase())
         .collect::<Vec<_>>();
-    let mut missing_servers = Vec::new();
-    let mut disconnected_servers = Vec::new();
-    for provider in &provider_preference {
+    let mut missing_preferred = Vec::new();
+    let mut disconnected_preferred = Vec::new();
+    for provider in preferred_servers {
         let any_enabled = enabled_servers
             .iter()
-            .any(|server| server.name.eq_ignore_ascii_case(provider));
+            .any(|server| server.name.eq_ignore_ascii_case(&provider));
         if !any_enabled {
-            missing_servers.push(provider.clone());
+            missing_preferred.push(provider.clone());
             continue;
         }
-        if !connected_servers.contains(provider) {
-            disconnected_servers.push(provider.clone());
+        if !connected_servers.contains(&provider) {
+            disconnected_preferred.push(provider);
         }
     }
-    let mut blocking_issues = Vec::<CapabilityBlockingIssue>::new();
-    if !missing_required_capabilities.is_empty() {
-        blocking_issues.push(CapabilityBlockingIssue {
-            code: "missing_required_capabilities".to_string(),
-            message: "Some required capabilities do not have any bindings.".to_string(),
-            capability_ids: missing_required_capabilities.clone(),
-            providers: Vec::new(),
-            tools: Vec::new(),
-        });
-    }
-    if !unbound_capabilities.is_empty() {
-        let providers = unbound_capabilities
-            .iter()
-            .flat_map(|capability_id| {
-                crate::capability_resolver::providers_for_capability(&bindings, capability_id)
-            })
-            .collect::<Vec<_>>();
-        blocking_issues.push(CapabilityBlockingIssue {
-            code: "unbound_capabilities".to_string(),
-            message: "Some required capabilities have bindings, but no available runtime tools."
-                .to_string(),
-            capability_ids: unbound_capabilities.clone(),
-            providers,
-            tools: Vec::new(),
-        });
-    }
-    if !missing_servers.is_empty() {
-        blocking_issues.push(CapabilityBlockingIssue {
+    if !missing_preferred.is_empty() {
+        readiness.blocking_issues.push(CapabilityBlockingIssue {
             code: "missing_mcp_servers".to_string(),
             message: "Preferred MCP servers are not configured.".to_string(),
             capability_ids: Vec::new(),
-            providers: missing_servers.clone(),
+            providers: missing_preferred.clone(),
             tools: Vec::new(),
         });
+        readiness.missing_servers.extend(missing_preferred);
     }
-    if !disconnected_servers.is_empty() {
-        blocking_issues.push(CapabilityBlockingIssue {
+    if !disconnected_preferred.is_empty() {
+        readiness.blocking_issues.push(CapabilityBlockingIssue {
             code: "disconnected_mcp_servers".to_string(),
             message: "Preferred MCP servers are configured but disconnected.".to_string(),
             capability_ids: Vec::new(),
-            providers: disconnected_servers.clone(),
+            providers: disconnected_preferred.clone(),
             tools: Vec::new(),
         });
+        readiness
+            .disconnected_servers
+            .extend(disconnected_preferred);
     }
-    Ok(CapabilityReadinessOutput {
-        workflow_id: "coder_issue_triage".to_string(),
-        runnable: blocking_issues.is_empty(),
-        resolved: Vec::new(),
-        missing_required_capabilities,
-        unbound_capabilities,
-        missing_optional_capabilities: Vec::new(),
-        missing_servers,
-        disconnected_servers,
-        auth_pending_tools: Vec::new(),
-        missing_secret_refs: Vec::new(),
-        considered_bindings: bindings.bindings.len(),
-        recommendations: Vec::new(),
-        blocking_issues,
-    })
+    readiness.missing_servers.sort();
+    readiness.missing_servers.dedup();
+    readiness.disconnected_servers.sort();
+    readiness.disconnected_servers.dedup();
+    readiness.runnable = readiness.blocking_issues.is_empty();
+    Ok(readiness)
 }
 
 fn compose_issue_triage_objective(input: &CoderRunCreateInput) -> String {

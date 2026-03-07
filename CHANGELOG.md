@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /coder/runs/{id}/cancel`
   - coder control endpoints now replay the existing context-run `plan_approved` and `run_cancelled` transitions instead of introducing a second coder lifecycle model
   - added `coder.run.phase_changed` emission for coder approve/cancel transitions and fixed cancelled coder runs to project a dedicated `cancelled` phase
+  - coder `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so run creation blocks on the same missing/unbound/disconnected/auth-pending conditions exposed by `/capabilities/readiness`
+  - explicit `mcp_servers` requested by coder runs remain hard requirements on top of that shared readiness check
+  - the HTTP test harness now seeds a connected GitHub MCP server/tool cache so coder tests exercise the real readiness/discovery path rather than a reduced fallback
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

@@ -48,6 +48,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added `POST /coder/runs/{id}/memory-candidates/{candidate_id}/promote` so reviewed coder memory candidates can be stored in governed memory and optionally promoted to shared visibility with reviewer metadata.
   - Added `POST /coder/runs/{id}/approve` and `POST /coder/runs/{id}/cancel` as thin coder control endpoints over the existing context-run transition model.
   - Those control endpoints now emit `coder.run.phase_changed`, and cancelled coder runs now project a dedicated `cancelled` phase.
+  - `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so coder run creation blocks on the same missing/unbound/disconnected/auth-pending conditions surfaced by `/capabilities/readiness`.
+  - Explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check.
 
 ## v0.4.1 (2026-03-07)
 

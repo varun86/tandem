@@ -42,8 +42,44 @@ pub(super) async fn test_state() -> AppState {
     let root = std::env::temp_dir().join(format!("tandem-http-test-{}", Uuid::new_v4()));
     let global = root.join("global-config.json");
     let tandem_home = root.join("tandem-home");
+    let mcp_state = root.join("mcp.json");
     std::env::set_var("TANDEM_GLOBAL_CONFIG", &global);
     std::env::set_var("TANDEM_HOME", &tandem_home);
+    let seeded_mcp = json!({
+        "github": {
+            "name": "github",
+            "transport": "memory://github",
+            "enabled": true,
+            "connected": false,
+            "headers": {},
+            "tool_cache": [
+                {
+                    "tool_name": "list_repository_issues",
+                    "description": "List repository issues",
+                    "input_schema": {"type":"object"},
+                    "fetched_at_ms": 1,
+                    "schema_hash": "tool-github-list-issues"
+                },
+                {
+                    "tool_name": "get_issue",
+                    "description": "Get a GitHub issue",
+                    "input_schema": {"type":"object"},
+                    "fetched_at_ms": 1,
+                    "schema_hash": "tool-github-get-issue"
+                }
+            ],
+            "tools_fetched_at_ms": 1,
+            "pending_auth_by_tool": {}
+        }
+    });
+    if let Some(parent) = mcp_state.parent() {
+        std::fs::create_dir_all(parent).expect("mcp state dir");
+    }
+    std::fs::write(
+        &mcp_state,
+        serde_json::to_string_pretty(&seeded_mcp).expect("seeded mcp json"),
+    )
+    .expect("write mcp state");
     let storage = Arc::new(Storage::new(root.join("storage")).await.expect("storage"));
     let config = ConfigStore::new(root.join("config.json"), None)
         .await
@@ -57,7 +93,7 @@ pub(super) async fn test_state() -> AppState {
     let agents = AgentRegistry::new(".").await.expect("agents");
     let tools = ToolRegistry::new();
     let permissions = PermissionManager::new(event_bus.clone());
-    let mcp = McpRegistry::new_with_state_file(root.join("mcp.json"));
+    let mcp = McpRegistry::new_with_state_file(mcp_state);
     let pty = PtyManager::new();
     let lsp = LspManager::new(".");
     let auth = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
@@ -101,6 +137,7 @@ pub(super) async fn test_state() -> AppState {
         })
         .await
         .expect("runtime ready");
+    assert!(state.mcp.connect("github").await);
     state
 }
 
