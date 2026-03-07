@@ -1900,6 +1900,7 @@ pub(super) async fn memory_search(
                 "content": hit.record.content,
                 "score": hit.score,
                 "run_id": hit.record.run_id,
+                "visibility": hit.record.visibility,
                 "artifact_refs": memory_artifact_refs(hit.record.metadata.as_ref()),
                 "metadata": hit.record.metadata,
                 "provenance": hit.record.provenance,
