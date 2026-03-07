@@ -1305,7 +1305,7 @@ async fn write_coder_memory_candidate_artifact(
 }
 
 fn build_governed_memory_content(candidate_payload: &Value) -> Option<String> {
-    candidate_payload
+    let base = candidate_payload
         .get("summary")
         .and_then(Value::as_str)
         .map(str::trim)
@@ -1319,7 +1319,142 @@ fn build_governed_memory_content(candidate_payload: &Value) -> Option<String> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
-        })
+        });
+    let payload = candidate_payload.get("payload");
+    let mut segments = Vec::<String>::new();
+    if let Some(summary) = base {
+        segments.push(summary);
+    }
+    let push_optional = |segments: &mut Vec<String>, label: &str, value: Option<&Value>| {
+        if let Some(text) = value
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            segments.push(format!("{label}: {text}"));
+        }
+    };
+    let push_list = |segments: &mut Vec<String>, label: &str, value: Option<&Value>| {
+        let values = value
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| row.as_str().map(str::trim))
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !values.is_empty() {
+            segments.push(format!("{label}: {}", values.join(", ")));
+        }
+    };
+    let push_object_summaries = |segments: &mut Vec<String>, label: &str, value: Option<&Value>| {
+        let values = value
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        row.get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToString::to_string)
+                            .or_else(|| {
+                                row.get("kind")
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(ToString::to_string)
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !values.is_empty() {
+            segments.push(format!("{label}: {}", values.join(", ")));
+        }
+    };
+    push_optional(
+        &mut segments,
+        "workflow",
+        payload.and_then(|row| row.get("workflow_mode")),
+    );
+    push_optional(
+        &mut segments,
+        "result",
+        payload.and_then(|row| row.get("result")),
+    );
+    push_optional(
+        &mut segments,
+        "verdict",
+        payload.and_then(|row| row.get("verdict")),
+    );
+    push_optional(
+        &mut segments,
+        "recommendation",
+        payload.and_then(|row| row.get("recommendation")),
+    );
+    push_optional(
+        &mut segments,
+        "fix_strategy",
+        payload.and_then(|row| row.get("fix_strategy")),
+    );
+    push_optional(
+        &mut segments,
+        "root_cause",
+        payload.and_then(|row| row.get("root_cause")),
+    );
+    push_optional(
+        &mut segments,
+        "risk_level",
+        payload.and_then(|row| row.get("risk_level")),
+    );
+    push_list(
+        &mut segments,
+        "changed_files",
+        payload.and_then(|row| row.get("changed_files")),
+    );
+    push_list(
+        &mut segments,
+        "blockers",
+        payload.and_then(|row| row.get("blockers")),
+    );
+    push_list(
+        &mut segments,
+        "requested_changes",
+        payload.and_then(|row| row.get("requested_changes")),
+    );
+    push_list(
+        &mut segments,
+        "required_checks",
+        payload.and_then(|row| row.get("required_checks")),
+    );
+    push_list(
+        &mut segments,
+        "required_approvals",
+        payload.and_then(|row| row.get("required_approvals")),
+    );
+    push_list(
+        &mut segments,
+        "validation_steps",
+        payload.and_then(|row| row.get("validation_steps")),
+    );
+    push_object_summaries(
+        &mut segments,
+        "validation_results",
+        payload.and_then(|row| row.get("validation_results")),
+    );
+    push_object_summaries(
+        &mut segments,
+        "regression_signals",
+        payload.and_then(|row| row.get("regression_signals")),
+    );
+    if segments.is_empty() {
+        None
+    } else {
+        Some(segments.join("\n"))
+    }
 }
 
 fn coder_memory_partition(record: &CoderRunRecord, tier: GovernedMemoryTier) -> MemoryPartition {
@@ -3624,6 +3759,57 @@ pub(super) async fn coder_merge_recommendation_summary_create(
         extra
     });
 
+    let readiness_artifact = if !input.blockers.is_empty()
+        || !input.required_checks.is_empty()
+        || !input.required_approvals.is_empty()
+    {
+        let readiness_id = format!("merge-readiness-{}", Uuid::new_v4().simple());
+        let readiness_payload = json!({
+            "coder_run_id": record.coder_run_id,
+            "linked_context_run_id": record.linked_context_run_id,
+            "workflow_mode": record.workflow_mode,
+            "repo_binding": record.repo_binding,
+            "github_ref": record.github_ref,
+            "recommendation": input.recommendation,
+            "risk_level": input.risk_level,
+            "blockers": input.blockers,
+            "required_checks": input.required_checks,
+            "required_approvals": input.required_approvals,
+            "memory_hits_used": input.memory_hits_used,
+            "summary_artifact_path": artifact.path,
+            "created_at_ms": crate::now_ms(),
+        });
+        let readiness_artifact = write_coder_artifact(
+            &state,
+            &record.linked_context_run_id,
+            &readiness_id,
+            "coder_merge_readiness_report",
+            "artifacts/merge_recommendation.readiness.json",
+            &readiness_payload,
+        )
+        .await?;
+        publish_coder_artifact_added(
+            &state,
+            &record,
+            &readiness_artifact,
+            Some("artifact_write"),
+            {
+                let mut extra = serde_json::Map::new();
+                extra.insert("kind".to_string(), json!("merge_readiness_report"));
+                if let Some(recommendation) = input.recommendation.clone() {
+                    extra.insert("recommendation".to_string(), json!(recommendation));
+                }
+                if let Some(risk_level) = input.risk_level.clone() {
+                    extra.insert("risk_level".to_string(), json!(risk_level));
+                }
+                extra
+            },
+        );
+        Some(readiness_artifact)
+    } else {
+        None
+    };
+
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
         .summary
@@ -3692,6 +3878,7 @@ pub(super) async fn coder_merge_recommendation_summary_create(
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
+        "readiness_artifact": readiness_artifact,
         "generated_candidates": generated_candidates,
     })))
 }

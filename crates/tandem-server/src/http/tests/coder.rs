@@ -1255,6 +1255,13 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
     );
     assert_eq!(
         summary_payload
+            .get("readiness_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_merge_readiness_report")
+    );
+    assert_eq!(
+        summary_payload
             .get("generated_candidates")
             .and_then(Value::as_array)
             .map(|rows| rows.iter().any(|row| {
@@ -1271,6 +1278,12 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
         Some(true)
     );
+    let readiness_artifact_id = summary_payload
+        .get("readiness_artifact")
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .expect("readiness artifact id")
+        .to_string();
 
     let artifacts_req = Request::builder()
         .method("GET")
@@ -1295,6 +1308,15 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
         .map(|rows| rows.iter().any(|row| {
             row.get("artifact_type").and_then(Value::as_str)
                 == Some("coder_merge_recommendation_summary")
+        }))
+        .unwrap_or(false));
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(readiness_artifact_id.as_str())
+                && row.get("artifact_type").and_then(Value::as_str)
+                    == Some("coder_merge_readiness_report")
         }))
         .unwrap_or(false));
 }
@@ -2720,6 +2742,13 @@ async fn coder_memory_candidate_promote_stores_governed_memory() {
         promoted_fix_record.project_tag.as_deref(),
         Some("proj-engine")
     );
+    assert!(promoted_fix_record.content.contains("workflow: issue_fix"));
+    assert!(promoted_fix_record
+        .content
+        .contains("fix_strategy: add startup fallback guard"));
+    assert!(promoted_fix_record
+        .content
+        .contains("root_cause: Startup recovery skipped the nil-config fallback path."));
     assert_eq!(
         promoted_fix_record
             .metadata
