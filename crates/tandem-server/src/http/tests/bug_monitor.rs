@@ -725,6 +725,12 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
         .and_then(Value::as_str)
         .is_some_and(|body| body.contains("boom")));
     assert!(
+        approve_payload.get("triage_summary_artifact").is_none()
+            || approve_payload
+                .get("triage_summary_artifact")
+                .is_some_and(Value::is_null)
+    );
+    assert!(
         approve_payload.get("issue_draft_artifact").is_none()
             || approve_payload
                 .get("issue_draft_artifact")
