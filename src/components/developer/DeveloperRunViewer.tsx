@@ -219,12 +219,30 @@ function runEventId(event: RunEventRow, index: number): string {
   return pickText(event.event_id) || `${runEventType(event)}-${index}`;
 }
 
+function isValidationTask(task: RunTaskRecord): boolean {
+  const typeText = [
+    pickText(task.task_type),
+    pickText(task.workflow_node_id),
+    pickText(task.title),
+    pickText(asRecord(task.payload)?.task_kind),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return typeText.includes("validation");
+}
+
+function taskLabel(task: RunTaskRecord): string {
+  return String(task.title ?? task.workflow_node_id ?? task.task_type ?? task.id ?? "task");
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [workflowFilter, setWorkflowFilter] = useState<string>("all");
-  const [detailTab, setDetailTab] = useState<"overview" | "artifacts" | "memory">("overview");
+  const [detailTab, setDetailTab] = useState<"overview" | "artifacts" | "memory" | "validation">(
+    "overview"
+  );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<CoderRunRecord | null>(null);
   const [runState, setRunState] = useState<Record<string, unknown> | null>(null);
@@ -473,6 +491,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     }));
   }, [selectedTaskRows]);
 
+  const validationTasks = useMemo(() => {
+    return selectedTaskRows.filter((task) => isValidationTask(task));
+  }, [selectedTaskRows]);
+
   const artifactGroups = useMemo<ArtifactGroup[]>(() => {
     const buckets = new Map<ArtifactCategory, CoderArtifactRecord[]>();
     for (const key of ["duplicate", "triage", "memory", "validation", "other"] as const) {
@@ -591,10 +613,21 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       tasks: selectedTaskRows.length,
       decisions: decisions.length,
       artifacts: artifacts.length,
+      validationTasks: validationTasks.length,
       duplicateArtifacts:
         artifactGroups.find((group) => group.key === "duplicate")?.artifacts.length ?? 0,
     };
-  }, [artifactGroups, artifacts.length, decisions.length, selectedTaskRows.length]);
+  }, [
+    artifactGroups,
+    artifacts.length,
+    decisions.length,
+    selectedTaskRows.length,
+    validationTasks.length,
+  ]);
+
+  const validationArtifacts = useMemo(() => {
+    return artifactGroups.find((group) => group.key === "validation")?.artifacts ?? [];
+  }, [artifactGroups]);
 
   const handleAction = useCallback(
     async (action: "approve" | "cancel") => {
@@ -829,7 +862,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       ["Tasks", selectedRunOverview.tasks],
                       ["Decisions", selectedRunOverview.decisions],
                       ["Artifacts", selectedRunOverview.artifacts],
-                      ["Duplicate artifacts", selectedRunOverview.duplicateArtifacts],
+                      ["Validation tasks", selectedRunOverview.validationTasks],
                     ].map(([label, value]) => (
                       <div
                         key={label}
@@ -869,6 +902,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                 {[
                   ["overview", "Overview"],
                   ["artifacts", "Artifacts"],
+                  ["validation", "Validation"],
                   ["memory", "Memory"],
                 ].map(([key, label]) => (
                   <button
@@ -1498,6 +1532,199 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       ) : (
                         <p className="text-sm text-text-muted">
                           Select an artifact to inspect its contents.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : null}
+
+              {detailTab === "validation" ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <SquareCheckBig className="h-4 w-4" />
+                        Validation Status
+                      </CardTitle>
+                      <CardDescription>
+                        Validation tasks and artifacts already emitted by the engine.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {[
+                          ["Validation tasks", validationTasks.length],
+                          ["Validation artifacts", validationArtifacts.length],
+                          ["Selected checks", selectedValidationSummary?.validationsAttempted ?? 0],
+                        ].map(([label, value]) => (
+                          <div
+                            key={label}
+                            className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                          >
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                              {label}
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-text">{String(value)}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-text">Validation tasks</p>
+                        {validationTasks.length === 0 ? (
+                          <p className="text-sm text-text-muted">
+                            No validation tasks are recorded for this run.
+                          </p>
+                        ) : (
+                          validationTasks.map((task, index) => (
+                            <div
+                              key={String(task.id ?? task.command_id ?? `validation-task-${index}`)}
+                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-text">{taskLabel(task)}</p>
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em]",
+                                    statusTone(pickText(task.status))
+                                  )}
+                                >
+                                  {pickText(task.status) || "unknown"}
+                                </span>
+                              </div>
+                              <p className="mt-2 text-[11px] text-text-muted">
+                                {pickText(task.workflow_node_id) ||
+                                  pickText(task.task_type) ||
+                                  "validation"}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-text">Validation artifacts</p>
+                        {validationArtifacts.length === 0 ? (
+                          <p className="text-sm text-text-muted">
+                            No validation artifacts have been emitted yet.
+                          </p>
+                        ) : (
+                          validationArtifacts.map((artifact) => (
+                            <button
+                              key={artifact.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedArtifactPath(artifact.path);
+                                setDetailTab("validation");
+                              }}
+                              className={cn(
+                                "w-full rounded-2xl border p-3 text-left",
+                                selectedArtifactPath === artifact.path
+                                  ? "border-primary/40 bg-primary/10"
+                                  : "border-border bg-surface-elevated/40"
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-text">
+                                  {artifact.artifact_type}
+                                </p>
+                                <span className="text-xs text-text-muted">
+                                  {formatTimestamp(artifact.ts_ms)}
+                                </span>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {artifact.step_id ? (
+                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                    Step {artifact.step_id}
+                                  </span>
+                                ) : null}
+                                {artifact.source_event_id ? (
+                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                    Event {artifact.source_event_id}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                                {artifact.path}
+                              </p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Database className="h-4 w-4" />
+                        Validation Inspector
+                      </CardTitle>
+                      <CardDescription>
+                        Parsed pass/fail metadata when the selected artifact exposes it.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {selectedArtifactPath ? (
+                        <>
+                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                              Selected artifact
+                            </p>
+                            <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                              {selectedArtifactPath}
+                            </p>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Outcome
+                              </p>
+                              <p className="mt-1 text-sm font-medium text-text">
+                                {selectedValidationSummary?.outcome || "Unknown"}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Passed
+                              </p>
+                              <p className="mt-1 text-sm font-medium text-text">
+                                {selectedValidationSummary?.passed === null ||
+                                selectedValidationSummary?.passed === undefined
+                                  ? "Unknown"
+                                  : selectedValidationSummary.passed
+                                    ? "Yes"
+                                    : "No"}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Checks
+                              </p>
+                              <p className="mt-1 text-sm font-medium text-text">
+                                {selectedValidationSummary?.validationsAttempted ?? 0}
+                              </p>
+                            </div>
+                          </div>
+                          {loadingArtifact ? (
+                            <p className="text-sm text-text-muted">Loading validation preview…</p>
+                          ) : artifactPreview?.kind === "diff" ? (
+                            <DiffViewer
+                              oldValue={artifactPreview.oldValue}
+                              newValue={artifactPreview.newValue}
+                              oldTitle="Before"
+                              newTitle="After"
+                            />
+                          ) : (
+                            <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
+                              {artifactPreview?.value ?? "No validation preview available."}
+                            </pre>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-text-muted">
+                          Select a validation artifact to inspect its outcome.
                         </p>
                       )}
                     </CardContent>
