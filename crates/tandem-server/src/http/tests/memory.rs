@@ -324,6 +324,7 @@ async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
 async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
     let artifact_refs = vec![Value::from("artifact://run-3/task-1/patch.diff")];
 
     let capability = json!({
@@ -375,6 +376,40 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
         .and_then(|v| v.as_str())
         .expect("memory id")
         .to_string();
+    let put_audit_id = put_payload
+        .get("audit_id")
+        .and_then(Value::as_str)
+        .expect("put audit id")
+        .to_string();
+    let put_updated_event = next_event_of_type(&mut rx, "memory.updated").await;
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("runID")
+            .and_then(Value::as_str),
+        Some("run-3-ok")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("action")
+            .and_then(Value::as_str),
+        Some("put")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        Some(put_audit_id.as_str())
+    );
 
     let private_project_search_req = Request::builder()
         .method("POST")
@@ -460,6 +495,40 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
     assert_eq!(
         promote_payload.get("new_memory_id").and_then(Value::as_str),
         Some(memory_id.as_str())
+    );
+    let promote_audit_id = promote_payload
+        .get("audit_id")
+        .and_then(Value::as_str)
+        .expect("promote audit id")
+        .to_string();
+    let promote_updated_event = next_event_of_type(&mut rx, "memory.updated").await;
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("runID")
+            .and_then(Value::as_str),
+        Some("run-3-ok")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("action")
+            .and_then(Value::as_str),
+        Some("promote")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        Some(promote_audit_id.as_str())
     );
 
     let search_req = Request::builder()

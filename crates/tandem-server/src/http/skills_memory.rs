@@ -1708,7 +1708,9 @@ pub(super) async fn memory_put_impl(
         "memory.updated",
         json!({
             "memoryID": id,
+            "runID": request.run_id,
             "action": "put",
+            "auditID": audit_id,
         }),
     ));
     Ok(MemoryPutResponse {
@@ -1866,7 +1868,9 @@ pub(super) async fn memory_promote_impl(
         "memory.updated",
         json!({
             "memoryID": new_id,
+            "runID": request.run_id,
             "action": "promote",
+            "auditID": audit_id,
         }),
     ));
     Ok(MemoryPromoteResponse {
