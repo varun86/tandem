@@ -45,6 +45,7 @@ type BlackboardTimelineItem = {
   stepId: string | null;
   sourceEventId: string | null;
 };
+type RunEventRow = Record<string, unknown>;
 
 type ArtifactCategory = "duplicate" | "triage" | "memory" | "validation" | "other";
 
@@ -193,6 +194,31 @@ function blackboardRowSourceEventId(row: BlackboardRow): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function runEventText(event: RunEventRow): string {
+  const payload = asRecord(event.payload);
+  return (
+    pickText(payload?.why_next_step) ||
+    pickText(payload?.detail) ||
+    pickText(payload?.summary) ||
+    pickText(payload?.stage) ||
+    pickText(payload?.message) ||
+    ""
+  );
+}
+
+function runEventTimestamp(event: RunEventRow): number | null {
+  const value = event.ts_ms;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function runEventType(event: RunEventRow): string {
+  return pickText(event.type) || "event";
+}
+
+function runEventId(event: RunEventRow, index: number): string {
+  return pickText(event.event_id) || `${runEventType(event)}-${index}`;
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -314,6 +340,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       : null;
   }, [runState]);
 
+  const selectedRunEvents = useMemo(() => {
+    const events = runState?.events;
+    return (Array.isArray(events) ? events : []) as RunEventRow[];
+  }, [runState]);
+
   const decisions = useMemo(() => {
     const rows = selectedBlackboard?.decisions;
     return (Array.isArray(rows) ? rows : []) as BlackboardRow[];
@@ -361,6 +392,16 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       })
       .slice(0, 10);
   }, [decisions, openQuestions]);
+
+  const eventTimeline = useMemo(() => {
+    return [...selectedRunEvents]
+      .sort((left, right) => {
+        const tsDelta = (runEventTimestamp(right) ?? 0) - (runEventTimestamp(left) ?? 0);
+        if (tsDelta !== 0) return tsDelta;
+        return runEventId(right, 0).localeCompare(runEventId(left, 0));
+      })
+      .slice(0, 12);
+  }, [selectedRunEvents]);
 
   const readinessHint = useMemo(() => {
     if (!error) return null;
@@ -1106,6 +1147,71 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                           <p className="text-sm text-text-muted">
                             No blackboard payload returned for this run.
                           </p>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Workflow className="h-4 w-4" />
+                          Run Timeline
+                        </CardTitle>
+                        <CardDescription>
+                          Recent engine events from the linked context run.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {eventTimeline.length === 0 ? (
+                          <p className="text-sm text-text-muted">
+                            No run events returned for this run.
+                          </p>
+                        ) : (
+                          eventTimeline.map((event, index) => {
+                            const eventType = runEventType(event);
+                            const eventText = runEventText(event);
+                            const stepId = pickText(event.step_id);
+                            const sourceEventId = pickText(event.event_id);
+                            return (
+                              <div key={runEventId(event, index)} className="flex gap-3">
+                                <div className="flex w-10 flex-col items-center">
+                                  <span className="mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/10 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+                                    {eventType.slice(0, 1).toUpperCase()}
+                                  </span>
+                                  {index < eventTimeline.length - 1 ? (
+                                    <div className="mt-2 h-full min-h-10 w-px bg-border" />
+                                  ) : null}
+                                </div>
+                                <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-sky-200">
+                                      {eventType.replace(/_/g, " ")}
+                                    </span>
+                                    <span className="text-[11px] text-text-muted">
+                                      {formatTimestamp(runEventTimestamp(event))}
+                                    </span>
+                                  </div>
+                                  {eventText ? (
+                                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
+                                      {eventText}
+                                    </p>
+                                  ) : null}
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {stepId ? (
+                                      <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                        Step {stepId}
+                                      </span>
+                                    ) : null}
+                                    {sourceEventId ? (
+                                      <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                        Event {sourceEventId}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
                         )}
                       </CardContent>
                     </Card>
