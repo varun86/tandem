@@ -317,6 +317,143 @@ async fn coder_run_approve_and_cancel_project_context_run_controls() {
 }
 
 #[tokio::test]
+async fn coder_issue_triage_run_replay_matches_persisted_state_and_checkpoint() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-replay",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem",
+                    "default_branch": "main"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 404,
+                    "url": "https://github.com/evan/tandem/issues/404"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let checkpoint_req = Request::builder()
+        .method("POST")
+        .uri(format!("/context/runs/{linked_context_run_id}/checkpoints"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "coder_replay_regression"
+            })
+            .to_string(),
+        ))
+        .expect("checkpoint request");
+    let checkpoint_resp = app
+        .clone()
+        .oneshot(checkpoint_req)
+        .await
+        .expect("checkpoint response");
+    assert_eq!(checkpoint_resp.status(), StatusCode::OK);
+    let checkpoint_body = to_bytes(checkpoint_resp.into_body(), usize::MAX)
+        .await
+        .expect("checkpoint body");
+    let checkpoint_payload: Value =
+        serde_json::from_slice(&checkpoint_body).expect("checkpoint json");
+    assert_eq!(
+        checkpoint_payload
+            .get("checkpoint")
+            .and_then(|row| row.get("run_id"))
+            .and_then(Value::as_str),
+        Some(linked_context_run_id.as_str())
+    );
+
+    let replay_req = Request::builder()
+        .method("GET")
+        .uri(format!("/context/runs/{linked_context_run_id}/replay"))
+        .body(Body::empty())
+        .expect("replay request");
+    let replay_resp = app
+        .clone()
+        .oneshot(replay_req)
+        .await
+        .expect("replay response");
+    assert_eq!(replay_resp.status(), StatusCode::OK);
+    let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
+        .await
+        .expect("replay body");
+    let replay_payload: Value = serde_json::from_slice(&replay_body).expect("replay json");
+
+    assert_eq!(
+        replay_payload
+            .get("drift")
+            .and_then(|row| row.get("mismatch"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        replay_payload
+            .get("from_checkpoint")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        replay_payload
+            .get("replay")
+            .and_then(|row| row.get("run_type"))
+            .and_then(Value::as_str),
+        Some("coder_issue_triage")
+    );
+    assert_eq!(
+        replay_payload
+            .get("replay_blackboard")
+            .and_then(|row| row.get("artifacts"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().any(|row| {
+                row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+            })),
+        Some(true)
+    );
+    assert_eq!(
+        replay_payload
+            .get("replay_blackboard")
+            .and_then(|row| row.get("tasks"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(5)
+    );
+}
+
+#[tokio::test]
 async fn coder_artifacts_endpoint_projects_context_blackboard_artifacts() {
     let state = test_state().await;
     state
