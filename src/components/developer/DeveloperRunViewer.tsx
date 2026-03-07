@@ -738,6 +738,35 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return artifactGroups.find((group) => group.key === "validation")?.artifacts ?? [];
   }, [artifactGroups]);
 
+  const latestValidationArtifact = useMemo(() => {
+    return [...validationArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
+  }, [validationArtifacts]);
+
+  const latestDuplicateArtifact = useMemo(() => {
+    const duplicateArtifacts =
+      artifactGroups.find((group) => group.key === "duplicate")?.artifacts ?? [];
+    return [...duplicateArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
+  }, [artifactGroups]);
+
+  const detailTabMeta = useMemo(() => {
+    return [
+      { key: "overview" as const, label: "Overview", count: selectedTaskRows.length },
+      { key: "artifacts" as const, label: "Artifacts", count: artifacts.length },
+      { key: "validation" as const, label: "Validation", count: validationTasks.length },
+      {
+        key: "memory" as const,
+        label: "Memory",
+        count: memoryHits.length + memoryCandidates.length,
+      },
+    ];
+  }, [
+    artifacts.length,
+    memoryCandidates.length,
+    memoryHits.length,
+    selectedTaskRows.length,
+    validationTasks.length,
+  ]);
+
   const handleAction = useCallback(
     async (action: "approve" | "cancel") => {
       if (!selectedRunId) return;
@@ -1057,6 +1086,34 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                   ))}
                 </CardContent>
                 <CardContent className="pt-0">
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {latestValidationArtifact ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedArtifactPath(latestValidationArtifact.path);
+                          setDetailTab("validation");
+                        }}
+                      >
+                        <SquareCheckBig className="h-4 w-4" />
+                        Latest validation
+                      </Button>
+                    ) : null}
+                    {latestDuplicateArtifact ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedArtifactPath(latestDuplicateArtifact.path);
+                          setDetailTab("artifacts");
+                        }}
+                      >
+                        <Database className="h-4 w-4" />
+                        Latest duplicate
+                      </Button>
+                    ) : null}
+                  </div>
                   <div className="grid gap-3 md:grid-cols-4">
                     {[
                       ["Tasks", selectedRunOverview.tasks],
@@ -1064,15 +1121,25 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       ["Artifacts", selectedRunOverview.artifacts],
                       ["Validation tasks", selectedRunOverview.validationTasks],
                     ].map(([label, value]) => (
-                      <div
+                      <button
                         key={label}
-                        className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
+                        type="button"
+                        onClick={() => {
+                          if (label === "Artifacts") {
+                            setDetailTab("artifacts");
+                          } else if (label === "Validation tasks") {
+                            setDetailTab("validation");
+                          } else {
+                            setDetailTab("overview");
+                          }
+                        }}
+                        className="rounded-2xl border border-border bg-surface-elevated/30 p-3 text-left transition-colors hover:bg-surface-elevated"
                       >
                         <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                           {label}
                         </p>
                         <p className="mt-1 text-lg font-semibold text-text">{String(value)}</p>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </CardContent>
@@ -1099,16 +1166,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
               ) : null}
 
               <div className="flex flex-wrap gap-2">
-                {[
-                  ["overview", "Overview"],
-                  ["artifacts", "Artifacts"],
-                  ["validation", "Validation"],
-                  ["memory", "Memory"],
-                ].map(([key, label]) => (
+                {detailTabMeta.map(({ key, label, count }) => (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setDetailTab(key as typeof detailTab)}
+                    onClick={() => setDetailTab(key)}
                     className={cn(
                       "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                       detailTab === key
@@ -1116,7 +1178,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         : "border-border bg-surface text-text-muted hover:text-text"
                     )}
                   >
-                    {label}
+                    <span className="inline-flex items-center gap-2">
+                      <span>{label}</span>
+                      <span
+                        className={cn(
+                          "rounded-full border px-1.5 py-0.5 text-[10px] leading-none",
+                          detailTab === key
+                            ? "border-primary/30 bg-primary/10 text-primary"
+                            : "border-border bg-surface-elevated/40 text-text-muted"
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </span>
                   </button>
                 ))}
               </div>
