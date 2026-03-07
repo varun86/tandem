@@ -244,6 +244,24 @@ function runNeedsAttention(run: CoderRunRecord): boolean {
   return status === "failed" || status === "blocked" || status === "awaiting_approval";
 }
 
+function runRecencyLabel(updatedAtMs: number): "fresh" | "recent" | "stale" {
+  const ageMs = Math.max(0, Date.now() - updatedAtMs);
+  if (ageMs <= 15 * 60 * 1000) return "fresh";
+  if (ageMs <= 2 * 60 * 60 * 1000) return "recent";
+  return "stale";
+}
+
+function runRecencyTone(label: "fresh" | "recent" | "stale"): string {
+  switch (label) {
+    case "fresh":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+    case "recent":
+      return "border-sky-500/20 bg-sky-500/10 text-sky-200";
+    default:
+      return "border-zinc-500/20 bg-zinc-500/10 text-zinc-300";
+  }
+}
+
 function relatedArtifactsForEvent(
   artifacts: CoderArtifactRecord[],
   stepId: string,
@@ -860,63 +878,103 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
               </div>
             ) : (
               <div className="space-y-2">
-                {displayedRuns.map((run) => (
-                  <button
-                    key={run.coder_run_id}
-                    type="button"
-                    onClick={() => setSelectedRunId(run.coder_run_id)}
-                    className={cn(
-                      "w-full rounded-2xl border px-4 py-3 text-left transition-colors",
-                      selectedRunId === run.coder_run_id
-                        ? "border-primary/40 bg-primary/10"
-                        : "border-border bg-surface hover:bg-surface-elevated"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-text">
-                          {run.coder_run_id}
-                        </p>
-                        <p className="truncate text-xs text-text-muted">
-                          {run.repo_binding?.repo_slug} • {run.workflow_mode}
-                        </p>
-                      </div>
-                      <span
+                {displayedRuns.map((run) =>
+                  (() => {
+                    const recency = runRecencyLabel(run.updated_at_ms);
+                    const isSelected = selectedRunId === run.coder_run_id;
+                    return (
+                      <button
+                        key={run.coder_run_id}
+                        type="button"
+                        onClick={() => setSelectedRunId(run.coder_run_id)}
                         className={cn(
-                          "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]",
-                          statusTone(run.status)
+                          "w-full rounded-2xl border px-4 py-3 text-left transition-colors",
+                          isSelected
+                            ? "border-primary/40 bg-primary/10"
+                            : "border-border bg-surface hover:bg-surface-elevated"
                         )}
                       >
-                        {run.status ?? "unknown"}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
-                        {run.phase ?? "analysis"}
-                      </span>
-                      {run.github_ref ? (
-                        <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
-                          {run.github_ref.kind === "pull_request" ? "PR" : "Issue"} #
-                          {run.github_ref.number}
-                        </span>
-                      ) : null}
-                      {run.source_client ? (
-                        <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
-                          {run.source_client}
-                        </span>
-                      ) : null}
-                      {runNeedsAttention(run) ? (
-                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-amber-100">
-                          Needs attention
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-text-muted">
-                      <span>{run.workflow_mode}</span>
-                      <span>{formatTimestamp(run.updated_at_ms)}</span>
-                    </div>
-                  </button>
-                ))}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-text">
+                              {run.coder_run_id}
+                            </p>
+                            <p className="truncate text-xs text-text-muted">
+                              {run.repo_binding?.repo_slug} • {run.workflow_mode}
+                            </p>
+                          </div>
+                          <span
+                            className={cn(
+                              "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]",
+                              statusTone(run.status)
+                            )}
+                          >
+                            {run.status ?? "unknown"}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                            {run.phase ?? "analysis"}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]",
+                              runRecencyTone(recency)
+                            )}
+                          >
+                            {recency}
+                          </span>
+                          {run.github_ref ? (
+                            <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                              {run.github_ref.kind === "pull_request" ? "PR" : "Issue"} #
+                              {run.github_ref.number}
+                            </span>
+                          ) : null}
+                          {run.source_client ? (
+                            <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                              {run.source_client}
+                            </span>
+                          ) : null}
+                          {run.status === "awaiting_approval" ? (
+                            <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-amber-100">
+                              Approval queue
+                            </span>
+                          ) : null}
+                          {runNeedsAttention(run) ? (
+                            <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-amber-100">
+                              Needs attention
+                            </span>
+                          ) : null}
+                        </div>
+                        {isSelected ? (
+                          <div className="mt-3 grid grid-cols-3 gap-2">
+                            {[
+                              ["tasks", selectedRunOverview.tasks],
+                              ["artifacts", selectedRunOverview.artifacts],
+                              ["validation", selectedRunOverview.validationTasks],
+                            ].map(([label, value]) => (
+                              <div
+                                key={label}
+                                className="rounded-xl border border-primary/20 bg-surface px-2 py-1.5"
+                              >
+                                <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                  {label}
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-text">
+                                  {String(value)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-text-muted">
+                          <span>{run.workflow_mode}</span>
+                          <span>{formatTimestamp(run.updated_at_ms)}</span>
+                        </div>
+                      </button>
+                    );
+                  })()
+                )}
               </div>
             )}
           </CardContent>
