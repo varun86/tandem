@@ -75,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - triage summary writes now auto-generate reusable `triage_memory` and `run_outcome` memory candidates so later coder runs can reuse structured triage conclusions without a second manual write step
   - `issue_triage` memory retrieval now also ranks governed/shared memory hits from the existing engine memory database alongside project semantic memory and prior coder-local candidates
   - added `POST /coder/runs/{id}/memory-candidates/{candidate_id}/promote` so reviewed coder memory candidates can be stored in the governed memory database and optionally marked shared when reviewer and approval metadata are supplied
+  - added thin coder control endpoints:
+    - `POST /coder/runs/{id}/approve`
+    - `POST /coder/runs/{id}/cancel`
+  - coder control endpoints now replay the existing context-run `plan_approved` and `run_cancelled` transitions instead of introducing a second coder lifecycle model
+  - added `coder.run.phase_changed` emission for coder approve/cancel transitions and fixed cancelled coder runs to project a dedicated `cancelled` phase
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

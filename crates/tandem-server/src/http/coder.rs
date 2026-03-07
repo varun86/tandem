@@ -4,8 +4,8 @@ use super::context_runs::{
 };
 use super::context_types::{
     ContextBlackboardArtifact, ContextBlackboardPatchOp, ContextBlackboardTaskStatus,
-    ContextRunCreateInput, ContextRunState, ContextRunStatus, ContextTaskCreateBatchInput,
-    ContextTaskCreateInput, ContextWorkspaceLease,
+    ContextRunCreateInput, ContextRunEventAppendInput, ContextRunState, ContextRunStatus,
+    ContextTaskCreateBatchInput, ContextTaskCreateInput, ContextWorkspaceLease,
 };
 use super::*;
 use axum::extract::Path;
@@ -164,6 +164,12 @@ pub(super) struct CoderMemoryHitsQuery {
     pub(super) q: Option<String>,
     #[serde(default)]
     pub(super) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderRunControlInput {
+    #[serde(default)]
+    pub(super) reason: Option<String>,
 }
 
 fn coder_runs_root(state: &AppState) -> PathBuf {
@@ -595,6 +601,9 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
     }
     if matches!(run.status, ContextRunStatus::Completed) {
         return "completed";
+    }
+    if matches!(run.status, ContextRunStatus::Cancelled) {
+        return "cancelled";
     }
     if matches!(
         run.status,
@@ -1129,6 +1138,98 @@ pub(super) async fn coder_run_get(
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
     })))
+}
+
+async fn coder_run_transition(
+    state: &AppState,
+    record: &CoderRunRecord,
+    event_type: &str,
+    status: ContextRunStatus,
+    reason: Option<String>,
+) -> Result<Value, StatusCode> {
+    let outcome = context_run_engine()
+        .commit_run_event(
+            state,
+            &record.linked_context_run_id,
+            ContextRunEventAppendInput {
+                event_type: event_type.to_string(),
+                status,
+                step_id: None,
+                payload: json!({
+                    "why_next_step": reason,
+                }),
+            },
+            None,
+        )
+        .await?;
+    let run = load_context_run_state(state, &record.linked_context_run_id).await?;
+    state.event_bus.publish(EngineEvent::new(
+        "coder.run.phase_changed",
+        json!({
+            "coder_run_id": record.coder_run_id,
+            "linked_context_run_id": record.linked_context_run_id,
+            "workflow_mode": record.workflow_mode,
+            "phase": project_coder_phase(&run),
+            "status": run.status,
+            "event_type": event_type,
+        }),
+    ));
+    Ok(json!({
+        "ok": true,
+        "event": outcome.event,
+        "coder_run": coder_run_payload(record, &run),
+        "run": run,
+    }))
+}
+
+pub(super) async fn coder_run_approve(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderRunControlInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+    if !matches!(run.status, ContextRunStatus::AwaitingApproval) {
+        return Ok(Json(json!({
+            "ok": false,
+            "error": "coder run is not awaiting approval",
+            "code": "CODER_NOT_AWAITING_APPROVAL"
+        })));
+    }
+    let why = input
+        .reason
+        .unwrap_or_else(|| "plan approved by operator".to_string());
+    Ok(Json(
+        coder_run_transition(
+            &state,
+            &record,
+            "plan_approved",
+            ContextRunStatus::Running,
+            Some(why),
+        )
+        .await?,
+    ))
+}
+
+pub(super) async fn coder_run_cancel(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderRunControlInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    let why = input
+        .reason
+        .unwrap_or_else(|| "run cancelled by operator".to_string());
+    Ok(Json(
+        coder_run_transition(
+            &state,
+            &record,
+            "run_cancelled",
+            ContextRunStatus::Cancelled,
+            Some(why),
+        )
+        .await?,
+    ))
 }
 
 pub(super) async fn coder_run_artifacts(

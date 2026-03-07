@@ -131,6 +131,144 @@ async fn coder_issue_triage_run_create_get_and_list() {
 }
 
 #[tokio::test]
+async fn coder_run_approve_and_cancel_project_context_run_controls() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-controls",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 15
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run")
+        .to_string();
+
+    let plan_req = Request::builder()
+        .method("POST")
+        .uri(format!("/context/runs/{linked_context_run_id}/events"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "type": "planning_started",
+                "status": "awaiting_approval",
+                "payload": {}
+            })
+            .to_string(),
+        ))
+        .expect("plan request");
+    let plan_resp = app.clone().oneshot(plan_req).await.expect("plan response");
+    assert_eq!(plan_resp.status(), StatusCode::OK);
+
+    let approve_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-controls/approve")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "approve coder plan"
+            })
+            .to_string(),
+        ))
+        .expect("approve request");
+    let approve_resp = app
+        .clone()
+        .oneshot(approve_req)
+        .await
+        .expect("approve response");
+    assert_eq!(approve_resp.status(), StatusCode::OK);
+    let approve_body = to_bytes(approve_resp.into_body(), usize::MAX)
+        .await
+        .expect("approve body");
+    let approve_payload: Value = serde_json::from_slice(&approve_body).expect("approve json");
+    assert_eq!(
+        approve_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("bootstrapping")
+    );
+    assert_eq!(
+        approve_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("running")
+    );
+
+    let cancel_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-controls/cancel")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "stop this coder run"
+            })
+            .to_string(),
+        ))
+        .expect("cancel request");
+    let cancel_resp = app
+        .clone()
+        .oneshot(cancel_req)
+        .await
+        .expect("cancel response");
+    assert_eq!(cancel_resp.status(), StatusCode::OK);
+    let cancel_body = to_bytes(cancel_resp.into_body(), usize::MAX)
+        .await
+        .expect("cancel body");
+    let cancel_payload: Value = serde_json::from_slice(&cancel_body).expect("cancel json");
+    assert_eq!(
+        cancel_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("cancelled")
+    );
+    assert_eq!(
+        cancel_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
 async fn coder_artifacts_endpoint_projects_context_blackboard_artifacts() {
     let state = test_state().await;
     state
