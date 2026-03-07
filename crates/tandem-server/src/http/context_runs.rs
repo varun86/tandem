@@ -514,6 +514,31 @@ impl ContextRunEngine {
             patch_op,
             patch_payload,
         )?;
+        let mut published_payload = event.payload.clone();
+        if let Some(payload) = published_payload.as_object_mut() {
+            payload
+                .entry("runID".to_string())
+                .or_insert_with(|| json!(run_id));
+            payload
+                .entry("eventID".to_string())
+                .or_insert_with(|| json!(event.event_id.clone()));
+            payload
+                .entry("eventSeq".to_string())
+                .or_insert_with(|| json!(event.seq));
+            payload
+                .entry("tsMs".to_string())
+                .or_insert_with(|| json!(event.ts_ms));
+            payload
+                .entry("taskID".to_string())
+                .or_insert_with(|| json!(next_task.id.clone()));
+            payload
+                .entry("taskStatus".to_string())
+                .or_insert_with(|| json!(next_task.status.clone()));
+        }
+        state.event_bus.publish(EngineEvent::new(
+            event.event_type.clone(),
+            published_payload,
+        ));
         let blackboard = load_projected_context_blackboard(state, run_id);
         Ok(ContextRunCommitResult {
             run,

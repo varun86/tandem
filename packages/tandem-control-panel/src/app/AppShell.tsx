@@ -78,6 +78,14 @@ export function AppShell({
     providerBadge: string;
     providerText: string;
     activeRuns: number;
+    bugMonitor?: {
+      enabled: boolean;
+      monitoringActive: boolean;
+      paused: boolean;
+      pendingIncidents: number;
+      blocked: boolean;
+      lastError?: string;
+    } | null;
   };
   routeKey: string;
   children: any;
@@ -96,7 +104,15 @@ export function AppShell({
     try {
       renderIcons();
     } catch {}
-  }, [currentRoute, mobileNavOpen]);
+  }, [
+    currentRoute,
+    mobileNavOpen,
+    statusBar.bugMonitor?.enabled,
+    statusBar.bugMonitor?.monitoringActive,
+    statusBar.bugMonitor?.paused,
+    statusBar.bugMonitor?.pendingIncidents,
+    statusBar.bugMonitor?.blocked,
+  ]);
 
   useEffect(() => {
     setAvatarErrored(false);
@@ -111,6 +127,43 @@ export function AppShell({
     () => navRoutes.find(([id]) => id === currentRoute) || navRoutes[0],
     [currentRoute, navRoutes]
   );
+  const bugMonitorState = useMemo(() => {
+    const monitor = statusBar.bugMonitor;
+    if (!monitor?.enabled) return null;
+    if (monitor.blocked) {
+      return {
+        toneClass: "blocked",
+        label: "Bug Monitor blocked",
+        shortLabel: "Blocked",
+      };
+    }
+    if (monitor.paused) {
+      return {
+        toneClass: "paused",
+        label: "Bug Monitor paused",
+        shortLabel: "Paused",
+      };
+    }
+    if (monitor.pendingIncidents > 0) {
+      return {
+        toneClass: "incidents",
+        label: `Bug Monitor incidents: ${monitor.pendingIncidents}`,
+        shortLabel: `${monitor.pendingIncidents} incident${monitor.pendingIncidents === 1 ? "" : "s"}`,
+      };
+    }
+    if (monitor.monitoringActive) {
+      return {
+        toneClass: "watching",
+        label: "Bug Monitor watching",
+        shortLabel: "Watching",
+      };
+    }
+    return {
+      toneClass: "ready",
+      label: "Bug Monitor ready",
+      shortLabel: "Ready",
+    };
+  }, [statusBar.bugMonitor]);
 
   const renderAvatar = () =>
     avatarUrl && !avatarErrored ? (
@@ -219,6 +272,28 @@ export function AppShell({
                 <span className="tcp-badge tcp-badge-ghost">idle</span>
               )}
             </div>
+            {bugMonitorState ? (
+              <div className="tcp-context-stat">
+                <span className="tcp-subtle text-xs">Bug Monitor</span>
+                <button
+                  type="button"
+                  className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+                  title={
+                    statusBar.bugMonitor?.lastError
+                      ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
+                      : bugMonitorState.label
+                  }
+                  onClick={() => {
+                    onNavigate("failure-reporter");
+                    if (mobile) setMobileNavOpen(false);
+                  }}
+                >
+                  <i data-lucide="bug-play"></i>
+                  <span className="tcp-bug-monitor-dot" aria-hidden="true"></span>
+                  <span>{bugMonitorState.shortLabel}</span>
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -245,7 +320,7 @@ export function AppShell({
               if (mobile) setMobileNavOpen(false);
             }}
           >
-            <i data-lucide="sparkles"></i>
+            <i data-lucide="paint-bucket"></i>
             Cycle theme
           </button>
           <button
@@ -281,7 +356,7 @@ export function AppShell({
             <i data-lucide="search"></i>
           </IconButton>
           <IconButton title="Cycle theme" onClick={onThemeCycle}>
-            <i data-lucide="sparkles"></i>
+            <i data-lucide="paint-bucket"></i>
           </IconButton>
           <IconButton title="Logout" onClick={onLogout}>
             <i data-lucide="log-out"></i>
@@ -310,6 +385,21 @@ export function AppShell({
               {currentNav?.[1] || routeMeta.subtitle}
             </div>
           </div>
+          {bugMonitorState ? (
+            <button
+              type="button"
+              className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+              title={
+                statusBar.bugMonitor?.lastError
+                  ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
+                  : bugMonitorState.label
+              }
+              onClick={() => onNavigate("failure-reporter")}
+            >
+              <i data-lucide="bug-play"></i>
+              <span className="tcp-bug-monitor-dot" aria-hidden="true"></span>
+            </button>
+          ) : null}
           {statusBar.activeRuns > 0 ? (
             <StatusPulse tone="live" text={String(statusBar.activeRuns)} />
           ) : null}
@@ -322,6 +412,22 @@ export function AppShell({
             <p className="tcp-subtle mt-1 max-w-2xl">{routeMeta.subtitle}</p>
           </div>
           <div className="tcp-topbar-status">
+            {bugMonitorState ? (
+              <button
+                type="button"
+                className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+                title={
+                  statusBar.bugMonitor?.lastError
+                    ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
+                    : bugMonitorState.label
+                }
+                onClick={() => onNavigate("failure-reporter")}
+              >
+                <i data-lucide="bug-play"></i>
+                <span className="tcp-bug-monitor-dot" aria-hidden="true"></span>
+                <span>{bugMonitorState.shortLabel}</span>
+              </button>
+            ) : null}
             <span className={statusBar.providerBadge}>{statusBar.providerText}</span>
             {statusBar.engineHealthy ? (
               <StatusPulse tone="ok" text="Engine healthy" />

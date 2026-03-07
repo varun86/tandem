@@ -1534,6 +1534,91 @@ async fn context_task_transition_rejects_task_revision_mismatch() {
 }
 
 #[tokio::test]
+async fn context_task_fail_transition_publishes_engine_event() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let create_run_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "ctx-run-task-engine-event",
+                "objective": "publish a task failure event"
+            })
+            .to_string(),
+        ))
+        .expect("create run request");
+    let create_run_resp = app
+        .clone()
+        .oneshot(create_run_req)
+        .await
+        .expect("create run response");
+    assert_eq!(create_run_resp.status(), StatusCode::OK);
+
+    let create_tasks_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-task-engine-event/tasks")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "task_type": "unit_work",
+                        "status": "in_progress",
+                        "payload": {"title": "Break the build"}
+                    }
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("create tasks request");
+    let create_tasks_resp = app
+        .clone()
+        .oneshot(create_tasks_req)
+        .await
+        .expect("create tasks response");
+    assert_eq!(create_tasks_resp.status(), StatusCode::OK);
+
+    let transition_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-task-engine-event/tasks/task-1/transition")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "action": "fail",
+                "command_id": "cmd-fail-event",
+                "error": "PROMPT_RETRY_FAILED"
+            })
+            .to_string(),
+        ))
+        .expect("transition request");
+    let transition_resp = app
+        .clone()
+        .oneshot(transition_req)
+        .await
+        .expect("transition response");
+    assert_eq!(transition_resp.status(), StatusCode::OK);
+
+    let event = next_event_of_type(&mut rx, "context.task.failed").await;
+    assert_eq!(
+        event.properties.get("runID").and_then(Value::as_str),
+        Some("ctx-run-task-engine-event")
+    );
+    assert_eq!(
+        event.properties.get("taskID").and_then(Value::as_str),
+        Some("task-1")
+    );
+    assert_eq!(
+        event.properties.get("error").and_then(Value::as_str),
+        Some("PROMPT_RETRY_FAILED")
+    );
+}
+
+#[tokio::test]
 async fn context_task_create_rejects_implementation_without_output_target() {
     let state = test_state().await;
     let app = app_router(state.clone());

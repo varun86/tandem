@@ -90,6 +90,75 @@ async fn paused_failure_reporter_runtime_ignores_failure_events() {
 }
 
 #[tokio::test]
+async fn failure_reporter_runtime_detects_real_context_task_failures() {
+    let state = test_state().await;
+    state
+        .put_failure_reporter_config(crate::FailureReporterConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let task = tokio::spawn(crate::run_failure_reporter(state.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    state.event_bus.publish(EngineEvent::new(
+        "context.task.failed",
+        json!({
+            "runID": "ctx-run-fr-real-failure",
+            "taskID": "task-3",
+            "title": "Add levels, combat, UI, and audiovisual polish",
+            "error": "PROMPT_RETRY_FAILED",
+            "component": "swarm-agent-2",
+            "task": {
+                "id": "task-3",
+                "payload": {
+                    "title": "Add levels, combat, UI, and audiovisual polish"
+                }
+            }
+        }),
+    ));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let incidents = state.list_failure_reporter_incidents(10).await;
+            let drafts = state.list_failure_reporter_drafts(10).await;
+            if incidents
+                .iter()
+                .any(|row| row.draft_id.is_some() || row.last_error.is_some())
+                || !drafts.is_empty()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("incident timeout");
+
+    let incidents = state.list_failure_reporter_incidents(10).await;
+    assert_eq!(incidents.len(), 1);
+    let incident = &incidents[0];
+    assert_eq!(incident.event_type, "context.task.failed");
+    assert!(
+        incident.title.contains("context.task.failed")
+            || incident
+                .title
+                .contains("Add levels, combat, UI, and audiovisual polish"),
+        "unexpected incident title: {}",
+        incident.title
+    );
+    assert!(
+        incident.draft_id.is_some() || incident.last_error.is_some(),
+        "expected either a draft or a recorded reporter error"
+    );
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn failure_reporter_report_creates_and_dedupes_draft() {
     let state = test_state().await;
     state

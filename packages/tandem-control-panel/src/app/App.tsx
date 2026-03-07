@@ -118,6 +118,21 @@ function useIdentity(client: TandemClient | null, enabled: boolean) {
   });
 }
 
+function useBugMonitorStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ["failure-reporter", "status"],
+    enabled,
+    refetchInterval: enabled ? 10000 : false,
+    queryFn: async () => {
+      try {
+        return await api("/api/engine/failure-reporter/status", { method: "GET" });
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
 function AppBody() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -153,6 +168,7 @@ function AppBody() {
   const identityQuery = useIdentity(client, authed);
   const healthQuery = useSystemHealth(authed);
   const swarmStatusQuery = useSwarmStatus(authed);
+  const bugMonitorQuery = useBugMonitorStatus(authed);
 
   const loginMutation = useMutation({
     mutationFn: async ({ token }: { token: string; remember: boolean }) => {
@@ -329,6 +345,15 @@ function AppBody() {
   const providerText = providerQuery.data?.ready
     ? `${providerQuery.data?.defaultProvider || "none"}/${providerQuery.data?.defaultModel || "none"}`
     : "provider setup required";
+  const bugMonitorStatus = (bugMonitorQuery.data as any) || null;
+  const bugMonitorEnabled = !!bugMonitorStatus?.config?.enabled;
+  const bugMonitorPendingIncidents = Number(bugMonitorStatus?.runtime?.pending_incidents || 0);
+  const bugMonitorMonitoringActive = !!bugMonitorStatus?.runtime?.monitoring_active;
+  const bugMonitorPaused = !!bugMonitorStatus?.runtime?.paused;
+  const bugMonitorRuntimeReady = !!bugMonitorStatus?.readiness?.runtime_ready;
+  const bugMonitorLastError = String(
+    bugMonitorStatus?.runtime?.last_runtime_error || bugMonitorStatus?.last_error || ""
+  ).trim();
 
   return (
     <>
@@ -350,6 +375,16 @@ function AppBody() {
           )
             ? 1
             : 0,
+          bugMonitor: bugMonitorEnabled
+            ? {
+                enabled: true,
+                monitoringActive: bugMonitorMonitoringActive,
+                paused: bugMonitorPaused,
+                pendingIncidents: bugMonitorPendingIncidents,
+                blocked: !bugMonitorRuntimeReady,
+                lastError: bugMonitorLastError,
+              }
+            : null,
         }}
         routeKey={currentRoute}
         providerGate={

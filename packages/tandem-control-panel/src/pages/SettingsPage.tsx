@@ -1183,7 +1183,7 @@ export function SettingsPage({
   const sectionTabs: Array<{ id: SettingsSection; label: string; icon: string }> = [
     { id: "providers", label: "Providers", icon: "cpu" },
     { id: "identity", label: "Identity", icon: "badge-check" },
-    { id: "theme", label: "Themes", icon: "palette" },
+    { id: "theme", label: "Themes", icon: "paint-bucket" },
     { id: "channels", label: "Channels", icon: "message-circle" },
     { id: "mcp", label: "MCP", icon: "plug-zap" },
     { id: "failure_reporter", label: "Bug Monitor", icon: "bug-play" },
