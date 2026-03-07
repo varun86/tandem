@@ -1024,7 +1024,10 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
     };
     let governed_issue_fix_weight = |hit: &Value| {
         (matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
-            && memory_hit_kind(hit).as_deref() == Some("fix_pattern")
+            && matches!(
+                memory_hit_kind(hit).as_deref(),
+                Some("fix_pattern") | Some("validation_memory")
+            )
             && hit.get("source").and_then(Value::as_str) == Some("governed_memory")) as u8
     };
     let governed_issue_triage_weight = |hit: &Value| {
@@ -1058,9 +1061,9 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
     ref_order
         .then_with(|| governed_issue_triage_order)
         .then_with(|| governed_issue_triage_outcome_order)
+        .then_with(|| governed_issue_fix_order)
         .then_with(|| kind_order)
         .then_with(|| structured_order)
-        .then_with(|| governed_issue_fix_order)
         .then_with(score_order)
 }
 

@@ -3747,6 +3747,190 @@ async fn coder_promoted_fix_memory_reuses_strategy_across_issues() {
 }
 
 #[tokio::test]
+async fn coder_promoted_validation_memory_reuses_across_issues() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_first_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-validation-promote-a",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 211
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("first create request");
+    let create_first_resp = app
+        .clone()
+        .oneshot(create_first_req)
+        .await
+        .expect("first create response");
+    assert_eq!(create_first_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-validation-promote-a/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Add the startup fallback guard and verify recovery with a targeted regression.",
+                "root_cause": "Startup recovery skipped the nil-config fallback path.",
+                "fix_strategy": "add startup fallback guard",
+                "validation_steps": ["cargo test -p tandem-server coder_promoted_validation_memory_reuses_across_issues -- --test-threads=1"],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "startup recovery regression passed"
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    let validation_candidate_id = summary_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find_map(|row| {
+                (row.get("kind").and_then(Value::as_str) == Some("validation_memory")).then(
+                    || {
+                        row.get("candidate_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    },
+                )?
+            })
+        })
+        .expect("validation candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-validation-promote-a/memory-candidates/{validation_candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "approved reusable validation evidence"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::OK);
+    let promote_payload: Value = serde_json::from_slice(
+        &to_bytes(promote_resp.into_body(), usize::MAX)
+            .await
+            .expect("promote body"),
+    )
+    .expect("promote json");
+
+    let create_second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-validation-promote-b",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 212
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("second create request");
+    let create_second_resp = app
+        .clone()
+        .oneshot(create_second_req)
+        .await
+        .expect("second create response");
+    assert_eq!(create_second_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-validation-promote-b/memory-hits?q=startup%20recovery%20regression%20passed")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    let first_hit = hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .cloned()
+        .expect("first hit");
+    assert_eq!(
+        first_hit.get("source").and_then(Value::as_str),
+        Some("governed_memory")
+    );
+    assert_eq!(
+        first_hit
+            .get("metadata")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("validation_memory")
+    );
+    assert_eq!(
+        first_hit.get("memory_id").and_then(Value::as_str),
+        promote_payload.get("memory_id").and_then(Value::as_str)
+    );
+    assert_eq!(first_hit.get("same_ref").and_then(Value::as_bool), None);
+    assert!(first_hit.get("content").and_then(Value::as_str).is_some());
+}
+
+#[tokio::test]
 async fn coder_promoted_failure_pattern_reuses_across_issues() {
     let state = test_state().await;
     state
