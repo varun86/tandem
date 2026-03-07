@@ -3029,79 +3029,87 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               No memory hits match the current filter.
                             </p>
                           ) : null}
-                          {filteredMemoryHits.map((hit, index) => (
-                            <div
-                              key={String(hit.candidate_id ?? hit.memory_id ?? index)}
-                              className="rounded-3xl border border-border bg-surface-elevated/40 p-4"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="text-sm font-medium text-text">
-                                    {memoryKindLabel(hit.kind ?? hit.source ?? "memory_hit")}
-                                  </p>
-                                  <p className="mt-1 text-[11px] text-text-muted">
-                                    {pickText(hit.candidate_id) ||
-                                      pickText(hit.memory_id) ||
-                                      `hit-${index + 1}`}
-                                  </p>
+                          {filteredMemoryHits.map((hit, index) => {
+                            const hitId =
+                              pickText(hit.candidate_id) ||
+                              pickText(hit.memory_id) ||
+                              `hit-${index + 1}`;
+                            return (
+                              <div
+                                key={String(hit.candidate_id ?? hit.memory_id ?? index)}
+                                className="rounded-3xl border border-border bg-surface-elevated/40 p-4"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-medium text-text">
+                                      {memoryKindLabel(hit.kind ?? hit.source ?? "memory_hit")}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyMemoryValue(hitId)}
+                                      className="mt-1 text-[11px] text-text-muted transition-colors hover:text-text"
+                                    >
+                                      {copiedMemoryValue === hitId ? "Copied" : hitId}
+                                    </button>
+                                  </div>
+                                  {typeof hit.score === "number" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setMemoryHitFilter("scored")}
+                                      className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition-colors hover:bg-emerald-500/15"
+                                    >
+                                      score {hit.score.toFixed(2)}
+                                    </button>
+                                  ) : null}
                                 </div>
-                                {typeof hit.score === "number" ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setMemoryHitFilter("scored")}
-                                    className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition-colors hover:bg-emerald-500/15"
-                                  >
-                                    score {hit.score.toFixed(2)}
-                                  </button>
-                                ) : null}
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {pickText(hit.kind) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyMemoryValue(pickText(hit.kind))}
+                                      className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                    >
+                                      {copiedMemoryValue === pickText(hit.kind)
+                                        ? "Copied"
+                                        : pickText(hit.kind)}
+                                    </button>
+                                  ) : null}
+                                  {pickText(hit.source) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyMemoryValue(pickText(hit.source))}
+                                      className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                    >
+                                      {copiedMemoryValue === pickText(hit.source)
+                                        ? "Copied"
+                                        : pickText(hit.source)}
+                                    </button>
+                                  ) : null}
+                                  {pickText(hit.memory_id) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void copyMemoryValue(`memory ${pickText(hit.memory_id)}`)
+                                      }
+                                      className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                    >
+                                      {copiedMemoryValue === `memory ${pickText(hit.memory_id)}`
+                                        ? "Copied"
+                                        : `memory ${pickText(hit.memory_id)}`}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <div className="mt-3 rounded-2xl border border-border bg-surface p-3">
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    Summary
+                                  </p>
+                                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                                    {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
+                                  </pre>
+                                </div>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {pickText(hit.kind) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void copyMemoryValue(pickText(hit.kind))}
-                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
-                                  >
-                                    {copiedMemoryValue === pickText(hit.kind)
-                                      ? "Copied"
-                                      : pickText(hit.kind)}
-                                  </button>
-                                ) : null}
-                                {pickText(hit.source) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void copyMemoryValue(pickText(hit.source))}
-                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
-                                  >
-                                    {copiedMemoryValue === pickText(hit.source)
-                                      ? "Copied"
-                                      : pickText(hit.source)}
-                                  </button>
-                                ) : null}
-                                {pickText(hit.memory_id) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void copyMemoryValue(`memory ${pickText(hit.memory_id)}`)
-                                    }
-                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
-                                  >
-                                    {copiedMemoryValue === `memory ${pickText(hit.memory_id)}`
-                                      ? "Copied"
-                                      : `memory ${pickText(hit.memory_id)}`}
-                                  </button>
-                                ) : null}
-                              </div>
-                              <div className="mt-3 rounded-2xl border border-border bg-surface p-3">
-                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                                  Summary
-                                </p>
-                                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                                  {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
-                                </pre>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </CardContent>
@@ -3186,9 +3194,15 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               <div className="flex items-center justify-between gap-3">
                                 <div>
                                   <p className="text-sm font-medium text-text">{candidate.kind}</p>
-                                  <p className="mt-1 text-[11px] text-text-muted">
-                                    {candidate.candidate_id}
-                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyMemoryValue(candidate.candidate_id)}
+                                    className="mt-1 text-[11px] text-text-muted transition-colors hover:text-text"
+                                  >
+                                    {copiedMemoryValue === candidate.candidate_id
+                                      ? "Copied"
+                                      : candidate.candidate_id}
+                                  </button>
                                 </div>
                                 <span className="text-xs text-text-muted">
                                   {formatTimestamp(candidate.created_at_ms)}
