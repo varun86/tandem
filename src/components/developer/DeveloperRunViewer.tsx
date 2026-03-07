@@ -7,6 +7,7 @@ import {
   GitBranch,
   PanelsTopLeft,
   RefreshCw,
+  Search,
   SquareCheckBig,
   SquareX,
   Workflow,
@@ -87,6 +88,10 @@ function renderValue(value: unknown): string {
 
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
+  const [runQuery, setRunQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [workflowFilter, setWorkflowFilter] = useState<string>("all");
+  const [detailTab, setDetailTab] = useState<"overview" | "artifacts" | "memory">("overview");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<CoderRunRecord | null>(null);
   const [runState, setRunState] = useState<Record<string, unknown> | null>(null);
@@ -221,6 +226,34 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return null;
   }, [error]);
 
+  const filteredRuns = useMemo(() => {
+    const query = runQuery.trim().toLowerCase();
+    return runs.filter((run) => {
+      if (statusFilter !== "all" && (run.status ?? "unknown") !== statusFilter) return false;
+      if (workflowFilter !== "all" && run.workflow_mode !== workflowFilter) return false;
+      if (!query) return true;
+      return [
+        run.coder_run_id,
+        run.repo_binding?.repo_slug,
+        run.workflow_mode,
+        run.phase,
+        run.status,
+        run.github_ref ? `${run.github_ref.kind} ${run.github_ref.number}` : "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [runQuery, runs, statusFilter, workflowFilter]);
+
+  const runStatuses = useMemo(() => {
+    return ["all", ...new Set(runs.map((run) => run.status ?? "unknown"))];
+  }, [runs]);
+
+  const workflowModes = useMemo(() => {
+    return ["all", ...new Set(runs.map((run) => run.workflow_mode))];
+  }, [runs]);
+
   const taskColumns = useMemo(() => {
     const grouped = new Map<string, RunTaskRecord[]>();
     for (const column of TASK_COLUMNS) grouped.set(column.key, []);
@@ -323,19 +356,55 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
             </div>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-            {runs.length === 0 ? (
+            <div className="mb-3 space-y-2">
+              <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
+                <Search className="h-4 w-4 text-text-muted" />
+                <input
+                  value={runQuery}
+                  onChange={(event) => setRunQuery(event.target.value)}
+                  placeholder="Filter runs by id, repo, mode, or ref"
+                  className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-subtle"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
+                >
+                  {runStatuses.map((status) => (
+                    <option key={status} value={status}>
+                      {status === "all" ? "All statuses" : status}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={workflowFilter}
+                  onChange={(event) => setWorkflowFilter(event.target.value)}
+                  className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
+                >
+                  {workflowModes.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode === "all" ? "All workflows" : mode}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {filteredRuns.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-elevated/40 p-6 text-center">
                 <Workflow className="h-6 w-6 text-text-muted" />
                 <div>
-                  <p className="text-sm font-medium text-text">No coder runs yet.</p>
+                  <p className="text-sm font-medium text-text">No matching coder runs.</p>
                   <p className="text-xs text-text-muted">
-                    This view reads the engine’s current coder endpoints.
+                    Adjust the filters or wait for the engine to create a run.
                   </p>
                 </div>
               </div>
             ) : (
               <div className="space-y-2">
-                {runs.map((run) => (
+                {filteredRuns.map((run) => (
                   <button
                     key={run.coder_run_id}
                     type="button"
@@ -474,272 +543,351 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                 </Card>
               ) : null}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <PanelsTopLeft className="h-4 w-4" />
-                    Coder Kanban
-                  </CardTitle>
-                  <CardDescription>Projected directly from engine task state.</CardDescription>
-                </CardHeader>
-                <CardContent className="overflow-x-auto">
-                  <div className="grid min-w-[980px] grid-cols-5 gap-3">
-                    {taskColumns.map((column) => (
-                      <div
-                        key={column.key}
-                        className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
-                      >
-                        <div className="mb-3 flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">
-                            {column.label}
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ["overview", "Overview"],
+                  ["artifacts", "Artifacts"],
+                  ["memory", "Memory"],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setDetailTab(key as typeof detailTab)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      detailTab === key
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border bg-surface text-text-muted hover:text-text"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {detailTab === "overview" ? (
+                <>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <PanelsTopLeft className="h-4 w-4" />
+                        Coder Kanban
+                      </CardTitle>
+                      <CardDescription>Projected directly from engine task state.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="overflow-x-auto">
+                      <div className="grid min-w-[980px] grid-cols-5 gap-3">
+                        {taskColumns.map((column) => (
+                          <div
+                            key={column.key}
+                            className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
+                          >
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">
+                                {column.label}
+                              </p>
+                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                                {column.tasks.length}
+                              </span>
+                            </div>
+                            <div className="space-y-2">
+                              {column.tasks.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                                  No tasks
+                                </div>
+                              ) : (
+                                column.tasks.map((task, index) => (
+                                  <div
+                                    key={String(
+                                      task.id ?? task.command_id ?? `${column.key}-${index}`
+                                    )}
+                                    className="rounded-xl border border-border bg-surface p-3"
+                                  >
+                                    <p className="text-sm font-medium text-text">
+                                      {String(
+                                        task.title ??
+                                          task.workflow_node_id ??
+                                          task.task_type ??
+                                          task.id ??
+                                          "task"
+                                      )}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-text-muted">
+                                      {String(task.workflow_node_id ?? task.task_type ?? "")}
+                                    </p>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <GitBranch className="h-4 w-4" />
+                          Blackboard And Decisions
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {selectedBlackboard ? (
+                          <>
+                            <div className="grid gap-3 md:grid-cols-3">
+                              {[
+                                ["Decisions", decisions.length],
+                                ["Open questions", openQuestions.length],
+                                [
+                                  "Artifacts",
+                                  Array.isArray(selectedBlackboard.artifacts)
+                                    ? selectedBlackboard.artifacts.length
+                                    : 0,
+                                ],
+                              ].map(([label, value]) => (
+                                <div
+                                  key={label}
+                                  className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                >
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    {label}
+                                  </p>
+                                  <p className="mt-1 text-lg font-semibold text-text">
+                                    {String(value)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {decisions.length > 0 ? (
+                              decisions.slice(0, 6).map((decision, index) => (
+                                <div
+                                  key={String(
+                                    (decision as Record<string, unknown>).id ?? `decision-${index}`
+                                  )}
+                                  className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                >
+                                  <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                                    {renderValue(decision)}
+                                  </pre>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-text-muted">
+                                No blackboard decisions yet.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-text-muted">
+                            No blackboard payload returned for this run.
                           </p>
-                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
-                            {column.tasks.length}
-                          </span>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Brain className="h-4 w-4" />
+                          Memory Snapshot
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                              Hits
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-text">
+                              {memoryHits.length}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                              Candidates
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-text">
+                              {memoryCandidates.length}
+                            </p>
+                          </div>
                         </div>
                         <div className="space-y-2">
-                          {column.tasks.length === 0 ? (
-                            <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                              No tasks
-                            </div>
-                          ) : (
-                            column.tasks.map((task, index) => (
-                              <div
-                                key={String(task.id ?? task.command_id ?? `${column.key}-${index}`)}
-                                className="rounded-xl border border-border bg-surface p-3"
-                              >
-                                <p className="text-sm font-medium text-text">
-                                  {String(
-                                    task.title ??
-                                      task.workflow_node_id ??
-                                      task.task_type ??
-                                      task.id ??
-                                      "task"
-                                  )}
-                                </p>
-                                <p className="mt-1 text-[11px] text-text-muted">
-                                  {String(task.workflow_node_id ?? task.task_type ?? "")}
-                                </p>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <GitBranch className="h-4 w-4" />
-                      Blackboard And Decisions
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {selectedBlackboard ? (
-                      <>
-                        <div className="grid gap-3 md:grid-cols-3">
-                          {[
-                            ["Decisions", decisions.length],
-                            ["Open questions", openQuestions.length],
-                            [
-                              "Artifacts",
-                              Array.isArray(selectedBlackboard.artifacts)
-                                ? selectedBlackboard.artifacts.length
-                                : 0,
-                            ],
-                          ].map(([label, value]) => (
+                          {memoryHits.slice(0, 3).map((hit, index) => (
                             <div
-                              key={label}
-                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                            >
-                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                                {label}
-                              </p>
-                              <p className="mt-1 text-lg font-semibold text-text">
-                                {String(value)}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                        {decisions.length > 0 ? (
-                          decisions.slice(0, 6).map((decision, index) => (
-                            <div
-                              key={String(
-                                (decision as Record<string, unknown>).id ?? `decision-${index}`
-                              )}
+                              key={String(hit.candidate_id ?? hit.memory_id ?? index)}
                               className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
                             >
                               <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                                {renderValue(decision)}
+                                {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
                               </pre>
                             </div>
-                          ))
-                        ) : (
-                          <p className="text-sm text-text-muted">No blackboard decisions yet.</p>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-sm text-text-muted">
-                        No blackboard payload returned for this run.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              ) : null}
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Database className="h-4 w-4" />
-                      Artifact Feed
-                    </CardTitle>
-                    <CardDescription>
-                      Includes duplicate and memory-backed history from engine artifacts.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {artifacts.length === 0 ? (
-                      <p className="text-sm text-text-muted">No artifacts yet.</p>
-                    ) : (
-                      (artifactHighlights.length > 0 ? artifactHighlights : artifacts).map(
-                        (artifact) => (
-                          <button
-                            key={artifact.id}
-                            type="button"
-                            onClick={() => setSelectedArtifactPath(artifact.path)}
-                            className={cn(
-                              "w-full rounded-2xl border p-3 text-left",
-                              selectedArtifactPath === artifact.path
-                                ? "border-primary/40 bg-primary/10"
-                                : "border-border bg-surface-elevated/40"
-                            )}
+              {detailTab === "artifacts" ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Database className="h-4 w-4" />
+                        Artifact Feed
+                      </CardTitle>
+                      <CardDescription>
+                        Includes duplicate and memory-backed history from engine artifacts.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {artifacts.length === 0 ? (
+                        <p className="text-sm text-text-muted">No artifacts yet.</p>
+                      ) : (
+                        (artifactHighlights.length > 0 ? artifactHighlights : artifacts).map(
+                          (artifact) => (
+                            <button
+                              key={artifact.id}
+                              type="button"
+                              onClick={() => setSelectedArtifactPath(artifact.path)}
+                              className={cn(
+                                "w-full rounded-2xl border p-3 text-left",
+                                selectedArtifactPath === artifact.path
+                                  ? "border-primary/40 bg-primary/10"
+                                  : "border-border bg-surface-elevated/40"
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-text">
+                                  {artifact.artifact_type}
+                                </p>
+                                <span className="text-xs text-text-muted">
+                                  {formatTimestamp(artifact.ts_ms)}
+                                </span>
+                              </div>
+                              <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                                {artifact.path}
+                              </p>
+                            </button>
+                          )
+                        )
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Database className="h-4 w-4" />
+                        Artifact Inspector
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {selectedArtifactPath ? (
+                        <>
+                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                              Selected
+                            </p>
+                            <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                              {selectedArtifactPath}
+                            </p>
+                          </div>
+                          {loadingArtifact ? (
+                            <p className="text-sm text-text-muted">Loading artifact preview…</p>
+                          ) : artifactPreview?.kind === "diff" ? (
+                            <DiffViewer
+                              oldValue={artifactPreview.oldValue}
+                              newValue={artifactPreview.newValue}
+                              oldTitle="Before"
+                              newTitle="After"
+                            />
+                          ) : (
+                            <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
+                              {artifactPreview?.value ?? "No artifact preview available."}
+                            </pre>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-text-muted">
+                          Select an artifact to inspect its contents.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : null}
+
+              {detailTab === "memory" ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Brain className="h-4 w-4" />
+                        Memory Hits
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {memoryHits.length === 0 ? (
+                        <p className="text-sm text-text-muted">No memory hits returned.</p>
+                      ) : (
+                        memoryHits.map((hit, index) => (
+                          <div
+                            key={String(hit.candidate_id ?? hit.memory_id ?? index)}
+                            className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
                           >
                             <div className="flex items-center justify-between gap-3">
                               <p className="text-sm font-medium text-text">
-                                {artifact.artifact_type}
+                                {renderValue(hit.kind ?? hit.source ?? "memory_hit")}
                               </p>
                               <span className="text-xs text-text-muted">
-                                {formatTimestamp(artifact.ts_ms)}
+                                {typeof hit.score === "number" ? hit.score.toFixed(2) : ""}
                               </span>
                             </div>
-                            <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
-                              {artifact.path}
-                            </p>
-                          </button>
-                        )
-                      )
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Database className="h-4 w-4" />
-                      Artifact Inspector
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {selectedArtifactPath ? (
-                      <>
-                        <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                            Selected
-                          </p>
-                          <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
-                            {selectedArtifactPath}
-                          </p>
-                        </div>
-                        {loadingArtifact ? (
-                          <p className="text-sm text-text-muted">Loading artifact preview…</p>
-                        ) : artifactPreview?.kind === "diff" ? (
-                          <DiffViewer
-                            oldValue={artifactPreview.oldValue}
-                            newValue={artifactPreview.newValue}
-                            oldTitle="Before"
-                            newTitle="After"
-                          />
-                        ) : (
-                          <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
-                            {artifactPreview?.value ?? "No artifact preview available."}
-                          </pre>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-sm text-text-muted">
-                        Select an artifact to inspect its contents.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Brain className="h-4 w-4" />
-                      Memory Hits
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {memoryHits.length === 0 ? (
-                      <p className="text-sm text-text-muted">No memory hits returned.</p>
-                    ) : (
-                      memoryHits.map((hit, index) => (
-                        <div
-                          key={String(hit.candidate_id ?? hit.memory_id ?? index)}
-                          className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-medium text-text">
-                              {renderValue(hit.kind ?? hit.source ?? "memory_hit")}
-                            </p>
-                            <span className="text-xs text-text-muted">
-                              {typeof hit.score === "number" ? hit.score.toFixed(2) : ""}
-                            </span>
+                            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                              {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
+                            </pre>
                           </div>
-                          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                            {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
-                          </pre>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Brain className="h-4 w-4" />
-                      Memory Candidates
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {memoryCandidates.length === 0 ? (
-                      <p className="text-sm text-text-muted">No memory candidates recorded.</p>
-                    ) : (
-                      memoryCandidates.map((candidate) => (
-                        <div
-                          key={candidate.candidate_id}
-                          className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-medium text-text">{candidate.kind}</p>
-                            <span className="text-xs text-text-muted">
-                              {formatTimestamp(candidate.created_at_ms)}
-                            </span>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Brain className="h-4 w-4" />
+                        Memory Candidates
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {memoryCandidates.length === 0 ? (
+                        <p className="text-sm text-text-muted">No memory candidates recorded.</p>
+                      ) : (
+                        memoryCandidates.map((candidate) => (
+                          <div
+                            key={candidate.candidate_id}
+                            className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-text">{candidate.kind}</p>
+                              <span className="text-xs text-text-muted">
+                                {formatTimestamp(candidate.created_at_ms)}
+                              </span>
+                            </div>
+                            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                              {renderValue(candidate.summary ?? candidate.payload)}
+                            </pre>
                           </div>
-                          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                            {renderValue(candidate.summary ?? candidate.payload)}
-                          </pre>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
