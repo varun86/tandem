@@ -679,6 +679,15 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
         hits_payload.get("query").and_then(Value::as_str),
         Some("evan/tandem issue #79")
     );
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("fix_pattern")
+    );
     assert!(hits_payload
         .get("hits")
         .and_then(Value::as_array)

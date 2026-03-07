@@ -894,56 +894,59 @@ async fn collect_issue_triage_memory_hits(
     let mut governed_hits = list_governed_memory_hits(record, query, limit).await;
     hits.append(&mut project_hits);
     hits.append(&mut governed_hits);
-    hits.sort_by(|a, b| {
-        let a_same_issue = a
-            .get("same_issue")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let b_same_issue = b
-            .get("same_issue")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-        let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-        b_same_issue
-            .cmp(&a_same_issue)
-            .then_with(|| {
-                b_score
-                    .partial_cmp(&a_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| {
-                b.get("created_at_ms")
-                    .and_then(Value::as_u64)
-                    .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
-            })
-    });
+    hits.sort_by(|a, b| compare_coder_memory_hits(record, a, b));
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
 }
 
-fn default_coder_memory_query(record: &CoderRunRecord) -> String {
-    match record.github_ref.as_ref() {
-        Some(reference) if matches!(reference.kind, CoderGithubRefKind::PullRequest) => {
-            format!(
-                "{} pull request #{}",
-                record.repo_binding.repo_slug, reference.number
-            )
-        }
-        Some(reference) => format!(
-            "{} issue #{}",
-            record.repo_binding.repo_slug, reference.number
-        ),
-        None => record.repo_binding.repo_slug.clone(),
+fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> std::cmp::Ordering {
+    let a_same_issue = a
+        .get("same_issue")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let b_same_issue = b
+        .get("same_issue")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+    let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+    let base = b_same_issue
+        .cmp(&a_same_issue)
+        .then_with(|| {
+            b_score
+                .partial_cmp(&a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| {
+            b.get("created_at_ms")
+                .and_then(Value::as_u64)
+                .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
+        });
+    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
+        return base;
     }
+    let kind_weight = |hit: &Value| match memory_hit_kind(hit).as_deref() {
+        Some("fix_pattern") => 4_u8,
+        Some("run_outcome") if memory_hit_workflow_mode(hit).as_deref() == Some("issue_fix") => {
+            3_u8
+        }
+        Some("triage_memory") => 2_u8,
+        _ => 1_u8,
+    };
+    kind_weight(b).cmp(&kind_weight(a)).then(base)
 }
 
-fn value_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+fn memory_hit_workflow_mode(hit: &Value) -> Option<String> {
+    value_string(
+        hit.get("payload")
+            .and_then(|row| row.get("workflow_mode"))
+            .or_else(|| hit.get("metadata").and_then(|row| row.get("workflow_mode"))),
+    )
+}
+
+fn memory_hit_kind(hit: &Value) -> Option<String> {
+    value_string(hit.get("kind"))
+        .or_else(|| value_string(hit.get("metadata").and_then(|row| row.get("kind"))))
 }
 
 fn derive_failure_pattern_duplicate_matches(
@@ -958,9 +961,7 @@ fn derive_failure_pattern_duplicate_matches(
     let mut duplicates = Vec::<Value>::new();
     let mut seen = HashSet::<String>::new();
     for hit in hits {
-        let kind = value_string(hit.get("kind"))
-            .or_else(|| value_string(hit.get("metadata").and_then(|row| row.get("kind"))))
-            .unwrap_or_default();
+        let kind = memory_hit_kind(hit).unwrap_or_default();
         if kind != "failure_pattern" {
             continue;
         }
@@ -1017,6 +1018,29 @@ fn derive_failure_pattern_duplicate_matches(
     duplicates.sort_by(compare_failure_pattern_duplicate_matches);
     duplicates.truncate(limit.clamp(1, 8));
     duplicates
+}
+fn default_coder_memory_query(record: &CoderRunRecord) -> String {
+    match record.github_ref.as_ref() {
+        Some(reference) if matches!(reference.kind, CoderGithubRefKind::PullRequest) => {
+            format!(
+                "{} pull request #{}",
+                record.repo_binding.repo_slug, reference.number
+            )
+        }
+        Some(reference) => format!(
+            "{} issue #{}",
+            record.repo_binding.repo_slug, reference.number
+        ),
+        None => record.repo_binding.repo_slug.clone(),
+    }
+}
+
+fn value_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 pub(crate) fn failure_pattern_fingerprint(
