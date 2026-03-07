@@ -286,6 +286,17 @@ function relatedArtifactsForTask(
   return artifacts.filter((artifact) => !!artifact.step_id && taskIds.includes(artifact.step_id));
 }
 
+function relatedArtifactsForBlackboardRow(
+  artifacts: CoderArtifactRecord[],
+  row: BlackboardRow
+): CoderArtifactRecord[] {
+  return relatedArtifactsForEvent(
+    artifacts,
+    blackboardRowStepId(row) ?? "",
+    blackboardRowSourceEventId(row) ?? ""
+  );
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -926,6 +937,22 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       }, 0);
     },
     []
+  );
+
+  const openArtifactContext = useCallback(
+    (target: "task" | "event") => {
+      if (!selectedArtifactRecord) return;
+      if (target === "task") {
+        if (!selectedArtifactRecord.step_id) return;
+        focusOverviewSection("kanban");
+        return;
+      }
+      if (!selectedArtifactRecord.source_event_id) return;
+      setEventTypeFilter("all");
+      setEventQuery(selectedArtifactRecord.source_event_id);
+      focusOverviewSection("timeline");
+    },
+    [focusOverviewSection, selectedArtifactRecord]
   );
 
   return (
@@ -1646,6 +1673,25 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                         Event {blackboardRowSourceEventId(latestDecision)}
                                       </span>
                                     ) : null}
+                                    {relatedArtifactsForBlackboardRow(artifacts, latestDecision)
+                                      .slice(0, 3)
+                                      .map((artifact) => (
+                                        <button
+                                          key={artifact.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedArtifactPath(artifact.path);
+                                            setDetailTab(
+                                              artifactCategory(artifact) === "validation"
+                                                ? "validation"
+                                                : "artifacts"
+                                            );
+                                          }}
+                                          className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated"
+                                        >
+                                          {artifact.artifact_type}
+                                        </button>
+                                      ))}
                                   </div>
                                 </div>
                               ) : (
@@ -1673,59 +1719,83 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       </span>
                                     </div>
                                     <div className="space-y-3">
-                                      {blackboardTimeline.map((item, index) => (
-                                        <div key={item.id} className="flex gap-3">
-                                          <div className="flex w-10 flex-col items-center">
-                                            <span
-                                              className={cn(
-                                                "mt-1 flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.16em]",
-                                                item.kind === "decision"
-                                                  ? "border-primary/30 bg-primary/10 text-primary"
-                                                  : "border-amber-500/30 bg-amber-500/10 text-amber-100"
-                                              )}
-                                            >
-                                              {item.kind === "decision" ? "D" : "Q"}
-                                            </span>
-                                            {index < blackboardTimeline.length - 1 ? (
-                                              <div className="mt-2 h-full min-h-10 w-px bg-border" />
-                                            ) : null}
-                                          </div>
-                                          <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
-                                            <div className="flex flex-wrap items-center gap-2">
+                                      {blackboardTimeline.map((item, index) => {
+                                        const relatedArtifacts = relatedArtifactsForEvent(
+                                          artifacts,
+                                          item.stepId ?? "",
+                                          item.sourceEventId ?? ""
+                                        ).slice(0, 3);
+                                        return (
+                                          <div key={item.id} className="flex gap-3">
+                                            <div className="flex w-10 flex-col items-center">
                                               <span
                                                 className={cn(
-                                                  "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]",
+                                                  "mt-1 flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.16em]",
                                                   item.kind === "decision"
-                                                    ? "border-primary/20 bg-primary/10 text-primary"
-                                                    : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+                                                    ? "border-primary/30 bg-primary/10 text-primary"
+                                                    : "border-amber-500/30 bg-amber-500/10 text-amber-100"
                                                 )}
                                               >
-                                                {item.kind === "decision"
-                                                  ? "Decision"
-                                                  : "Open question"}
+                                                {item.kind === "decision" ? "D" : "Q"}
                                               </span>
-                                              <span className="text-[11px] text-text-muted">
-                                                {formatTimestamp(item.tsMs)}
-                                              </span>
+                                              {index < blackboardTimeline.length - 1 ? (
+                                                <div className="mt-2 h-full min-h-10 w-px bg-border" />
+                                              ) : null}
                                             </div>
-                                            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
-                                              {item.text}
-                                            </p>
-                                            <div className="mt-3 flex flex-wrap gap-2">
-                                              {item.stepId ? (
-                                                <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                                  Step {item.stepId}
+                                            <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <span
+                                                  className={cn(
+                                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]",
+                                                    item.kind === "decision"
+                                                      ? "border-primary/20 bg-primary/10 text-primary"
+                                                      : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+                                                  )}
+                                                >
+                                                  {item.kind === "decision"
+                                                    ? "Decision"
+                                                    : "Open question"}
                                                 </span>
-                                              ) : null}
-                                              {item.sourceEventId ? (
-                                                <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                                  Source {item.sourceEventId}
+                                                <span className="text-[11px] text-text-muted">
+                                                  {formatTimestamp(item.tsMs)}
                                                 </span>
-                                              ) : null}
+                                              </div>
+                                              <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
+                                                {item.text}
+                                              </p>
+                                              <div className="mt-3 flex flex-wrap gap-2">
+                                                {item.stepId ? (
+                                                  <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                    Step {item.stepId}
+                                                  </span>
+                                                ) : null}
+                                                {item.sourceEventId ? (
+                                                  <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                    Source {item.sourceEventId}
+                                                  </span>
+                                                ) : null}
+                                                {relatedArtifacts.map((artifact) => (
+                                                  <button
+                                                    key={artifact.id}
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setSelectedArtifactPath(artifact.path);
+                                                      setDetailTab(
+                                                        artifactCategory(artifact) === "validation"
+                                                          ? "validation"
+                                                          : "artifacts"
+                                                      );
+                                                    }}
+                                                    className="rounded-full border border-border bg-surface-elevated/40 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-text-muted transition-colors hover:bg-surface-elevated"
+                                                  >
+                                                    {artifact.artifact_type}
+                                                  </button>
+                                                ))}
+                                              </div>
                                             </div>
                                           </div>
-                                        </div>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   </div>
 
@@ -1742,30 +1812,61 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       </p>
                                       <div className="mt-3 space-y-2">
                                         {openQuestions.length > 0 ? (
-                                          openQuestions.slice(0, 4).map((question, index) => (
-                                            <div
-                                              key={String(
-                                                question.id ??
-                                                  question.source_event_id ??
-                                                  `open-question-${index}`
-                                              )}
-                                              className="rounded-2xl border border-border bg-surface p-3"
-                                            >
-                                              <p className="text-sm text-text">
-                                                {blackboardRowText(question)}
-                                              </p>
-                                              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
-                                                <span>
-                                                  {formatTimestamp(
-                                                    blackboardRowTimestamp(question)
-                                                  )}
-                                                </span>
-                                                {blackboardRowStepId(question) ? (
-                                                  <span>step {blackboardRowStepId(question)}</span>
+                                          openQuestions.slice(0, 4).map((question, index) => {
+                                            const relatedArtifacts =
+                                              relatedArtifactsForBlackboardRow(
+                                                artifacts,
+                                                question
+                                              ).slice(0, 2);
+                                            return (
+                                              <div
+                                                key={String(
+                                                  question.id ??
+                                                    question.source_event_id ??
+                                                    `open-question-${index}`
+                                                )}
+                                                className="rounded-2xl border border-border bg-surface p-3"
+                                              >
+                                                <p className="text-sm text-text">
+                                                  {blackboardRowText(question)}
+                                                </p>
+                                                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+                                                  <span>
+                                                    {formatTimestamp(
+                                                      blackboardRowTimestamp(question)
+                                                    )}
+                                                  </span>
+                                                  {blackboardRowStepId(question) ? (
+                                                    <span>
+                                                      step {blackboardRowStepId(question)}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                {relatedArtifacts.length > 0 ? (
+                                                  <div className="mt-3 flex flex-wrap gap-2">
+                                                    {relatedArtifacts.map((artifact) => (
+                                                      <button
+                                                        key={artifact.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                          setSelectedArtifactPath(artifact.path);
+                                                          setDetailTab(
+                                                            artifactCategory(artifact) ===
+                                                              "validation"
+                                                              ? "validation"
+                                                              : "artifacts"
+                                                          );
+                                                        }}
+                                                        className="rounded-full border border-border bg-surface-elevated/40 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-text-muted transition-colors hover:bg-surface-elevated"
+                                                      >
+                                                        {artifact.artifact_type}
+                                                      </button>
+                                                    ))}
+                                                  </div>
                                                 ) : null}
                                               </div>
-                                            </div>
-                                          ))
+                                            );
+                                          })
                                         ) : (
                                           <p className="text-sm text-text-muted">
                                             No open questions recorded.
@@ -1965,33 +2066,43 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         </CardHeader>
                         <CardContent className="space-y-3">
                           <div className="grid gap-3 md:grid-cols-2">
-                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            <button
+                              type="button"
+                              onClick={() => focusTabSection("memory", "memory_hits")}
+                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                            >
                               <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                 Hits
                               </p>
                               <p className="mt-1 text-lg font-semibold text-text">
                                 {memoryHits.length}
                               </p>
-                            </div>
-                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => focusTabSection("memory", "memory_candidates")}
+                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                            >
                               <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                 Candidates
                               </p>
                               <p className="mt-1 text-lg font-semibold text-text">
                                 {memoryCandidates.length}
                               </p>
-                            </div>
+                            </button>
                           </div>
                           <div className="space-y-2">
                             {memoryHits.slice(0, 3).map((hit, index) => (
-                              <div
+                              <button
                                 key={String(hit.candidate_id ?? hit.memory_id ?? index)}
-                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                type="button"
+                                onClick={() => focusTabSection("memory", "memory_hits")}
+                                className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                               >
                                 <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
                                   {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
                                 </pre>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         </CardContent>
@@ -2188,6 +2299,29 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 </button>
                               ) : null}
                             </div>
+                            {selectedArtifactRecord?.step_id ||
+                            selectedArtifactRecord?.source_event_id ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {selectedArtifactRecord.step_id ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openArtifactContext("task")}
+                                    className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                  >
+                                    Step {selectedArtifactRecord.step_id}
+                                  </button>
+                                ) : null}
+                                {selectedArtifactRecord.source_event_id ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openArtifactContext("event")}
+                                    className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                  >
+                                    Event {selectedArtifactRecord.source_event_id}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {selectedDuplicateMatches.length > 0 ? (
@@ -2488,6 +2622,29 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
                               {selectedArtifactPath}
                             </p>
+                            {selectedArtifactRecord?.step_id ||
+                            selectedArtifactRecord?.source_event_id ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {selectedArtifactRecord.step_id ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openArtifactContext("task")}
+                                    className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                  >
+                                    Step {selectedArtifactRecord.step_id}
+                                  </button>
+                                ) : null}
+                                {selectedArtifactRecord.source_event_id ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openArtifactContext("event")}
+                                    className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                  >
+                                    Event {selectedArtifactRecord.source_event_id}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="grid gap-3 md:grid-cols-3">
                             <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
