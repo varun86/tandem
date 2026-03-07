@@ -885,7 +885,7 @@ fn derive_failure_pattern_duplicate_matches(
     duplicates
 }
 
-fn failure_pattern_fingerprint(
+pub(crate) fn failure_pattern_fingerprint(
     repo_slug: &str,
     summary: &str,
     affected_files: &[String],

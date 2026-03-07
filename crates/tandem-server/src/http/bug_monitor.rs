@@ -10,10 +10,13 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path as FsPath, PathBuf};
+use tandem_memory::{
+    GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition, MemoryPutRequest,
+};
 use uuid::Uuid;
 
 use super::context_runs::{
-    context_run_tasks_create, ensure_context_run_dir, load_context_run_state,
+    context_run_dir, context_run_tasks_create, ensure_context_run_dir, load_context_run_state,
     save_context_run_state,
 };
 use super::context_types::{
@@ -341,6 +344,158 @@ fn render_bug_monitor_template(
     body.trim().to_string()
 }
 
+fn derive_bug_monitor_failure_pattern_markers(
+    summary: &str,
+    notes: Option<&str>,
+    logs: &[String],
+) -> Vec<String> {
+    let mut canonical_markers = summary
+        .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
+        .map(str::trim)
+        .filter(|token| token.len() >= 5)
+        .map(ToString::to_string)
+        .take(5)
+        .collect::<Vec<_>>();
+    if let Some(note_text) = notes.map(str::trim).filter(|value| !value.is_empty()) {
+        canonical_markers.push(note_text.to_string());
+    }
+    for line in logs.iter().map(String::as_str).take(3) {
+        if let Some(value) = normalize_issue_draft_line(line) {
+            canonical_markers.push(value);
+        }
+    }
+    canonical_markers.sort();
+    canonical_markers.dedup();
+    canonical_markers.truncate(8);
+    canonical_markers
+}
+
+async fn persist_bug_monitor_failure_pattern_memory(
+    state: &AppState,
+    draft: &BugMonitorDraftRecord,
+    triage_run_id: &str,
+    triage_summary: &Value,
+    summary_artifact_path: &str,
+) -> Result<Value, StatusCode> {
+    let summary_text = triage_summary
+        .get("what_happened")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            draft
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("Bug Monitor detected a failure that needs triage.")
+        .to_string();
+    let notes = triage_summary.get("notes").and_then(Value::as_str);
+    let logs = triage_summary
+        .get("logs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let canonical_markers = derive_bug_monitor_failure_pattern_markers(&summary_text, notes, &logs);
+    let affected_components = vec![draft
+        .repo
+        .rsplit('/')
+        .next()
+        .unwrap_or(draft.repo.as_str())
+        .to_string()];
+    let fingerprint = super::coder::failure_pattern_fingerprint(
+        &draft.repo,
+        &summary_text,
+        &affected_components,
+        &canonical_markers,
+    );
+    let query_text = std::iter::once(summary_text.as_str())
+        .chain(logs.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let duplicate_matches = super::coder::find_failure_pattern_duplicates(
+        state,
+        &draft.repo,
+        None,
+        &["bug_monitor".to_string(), "default".to_string()],
+        &query_text,
+        Some(&fingerprint),
+        3,
+    )
+    .await?;
+    if duplicate_matches.iter().any(|row| {
+        row.get("source").and_then(Value::as_str) == Some("governed_memory")
+            && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
+    }) {
+        return Ok(json!({
+            "stored": false,
+            "reason": "governed_failure_pattern_exists",
+            "fingerprint": fingerprint,
+            "duplicate_matches": duplicate_matches,
+        }));
+    }
+
+    let partition = MemoryPartition {
+        org_id: draft.repo.clone(),
+        workspace_id: draft.repo.clone(),
+        project_id: draft.repo.clone(),
+        tier: GovernedMemoryTier::Session,
+    };
+    let capability = Some(super::skills_memory::issue_run_memory_capability(
+        triage_run_id,
+        Some("bug_monitor"),
+        &partition,
+        super::skills_memory::RunMemoryCapabilityPolicy::CoderWorkflow,
+    ));
+    let metadata = json!({
+        "kind": "failure_pattern",
+        "repo_slug": draft.repo,
+        "failure_pattern_fingerprint": fingerprint,
+        "linked_issue_numbers": draft.issue_number.into_iter().collect::<Vec<_>>(),
+        "affected_components": affected_components,
+        "artifact_refs": [summary_artifact_path],
+        "canonical_markers": canonical_markers,
+        "symptoms": [summary_text],
+        "draft_id": draft.draft_id,
+        "triage_run_id": triage_run_id,
+        "source": "bug_monitor",
+    });
+    let put_response = super::skills_memory::memory_put_impl(
+        state,
+        MemoryPutRequest {
+            run_id: triage_run_id.to_string(),
+            partition: partition.clone(),
+            kind: MemoryContentKind::Fact,
+            content: summary_text.clone(),
+            artifact_refs: vec![summary_artifact_path.to_string()],
+            classification: MemoryClassification::Internal,
+            metadata: Some(metadata.clone()),
+        },
+        capability,
+    )
+    .await?;
+    Ok(json!({
+        "stored": true,
+        "memory_id": put_response.id,
+        "fingerprint": fingerprint,
+        "content": summary_text,
+        "metadata": metadata,
+        "partition": {
+            "org_id": partition.org_id,
+            "workspace_id": partition.workspace_id,
+            "project_id": partition.project_id,
+            "tier": partition.tier,
+        },
+        "duplicate_matches": duplicate_matches,
+    }))
+}
+
 async fn latest_bug_monitor_incident_for_draft(
     state: &AppState,
     draft_id: &str,
@@ -665,6 +820,44 @@ pub(super) async fn create_bug_monitor_triage_summary(
         }
     }
 
+    let summary_artifact_path = context_run_dir(&state, &triage_run_id)
+        .join("artifacts/bug_monitor.triage_summary.json")
+        .to_string_lossy()
+        .to_string();
+    let failure_pattern_memory = match persist_bug_monitor_failure_pattern_memory(
+        &state,
+        &draft,
+        &triage_run_id,
+        &payload,
+        &summary_artifact_path,
+    )
+    .await
+    {
+        Ok(memory) => {
+            if memory
+                .get("stored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let memory_artifact_id = format!(
+                    "bug-monitor-failure-pattern-memory-{}",
+                    Uuid::new_v4().simple()
+                );
+                let _ = write_bug_monitor_artifact(
+                    &state,
+                    &triage_run_id,
+                    &memory_artifact_id,
+                    "bug_monitor_failure_pattern_memory",
+                    "artifacts/bug_monitor.failure_pattern_memory.json",
+                    &memory,
+                )
+                .await;
+            }
+            Some(memory)
+        }
+        Err(_) => None,
+    };
+
     draft.github_status = Some("triage_summary_ready".to_string());
     if draft.status.eq_ignore_ascii_case("triage_queued") {
         draft.status = "draft_ready".to_string();
@@ -689,6 +882,7 @@ pub(super) async fn create_bug_monitor_triage_summary(
             "ok": true,
             "draft": draft,
             "triage_summary": payload,
+            "failure_pattern_memory": failure_pattern_memory,
             "issue_draft": issue_draft,
         }))
         .into_response(),
@@ -699,6 +893,7 @@ pub(super) async fn create_bug_monitor_triage_summary(
                 "code": "BUG_MONITOR_TRIAGE_SUMMARY_ISSUE_DRAFT_FAILED",
                 "draft": draft,
                 "triage_summary": payload,
+                "failure_pattern_memory": failure_pattern_memory,
                 "detail": error.to_string(),
             })),
         )

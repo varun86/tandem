@@ -823,6 +823,66 @@ async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
         issue_draft.get("suggested_title").and_then(Value::as_str),
         Some("Structured triage title")
     );
+
+    let failure_pattern_payload = summary_payload
+        .get("failure_pattern_memory")
+        .cloned()
+        .expect("failure pattern memory");
+    assert_eq!(
+        failure_pattern_payload
+            .get("stored")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        failure_pattern_payload
+            .get("metadata")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("failure_pattern")
+    );
+    assert_eq!(
+        failure_pattern_payload
+            .get("metadata")
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("acme/platform")
+    );
+
+    let duplicate_report_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "desktop_logs",
+                    "title": "Structured triage summary",
+                    "detail": "Structured triage summary",
+                    "excerpt": ["structured log line"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("duplicate report request");
+    let duplicate_report_resp = app
+        .clone()
+        .oneshot(duplicate_report_req)
+        .await
+        .expect("duplicate report response");
+    assert_eq!(duplicate_report_resp.status(), StatusCode::OK);
+    let duplicate_report_payload: Value = serde_json::from_slice(
+        &to_bytes(duplicate_report_resp.into_body(), usize::MAX)
+            .await
+            .expect("duplicate report body"),
+    )
+    .expect("duplicate report json");
+    assert_eq!(
+        duplicate_report_payload
+            .get("suppressed")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[tokio::test]
