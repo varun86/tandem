@@ -543,6 +543,15 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
         summary_payload
             .get("generated_candidates")
             .and_then(Value::as_array)
+            .map(|rows| rows.iter().any(|row| {
+                row.get("kind").and_then(Value::as_str) == Some("validation_memory")
+            })),
+        Some(true)
+    );
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
             .map(|rows| rows
                 .iter()
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
@@ -702,6 +711,16 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
             .and_then(Value::as_str),
         Some("fix_pattern")
     );
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("validation_memory")
+                && (row.get("source_coder_run_id").and_then(Value::as_str)
+                    == Some("coder-issue-fix-a")
+                    || row.get("run_id").and_then(Value::as_str) == Some("coder-issue-fix-a"))
+        }))
+        .unwrap_or(false));
     assert!(hits_payload
         .get("hits")
         .and_then(Value::as_array)
@@ -894,6 +913,36 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         .map(|rows| rows.iter().any(|row| {
             row.get("id").and_then(Value::as_str) == Some(review_evidence_artifact_id.as_str())
                 && row.get("artifact_type").and_then(Value::as_str) == Some("coder_review_evidence")
+        }))
+        .unwrap_or(false));
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-summary/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    assert!(candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("review_memory")
+                && row
+                    .get("payload")
+                    .and_then(|payload| payload.get("review_evidence_artifact_path"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| path.ends_with("/artifacts/pr_review.evidence.json"))
         }))
         .unwrap_or(false));
 
@@ -1317,6 +1366,38 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
             row.get("id").and_then(Value::as_str) == Some(readiness_artifact_id.as_str())
                 && row.get("artifact_type").and_then(Value::as_str)
                     == Some("coder_merge_readiness_report")
+        }))
+        .unwrap_or(false));
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-merge-recommendation-summary/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    assert!(candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("merge_recommendation_memory")
+                && row
+                    .get("payload")
+                    .and_then(|payload| payload.get("readiness_artifact_path"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| {
+                        path.ends_with("/artifacts/merge_recommendation.readiness.json")
+                    })
         }))
         .unwrap_or(false));
 }

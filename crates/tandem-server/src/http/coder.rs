@@ -114,6 +114,7 @@ pub(super) struct CoderRunListQuery {
 pub(super) enum CoderMemoryCandidateKind {
     TriageMemory,
     FixPattern,
+    ValidationMemory,
     ReviewMemory,
     MergeRecommendationMemory,
     RegressionSignal,
@@ -944,14 +945,19 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         });
     let kind_weight = |hit: &Value| match memory_hit_kind(hit).as_deref() {
         Some("fix_pattern") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => 4_u8,
+        Some("validation_memory")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) =>
+        {
+            3_u8
+        }
         Some("run_outcome")
             if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
                 && memory_hit_workflow_mode(hit).as_deref() == Some("issue_fix") =>
         {
-            3_u8
+            2_u8
         }
         Some("triage_memory") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => {
-            2_u8
+            1_u8
         }
         Some("merge_recommendation_memory")
             if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
@@ -3074,6 +3080,7 @@ pub(super) async fn coder_memory_candidate_promote(
             kind: match kind {
                 CoderMemoryCandidateKind::TriageMemory => MemoryContentKind::SolutionCapsule,
                 CoderMemoryCandidateKind::FixPattern => MemoryContentKind::SolutionCapsule,
+                CoderMemoryCandidateKind::ValidationMemory => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::ReviewMemory => MemoryContentKind::SolutionCapsule,
                 CoderMemoryCandidateKind::MergeRecommendationMemory => {
                     MemoryContentKind::SolutionCapsule
@@ -3455,6 +3462,7 @@ pub(super) async fn coder_pr_review_summary_create(
                 "regression_signals": input.regression_signals,
                 "memory_hits_used": input.memory_hits_used,
                 "summary_artifact_path": artifact.path,
+                "review_evidence_artifact_path": review_evidence_artifact.as_ref().map(|row| row.path.clone()),
             }),
         )
         .await?;
@@ -3502,6 +3510,7 @@ pub(super) async fn coder_pr_review_summary_create(
                         "regression_signals": input.regression_signals,
                         "memory_hits_used": input.memory_hits_used,
                         "summary_artifact_path": artifact.path,
+                        "review_evidence_artifact_path": review_evidence_artifact.as_ref().map(|row| row.path.clone()),
                     }),
                 )
                 .await?;
@@ -3535,6 +3544,7 @@ pub(super) async fn coder_pr_review_summary_create(
                 "regression_signals": input.regression_signals,
                 "memory_hits_used": input.memory_hits_used,
                 "summary_artifact_path": artifact.path,
+                "review_evidence_artifact_path": review_evidence_artifact.as_ref().map(|row| row.path.clone()),
             }),
         )
         .await?;
@@ -3676,6 +3686,56 @@ pub(super) async fn coder_issue_fix_summary_create(
             "kind": "fix_pattern",
             "artifact_path": fix_pattern_artifact.path,
         }));
+
+        if !input.validation_steps.is_empty() || !input.validation_results.is_empty() {
+            let validation_summary = input
+                .validation_results
+                .iter()
+                .filter_map(|row| {
+                    row.get("summary")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                })
+                .next()
+                .or_else(|| {
+                    (!input.validation_steps.is_empty()).then(|| {
+                        format!(
+                            "Validation attempted: {}",
+                            input.validation_steps.join(", ")
+                        )
+                    })
+                })
+                .unwrap_or_else(|| "Validation evidence captured for issue fix.".to_string());
+            let (validation_memory_id, validation_memory_artifact) =
+                write_coder_memory_candidate_artifact(
+                    &state,
+                    &record,
+                    CoderMemoryCandidateKind::ValidationMemory,
+                    Some(validation_summary),
+                    Some("validate_fix".to_string()),
+                    json!({
+                        "workflow_mode": "issue_fix",
+                        "summary": summary_text,
+                        "result": strategy,
+                        "root_cause": input.root_cause,
+                        "fix_strategy": input.fix_strategy,
+                        "changed_files": input.changed_files,
+                        "validation_steps": input.validation_steps,
+                        "validation_results": input.validation_results,
+                        "memory_hits_used": input.memory_hits_used,
+                        "summary_artifact_path": artifact.path,
+                        "validation_artifact_path": validation_artifact.as_ref().map(|row| row.path.clone()),
+                    }),
+                )
+                .await?;
+            generated_candidates.push(json!({
+                "candidate_id": validation_memory_id,
+                "kind": "validation_memory",
+                "artifact_path": validation_memory_artifact.path,
+            }));
+        }
 
         let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
             &state,
@@ -3841,6 +3901,7 @@ pub(super) async fn coder_merge_recommendation_summary_create(
                     "required_approvals": input.required_approvals,
                     "memory_hits_used": input.memory_hits_used,
                     "summary_artifact_path": artifact.path,
+                    "readiness_artifact_path": readiness_artifact.as_ref().map(|row| row.path.clone()),
                 }),
             )
             .await?;
@@ -3866,6 +3927,7 @@ pub(super) async fn coder_merge_recommendation_summary_create(
                 "required_approvals": input.required_approvals,
                 "memory_hits_used": input.memory_hits_used,
                 "summary_artifact_path": artifact.path,
+                "readiness_artifact_path": readiness_artifact.as_ref().map(|row| row.path.clone()),
             }),
         )
         .await?;
