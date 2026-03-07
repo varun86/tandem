@@ -2075,14 +2075,26 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                     ) : null}
                                     <div className="mt-3 flex flex-wrap gap-2">
                                       {stepId ? (
-                                        <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                        <button
+                                          type="button"
+                                          onClick={() => focusOverviewSection("kanban")}
+                                          className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                        >
                                           Step {stepId}
-                                        </span>
+                                        </button>
                                       ) : null}
                                       {sourceEventId ? (
-                                        <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEventTypeFilter("all");
+                                            setEventQuery(sourceEventId);
+                                            focusOverviewSection("timeline");
+                                          }}
+                                          className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                                        >
                                           Event {sourceEventId}
-                                        </span>
+                                        </button>
                                       ) : null}
                                     </div>
                                     {relatedArtifacts.length > 0 ? (
