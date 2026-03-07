@@ -273,6 +273,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [runQuery, setRunQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [workflowFilter, setWorkflowFilter] = useState<string>("all");
+  const [runSortMode, setRunSortMode] = useState<"updated" | "attention" | "approval">("updated");
   const [artifactQuery, setArtifactQuery] = useState("");
   const [eventQuery, setEventQuery] = useState("");
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
@@ -510,6 +511,23 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
         .includes(query);
     });
   }, [runQuery, runs, statusFilter, workflowFilter]);
+
+  const displayedRuns = useMemo(() => {
+    const ordered = [...filteredRuns];
+    ordered.sort((left, right) => {
+      if (runSortMode === "approval") {
+        const leftApproval = (left.status ?? "") === "awaiting_approval" ? 1 : 0;
+        const rightApproval = (right.status ?? "") === "awaiting_approval" ? 1 : 0;
+        if (leftApproval !== rightApproval) return rightApproval - leftApproval;
+      } else if (runSortMode === "attention") {
+        const leftAttention = runNeedsAttention(left) ? 1 : 0;
+        const rightAttention = runNeedsAttention(right) ? 1 : 0;
+        if (leftAttention !== rightAttention) return rightAttention - leftAttention;
+      }
+      return (right.updated_at_ms ?? 0) - (left.updated_at_ms ?? 0);
+    });
+    return ordered;
+  }, [filteredRuns, runSortMode]);
 
   const runSummary = useMemo(() => {
     return filteredRuns.reduce(
@@ -754,15 +772,32 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                   ["Awaiting approval", runSummary.awaitingApproval],
                   ["Needs attention", runSummary.needsAttention],
                 ].map(([label, value]) => (
-                  <div
+                  <button
                     key={label}
-                    className="rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2"
+                    type="button"
+                    onClick={() => {
+                      if (label === "Awaiting approval") {
+                        setStatusFilter("awaiting_approval");
+                        setRunSortMode("approval");
+                      } else if (label === "Needs attention") {
+                        setStatusFilter("all");
+                        setRunSortMode("attention");
+                      } else if (label === "Visible runs") {
+                        setStatusFilter("all");
+                        setWorkflowFilter("all");
+                        setRunSortMode("updated");
+                      } else if (label === "Active") {
+                        setStatusFilter("running");
+                        setRunSortMode("updated");
+                      }
+                    }}
+                    className="rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2 text-left transition-colors hover:bg-surface-elevated"
                   >
                     <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted">
                       {label}
                     </p>
                     <p className="mt-1 text-sm font-semibold text-text">{String(value)}</p>
-                  </div>
+                  </button>
                 ))}
               </div>
               <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
@@ -787,6 +822,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                   ))}
                 </select>
                 <select
+                  value={runSortMode}
+                  onChange={(event) =>
+                    setRunSortMode(event.target.value as "updated" | "attention" | "approval")
+                  }
+                  className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
+                >
+                  <option value="updated">Recently updated</option>
+                  <option value="attention">Needs attention first</option>
+                  <option value="approval">Awaiting approval first</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select
                   value={workflowFilter}
                   onChange={(event) => setWorkflowFilter(event.target.value)}
                   className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
@@ -800,7 +848,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
               </div>
             </div>
 
-            {filteredRuns.length === 0 ? (
+            {displayedRuns.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-elevated/40 p-6 text-center">
                 <Workflow className="h-6 w-6 text-text-muted" />
                 <div>
@@ -812,7 +860,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
               </div>
             ) : (
               <div className="space-y-2">
-                {filteredRuns.map((run) => (
+                {displayedRuns.map((run) => (
                   <button
                     key={run.coder_run_id}
                     type="button"
