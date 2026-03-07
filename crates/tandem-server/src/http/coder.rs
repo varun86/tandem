@@ -922,17 +922,38 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
                 .and_then(Value::as_u64)
                 .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
         });
-    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
-        return base;
-    }
     let kind_weight = |hit: &Value| match memory_hit_kind(hit).as_deref() {
-        Some("fix_pattern") => 4_u8,
-        Some("run_outcome") if memory_hit_workflow_mode(hit).as_deref() == Some("issue_fix") => {
+        Some("fix_pattern") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => 4_u8,
+        Some("run_outcome")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
+                && memory_hit_workflow_mode(hit).as_deref() == Some("issue_fix") =>
+        {
             3_u8
         }
-        Some("triage_memory") => 2_u8,
+        Some("triage_memory") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => {
+            2_u8
+        }
+        Some("merge_recommendation_memory")
+            if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
+        {
+            4_u8
+        }
+        Some("run_outcome")
+            if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation)
+                && memory_hit_workflow_mode(hit).as_deref() == Some("merge_recommendation") =>
+        {
+            3_u8
+        }
+        Some("regression_signal")
+            if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
+        {
+            2_u8
+        }
         _ => 1_u8,
     };
+    if kind_weight(a) == 1 && kind_weight(b) == 1 {
+        return base;
+    }
     kind_weight(b).cmp(&kind_weight(a)).then(base)
 }
 

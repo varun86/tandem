@@ -1348,6 +1348,15 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
         hits_payload.get("query").and_then(Value::as_str),
         Some("evan/tandem pull request #93")
     );
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("merge_recommendation_memory")
+    );
     assert!(hits_payload
         .get("hits")
         .and_then(Value::as_array)
