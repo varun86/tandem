@@ -57,6 +57,7 @@
   - `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so coder run creation blocks on the same missing/unbound/disconnected/auth-pending conditions surfaced by `/capabilities/readiness`
   - explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check
   - coder memory promotion now reuses the generic governed-memory `memory_put` / `memory_promote` path instead of a coder-specific direct DB bridge
+  - run-scoped governed-memory capability issuance is now shared through `skills_memory.rs` helpers, so coder workflows derive subject and tier policy through the same helper path as the generic memory routes
   - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite
   - coder lifecycle and artifact events now share a normalized payload shape, and `coder.artifact.added` includes explicit `kind` metadata so desktop and other clients can consume coder events without per-event special casing
 

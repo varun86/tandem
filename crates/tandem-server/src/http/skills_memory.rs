@@ -866,19 +866,55 @@ pub(super) async fn skill_list() -> Json<Value> {
     }))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RunMemoryCapabilityPolicy {
+    Default,
+    CoderWorkflow,
+}
+
+pub(super) fn run_memory_subject(subject_hint: Option<&str>) -> String {
+    subject_hint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
+pub(super) fn issue_run_memory_capability(
+    run_id: &str,
+    subject_hint: Option<&str>,
+    partition: &tandem_memory::MemoryPartition,
+    policy: RunMemoryCapabilityPolicy,
+) -> MemoryCapabilityToken {
+    let memory = match policy {
+        RunMemoryCapabilityPolicy::Default => MemoryCapabilities::default(),
+        RunMemoryCapabilityPolicy::CoderWorkflow => MemoryCapabilities {
+            read_tiers: vec![
+                tandem_memory::GovernedMemoryTier::Session,
+                tandem_memory::GovernedMemoryTier::Project,
+            ],
+            write_tiers: vec![tandem_memory::GovernedMemoryTier::Session],
+            promote_targets: vec![tandem_memory::GovernedMemoryTier::Project],
+            require_review_for_promote: true,
+            allow_auto_use_tiers: vec![tandem_memory::GovernedMemoryTier::Curated],
+        },
+    };
+    MemoryCapabilityToken {
+        run_id: run_id.to_string(),
+        subject: run_memory_subject(subject_hint),
+        org_id: partition.org_id.clone(),
+        workspace_id: partition.workspace_id.clone(),
+        project_id: partition.project_id.clone(),
+        memory,
+        expires_at: u64::MAX,
+    }
+}
+
 pub(super) fn default_memory_capability_for(
     run_id: &str,
     partition: &tandem_memory::MemoryPartition,
 ) -> MemoryCapabilityToken {
-    MemoryCapabilityToken {
-        run_id: run_id.to_string(),
-        subject: "default".to_string(),
-        org_id: partition.org_id.clone(),
-        workspace_id: partition.workspace_id.clone(),
-        project_id: partition.project_id.clone(),
-        memory: MemoryCapabilities::default(),
-        expires_at: u64::MAX,
-    }
+    issue_run_memory_capability(run_id, None, partition, RunMemoryCapabilityPolicy::Default)
 }
 
 pub(super) fn validate_memory_capability(
