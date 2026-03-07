@@ -591,6 +591,117 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
 }
 
 #[tokio::test]
+async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
+    let state = test_state().await;
+    state
+        .put_bug_monitor_config(crate::BugMonitorConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let app = app_router(state.clone());
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "desktop_logs",
+                    "title": "Noisy raw detail",
+                    "detail": "raw detail should not win",
+                    "excerpt": ["noisy line"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let create_resp = app.clone().oneshot(create_req).await.expect("response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let draft_id = create_payload
+        .get("draft")
+        .and_then(|row| row.get("draft_id"))
+        .and_then(Value::as_str)
+        .expect("draft id")
+        .to_string();
+
+    let triage_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
+        .body(Body::empty())
+        .expect("triage request");
+    let triage_resp = app
+        .clone()
+        .oneshot(triage_req)
+        .await
+        .expect("triage response");
+    assert_eq!(triage_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/triage-summary"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "suggested_title": "Structured triage title",
+                "what_happened": "Structured triage summary",
+                "expected_behavior": "The run should complete successfully.",
+                "steps_to_reproduce": [
+                    "Open the repo",
+                    "Run the failing workflow",
+                    "Observe the orchestration error"
+                ],
+                "environment": [
+                    "Repo: acme/platform",
+                    "Process: tandem-engine"
+                ],
+                "logs": [
+                    "structured log line",
+                    "second structured line"
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    let issue_draft = summary_payload.get("issue_draft").expect("issue draft");
+    let rendered_body = issue_draft
+        .get("rendered_body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(rendered_body.contains("Structured triage summary"));
+    assert!(rendered_body.contains("The run should complete successfully."));
+    assert!(rendered_body.contains("1. Open the repo"));
+    assert!(rendered_body.contains("structured log line"));
+    assert!(!rendered_body.contains("raw detail should not win"));
+    assert_eq!(
+        issue_draft.get("suggested_title").and_then(Value::as_str),
+        Some("Structured triage title")
+    );
+}
+
+#[tokio::test]
 async fn bug_monitor_triage_run_created_from_approved_draft() {
     let state = test_state().await;
     state

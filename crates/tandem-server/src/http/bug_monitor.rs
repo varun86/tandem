@@ -57,6 +57,24 @@ pub(super) struct BugMonitorDecisionInput {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct BugMonitorTriageSummaryInput {
+    #[serde(default)]
+    pub suggested_title: Option<String>,
+    #[serde(default)]
+    pub what_happened: Option<String>,
+    #[serde(default)]
+    pub expected_behavior: Option<String>,
+    #[serde(default)]
+    pub steps_to_reproduce: Vec<String>,
+    #[serde(default)]
+    pub environment: Vec<String>,
+    #[serde(default)]
+    pub logs: Vec<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
 async fn write_bug_monitor_artifact(
     state: &AppState,
     linked_context_run_id: &str,
@@ -337,18 +355,47 @@ async fn latest_bug_monitor_incident_for_draft(
         .cloned()
 }
 
+fn latest_bug_monitor_artifact(
+    state: &AppState,
+    triage_run_id: &str,
+    artifact_type: &str,
+) -> Option<ContextBlackboardArtifact> {
+    let blackboard = super::context_runs::load_context_blackboard(state, triage_run_id);
+    blackboard
+        .artifacts
+        .iter()
+        .filter(|row| row.artifact_type == artifact_type)
+        .max_by_key(|row| row.ts_ms)
+        .cloned()
+}
+
+async fn load_bug_monitor_artifact_payload(
+    state: &AppState,
+    triage_run_id: &str,
+    artifact_type: &str,
+) -> Option<(ContextBlackboardArtifact, Value)> {
+    let artifact = latest_bug_monitor_artifact(state, triage_run_id, artifact_type)?;
+    let raw = tokio::fs::read_to_string(&artifact.path).await.ok()?;
+    let payload = serde_json::from_str::<Value>(&raw).ok()?;
+    Some((artifact, payload))
+}
+
+pub(crate) async fn load_bug_monitor_triage_summary_artifact(
+    state: &AppState,
+    triage_run_id: &str,
+) -> Option<Value> {
+    load_bug_monitor_artifact_payload(state, triage_run_id, "bug_monitor_triage_summary")
+        .await
+        .map(|(_, payload)| payload)
+}
+
 pub(crate) async fn load_bug_monitor_issue_draft_artifact(
     state: &AppState,
     triage_run_id: &str,
 ) -> Option<Value> {
-    let blackboard = super::context_runs::load_context_blackboard(state, triage_run_id);
-    let artifact = blackboard
-        .artifacts
-        .iter()
-        .rev()
-        .find(|row| row.artifact_type == "bug_monitor_issue_draft")?;
-    let raw = tokio::fs::read_to_string(&artifact.path).await.ok()?;
-    serde_json::from_str::<Value>(&raw).ok()
+    load_bug_monitor_artifact_payload(state, triage_run_id, "bug_monitor_issue_draft")
+        .await
+        .map(|(_, payload)| payload)
 }
 
 pub(crate) async fn ensure_bug_monitor_issue_draft(
@@ -365,29 +412,86 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
         anyhow::anyhow!("Bug Monitor draft needs a triage run before issue drafting")
     })?;
     if !force {
-        if let Some(existing) = load_bug_monitor_issue_draft_artifact(&state, &triage_run_id).await
-        {
-            return Ok(existing);
+        let existing_issue_draft =
+            load_bug_monitor_artifact_payload(&state, &triage_run_id, "bug_monitor_issue_draft")
+                .await;
+        let triage_summary =
+            load_bug_monitor_artifact_payload(&state, &triage_run_id, "bug_monitor_triage_summary")
+                .await;
+        if let Some((issue_artifact, issue_payload)) = existing_issue_draft {
+            let triage_newer = triage_summary
+                .as_ref()
+                .map(|(summary_artifact, _)| summary_artifact.ts_ms > issue_artifact.ts_ms)
+                .unwrap_or(false);
+            if !triage_newer {
+                return Ok(issue_payload);
+            }
         }
     }
 
     let incident = latest_bug_monitor_incident_for_draft(&state, draft_id).await;
+    let triage_summary = load_bug_monitor_triage_summary_artifact(&state, &triage_run_id).await;
     let (template, template_source) = load_bug_monitor_issue_template(&config).await;
-    let what_happened = draft
-        .detail
-        .as_deref()
+    let what_happened = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("what_happened"))
+        .and_then(Value::as_str)
         .and_then(normalize_issue_draft_line)
         .or_else(|| {
-            incident
-                .as_ref()
-                .and_then(|row| normalize_issue_draft_line(&row.title))
+            draft
+                .detail
+                .as_deref()
+                .and_then(normalize_issue_draft_line)
+                .or_else(|| {
+                    incident
+                        .as_ref()
+                        .and_then(|row| normalize_issue_draft_line(&row.title))
+                })
+                .or_else(|| draft.title.as_deref().and_then(normalize_issue_draft_line))
         })
-        .or_else(|| draft.title.as_deref().and_then(normalize_issue_draft_line))
         .unwrap_or_else(|| "Bug Monitor detected a failure that needs triage.".to_string());
-    let expected_behavior = derive_expected_behavior(&draft, incident.as_ref());
-    let steps_to_reproduce = derive_steps_to_reproduce(&draft, incident.as_ref());
-    let environment_lines = derive_environment_lines(&draft, incident.as_ref());
-    let log_lines = derive_log_lines(&draft, incident.as_ref());
+    let expected_behavior = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("expected_behavior"))
+        .and_then(Value::as_str)
+        .and_then(normalize_issue_draft_line)
+        .unwrap_or_else(|| derive_expected_behavior(&draft, incident.as_ref()));
+    let steps_to_reproduce = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("steps_to_reproduce"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .filter_map(normalize_issue_draft_line)
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| derive_steps_to_reproduce(&draft, incident.as_ref()));
+    let environment_lines = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("environment"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .filter_map(normalize_issue_draft_line)
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| derive_environment_lines(&draft, incident.as_ref()));
+    let log_lines = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("logs"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .filter_map(normalize_issue_draft_line)
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| derive_log_lines(&draft, incident.as_ref()));
     let hidden_markers = vec![
         format!("<!-- tandem:fingerprint:v1:{} -->", draft.fingerprint),
         format!("<!-- tandem:triage_run_id:v1:{} -->", triage_run_id),
@@ -406,12 +510,19 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
         "repo": draft.repo,
         "triage_run_id": triage_run_id,
         "template_source": template_source,
-        "suggested_title": draft.title.clone().unwrap_or_else(|| "Bug Monitor issue".to_string()),
+        "suggested_title": triage_summary
+            .as_ref()
+            .and_then(|row| row.get("suggested_title"))
+            .and_then(Value::as_str)
+            .and_then(normalize_issue_draft_line)
+            .or_else(|| draft.title.clone())
+            .unwrap_or_else(|| "Bug Monitor issue".to_string()),
         "what_happened": what_happened,
         "expected_behavior": expected_behavior,
         "steps_to_reproduce": steps_to_reproduce,
         "environment": environment_lines,
         "logs": log_lines,
+        "triage_summary": triage_summary,
         "rendered_body": rendered_body,
         "created_at_ms": crate::now_ms(),
     });
@@ -433,6 +544,144 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
     }
     let _ = state.put_bug_monitor_draft(draft).await?;
     Ok(payload)
+}
+
+pub(super) async fn create_bug_monitor_triage_summary(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<BugMonitorTriageSummaryInput>,
+) -> Response {
+    let mut draft = match state.get_bug_monitor_draft(&id).await {
+        Some(draft) => draft,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "Bug Monitor draft not found",
+                    "code": "BUG_MONITOR_DRAFT_NOT_FOUND",
+                    "draft_id": id,
+                })),
+            )
+                .into_response();
+        }
+    };
+    let Some(triage_run_id) = draft.triage_run_id.clone() else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Bug Monitor draft needs a triage run before a triage summary can be written",
+                "code": "BUG_MONITOR_TRIAGE_SUMMARY_REQUIRES_RUN",
+                "draft_id": id,
+            })),
+        )
+            .into_response();
+    };
+    let what_happened = input
+        .what_happened
+        .as_deref()
+        .and_then(normalize_issue_draft_line)
+        .or_else(|| draft.title.as_deref().and_then(normalize_issue_draft_line))
+        .unwrap_or_else(|| "Bug Monitor detected a failure that needs triage.".to_string());
+    let expected_behavior = input
+        .expected_behavior
+        .as_deref()
+        .and_then(normalize_issue_draft_line)
+        .unwrap_or_else(|| "The failing flow should complete without an error.".to_string());
+    let steps_to_reproduce = input
+        .steps_to_reproduce
+        .into_iter()
+        .filter_map(normalize_issue_draft_line)
+        .take(8)
+        .collect::<Vec<_>>();
+    let environment = input
+        .environment
+        .into_iter()
+        .filter_map(normalize_issue_draft_line)
+        .take(12)
+        .collect::<Vec<_>>();
+    let logs = input
+        .logs
+        .into_iter()
+        .filter_map(normalize_issue_draft_line)
+        .take(20)
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "triage_run_id": triage_run_id,
+        "suggested_title": input.suggested_title.as_deref().and_then(normalize_issue_draft_line),
+        "what_happened": what_happened,
+        "expected_behavior": expected_behavior,
+        "steps_to_reproduce": steps_to_reproduce,
+        "environment": environment,
+        "logs": logs,
+        "notes": input.notes.as_deref().and_then(normalize_issue_draft_line),
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact_id = format!("bug-monitor-triage-summary-{}", Uuid::new_v4().simple());
+    match write_bug_monitor_artifact(
+        &state,
+        &triage_run_id,
+        &artifact_id,
+        "bug_monitor_triage_summary",
+        "artifacts/bug_monitor.triage_summary.json",
+        &payload,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(status) => {
+            return (
+                status,
+                Json(json!({
+                    "error": "Failed to write Bug Monitor triage summary",
+                    "code": "BUG_MONITOR_TRIAGE_SUMMARY_WRITE_FAILED",
+                    "draft_id": id,
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    draft.github_status = Some("triage_summary_ready".to_string());
+    if draft.status.eq_ignore_ascii_case("triage_queued") {
+        draft.status = "draft_ready".to_string();
+    }
+    let draft = match state.put_bug_monitor_draft(draft).await {
+        Ok(draft) => draft,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Failed to update Bug Monitor draft after triage summary",
+                    "code": "BUG_MONITOR_TRIAGE_SUMMARY_DRAFT_UPDATE_FAILED",
+                    "draft_id": id,
+                    "detail": error.to_string(),
+                })),
+            )
+                .into_response();
+        }
+    };
+    match ensure_bug_monitor_issue_draft(state.clone(), &id, true).await {
+        Ok(issue_draft) => Json(json!({
+            "ok": true,
+            "draft": draft,
+            "triage_summary": payload,
+            "issue_draft": issue_draft,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Bug Monitor triage summary was written, but issue draft regeneration failed",
+                "code": "BUG_MONITOR_TRIAGE_SUMMARY_ISSUE_DRAFT_FAILED",
+                "draft": draft,
+                "triage_summary": payload,
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
 }
 
 pub(super) async fn get_bug_monitor_config(

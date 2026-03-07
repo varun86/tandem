@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed Bug Monitor incident persistence so draft-creation failures record a visible incident error instead of leaving a half-created incident with no draft or explanation
   - approving a Bug Monitor draft no longer fails the operator action just because the follow-up GitHub publish step is blocked
   - split Bug Monitor readiness into local ingest vs GitHub publish readiness so live tracker surfaces can report “watching locally” instead of incorrectly showing the monitor as fully blocked
+  - added `POST /bug-monitor/drafts/{id}/triage-summary` so Bug Monitor triage can write a structured summary artifact with `what_happened`, `expected_behavior`, `steps_to_reproduce`, `environment`, and `logs`
+  - Bug Monitor issue-draft generation now prefers that structured triage summary artifact over raw incident detail when rendering the repo issue template
 
 - **Initial Tandem Coder engine API foundation**:
   - added a first engine-owned coder API surface:
