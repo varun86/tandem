@@ -286,6 +286,26 @@ pub(super) struct CoderMergeRecommendationSummaryCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderMergeReadinessReportCreateInput {
+    #[serde(default)]
+    pub(super) recommendation: Option<String>,
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) risk_level: Option<String>,
+    #[serde(default)]
+    pub(super) blockers: Vec<String>,
+    #[serde(default)]
+    pub(super) required_checks: Vec<String>,
+    #[serde(default)]
+    pub(super) required_approvals: Vec<String>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderMemoryHitsQuery {
     #[serde(default)]
     pub(super) q: Option<String>,
@@ -4500,56 +4520,21 @@ pub(super) async fn coder_merge_recommendation_summary_create(
         extra
     });
 
-    let readiness_artifact = if !input.blockers.is_empty()
-        || !input.required_checks.is_empty()
-        || !input.required_approvals.is_empty()
-    {
-        let readiness_id = format!("merge-readiness-{}", Uuid::new_v4().simple());
-        let readiness_payload = json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "workflow_mode": record.workflow_mode,
-            "repo_binding": record.repo_binding,
-            "github_ref": record.github_ref,
-            "recommendation": input.recommendation,
-            "risk_level": input.risk_level,
-            "blockers": input.blockers,
-            "required_checks": input.required_checks,
-            "required_approvals": input.required_approvals,
-            "memory_hits_used": input.memory_hits_used,
-            "summary_artifact_path": artifact.path,
-            "created_at_ms": crate::now_ms(),
-        });
-        let readiness_artifact = write_coder_artifact(
-            &state,
-            &record.linked_context_run_id,
-            &readiness_id,
-            "coder_merge_readiness_report",
-            "artifacts/merge_recommendation.readiness.json",
-            &readiness_payload,
-        )
-        .await?;
-        publish_coder_artifact_added(
-            &state,
-            &record,
-            &readiness_artifact,
-            Some("artifact_write"),
-            {
-                let mut extra = serde_json::Map::new();
-                extra.insert("kind".to_string(), json!("merge_readiness_report"));
-                if let Some(recommendation) = input.recommendation.clone() {
-                    extra.insert("recommendation".to_string(), json!(recommendation));
-                }
-                if let Some(risk_level) = input.risk_level.clone() {
-                    extra.insert("risk_level".to_string(), json!(risk_level));
-                }
-                extra
-            },
-        );
-        Some(readiness_artifact)
-    } else {
-        None
-    };
+    let readiness_artifact = write_merge_readiness_artifact(
+        &state,
+        &record,
+        input.recommendation.as_deref(),
+        input.summary.as_deref(),
+        input.risk_level.as_deref(),
+        &input.blockers,
+        &input.required_checks,
+        &input.required_approvals,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        Some(&artifact.path),
+        Some("artifact_write"),
+    )
+    .await?;
 
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
@@ -4637,6 +4622,118 @@ pub(super) async fn coder_merge_recommendation_summary_create(
         "artifact": artifact,
         "readiness_artifact": readiness_artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
+    })))
+}
+
+async fn write_merge_readiness_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    recommendation: Option<&str>,
+    summary: Option<&str>,
+    risk_level: Option<&str>,
+    blockers: &[String],
+    required_checks: &[String],
+    required_approvals: &[String],
+    memory_hits_used: &[String],
+    notes: Option<&str>,
+    summary_artifact_path: Option<&str>,
+    phase: Option<&str>,
+) -> Result<Option<ContextBlackboardArtifact>, StatusCode> {
+    if blockers.is_empty()
+        && required_checks.is_empty()
+        && required_approvals.is_empty()
+        && summary.map(str::trim).unwrap_or("").is_empty()
+        && notes.map(str::trim).unwrap_or("").is_empty()
+    {
+        return Ok(None);
+    }
+    let readiness_id = format!("merge-readiness-{}", Uuid::new_v4().simple());
+    let readiness_payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "recommendation": recommendation,
+        "summary": summary,
+        "risk_level": risk_level,
+        "blockers": blockers,
+        "required_checks": required_checks,
+        "required_approvals": required_approvals,
+        "memory_hits_used": memory_hits_used,
+        "notes": notes,
+        "summary_artifact_path": summary_artifact_path,
+        "created_at_ms": crate::now_ms(),
+    });
+    let readiness_artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &readiness_id,
+        "coder_merge_readiness_report",
+        "artifacts/merge_recommendation.readiness.json",
+        &readiness_payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &readiness_artifact, phase, {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("merge_readiness_report"));
+        if let Some(recommendation) = recommendation {
+            extra.insert("recommendation".to_string(), json!(recommendation));
+        }
+        if let Some(risk_level) = risk_level {
+            extra.insert("risk_level".to_string(), json!(risk_level));
+        }
+        extra
+    });
+    Ok(Some(readiness_artifact))
+}
+
+pub(super) async fn coder_merge_readiness_report_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderMergeReadinessReportCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let artifact = write_merge_readiness_artifact(
+        &state,
+        &record,
+        input.recommendation.as_deref(),
+        input.summary.as_deref(),
+        input.risk_level.as_deref(),
+        &input.blockers,
+        &input.required_checks,
+        &input.required_approvals,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        None,
+        Some("analysis"),
+    )
+    .await?;
+    let Some(artifact) = artifact else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let final_run = advance_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_pull_request",
+            "retrieve_memory",
+            "assess_merge_readiness",
+        ],
+        &["write_merge_artifact"],
+        "Write the merge recommendation summary.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "artifact": artifact,
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
     })))

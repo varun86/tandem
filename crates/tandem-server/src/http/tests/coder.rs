@@ -1902,6 +1902,136 @@ async fn coder_merge_recommendation_run_create_gets_seeded_tasks() {
 }
 
 #[tokio::test]
+async fn coder_merge_readiness_report_advances_merge_run() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-readiness",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 93
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let readiness_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-readiness/merge-readiness-report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "hold",
+                "summary": "The PR is close, but CODEOWNERS approval is still required.",
+                "risk_level": "medium",
+                "blockers": ["Required CODEOWNERS approval missing"],
+                "required_checks": ["ci / test", "ci / lint"],
+                "required_approvals": ["codeowners"],
+                "memory_hits_used": ["memory-hit-merge-readiness-1"],
+                "notes": "Readiness captured before final merge summary."
+            })
+            .to_string(),
+        ))
+        .expect("readiness request");
+    let readiness_resp = app
+        .clone()
+        .oneshot(readiness_req)
+        .await
+        .expect("readiness response");
+    assert_eq!(readiness_resp.status(), StatusCode::OK);
+    let readiness_payload: Value = serde_json::from_slice(
+        &to_bytes(readiness_resp.into_body(), usize::MAX)
+            .await
+            .expect("readiness body"),
+    )
+    .expect("readiness json");
+    assert_eq!(
+        readiness_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_merge_readiness_report")
+    );
+    assert_eq!(
+        readiness_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("running")
+    );
+    assert_eq!(
+        readiness_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("artifact_write")
+    );
+
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Running);
+    for workflow_node_id in [
+        "inspect_pull_request",
+        "retrieve_memory",
+        "assess_merge_readiness",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("write_merge_artifact"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Runnable)
+    );
+}
+
+#[tokio::test]
 async fn coder_merge_recommendation_summary_create_writes_artifact() {
     let state = test_state().await;
     state
