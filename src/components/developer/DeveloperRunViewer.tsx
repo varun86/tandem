@@ -1111,7 +1111,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                 >
                   {runStatuses.map((status) => (
                     <option key={status} value={status}>
-                      {status === "all" ? "All statuses" : status}
+                      {status === "all"
+                        ? "All statuses"
+                        : status === "active"
+                          ? "Active (running/planning)"
+                          : status}
                     </option>
                   ))}
                 </select>
