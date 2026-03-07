@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Brain,
@@ -311,6 +311,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [acting, setActing] = useState<"approve" | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const kanbanRef = useRef<HTMLDivElement | null>(null);
+  const blackboardRef = useRef<HTMLDivElement | null>(null);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const memorySnapshotRef = useRef<HTMLDivElement | null>(null);
 
   const loadRuns = useCallback(async () => {
     setLoadingRuns(true);
@@ -787,6 +791,24 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     [loadRunDetail, loadRuns, selectedRunId]
   );
 
+  const focusOverviewSection = useCallback(
+    (section: "kanban" | "blackboard" | "timeline" | "memory") => {
+      const target =
+        section === "kanban"
+          ? kanbanRef
+          : section === "blackboard"
+            ? blackboardRef
+            : section === "timeline"
+              ? timelineRef
+              : memorySnapshotRef;
+      setDetailTab("overview");
+      globalThis.setTimeout(() => {
+        target.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    },
+    []
+  );
+
   return (
     <div className="h-full w-full overflow-hidden app-background">
       <div className="grid h-full grid-cols-[340px_minmax(0,1fr)] gap-4 p-4">
@@ -1125,7 +1147,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         key={label}
                         type="button"
                         onClick={() => {
-                          if (label === "Artifacts") {
+                          if (label === "Tasks") {
+                            focusOverviewSection("kanban");
+                          } else if (label === "Decisions") {
+                            focusOverviewSection("blackboard");
+                          } else if (label === "Artifacts") {
                             setDetailTab("artifacts");
                           } else if (label === "Validation tasks") {
                             setDetailTab("validation");
@@ -1196,438 +1222,527 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
               </div>
 
               {detailTab === "overview" ? (
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    ["kanban", "Kanban"],
+                    ["blackboard", "Blackboard"],
+                    ["timeline", "Timeline"],
+                    ["memory", "Memory"],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() =>
+                        focusOverviewSection(key as "kanban" | "blackboard" | "timeline" | "memory")
+                      }
+                      className="rounded-full border border-border bg-surface-elevated/30 px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                    >
+                      Jump to {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {detailTab === "overview" ? (
                 <>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-base">
-                        <PanelsTopLeft className="h-4 w-4" />
-                        Coder Kanban
-                      </CardTitle>
-                      <CardDescription>Projected directly from engine task state.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="overflow-x-auto">
-                      <div className="grid min-w-[980px] grid-cols-5 gap-3">
-                        {taskColumns.map((column) => (
-                          <div
-                            key={column.key}
-                            className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
-                          >
-                            <div className="mb-3 flex items-center justify-between gap-2">
-                              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">
-                                {column.label}
-                              </p>
-                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
-                                {column.tasks.length}
-                              </span>
-                            </div>
-                            <div className="space-y-2">
-                              {column.tasks.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                                  No tasks
-                                </div>
-                              ) : (
-                                column.tasks.map((task, index) => (
-                                  <div
-                                    key={String(
-                                      task.id ?? task.command_id ?? `${column.key}-${index}`
-                                    )}
-                                    className="rounded-xl border border-border bg-surface p-3"
-                                  >
-                                    <p className="text-sm font-medium text-text">
-                                      {String(
-                                        task.title ??
-                                          task.workflow_node_id ??
-                                          task.task_type ??
-                                          task.id ??
-                                          "task"
-                                      )}
-                                    </p>
-                                    <p className="mt-1 text-[11px] text-text-muted">
-                                      {String(task.workflow_node_id ?? task.task_type ?? "")}
-                                    </p>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <div className="grid gap-4 xl:grid-cols-2">
+                  <div ref={kanbanRef}>
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
-                          <GitBranch className="h-4 w-4" />
-                          Blackboard And Decisions
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {selectedBlackboard ? (
-                          <>
-                            <div className="grid gap-3 md:grid-cols-3">
-                              {[
-                                ["Decisions", decisions.length],
-                                ["Open questions", openQuestions.length],
-                                [
-                                  "Artifacts",
-                                  Array.isArray(selectedBlackboard.artifacts)
-                                    ? selectedBlackboard.artifacts.length
-                                    : 0,
-                                ],
-                              ].map(([label, value]) => (
-                                <div
-                                  key={label}
-                                  className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                                >
-                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                                    {label}
-                                  </p>
-                                  <p className="mt-1 text-lg font-semibold text-text">
-                                    {String(value)}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                            {latestDecision ? (
-                              <div className="rounded-3xl border border-primary/20 bg-primary/5 p-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-[11px] uppercase tracking-[0.24em] text-primary/80">
-                                      Current decision
-                                    </p>
-                                    <p className="mt-2 text-sm font-medium text-text">
-                                      {blackboardRowText(latestDecision)}
-                                    </p>
-                                  </div>
-                                  <p className="text-xs text-text-muted">
-                                    {formatTimestamp(blackboardRowTimestamp(latestDecision))}
-                                  </p>
-                                </div>
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  {blackboardRowStepId(latestDecision) ? (
-                                    <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
-                                      Step {blackboardRowStepId(latestDecision)}
-                                    </span>
-                                  ) : null}
-                                  {blackboardRowSourceEventId(latestDecision) ? (
-                                    <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
-                                      Event {blackboardRowSourceEventId(latestDecision)}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="text-sm text-text-muted">
-                                No blackboard decisions yet.
-                              </p>
-                            )}
-                            {blackboardTimeline.length > 0 ? (
-                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-                                <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
-                                  <div className="mb-4 flex items-center justify-between gap-3">
-                                    <div>
-                                      <p className="text-sm font-medium text-text">
-                                        Decision lineage
-                                      </p>
-                                      <p className="text-xs text-text-muted">
-                                        Chronological blackboard activity from the current run.
-                                      </p>
-                                    </div>
-                                    <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
-                                      {blackboardTimeline.length} items
-                                    </span>
-                                  </div>
-                                  <div className="space-y-3">
-                                    {blackboardTimeline.map((item, index) => (
-                                      <div key={item.id} className="flex gap-3">
-                                        <div className="flex w-10 flex-col items-center">
-                                          <span
-                                            className={cn(
-                                              "mt-1 flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.16em]",
-                                              item.kind === "decision"
-                                                ? "border-primary/30 bg-primary/10 text-primary"
-                                                : "border-amber-500/30 bg-amber-500/10 text-amber-100"
-                                            )}
-                                          >
-                                            {item.kind === "decision" ? "D" : "Q"}
-                                          </span>
-                                          {index < blackboardTimeline.length - 1 ? (
-                                            <div className="mt-2 h-full min-h-10 w-px bg-border" />
-                                          ) : null}
-                                        </div>
-                                        <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span
-                                              className={cn(
-                                                "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]",
-                                                item.kind === "decision"
-                                                  ? "border-primary/20 bg-primary/10 text-primary"
-                                                  : "border-amber-500/20 bg-amber-500/10 text-amber-100"
-                                              )}
-                                            >
-                                              {item.kind === "decision"
-                                                ? "Decision"
-                                                : "Open question"}
-                                            </span>
-                                            <span className="text-[11px] text-text-muted">
-                                              {formatTimestamp(item.tsMs)}
-                                            </span>
-                                          </div>
-                                          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
-                                            {item.text}
-                                          </p>
-                                          <div className="mt-3 flex flex-wrap gap-2">
-                                            {item.stepId ? (
-                                              <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                                Step {item.stepId}
-                                              </span>
-                                            ) : null}
-                                            {item.sourceEventId ? (
-                                              <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                                Source {item.sourceEventId}
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div className="space-y-3">
-                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
-                                    <p className="text-sm font-medium text-text">Open questions</p>
-                                    <p className="mt-1 text-xs text-text-muted">
-                                      Outstanding uncertainty captured on the blackboard.
-                                    </p>
-                                    <div className="mt-3 space-y-2">
-                                      {openQuestions.length > 0 ? (
-                                        openQuestions.slice(0, 4).map((question, index) => (
-                                          <div
-                                            key={String(
-                                              question.id ??
-                                                question.source_event_id ??
-                                                `open-question-${index}`
-                                            )}
-                                            className="rounded-2xl border border-border bg-surface p-3"
-                                          >
-                                            <p className="text-sm text-text">
-                                              {blackboardRowText(question)}
-                                            </p>
-                                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
-                                              <span>
-                                                {formatTimestamp(blackboardRowTimestamp(question))}
-                                              </span>
-                                              {blackboardRowStepId(question) ? (
-                                                <span>step {blackboardRowStepId(question)}</span>
-                                              ) : null}
-                                            </div>
-                                          </div>
-                                        ))
-                                      ) : (
-                                        <p className="text-sm text-text-muted">
-                                          No open questions recorded.
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
-                                    <p className="text-sm font-medium text-text">Lineage notes</p>
-                                    <div className="mt-3 space-y-2 text-xs text-text-muted">
-                                      <p>
-                                        Decisions and questions are ordered by their recorded
-                                        blackboard timestamp.
-                                      </p>
-                                      <p>
-                                        Step and source ids come directly from blackboard rows so
-                                        you can correlate them with run tasks and artifacts.
-                                      </p>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : null}
-                          </>
-                        ) : (
-                          <p className="text-sm text-text-muted">
-                            No blackboard payload returned for this run.
-                          </p>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <Workflow className="h-4 w-4" />
-                          Run Timeline
+                          <PanelsTopLeft className="h-4 w-4" />
+                          Coder Kanban
                         </CardTitle>
                         <CardDescription>
-                          Recent engine events from the linked context run.
+                          Projected directly from engine task state.
                         </CardDescription>
                       </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-                          <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
-                            <Search className="h-4 w-4 text-text-muted" />
-                            <input
-                              value={eventQuery}
-                              onChange={(event) => setEventQuery(event.target.value)}
-                              placeholder="Filter events by type, step, id, or text"
-                              className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-subtle"
-                            />
-                          </div>
-                          <select
-                            value={eventTypeFilter}
-                            onChange={(event) => setEventTypeFilter(event.target.value)}
-                            className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
-                          >
-                            {eventTypes.map((type) => (
-                              <option key={type} value={type}>
-                                {type === "all" ? "All event types" : type}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        {filteredEventTimeline.length === 0 ? (
-                          <p className="text-sm text-text-muted">
-                            No run events match the current filters.
-                          </p>
-                        ) : (
-                          filteredEventTimeline.map((event, index) => {
-                            const eventType = runEventType(event);
-                            const eventText = runEventText(event);
-                            const stepId = pickText(event.step_id);
-                            const sourceEventId = pickText(event.event_id);
-                            const relatedArtifacts = relatedArtifactsForEvent(
-                              artifacts,
-                              stepId,
-                              sourceEventId
-                            ).slice(0, 3);
-                            return (
-                              <div key={runEventId(event, index)} className="flex gap-3">
-                                <div className="flex w-10 flex-col items-center">
-                                  <span className="mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/10 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
-                                    {eventType.slice(0, 1).toUpperCase()}
-                                  </span>
-                                  {index < filteredEventTimeline.length - 1 ? (
-                                    <div className="mt-2 h-full min-h-10 w-px bg-border" />
-                                  ) : null}
-                                </div>
-                                <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-sky-200">
-                                      {eventType.replace(/_/g, " ")}
-                                    </span>
-                                    <span className="text-[11px] text-text-muted">
-                                      {formatTimestamp(runEventTimestamp(event))}
-                                    </span>
-                                  </div>
-                                  {eventText ? (
-                                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
-                                      {eventText}
-                                    </p>
-                                  ) : null}
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    {stepId ? (
-                                      <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                        Step {stepId}
-                                      </span>
-                                    ) : null}
-                                    {sourceEventId ? (
-                                      <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                        Event {sourceEventId}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  {relatedArtifacts.length > 0 ? (
-                                    <div className="mt-3 rounded-2xl border border-border bg-surface-elevated/40 p-3">
-                                      <div className="mb-2 flex items-center justify-between gap-3">
-                                        <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                                          Related artifacts
-                                        </p>
-                                        <span className="text-[11px] text-text-muted">
-                                          {relatedArtifacts.length}
-                                        </span>
-                                      </div>
-                                      <div className="space-y-2">
-                                        {relatedArtifacts.map((artifact) => (
-                                          <button
-                                            key={artifact.id}
-                                            type="button"
-                                            onClick={() => {
-                                              setSelectedArtifactPath(artifact.path);
-                                              setDetailTab("artifacts");
-                                            }}
-                                            className="w-full rounded-2xl border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-surface-elevated"
-                                          >
-                                            <div className="flex items-center justify-between gap-3">
-                                              <span className="text-sm font-medium text-text">
-                                                {artifact.artifact_type}
-                                              </span>
-                                              <span className="text-[11px] text-text-muted">
-                                                {formatTimestamp(artifact.ts_ms)}
-                                              </span>
-                                            </div>
-                                            <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
-                                              {artifact.path}
-                                            </p>
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <Brain className="h-4 w-4" />
-                          Memory Snapshot
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
-                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                              Hits
-                            </p>
-                            <p className="mt-1 text-lg font-semibold text-text">
-                              {memoryHits.length}
-                            </p>
-                          </div>
-                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
-                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                              Candidates
-                            </p>
-                            <p className="mt-1 text-lg font-semibold text-text">
-                              {memoryCandidates.length}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          {memoryHits.slice(0, 3).map((hit, index) => (
+                      <CardContent className="overflow-x-auto">
+                        <div className="grid min-w-[980px] grid-cols-5 gap-3">
+                          {taskColumns.map((column) => (
                             <div
-                              key={String(hit.candidate_id ?? hit.memory_id ?? index)}
-                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                              key={column.key}
+                              className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
                             >
-                              <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                                {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
-                              </pre>
+                              <div className="mb-3 flex items-center justify-between gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">
+                                  {column.label}
+                                </p>
+                                <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                                  {column.tasks.length}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                {column.tasks.length === 0 ? (
+                                  <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                                    No tasks
+                                  </div>
+                                ) : (
+                                  column.tasks.map((task, index) =>
+                                    (() => {
+                                      const relatedArtifacts = relatedArtifactsForTask(
+                                        artifacts,
+                                        task
+                                      ).slice(0, 3);
+                                      return (
+                                        <div
+                                          key={String(
+                                            task.id ?? task.command_id ?? `${column.key}-${index}`
+                                          )}
+                                          className="rounded-xl border border-border bg-surface p-3"
+                                        >
+                                          <p className="text-sm font-medium text-text">
+                                            {String(
+                                              task.title ??
+                                                task.workflow_node_id ??
+                                                task.task_type ??
+                                                task.id ??
+                                                "task"
+                                            )}
+                                          </p>
+                                          <p className="mt-1 text-[11px] text-text-muted">
+                                            {String(task.workflow_node_id ?? task.task_type ?? "")}
+                                          </p>
+                                          {relatedArtifacts.length > 0 ? (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                              {relatedArtifacts.map((artifact) => (
+                                                <button
+                                                  key={artifact.id}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setSelectedArtifactPath(artifact.path);
+                                                    setDetailTab(
+                                                      artifactCategory(artifact) === "validation"
+                                                        ? "validation"
+                                                        : "artifacts"
+                                                    );
+                                                  }}
+                                                  className="rounded-full border border-border bg-surface-elevated/40 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-text-muted transition-colors hover:bg-surface-elevated"
+                                                >
+                                                  {artifact.artifact_type}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })()
+                                  )
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
                       </CardContent>
                     </Card>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div ref={blackboardRef}>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <GitBranch className="h-4 w-4" />
+                            Blackboard And Decisions
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {selectedBlackboard ? (
+                            <>
+                              <div className="grid gap-3 md:grid-cols-3">
+                                {[
+                                  ["Decisions", decisions.length],
+                                  ["Open questions", openQuestions.length],
+                                  [
+                                    "Artifacts",
+                                    Array.isArray(selectedBlackboard.artifacts)
+                                      ? selectedBlackboard.artifacts.length
+                                      : 0,
+                                  ],
+                                ].map(([label, value]) => (
+                                  <div
+                                    key={label}
+                                    className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                  >
+                                    <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                      {label}
+                                    </p>
+                                    <p className="mt-1 text-lg font-semibold text-text">
+                                      {String(value)}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                              {latestDecision ? (
+                                <div className="rounded-3xl border border-primary/20 bg-primary/5 p-4">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-[11px] uppercase tracking-[0.24em] text-primary/80">
+                                        Current decision
+                                      </p>
+                                      <p className="mt-2 text-sm font-medium text-text">
+                                        {blackboardRowText(latestDecision)}
+                                      </p>
+                                    </div>
+                                    <p className="text-xs text-text-muted">
+                                      {formatTimestamp(blackboardRowTimestamp(latestDecision))}
+                                    </p>
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {blackboardRowStepId(latestDecision) ? (
+                                      <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                        Step {blackboardRowStepId(latestDecision)}
+                                      </span>
+                                    ) : null}
+                                    {blackboardRowSourceEventId(latestDecision) ? (
+                                      <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                        Event {blackboardRowSourceEventId(latestDecision)}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-sm text-text-muted">
+                                  No blackboard decisions yet.
+                                </p>
+                              )}
+                              {blackboardTimeline.length > 0 ? (
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                    <div className="mb-4 flex items-center justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-medium text-text">
+                                          Decision lineage
+                                        </p>
+                                        <p className="text-xs text-text-muted">
+                                          Chronological blackboard activity from the current run.
+                                        </p>
+                                      </div>
+                                      <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                        {blackboardTimeline.length} items
+                                      </span>
+                                    </div>
+                                    <div className="space-y-3">
+                                      {blackboardTimeline.map((item, index) => (
+                                        <div key={item.id} className="flex gap-3">
+                                          <div className="flex w-10 flex-col items-center">
+                                            <span
+                                              className={cn(
+                                                "mt-1 flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.16em]",
+                                                item.kind === "decision"
+                                                  ? "border-primary/30 bg-primary/10 text-primary"
+                                                  : "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                                              )}
+                                            >
+                                              {item.kind === "decision" ? "D" : "Q"}
+                                            </span>
+                                            {index < blackboardTimeline.length - 1 ? (
+                                              <div className="mt-2 h-full min-h-10 w-px bg-border" />
+                                            ) : null}
+                                          </div>
+                                          <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span
+                                                className={cn(
+                                                  "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]",
+                                                  item.kind === "decision"
+                                                    ? "border-primary/20 bg-primary/10 text-primary"
+                                                    : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+                                                )}
+                                              >
+                                                {item.kind === "decision"
+                                                  ? "Decision"
+                                                  : "Open question"}
+                                              </span>
+                                              <span className="text-[11px] text-text-muted">
+                                                {formatTimestamp(item.tsMs)}
+                                              </span>
+                                            </div>
+                                            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
+                                              {item.text}
+                                            </p>
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                              {item.stepId ? (
+                                                <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                  Step {item.stepId}
+                                                </span>
+                                              ) : null}
+                                              {item.sourceEventId ? (
+                                                <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                  Source {item.sourceEventId}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                    <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                      <p className="text-sm font-medium text-text">
+                                        Open questions
+                                      </p>
+                                      <p className="mt-1 text-xs text-text-muted">
+                                        Outstanding uncertainty captured on the blackboard.
+                                      </p>
+                                      <div className="mt-3 space-y-2">
+                                        {openQuestions.length > 0 ? (
+                                          openQuestions.slice(0, 4).map((question, index) => (
+                                            <div
+                                              key={String(
+                                                question.id ??
+                                                  question.source_event_id ??
+                                                  `open-question-${index}`
+                                              )}
+                                              className="rounded-2xl border border-border bg-surface p-3"
+                                            >
+                                              <p className="text-sm text-text">
+                                                {blackboardRowText(question)}
+                                              </p>
+                                              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+                                                <span>
+                                                  {formatTimestamp(
+                                                    blackboardRowTimestamp(question)
+                                                  )}
+                                                </span>
+                                                {blackboardRowStepId(question) ? (
+                                                  <span>step {blackboardRowStepId(question)}</span>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          ))
+                                        ) : (
+                                          <p className="text-sm text-text-muted">
+                                            No open questions recorded.
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                      <p className="text-sm font-medium text-text">Lineage notes</p>
+                                      <div className="mt-3 space-y-2 text-xs text-text-muted">
+                                        <p>
+                                          Decisions and questions are ordered by their recorded
+                                          blackboard timestamp.
+                                        </p>
+                                        <p>
+                                          Step and source ids come directly from blackboard rows so
+                                          you can correlate them with run tasks and artifacts.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <p className="text-sm text-text-muted">
+                              No blackboard payload returned for this run.
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div ref={timelineRef}>
+                      <Card>
+                        <CardHeader>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <CardTitle className="flex items-center gap-2 text-base">
+                                <Workflow className="h-4 w-4" />
+                                Run Timeline
+                              </CardTitle>
+                              <CardDescription>
+                                Recent engine events from the linked context run.
+                              </CardDescription>
+                            </div>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => setDetailTab("artifacts")}
+                            >
+                              <Database className="h-4 w-4" />
+                              Open artifacts
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                            <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
+                              <Search className="h-4 w-4 text-text-muted" />
+                              <input
+                                value={eventQuery}
+                                onChange={(event) => setEventQuery(event.target.value)}
+                                placeholder="Filter events by type, step, id, or text"
+                                className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-subtle"
+                              />
+                            </div>
+                            <select
+                              value={eventTypeFilter}
+                              onChange={(event) => setEventTypeFilter(event.target.value)}
+                              className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
+                            >
+                              {eventTypes.map((type) => (
+                                <option key={type} value={type}>
+                                  {type === "all" ? "All event types" : type}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {filteredEventTimeline.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No run events match the current filters.
+                            </p>
+                          ) : (
+                            filteredEventTimeline.map((event, index) => {
+                              const eventType = runEventType(event);
+                              const eventText = runEventText(event);
+                              const stepId = pickText(event.step_id);
+                              const sourceEventId = pickText(event.event_id);
+                              const relatedArtifacts = relatedArtifactsForEvent(
+                                artifacts,
+                                stepId,
+                                sourceEventId
+                              ).slice(0, 3);
+                              return (
+                                <div key={runEventId(event, index)} className="flex gap-3">
+                                  <div className="flex w-10 flex-col items-center">
+                                    <span className="mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/10 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+                                      {eventType.slice(0, 1).toUpperCase()}
+                                    </span>
+                                    {index < filteredEventTimeline.length - 1 ? (
+                                      <div className="mt-2 h-full min-h-10 w-px bg-border" />
+                                    ) : null}
+                                  </div>
+                                  <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-sky-200">
+                                        {eventType.replace(/_/g, " ")}
+                                      </span>
+                                      <span className="text-[11px] text-text-muted">
+                                        {formatTimestamp(runEventTimestamp(event))}
+                                      </span>
+                                    </div>
+                                    {eventText ? (
+                                      <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
+                                        {eventText}
+                                      </p>
+                                    ) : null}
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {stepId ? (
+                                        <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                          Step {stepId}
+                                        </span>
+                                      ) : null}
+                                      {sourceEventId ? (
+                                        <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                          Event {sourceEventId}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {relatedArtifacts.length > 0 ? (
+                                      <div className="mt-3 rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                          <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                            Related artifacts
+                                          </p>
+                                          <span className="text-[11px] text-text-muted">
+                                            {relatedArtifacts.length}
+                                          </span>
+                                        </div>
+                                        <div className="space-y-2">
+                                          {relatedArtifacts.map((artifact) => (
+                                            <button
+                                              key={artifact.id}
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedArtifactPath(artifact.path);
+                                                setDetailTab("artifacts");
+                                              }}
+                                              className="w-full rounded-2xl border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-surface-elevated"
+                                            >
+                                              <div className="flex items-center justify-between gap-3">
+                                                <span className="text-sm font-medium text-text">
+                                                  {artifact.artifact_type}
+                                                </span>
+                                                <span className="text-[11px] text-text-muted">
+                                                  {formatTimestamp(artifact.ts_ms)}
+                                                </span>
+                                              </div>
+                                              <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
+                                                {artifact.path}
+                                              </p>
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div ref={memorySnapshotRef}>
+                      <Card>
+                        <CardHeader>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <CardTitle className="flex items-center gap-2 text-base">
+                                <Brain className="h-4 w-4" />
+                                Memory Snapshot
+                              </CardTitle>
+                            </div>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => setDetailTab("memory")}
+                            >
+                              <Brain className="h-4 w-4" />
+                              Open memory
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Hits
+                              </p>
+                              <p className="mt-1 text-lg font-semibold text-text">
+                                {memoryHits.length}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Candidates
+                              </p>
+                              <p className="mt-1 text-lg font-semibold text-text">
+                                {memoryCandidates.length}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {memoryHits.slice(0, 3).map((hit, index) => (
+                              <div
+                                key={String(hit.candidate_id ?? hit.memory_id ?? index)}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                              >
+                                <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                                  {renderValue(hit.summary ?? hit.content ?? hit.payload ?? hit)}
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
                   </div>
                 </>
               ) : null}
