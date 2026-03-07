@@ -474,6 +474,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [compareArtifactPath, setCompareArtifactPath] = useState<string | null>(null);
   const [compareArtifactContent, setCompareArtifactContent] = useState<string>("");
   const [selectedDiffFileKey, setSelectedDiffFileKey] = useState<string | null>(null);
+  const [compareDiffFileKey, setCompareDiffFileKey] = useState<string | null>(null);
   const [artifactPreviewMode, setArtifactPreviewMode] = useState<"diff" | "raw">("diff");
   const [artifactDiffSplitView, setArtifactDiffSplitView] = useState(true);
   const [loadingArtifact, setLoadingArtifact] = useState(false);
@@ -590,6 +591,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
 
   useEffect(() => {
     setSelectedDiffFileKey(null);
+    setCompareDiffFileKey(null);
     setArtifactPreviewMode("diff");
     setArtifactDiffSplitView(true);
     setCompareArtifactPath(null);
@@ -1010,6 +1012,68 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     if (!compareArtifactPath) return null;
     return artifacts.find((artifact) => artifact.path === compareArtifactPath) ?? null;
   }, [artifacts, compareArtifactPath]);
+
+  const compareArtifactPreview = useMemo<ArtifactPreview | null>(() => {
+    if (!compareArtifactContent) return null;
+    try {
+      const parsed = JSON.parse(compareArtifactContent) as Record<string, unknown>;
+      const files = extractArtifactDiffFiles(parsed, compareArtifactRecord?.path);
+      if (files.length > 0) {
+        return {
+          kind: "diff",
+          rawValue: compareArtifactContent,
+          files,
+        };
+      }
+      return { kind: "raw", value: compareArtifactContent };
+    } catch {
+      return { kind: "raw", value: compareArtifactContent };
+    }
+  }, [compareArtifactContent, compareArtifactRecord?.path]);
+
+  const compareDiffFile = useMemo(() => {
+    if (compareArtifactPreview?.kind !== "diff") return null;
+    return compareArtifactPreview.files.find((file) => file.key === compareDiffFileKey) ?? null;
+  }, [compareArtifactPreview, compareDiffFileKey]);
+
+  const structuredComparePair = useMemo(() => {
+    if (artifactPreview?.kind !== "diff" || compareArtifactPreview?.kind !== "diff") return null;
+    const selectedByLabel = new Map(artifactPreview.files.map((file) => [file.label, file]));
+    const compareByLabel = new Map(compareArtifactPreview.files.map((file) => [file.label, file]));
+    const sharedLabels = artifactPreview.files
+      .map((file) => file.label)
+      .filter((label) => compareByLabel.has(label));
+    if (sharedLabels.length === 0) return null;
+    const activeLabel =
+      (selectedDiffFile && compareByLabel.has(selectedDiffFile.label) && selectedDiffFile.label) ||
+      (compareDiffFile && selectedByLabel.has(compareDiffFile.label) && compareDiffFile.label) ||
+      sharedLabels[0] ||
+      null;
+    if (!activeLabel) return null;
+    return {
+      sharedLabels,
+      selectedFile: selectedByLabel.get(activeLabel) ?? null,
+      compareFile: compareByLabel.get(activeLabel) ?? null,
+      activeLabel,
+    };
+  }, [artifactPreview, compareArtifactPreview, compareDiffFile, selectedDiffFile]);
+
+  useEffect(() => {
+    if (compareArtifactPreview?.kind !== "diff") return;
+    if (structuredComparePair?.activeLabel) {
+      const target =
+        compareArtifactPreview.files.find(
+          (file) => file.label === structuredComparePair.activeLabel
+        )?.key ?? null;
+      setCompareDiffFileKey(target);
+      return;
+    }
+    setCompareDiffFileKey((current) =>
+      compareArtifactPreview.files.some((file) => file.key === current)
+        ? current
+        : (compareArtifactPreview.files[0]?.key ?? null)
+    );
+  }, [compareArtifactPreview, structuredComparePair]);
 
   const relatedBlackboardRows = useMemo(() => {
     if (!selectedArtifactContext) return [];
@@ -1578,6 +1642,72 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     if (loadingCompareArtifact) {
       return <p className="text-sm text-text-muted">Loading comparison artifact…</p>;
     }
+    const structuredCompare =
+      structuredComparePair?.selectedFile && structuredComparePair?.compareFile ? (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-border bg-surface-elevated/30 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                  Structured compare
+                </p>
+                <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
+                  {structuredComparePair.activeLabel}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                  {structuredComparePair.selectedFile.extensionLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setArtifactDiffSplitView((current) => !current)}
+                  className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                >
+                  {artifactDiffSplitView ? "Split" : "Unified"}
+                </button>
+              </div>
+            </div>
+            {structuredComparePair.sharedLabels.length > 1 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {structuredComparePair.sharedLabels.map((label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      const currentFile =
+                        artifactPreview?.kind === "diff"
+                          ? artifactPreview.files.find((file) => file.label === label)
+                          : null;
+                      const siblingFile =
+                        compareArtifactPreview?.kind === "diff"
+                          ? compareArtifactPreview.files.find((file) => file.label === label)
+                          : null;
+                      setSelectedDiffFileKey(currentFile?.key ?? null);
+                      setCompareDiffFileKey(siblingFile?.key ?? null);
+                    }}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] transition-colors",
+                      structuredComparePair.activeLabel === label
+                        ? "border-primary/40 bg-primary/10 text-text"
+                        : "border-border text-text-muted hover:bg-surface-elevated hover:text-text"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <DiffViewer
+            oldValue={structuredComparePair.selectedFile.newValue}
+            newValue={structuredComparePair.compareFile.newValue}
+            oldTitle={`Current ${structuredComparePair.selectedFile.label}`}
+            newTitle={`Compared ${structuredComparePair.compareFile.label}`}
+            splitView={artifactDiffSplitView}
+          />
+        </div>
+      ) : null;
     return (
       <div className="space-y-3 rounded-3xl border border-primary/20 bg-primary/5 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1601,27 +1731,33 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
             Clear compare
           </button>
         </div>
-        <DiffViewer
-          oldValue={selectedArtifactContent}
-          newValue={compareArtifactContent}
-          oldTitle={
-            selectedArtifactRecord
-              ? `${selectedArtifactRecord.artifact_type} (${formatTimestamp(selectedArtifactRecord.ts_ms)})`
-              : "Current artifact"
-          }
-          newTitle={
-            compareArtifactRecord
-              ? `${compareArtifactRecord.artifact_type} (${formatTimestamp(compareArtifactRecord.ts_ms)})`
-              : "Compared artifact"
-          }
-          splitView={artifactDiffSplitView}
-        />
+        {structuredCompare ?? (
+          <DiffViewer
+            oldValue={selectedArtifactContent}
+            newValue={compareArtifactContent}
+            oldTitle={
+              selectedArtifactRecord
+                ? `${selectedArtifactRecord.artifact_type} (${formatTimestamp(selectedArtifactRecord.ts_ms)})`
+                : "Current artifact"
+            }
+            newTitle={
+              compareArtifactRecord
+                ? `${compareArtifactRecord.artifact_type} (${formatTimestamp(compareArtifactRecord.ts_ms)})`
+                : "Compared artifact"
+            }
+            splitView={artifactDiffSplitView}
+          />
+        )}
       </div>
     );
   }, [
     artifactDiffSplitView,
+    artifactPreview,
     compareArtifactPath,
     compareArtifactContent,
+    compareArtifactPreview,
+    compareDiffFile,
+    structuredComparePair,
     compareArtifactRecord,
     loadingCompareArtifact,
     selectedArtifactContent,
