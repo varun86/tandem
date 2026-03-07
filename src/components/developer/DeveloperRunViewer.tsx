@@ -326,6 +326,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [acting, setActing] = useState<"approve" | "cancel" | null>(null);
   const [copiedContextRun, setCopiedContextRun] = useState(false);
+  const [copiedDuplicateBadge, setCopiedDuplicateBadge] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const kanbanRef = useRef<HTMLDivElement | null>(null);
   const blackboardRef = useRef<HTMLDivElement | null>(null);
@@ -898,6 +899,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       // Ignore clipboard failures; the id is still visible in the UI.
     }
   }, [selectedRun?.linked_context_run_id]);
+
+  const copyDuplicateBadgeValue = useCallback(async (value: string) => {
+    try {
+      if (!globalThis.navigator?.clipboard?.writeText) return;
+      await globalThis.navigator.clipboard.writeText(value);
+      setCopiedDuplicateBadge(value);
+      globalThis.setTimeout(() => {
+        setCopiedDuplicateBadge((current) => (current === value ? null : current));
+      }, 1200);
+    } catch {
+      // Ignore clipboard failures and keep the row action available.
+    }
+  }, []);
 
   const focusOverviewSection = useCallback(
     (section: "kanban" | "blackboard" | "timeline" | "memory") => {
@@ -2543,12 +2557,17 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                     </p>
                                     <div className="mt-2 flex flex-wrap gap-2">
                                       {duplicateMatchBadges(match).map((badge) => (
-                                        <span
+                                        <button
                                           key={badge}
-                                          className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted"
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            void copyDuplicateBadgeValue(badge);
+                                          }}
+                                          className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
                                         >
-                                          {badge}
-                                        </span>
+                                          {copiedDuplicateBadge === badge ? "Copied" : badge}
+                                        </button>
                                       ))}
                                     </div>
                                   </button>
