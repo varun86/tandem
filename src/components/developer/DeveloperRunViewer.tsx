@@ -240,6 +240,8 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [runQuery, setRunQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [workflowFilter, setWorkflowFilter] = useState<string>("all");
+  const [eventQuery, setEventQuery] = useState("");
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
   const [detailTab, setDetailTab] = useState<"overview" | "artifacts" | "memory" | "validation">(
     "overview"
   );
@@ -420,6 +422,31 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       })
       .slice(0, 12);
   }, [selectedRunEvents]);
+
+  const eventTypes = useMemo(() => {
+    return [
+      "all",
+      ...new Set(selectedRunEvents.map((event) => runEventType(event)).filter(Boolean)),
+    ];
+  }, [selectedRunEvents]);
+
+  const filteredEventTimeline = useMemo(() => {
+    const needle = eventQuery.trim().toLowerCase();
+    return eventTimeline.filter((event) => {
+      const type = runEventType(event);
+      if (eventTypeFilter !== "all" && type !== eventTypeFilter) return false;
+      if (!needle) return true;
+      const text = runEventText(event).toLowerCase();
+      const stepId = pickText(event.step_id).toLowerCase();
+      const eventId = pickText(event.event_id).toLowerCase();
+      return (
+        type.toLowerCase().includes(needle) ||
+        text.includes(needle) ||
+        stepId.includes(needle) ||
+        eventId.includes(needle)
+      );
+    });
+  }, [eventQuery, eventTimeline, eventTypeFilter]);
 
   const readinessHint = useMemo(() => {
     if (!error) return null;
@@ -1196,12 +1223,34 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-3">
-                        {eventTimeline.length === 0 ? (
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                          <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
+                            <Search className="h-4 w-4 text-text-muted" />
+                            <input
+                              value={eventQuery}
+                              onChange={(event) => setEventQuery(event.target.value)}
+                              placeholder="Filter events by type, step, id, or text"
+                              className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-subtle"
+                            />
+                          </div>
+                          <select
+                            value={eventTypeFilter}
+                            onChange={(event) => setEventTypeFilter(event.target.value)}
+                            className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none"
+                          >
+                            {eventTypes.map((type) => (
+                              <option key={type} value={type}>
+                                {type === "all" ? "All event types" : type}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {filteredEventTimeline.length === 0 ? (
                           <p className="text-sm text-text-muted">
-                            No run events returned for this run.
+                            No run events match the current filters.
                           </p>
                         ) : (
-                          eventTimeline.map((event, index) => {
+                          filteredEventTimeline.map((event, index) => {
                             const eventType = runEventType(event);
                             const eventText = runEventText(event);
                             const stepId = pickText(event.step_id);
@@ -1212,7 +1261,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                   <span className="mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/10 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
                                     {eventType.slice(0, 1).toUpperCase()}
                                   </span>
-                                  {index < eventTimeline.length - 1 ? (
+                                  {index < filteredEventTimeline.length - 1 ? (
                                     <div className="mt-2 h-full min-h-10 w-px bg-border" />
                                   ) : null}
                                 </div>
