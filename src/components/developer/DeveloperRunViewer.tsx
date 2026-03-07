@@ -763,6 +763,15 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return [...triageArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
   }, [artifactGroups]);
 
+  const latestArtifactByCategory = useMemo(() => {
+    const latest = new Map<ArtifactCategory, CoderArtifactRecord>();
+    for (const group of artifactGroups) {
+      const top = [...group.artifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0];
+      if (top) latest.set(group.key, top);
+    }
+    return latest;
+  }, [artifactGroups]);
+
   const detailTabMeta = useMemo(() => {
     return [
       { key: "overview" as const, label: "Overview", count: selectedTaskRows.length },
@@ -1907,24 +1916,38 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             {[
                               {
                                 label: "Duplicate",
+                                key: "duplicate" as const,
                                 group: artifactGroups.find((group) => group.key === "duplicate"),
                               },
                               {
                                 label: "Triage",
+                                key: "triage" as const,
                                 group: artifactGroups.find((group) => group.key === "triage"),
                               },
                               {
                                 label: "Memory",
+                                key: "memory" as const,
                                 group: artifactGroups.find((group) => group.key === "memory"),
                               },
                               {
                                 label: "Validation",
+                                key: "validation" as const,
                                 group: artifactGroups.find((group) => group.key === "validation"),
                               },
-                            ].map(({ label, group }) => (
-                              <div
+                            ].map(({ key, label, group }) => (
+                              <button
                                 key={label}
-                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                                type="button"
+                                onClick={() => {
+                                  const artifact = latestArtifactByCategory.get(key);
+                                  if (artifact) {
+                                    setSelectedArtifactPath(artifact.path);
+                                  }
+                                  if (key === "validation") {
+                                    setDetailTab("validation");
+                                  }
+                                }}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                               >
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                   {label}
@@ -1932,7 +1955,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 <p className="mt-1 text-lg font-semibold text-text">
                                   {String(group?.artifacts.length ?? 0)}
                                 </p>
-                              </div>
+                              </button>
                             ))}
                           </div>
 
