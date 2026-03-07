@@ -1022,8 +1022,14 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
             _ => 0_u8,
         }
     };
+    let governed_issue_fix_weight = |hit: &Value| {
+        (matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
+            && memory_hit_kind(hit).as_deref() == Some("fix_pattern")
+            && hit.get("source").and_then(Value::as_str) == Some("governed_memory")) as u8
+    };
     let kind_order = kind_weight(b).cmp(&kind_weight(a));
     let structured_order = structured_signal_weight(b).cmp(&structured_signal_weight(a));
+    let governed_issue_fix_order = governed_issue_fix_weight(b).cmp(&governed_issue_fix_weight(a));
     let score_order = || {
         b_score
             .partial_cmp(&a_score)
@@ -1037,6 +1043,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
     ref_order
         .then_with(|| kind_order)
         .then_with(|| structured_order)
+        .then_with(|| governed_issue_fix_order)
         .then_with(score_order)
 }
 

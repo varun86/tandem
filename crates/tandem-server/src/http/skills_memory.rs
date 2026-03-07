@@ -2012,6 +2012,7 @@ pub(super) async fn memory_list(
                     "created_at_ms": row.created_at_ms,
                     "updated_at_ms": row.updated_at_ms,
                     "visibility": row.visibility,
+                    "demoted": row.demoted,
                 })
             })
             .collect::<Vec<_>>()

@@ -566,4 +566,37 @@ async fn memory_demote_hides_item_from_search_results() {
         .map(|rows| rows.len())
         .unwrap_or_default();
     assert_eq!(count, 0);
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/memory?limit=20")
+        .body(Body::empty())
+        .expect("memory list request");
+    let list_resp = app
+        .clone()
+        .oneshot(list_req)
+        .await
+        .expect("memory list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("memory list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("memory list json");
+    let demoted_row = list_payload
+        .get("items")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("id").and_then(Value::as_str) == Some(memory_id.as_str()))
+        })
+        .cloned()
+        .expect("demoted memory row");
+    assert_eq!(
+        demoted_row.get("demoted").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        demoted_row.get("visibility").and_then(Value::as_str),
+        Some("private")
+    );
 }
