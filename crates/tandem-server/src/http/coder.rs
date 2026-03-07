@@ -114,6 +114,7 @@ pub(super) struct CoderRunListQuery {
 pub(super) enum CoderMemoryCandidateKind {
     TriageMemory,
     ReviewMemory,
+    RegressionSignal,
     FailurePattern,
     RunOutcome,
 }
@@ -2320,6 +2321,7 @@ pub(super) async fn coder_memory_candidate_promote(
             kind: match kind {
                 CoderMemoryCandidateKind::TriageMemory => MemoryContentKind::SolutionCapsule,
                 CoderMemoryCandidateKind::ReviewMemory => MemoryContentKind::SolutionCapsule,
+                CoderMemoryCandidateKind::RegressionSignal => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::FailurePattern => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::RunOutcome => MemoryContentKind::Note,
             },
@@ -2653,6 +2655,54 @@ pub(super) async fn coder_pr_review_summary_create(
             "kind": "review_memory",
             "artifact_path": review_memory_artifact.path,
         }));
+
+        if !input.regression_signals.is_empty() {
+            let regression_summary = format!(
+                "PR review regression signals: {}",
+                input
+                    .regression_signals
+                    .iter()
+                    .filter_map(|row| {
+                        row.get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToString::to_string)
+                            .or_else(|| {
+                                row.get("kind")
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(ToString::to_string)
+                            })
+                    })
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+            let (regression_signal_id, regression_signal_artifact) =
+                write_coder_memory_candidate_artifact(
+                    &state,
+                    &record,
+                    CoderMemoryCandidateKind::RegressionSignal,
+                    Some(regression_summary),
+                    Some("write_review_artifact".to_string()),
+                    json!({
+                        "workflow_mode": "pr_review",
+                        "verdict": input.verdict,
+                        "risk_level": input.risk_level,
+                        "regression_signals": input.regression_signals,
+                        "memory_hits_used": input.memory_hits_used,
+                        "summary_artifact_path": artifact.path,
+                    }),
+                )
+                .await?;
+            generated_candidates.push(json!({
+                "candidate_id": regression_signal_id,
+                "kind": "regression_signal",
+                "artifact_path": regression_signal_artifact.path,
+            }));
+        }
 
         let verdict = input
             .verdict

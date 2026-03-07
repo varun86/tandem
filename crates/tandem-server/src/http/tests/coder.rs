@@ -462,6 +462,15 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         summary_payload
             .get("generated_candidates")
             .and_then(Value::as_array)
+            .map(|rows| rows.iter().any(|row| {
+                row.get("kind").and_then(Value::as_str) == Some("regression_signal")
+            })),
+        Some(true)
+    );
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
             .map(|rows| rows
                 .iter()
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
@@ -549,7 +558,11 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
                 "verdict": "changes_requested",
                 "summary": "Previous review flagged missing rollback coverage.",
                 "risk_level": "high",
-                "requested_changes": ["Add rollback coverage"]
+                "requested_changes": ["Add rollback coverage"],
+                "regression_signals": [{
+                    "kind": "historical_failure_pattern",
+                    "summary": "Rollback-free migrations regressed previously"
+                }]
             })
             .to_string(),
         ))
@@ -639,6 +652,16 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
         .and_then(|row| row.get("hits"))
         .and_then(Value::as_array)
         .map(|rows| !rows.is_empty())
+        .unwrap_or(false));
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("regression_signal")
+                && (row.get("source_coder_run_id").and_then(Value::as_str)
+                    == Some("coder-pr-review-a")
+                    || row.get("run_id").and_then(Value::as_str) == Some("coder-pr-review-a"))
+        }))
         .unwrap_or(false));
     assert!(hits_payload
         .get("hits")
