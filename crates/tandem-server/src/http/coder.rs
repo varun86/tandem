@@ -1046,6 +1046,12 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
             && memory_hit_kind(hit).as_deref() == Some("regression_signal")
             && hit.get("source").and_then(Value::as_str) == Some("governed_memory")) as u8
     };
+    let governed_merge_weight = |hit: &Value| {
+        (matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation)
+            && memory_hit_kind(hit).as_deref() == Some("run_outcome")
+            && memory_hit_workflow_mode(hit).as_deref() == Some("merge_recommendation")
+            && hit.get("source").and_then(Value::as_str) == Some("governed_memory")) as u8
+    };
     let kind_order = kind_weight(b).cmp(&kind_weight(a));
     let structured_order = structured_signal_weight(b).cmp(&structured_signal_weight(a));
     let governed_issue_fix_order = governed_issue_fix_weight(b).cmp(&governed_issue_fix_weight(a));
@@ -1054,6 +1060,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
     let governed_issue_triage_outcome_order =
         governed_issue_triage_outcome_weight(b).cmp(&governed_issue_triage_outcome_weight(a));
     let governed_pr_review_order = governed_pr_review_weight(b).cmp(&governed_pr_review_weight(a));
+    let governed_merge_order = governed_merge_weight(b).cmp(&governed_merge_weight(a));
     let score_order = || {
         b_score
             .partial_cmp(&a_score)
@@ -1069,6 +1076,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         .then_with(|| governed_issue_triage_outcome_order)
         .then_with(|| governed_issue_fix_order)
         .then_with(|| governed_pr_review_order)
+        .then_with(|| governed_merge_order)
         .then_with(|| kind_order)
         .then_with(|| structured_order)
         .then_with(score_order)
