@@ -2368,7 +2368,20 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                     <CardContent className="space-y-3">
                       {selectedArtifactPath ? (
                         <>
-                          <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                selectedArtifactRecord &&
+                                artifactCategory(selectedArtifactRecord) === "validation"
+                              ) {
+                                focusTabSection("validation", "validation_artifacts");
+                              } else {
+                                setDetailTab("artifacts");
+                              }
+                            }}
+                            className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                          >
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
@@ -2423,7 +2436,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 ) : null}
                               </div>
                             ) : null}
-                          </div>
+                          </button>
                           <div className="flex flex-wrap gap-2">
                             {selectedDuplicateMatches.length > 0 ? (
                               <button
@@ -2494,15 +2507,27 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
 
                           {selectedValidationSummary ? (
                             <div className="grid gap-3 md:grid-cols-3">
-                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  focusTabSection("validation", "validation_inspector")
+                                }
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                              >
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                   Outcome
                                 </p>
                                 <p className="mt-1 text-sm font-medium text-text">
                                   {selectedValidationSummary.outcome || "Unknown"}
                                 </p>
-                              </div>
-                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  focusTabSection("validation", "validation_artifacts")
+                                }
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                              >
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                   Passed
                                 </p>
@@ -2513,15 +2538,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       ? "Yes"
                                       : "No"}
                                 </p>
-                              </div>
-                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => focusTabSection("validation", "validation_tasks")}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                              >
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
                                   Checks
                                 </p>
                                 <p className="mt-1 text-sm font-medium text-text">
                                   {selectedValidationSummary.validationsAttempted ?? 0}
                                 </p>
-                              </div>
+                              </button>
                             </div>
                           ) : null}
                           {loadingArtifact ? (
