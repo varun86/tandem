@@ -4504,10 +4504,7 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
-    pub async fn bug_monitor_list_drafts(
-        &self,
-        limit: Option<usize>,
-    ) -> Result<serde_json::Value> {
+    pub async fn bug_monitor_list_drafts(&self, limit: Option<usize>) -> Result<serde_json::Value> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/bug-monitor/drafts", self.base_url().await?);
         let mut request = self.http_client.get(&url);
@@ -4529,10 +4526,7 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
-    pub async fn bug_monitor_report(
-        &self,
-        report: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn bug_monitor_report(&self, report: serde_json::Value) -> Result<serde_json::Value> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/bug-monitor/report", self.base_url().await?);
         let body = serde_json::json!({
@@ -4556,7 +4550,11 @@ impl SidecarManager {
         reason: Option<String>,
     ) -> Result<serde_json::Value> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/bug-monitor/drafts/{}/approve", self.base_url().await?, draft_id);
+        let url = format!(
+            "{}/bug-monitor/drafts/{}/approve",
+            self.base_url().await?,
+            draft_id
+        );
         let response = self
             .http_client
             .post(&url)
@@ -4575,7 +4573,11 @@ impl SidecarManager {
         reason: Option<String>,
     ) -> Result<serde_json::Value> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/bug-monitor/drafts/{}/deny", self.base_url().await?, draft_id);
+        let url = format!(
+            "{}/bug-monitor/drafts/{}/deny",
+            self.base_url().await?,
+            draft_id
+        );
         let response = self
             .http_client
             .post(&url)
@@ -4588,12 +4590,13 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
-    pub async fn bug_monitor_create_triage_run(
-        &self,
-        draft_id: &str,
-    ) -> Result<serde_json::Value> {
+    pub async fn bug_monitor_create_triage_run(&self, draft_id: &str) -> Result<serde_json::Value> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/bug-monitor/drafts/{}/triage-run", self.base_url().await?, draft_id);
+        let url = format!(
+            "{}/bug-monitor/drafts/{}/triage-run",
+            self.base_url().await?,
+            draft_id
+        );
         let response = self.http_client.post(&url).send().await.map_err(|e| {
             TandemError::Sidecar(format!("Failed to create Bug Monitor triage run: {}", e))
         })?;
