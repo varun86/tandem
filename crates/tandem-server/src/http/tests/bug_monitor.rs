@@ -907,6 +907,18 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
         .and_then(|row| row.get("rendered_body"))
         .and_then(Value::as_str)
         .unwrap_or_default();
+    assert_eq!(
+        issue_draft_payload
+            .get("issue_draft_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_issue_draft")
+    );
+    assert!(issue_draft_payload
+        .get("issue_draft_artifact")
+        .and_then(|row| row.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.ends_with("/artifacts/bug_monitor.issue_draft.json")));
     assert!(rendered_body.contains("## What happened?"));
     assert!(rendered_body.contains("## What did you expect to happen?"));
     assert!(rendered_body.contains("## Steps to reproduce"));
