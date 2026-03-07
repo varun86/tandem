@@ -327,6 +327,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [acting, setActing] = useState<"approve" | "cancel" | null>(null);
   const [copiedContextRun, setCopiedContextRun] = useState(false);
   const [copiedDuplicateBadge, setCopiedDuplicateBadge] = useState<string | null>(null);
+  const [copiedMemoryValue, setCopiedMemoryValue] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const kanbanRef = useRef<HTMLDivElement | null>(null);
   const blackboardRef = useRef<HTMLDivElement | null>(null);
@@ -541,7 +542,12 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const filteredRuns = useMemo(() => {
     const query = runQuery.trim().toLowerCase();
     return runs.filter((run) => {
-      if (statusFilter !== "all" && (run.status ?? "unknown") !== statusFilter) return false;
+      const normalizedStatus = (run.status ?? "unknown").toLowerCase();
+      if (statusFilter === "active") {
+        if (normalizedStatus !== "running" && normalizedStatus !== "planning") return false;
+      } else if (statusFilter !== "all" && normalizedStatus !== statusFilter) {
+        return false;
+      }
       if (workflowFilter !== "all" && run.workflow_mode !== workflowFilter) return false;
       if (!query) return true;
       return [
@@ -590,7 +596,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   }, [filteredRuns]);
 
   const runStatuses = useMemo(() => {
-    return ["all", ...new Set(runs.map((run) => run.status ?? "unknown"))];
+    return ["all", "active", ...new Set(runs.map((run) => run.status ?? "unknown"))];
   }, [runs]);
 
   const workflowModes = useMemo(() => {
@@ -913,6 +919,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     }
   }, []);
 
+  const copyMemoryValue = useCallback(async (value: string) => {
+    try {
+      if (!globalThis.navigator?.clipboard?.writeText) return;
+      await globalThis.navigator.clipboard.writeText(value);
+      setCopiedMemoryValue(value);
+      globalThis.setTimeout(() => {
+        setCopiedMemoryValue((current) => (current === value ? null : current));
+      }, 1200);
+    } catch {
+      // Ignore clipboard failures and preserve the surrounding actions.
+    }
+  }, []);
+
   const focusOverviewSection = useCallback(
     (section: "kanban" | "blackboard" | "timeline" | "memory") => {
       const target =
@@ -1062,7 +1081,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         setWorkflowFilter("all");
                         setRunSortMode("updated");
                       } else if (label === "Active") {
-                        setStatusFilter("running");
+                        setStatusFilter("active");
                         setRunSortMode("updated");
                       }
                     }}
@@ -3023,26 +3042,50 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                   </p>
                                 </div>
                                 {typeof hit.score === "number" ? (
-                                  <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => setMemoryHitFilter("scored")}
+                                    className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition-colors hover:bg-emerald-500/15"
+                                  >
                                     score {hit.score.toFixed(2)}
-                                  </span>
+                                  </button>
                                 ) : null}
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {pickText(hit.kind) ? (
-                                  <span className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                    {pickText(hit.kind)}
-                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyMemoryValue(pickText(hit.kind))}
+                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                  >
+                                    {copiedMemoryValue === pickText(hit.kind)
+                                      ? "Copied"
+                                      : pickText(hit.kind)}
+                                  </button>
                                 ) : null}
                                 {pickText(hit.source) ? (
-                                  <span className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                    {pickText(hit.source)}
-                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyMemoryValue(pickText(hit.source))}
+                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                  >
+                                    {copiedMemoryValue === pickText(hit.source)
+                                      ? "Copied"
+                                      : pickText(hit.source)}
+                                  </button>
                                 ) : null}
                                 {pickText(hit.memory_id) ? (
-                                  <span className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                    memory {pickText(hit.memory_id)}
-                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void copyMemoryValue(`memory ${pickText(hit.memory_id)}`)
+                                    }
+                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                  >
+                                    {copiedMemoryValue === `memory ${pickText(hit.memory_id)}`
+                                      ? "Copied"
+                                      : `memory ${pickText(hit.memory_id)}`}
+                                  </button>
                                 ) : null}
                               </div>
                               <div className="mt-3 rounded-2xl border border-border bg-surface p-3">
@@ -3148,13 +3191,24 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 </span>
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200">
-                                  {candidate.kind}
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void copyMemoryValue(candidate.kind)}
+                                  className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition-colors hover:bg-emerald-500/15"
+                                >
+                                  {copiedMemoryValue === candidate.kind ? "Copied" : candidate.kind}
+                                </button>
                                 {candidate.artifact?.artifact_type ? (
-                                  <span className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedArtifactPath(candidate.artifact?.path ?? null);
+                                      setDetailTab("artifacts");
+                                    }}
+                                    className="rounded-full border border-border px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface hover:text-text"
+                                  >
                                     {candidate.artifact.artifact_type}
-                                  </span>
+                                  </button>
                                 ) : null}
                               </div>
                               {candidate.artifact ? (
