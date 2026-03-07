@@ -36,6 +36,15 @@ type DeveloperRunViewerProps = {
 };
 
 type RunTaskRecord = Record<string, unknown>;
+type BlackboardRow = Record<string, unknown>;
+type BlackboardTimelineItem = {
+  id: string;
+  kind: "decision" | "question";
+  text: string;
+  tsMs: number | null;
+  stepId: string | null;
+  sourceEventId: string | null;
+};
 
 const TASK_COLUMNS = [
   { key: "runnable", label: "Runnable" },
@@ -84,6 +93,38 @@ function renderValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value, null, 2) ?? "";
+}
+
+function pickText(value: unknown): string {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function blackboardRowText(row: BlackboardRow): string {
+  return (
+    pickText(row.text) ||
+    pickText(row.summary) ||
+    pickText(row.label) ||
+    pickText(row.title) ||
+    pickText(row.reason) ||
+    renderValue(row)
+  );
+}
+
+function blackboardRowTimestamp(row: BlackboardRow): number | null {
+  const value = row.ts_ms;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function blackboardRowStepId(row: BlackboardRow): string | null {
+  const value = row.step_id;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function blackboardRowSourceEventId(row: BlackboardRow): string | null {
+  const value = row.source_event_id;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
@@ -209,13 +250,51 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
 
   const decisions = useMemo(() => {
     const rows = selectedBlackboard?.decisions;
-    return Array.isArray(rows) ? rows : [];
+    return (Array.isArray(rows) ? rows : []) as BlackboardRow[];
   }, [selectedBlackboard]);
 
   const openQuestions = useMemo(() => {
     const rows = selectedBlackboard?.open_questions;
-    return Array.isArray(rows) ? rows : [];
+    return (Array.isArray(rows) ? rows : []) as BlackboardRow[];
   }, [selectedBlackboard]);
+
+  const latestDecision = useMemo(() => {
+    if (decisions.length === 0) return null;
+    return (
+      [...decisions].sort((left, right) => {
+        return (blackboardRowTimestamp(right) ?? 0) - (blackboardRowTimestamp(left) ?? 0);
+      })[0] ?? null
+    );
+  }, [decisions]);
+
+  const blackboardTimeline = useMemo<BlackboardTimelineItem[]>(() => {
+    const items = [
+      ...decisions.map((row, index) => ({
+        id: String(row.id ?? row.source_event_id ?? `decision-${index}`),
+        kind: "decision" as const,
+        text: blackboardRowText(row),
+        tsMs: blackboardRowTimestamp(row),
+        stepId: blackboardRowStepId(row),
+        sourceEventId: blackboardRowSourceEventId(row),
+      })),
+      ...openQuestions.map((row, index) => ({
+        id: String(row.id ?? row.source_event_id ?? `question-${index}`),
+        kind: "question" as const,
+        text: blackboardRowText(row),
+        tsMs: blackboardRowTimestamp(row),
+        stepId: blackboardRowStepId(row),
+        sourceEventId: blackboardRowSourceEventId(row),
+      })),
+    ];
+    return items
+      .sort((left, right) => {
+        const tsDelta = (right.tsMs ?? 0) - (left.tsMs ?? 0);
+        if (tsDelta !== 0) return tsDelta;
+        if (left.kind !== right.kind) return left.kind === "decision" ? -1 : 1;
+        return left.id.localeCompare(right.id);
+      })
+      .slice(0, 10);
+  }, [decisions, openQuestions]);
 
   const readinessHint = useMemo(() => {
     if (!error) return null;
@@ -633,7 +712,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                           Blackboard And Decisions
                         </CardTitle>
                       </CardHeader>
-                      <CardContent className="space-y-3">
+                      <CardContent className="space-y-4">
                         {selectedBlackboard ? (
                           <>
                             <div className="grid gap-3 md:grid-cols-3">
@@ -660,24 +739,166 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 </div>
                               ))}
                             </div>
-                            {decisions.length > 0 ? (
-                              decisions.slice(0, 6).map((decision, index) => (
-                                <div
-                                  key={String(
-                                    (decision as Record<string, unknown>).id ?? `decision-${index}`
-                                  )}
-                                  className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                                >
-                                  <pre className="whitespace-pre-wrap break-words text-[11px] text-text-muted">
-                                    {renderValue(decision)}
-                                  </pre>
+                            {latestDecision ? (
+                              <div className="rounded-3xl border border-primary/20 bg-primary/5 p-4">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-[0.24em] text-primary/80">
+                                      Current decision
+                                    </p>
+                                    <p className="mt-2 text-sm font-medium text-text">
+                                      {blackboardRowText(latestDecision)}
+                                    </p>
+                                  </div>
+                                  <p className="text-xs text-text-muted">
+                                    {formatTimestamp(blackboardRowTimestamp(latestDecision))}
+                                  </p>
                                 </div>
-                              ))
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {blackboardRowStepId(latestDecision) ? (
+                                    <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                      Step {blackboardRowStepId(latestDecision)}
+                                    </span>
+                                  ) : null}
+                                  {blackboardRowSourceEventId(latestDecision) ? (
+                                    <span className="rounded-full border border-primary/20 bg-surface px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                      Event {blackboardRowSourceEventId(latestDecision)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
                             ) : (
                               <p className="text-sm text-text-muted">
                                 No blackboard decisions yet.
                               </p>
                             )}
+                            {blackboardTimeline.length > 0 ? (
+                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+                                <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                  <div className="mb-4 flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-medium text-text">
+                                        Decision lineage
+                                      </p>
+                                      <p className="text-xs text-text-muted">
+                                        Chronological blackboard activity from the current run.
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                                      {blackboardTimeline.length} items
+                                    </span>
+                                  </div>
+                                  <div className="space-y-3">
+                                    {blackboardTimeline.map((item, index) => (
+                                      <div key={item.id} className="flex gap-3">
+                                        <div className="flex w-10 flex-col items-center">
+                                          <span
+                                            className={cn(
+                                              "mt-1 flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.16em]",
+                                              item.kind === "decision"
+                                                ? "border-primary/30 bg-primary/10 text-primary"
+                                                : "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                                            )}
+                                          >
+                                            {item.kind === "decision" ? "D" : "Q"}
+                                          </span>
+                                          {index < blackboardTimeline.length - 1 ? (
+                                            <div className="mt-2 h-full min-h-10 w-px bg-border" />
+                                          ) : null}
+                                        </div>
+                                        <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-3">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span
+                                              className={cn(
+                                                "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]",
+                                                item.kind === "decision"
+                                                  ? "border-primary/20 bg-primary/10 text-primary"
+                                                  : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+                                              )}
+                                            >
+                                              {item.kind === "decision"
+                                                ? "Decision"
+                                                : "Open question"}
+                                            </span>
+                                            <span className="text-[11px] text-text-muted">
+                                              {formatTimestamp(item.tsMs)}
+                                            </span>
+                                          </div>
+                                          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text">
+                                            {item.text}
+                                          </p>
+                                          <div className="mt-3 flex flex-wrap gap-2">
+                                            {item.stepId ? (
+                                              <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                Step {item.stepId}
+                                              </span>
+                                            ) : null}
+                                            {item.sourceEventId ? (
+                                              <span className="rounded-full border border-border bg-surface-elevated/50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                                Source {item.sourceEventId}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                    <p className="text-sm font-medium text-text">Open questions</p>
+                                    <p className="mt-1 text-xs text-text-muted">
+                                      Outstanding uncertainty captured on the blackboard.
+                                    </p>
+                                    <div className="mt-3 space-y-2">
+                                      {openQuestions.length > 0 ? (
+                                        openQuestions.slice(0, 4).map((question, index) => (
+                                          <div
+                                            key={String(
+                                              question.id ??
+                                                question.source_event_id ??
+                                                `open-question-${index}`
+                                            )}
+                                            className="rounded-2xl border border-border bg-surface p-3"
+                                          >
+                                            <p className="text-sm text-text">
+                                              {blackboardRowText(question)}
+                                            </p>
+                                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+                                              <span>
+                                                {formatTimestamp(blackboardRowTimestamp(question))}
+                                              </span>
+                                              {blackboardRowStepId(question) ? (
+                                                <span>step {blackboardRowStepId(question)}</span>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        ))
+                                      ) : (
+                                        <p className="text-sm text-text-muted">
+                                          No open questions recorded.
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-3xl border border-border bg-surface-elevated/30 p-4">
+                                    <p className="text-sm font-medium text-text">Lineage notes</p>
+                                    <div className="mt-3 space-y-2 text-xs text-text-muted">
+                                      <p>
+                                        Decisions and questions are ordered by their recorded
+                                        blackboard timestamp.
+                                      </p>
+                                      <p>
+                                        Step and source ids come directly from blackboard rows so
+                                        you can correlate them with run tasks and artifacts.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
                           </>
                         ) : (
                           <p className="text-sm text-text-muted">
