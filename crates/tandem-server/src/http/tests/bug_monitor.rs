@@ -417,6 +417,13 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
     assert_eq!(
         duplicate_summary
             .get("best_match")
+            .and_then(|value| value.get("match_reason"))
+            .and_then(Value::as_str),
+        Some("exact_fingerprint")
+    );
+    assert_eq!(
+        duplicate_summary
+            .get("best_match")
             .and_then(|value| value.get("recurrence_count"))
             .and_then(Value::as_u64),
         Some(5)

@@ -439,16 +439,26 @@ fn normalize_failure_pattern_text(values: &[Option<&str>]) -> String {
 }
 
 fn compare_failure_pattern_duplicate_matches(a: &Value, b: &Value) -> std::cmp::Ordering {
-    let a_exact = a
-        .get("match_reason")
-        .and_then(Value::as_str)
-        .map(|value| value == "exact_fingerprint")
-        .unwrap_or(false);
-    let b_exact = b
-        .get("match_reason")
-        .and_then(Value::as_str)
-        .map(|value| value == "exact_fingerprint")
-        .unwrap_or(false);
+    let is_exact = |value: &Value| {
+        value
+            .get("match_reason")
+            .and_then(Value::as_str)
+            .map(|reason| reason == "exact_fingerprint")
+            .unwrap_or_else(|| {
+                value
+                    .get("match_reasons")
+                    .and_then(Value::as_array)
+                    .map(|reasons| {
+                        reasons
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .any(|reason| reason == "exact_fingerprint")
+                    })
+                    .unwrap_or(false)
+            })
+    };
+    let a_exact = is_exact(a);
+    let b_exact = is_exact(b);
     let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let a_recurrence = a
@@ -563,6 +573,15 @@ pub(crate) async fn query_failure_pattern_matches(
             "candidate_id": candidate.get("candidate_id").cloned().unwrap_or(Value::Null),
             "summary": candidate.get("summary").cloned().unwrap_or(Value::Null),
             "fingerprint": payload.get("fingerprint").cloned().unwrap_or(Value::Null),
+            "match_reason": if reasons.iter().any(|reason| reason == "exact_fingerprint") {
+                Value::from("exact_fingerprint")
+            } else {
+                reasons
+                    .first()
+                    .cloned()
+                    .map(Value::from)
+                    .unwrap_or(Value::Null)
+            },
             "linked_issue_numbers": payload.get("linked_issue_numbers").cloned().unwrap_or_else(|| json!([])),
             "recurrence_count": payload.get("recurrence_count").cloned().unwrap_or_else(|| Value::from(1_u64)),
             "linked_pr_numbers": payload.get("linked_pr_numbers").cloned().unwrap_or_else(|| json!([])),

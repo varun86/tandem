@@ -482,10 +482,12 @@ async fn persist_bug_monitor_failure_pattern_memory(
         row.get("source").and_then(Value::as_str) == Some("governed_memory")
             && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
     }) {
+        let duplicate_summary = build_bug_monitor_duplicate_summary(&duplicate_matches);
         return Ok(json!({
             "stored": false,
             "reason": "governed_failure_pattern_exists",
             "fingerprint": fingerprint,
+            "duplicate_summary": duplicate_summary,
             "duplicate_matches": duplicate_matches,
         }));
     }
@@ -535,6 +537,7 @@ async fn persist_bug_monitor_failure_pattern_memory(
         "memory_id": put_response.id,
         "fingerprint": fingerprint,
         "content": summary_text,
+        "duplicate_summary": build_bug_monitor_duplicate_summary(&duplicate_matches),
         "metadata": metadata,
         "partition": {
             "org_id": partition.org_id,
@@ -587,10 +590,12 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
         row.get("source").and_then(Value::as_str) == Some("governed_memory")
             && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
     }) {
+        let duplicate_summary = build_bug_monitor_duplicate_summary(&duplicate_matches);
         return Ok(json!({
             "stored": false,
             "reason": "governed_failure_pattern_exists",
             "fingerprint": draft.fingerprint,
+            "duplicate_summary": duplicate_summary,
             "duplicate_matches": duplicate_matches,
         }));
     }
@@ -644,6 +649,7 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
         "memory_id": put_response.id,
         "fingerprint": draft.fingerprint,
         "content": summary_text,
+        "duplicate_summary": build_bug_monitor_duplicate_summary(&duplicate_matches),
         "metadata": metadata,
         "partition": {
             "org_id": partition.org_id,
@@ -732,7 +738,15 @@ pub(crate) fn build_bug_monitor_duplicate_summary(matches: &[Value]) -> Value {
             json!({
                 "fingerprint": row.get("fingerprint").cloned().unwrap_or(Value::Null),
                 "summary": row.get("summary").cloned().unwrap_or(Value::Null),
-                "match_reason": row.get("match_reason").cloned().unwrap_or(Value::Null),
+                "match_reason": row
+                    .get("match_reason")
+                    .cloned()
+                    .or_else(|| {
+                        row.get("match_reasons")
+                            .and_then(Value::as_array)
+                            .and_then(|reasons| reasons.first().cloned())
+                    })
+                    .unwrap_or(Value::Null),
                 "score": row.get("score").cloned().unwrap_or(Value::Null),
                 "recurrence_count": row.get("recurrence_count").cloned().unwrap_or_else(|| Value::from(1_u64)),
                 "linked_issue_numbers": row.get("linked_issue_numbers").cloned().unwrap_or_else(|| json!([])),
@@ -1431,6 +1445,7 @@ pub(super) async fn report_bug_monitor_issue(
             .await;
             Json(json!({
                 "draft": draft,
+                "duplicate_summary": build_bug_monitor_duplicate_summary(&duplicate_matches),
                 "duplicate_matches": duplicate_matches,
             }))
             .into_response()

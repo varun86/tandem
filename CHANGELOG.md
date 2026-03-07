@@ -72,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `failure_pattern` memory now carries recurrence metadata and stronger issue-linkage metadata, and duplicate ranking uses recurrence as a tie-breaker after exact fingerprint matches
   - duplicate-suppressed Bug Monitor incidents now persist a normalized `duplicate_summary` envelope with match count, best-match details, recurrence metadata, and linked-issue unions so tracker UIs can explain suppression deterministically after reload/reconnect
   - manual `POST /bug-monitor/report` suppression now returns that same normalized `duplicate_summary` envelope, and failure-pattern matching reuses the exact-fingerprint -> recurrence -> score ordering so the reported best match stays aligned with runtime suppression
+  - Bug Monitor failure-pattern reuse responses now attach the same normalized `duplicate_summary` envelope alongside any raw `duplicate_matches`, and coder-originated duplicate matches now emit a stable `match_reason` so exact-fingerprint priority survives through shared ranking and summary shaping
 
 - **Initial Tandem Coder engine API foundation**:
   - added a first engine-owned coder API surface:
