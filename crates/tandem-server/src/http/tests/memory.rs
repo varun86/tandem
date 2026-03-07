@@ -654,3 +654,101 @@ async fn memory_demote_hides_item_from_search_results() {
         Some("private")
     );
 }
+
+#[tokio::test]
+async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-6",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "blocked scopes should return no results",
+                "classification": "internal"
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let capability = json!({
+        "run_id": "run-6",
+        "subject": "default",
+        "org_id": "org-1",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "memory": {
+            "read_tiers": ["session", "project"],
+            "write_tiers": ["session"],
+            "promote_targets": ["project"],
+            "require_review_for_promote": true,
+            "allow_auto_use_tiers": ["curated"]
+        },
+        "expires_at": 9999999999999u64
+    });
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-6",
+                "query": "blocked scopes should return no results",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "project"
+                },
+                "read_scopes": ["team"],
+                "capability": capability,
+                "limit": 10
+            })
+            .to_string(),
+        ))
+        .expect("search request");
+    let search_resp = app
+        .clone()
+        .oneshot(search_req)
+        .await
+        .expect("search response");
+    assert_eq!(search_resp.status(), StatusCode::OK);
+    let search_body = to_bytes(search_resp.into_body(), usize::MAX)
+        .await
+        .expect("search body");
+    let search_payload: Value = serde_json::from_slice(&search_body).expect("search json");
+    assert_eq!(
+        search_payload
+            .get("results")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        search_payload
+            .get("scopes_used")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        search_payload
+            .get("blocked_scopes")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["team"])
+    );
+}
