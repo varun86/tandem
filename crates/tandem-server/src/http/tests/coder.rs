@@ -962,6 +962,54 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
         .expect("refresh builtin bindings");
     let app = app_router(state.clone());
 
+    let create_baseline_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-baseline",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 90
+                }
+            })
+            .to_string(),
+        ))
+        .expect("baseline create request");
+    let create_baseline_resp = app
+        .clone()
+        .oneshot(create_baseline_req)
+        .await
+        .expect("baseline create response");
+    assert_eq!(create_baseline_resp.status(), StatusCode::OK);
+
+    let baseline_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-pr-review-baseline/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "comment",
+                "summary": "Initial review requested one more pass before merge."
+            })
+            .to_string(),
+        ))
+        .expect("baseline summary request");
+    let baseline_summary_resp = app
+        .clone()
+        .oneshot(baseline_summary_req)
+        .await
+        .expect("baseline summary response");
+    assert_eq!(baseline_summary_resp.status(), StatusCode::OK);
+
     let create_first_req = Request::builder()
         .method("POST")
         .uri("/coder/runs")
@@ -1097,6 +1145,23 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
             .and_then(|row| row.get("kind"))
             .and_then(Value::as_str),
         Some("review_memory")
+    );
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("source_coder_run_id"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                hits_payload
+                    .get("hits")
+                    .and_then(Value::as_array)
+                    .and_then(|rows| rows.first())
+                    .and_then(|row| row.get("run_id"))
+                    .and_then(Value::as_str)
+            }),
+        Some("coder-pr-review-a")
     );
     assert_eq!(
         hits_payload
@@ -3117,6 +3182,189 @@ async fn coder_promoted_merge_memory_reuses_policy_history_across_pull_requests(
         .get("content")
         .and_then(Value::as_str)
         .is_some_and(|content| content.contains("blockers: Required reviewer approval missing")));
+}
+
+#[tokio::test]
+async fn coder_promoted_review_memory_reuses_requested_changes_across_pull_requests() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_first_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-review-promote-a",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 111
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("first create request");
+    let create_first_resp = app
+        .clone()
+        .oneshot(create_first_req)
+        .await
+        .expect("first create response");
+    assert_eq!(create_first_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-review-promote-a/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "Require rollback coverage before approval.",
+                "risk_level": "high",
+                "blockers": ["Rollback scenario coverage missing"],
+                "requested_changes": ["Add rollback coverage"],
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    let review_candidate_id = summary_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find_map(|row| {
+                (row.get("kind").and_then(Value::as_str) == Some("review_memory")).then(|| {
+                    row.get("candidate_id")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })?
+            })
+        })
+        .expect("review candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-review-promote-a/memory-candidates/{review_candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "approved reusable review guidance"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::OK);
+    let promote_payload: Value = serde_json::from_slice(
+        &to_bytes(promote_resp.into_body(), usize::MAX)
+            .await
+            .expect("promote body"),
+    )
+    .expect("promote json");
+
+    let create_second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-review-promote-b",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 112
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("second create request");
+    let create_second_resp = app
+        .clone()
+        .oneshot(create_second_req)
+        .await
+        .expect("second create response");
+    assert_eq!(create_second_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-review-promote-b/memory-hits?q=rollback%20coverage")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    let promoted_hit = hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row.get("source").and_then(Value::as_str) == Some("governed_memory")
+                    && row.get("memory_id").and_then(Value::as_str)
+                        == promote_payload.get("memory_id").and_then(Value::as_str)
+            })
+        })
+        .cloned()
+        .expect("promoted review hit");
+    assert_eq!(
+        promoted_hit
+            .get("metadata")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("review_memory")
+    );
+    assert!(promoted_hit
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|content| content.contains("requested_changes: Add rollback coverage")));
+    assert!(promoted_hit
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|content| content.contains("blockers: Rollback scenario coverage missing")));
 }
 
 #[tokio::test]

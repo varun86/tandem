@@ -981,10 +981,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         }
         _ => 1_u8,
     };
-    let policy_signal_weight = |hit: &Value| {
-        if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
-            return 0_u8;
-        }
+    let structured_signal_weight = |hit: &Value| {
         let payload = hit
             .get("payload")
             .or_else(|| hit.get("metadata"))
@@ -997,10 +994,22 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
                 .map(|rows| !rows.is_empty() as u8)
                 .unwrap_or(0_u8)
         };
-        list_weight("blockers") + list_weight("required_checks") + list_weight("required_approvals")
+        match record.workflow_mode {
+            CoderWorkflowMode::MergeRecommendation => {
+                list_weight("blockers")
+                    + list_weight("required_checks")
+                    + list_weight("required_approvals")
+            }
+            CoderWorkflowMode::PrReview => {
+                list_weight("blockers")
+                    + list_weight("requested_changes")
+                    + list_weight("regression_signals")
+            }
+            _ => 0_u8,
+        }
     };
     let kind_order = kind_weight(b).cmp(&kind_weight(a));
-    let policy_order = policy_signal_weight(b).cmp(&policy_signal_weight(a));
+    let structured_order = structured_signal_weight(b).cmp(&structured_signal_weight(a));
     let score_order = || {
         b_score
             .partial_cmp(&a_score)
@@ -1013,7 +1022,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
     };
     ref_order
         .then_with(|| kind_order)
-        .then_with(|| policy_order)
+        .then_with(|| structured_order)
         .then_with(score_order)
 }
 
