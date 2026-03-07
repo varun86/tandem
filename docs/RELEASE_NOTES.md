@@ -45,6 +45,8 @@
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior
   - added an initial fail-closed readiness gate for `issue_triage`: required GitHub issue capability bindings must exist, and explicitly requested MCP servers must be configured and connected
   - added `POST /coder/runs/{id}/memory-candidates` so `issue_triage` runs can persist engine-owned memory candidate payloads and attach them to the linked context run as `coder_memory_candidate` artifacts
+  - new `issue_triage` runs now seed their retrieval task with prior repo/issue memory candidate hints from earlier coder runs
+  - added `POST /coder/runs/{id}/triage-summary` so the engine can write a concrete `triage.summary.json` artifact and attach it as `coder_triage_summary`
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`

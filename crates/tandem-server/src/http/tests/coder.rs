@@ -327,3 +327,211 @@ async fn coder_memory_candidate_create_persists_artifact() {
         .unwrap_or(false);
     assert!(contains_candidate);
 }
+
+#[tokio::test]
+async fn coder_issue_triage_seeds_prior_memory_candidate_hints() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let first_run_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-seed-a",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 88
+                }
+            })
+            .to_string(),
+        ))
+        .expect("first run request");
+    let first_run_resp = app
+        .clone()
+        .oneshot(first_run_req)
+        .await
+        .expect("first run response");
+    assert_eq!(first_run_resp.status(), StatusCode::OK);
+
+    let candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-seed-a/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "failure_pattern",
+                "summary": "Known duplicate failure",
+                "payload": {
+                    "label": "duplicate"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("candidate request");
+    let candidate_resp = app
+        .clone()
+        .oneshot(candidate_req)
+        .await
+        .expect("candidate response");
+    assert_eq!(candidate_resp.status(), StatusCode::OK);
+
+    let second_run_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-seed-b",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 88
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second run request");
+    let second_run_resp = app
+        .clone()
+        .oneshot(second_run_req)
+        .await
+        .expect("second run response");
+    assert_eq!(second_run_resp.status(), StatusCode::OK);
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-seed-b")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .expect("get body");
+    let get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+    let retrieve_task = get_payload
+        .get("run")
+        .and_then(|row| row.get("tasks"))
+        .and_then(Value::as_array)
+        .and_then(|tasks| {
+            tasks.iter().find(|task| {
+                task.get("workflow_node_id").and_then(Value::as_str) == Some("retrieve_memory")
+            })
+        })
+        .cloned()
+        .expect("retrieve task");
+    let hint_count = retrieve_task
+        .get("payload")
+        .and_then(|row| row.get("candidate_hints"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    assert!(hint_count >= 1);
+}
+
+#[tokio::test]
+async fn coder_triage_summary_write_adds_summary_artifact() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-summary",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 91
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-summary/triage-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Likely duplicate in capabilities flow",
+                "confidence": "medium",
+                "affected_files": ["crates/tandem-server/src/http/coder.rs"],
+                "memory_hits_used": ["memcand-1"]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let artifacts_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-summary/artifacts")
+        .body(Body::empty())
+        .expect("artifacts request");
+    let artifacts_resp = app
+        .clone()
+        .oneshot(artifacts_req)
+        .await
+        .expect("artifacts response");
+    assert_eq!(artifacts_resp.status(), StatusCode::OK);
+    let artifacts_body = to_bytes(artifacts_resp.into_body(), usize::MAX)
+        .await
+        .expect("artifacts body");
+    let artifacts_payload: Value = serde_json::from_slice(&artifacts_body).expect("artifacts json");
+    let contains_summary = artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("artifact_type").and_then(Value::as_str) == Some("coder_triage_summary")
+            })
+        })
+        .unwrap_or(false);
+    assert!(contains_summary);
+}

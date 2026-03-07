@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - explicitly requested MCP servers must be configured and connected
   - added `POST /coder/runs/{id}/memory-candidates` so `issue_triage` runs can persist engine-owned memory candidate payloads with blackboard artifact provenance
   - memory candidate writes now emit `coder.memory.candidate_added` and attach `coder_memory_candidate` artifacts to the linked context run
+  - new `issue_triage` runs now seed their retrieval task with prior repo/issue memory candidate hints from earlier coder runs
+  - added `POST /coder/runs/{id}/triage-summary` so the engine can write a concrete `triage.summary.json` artifact and attach it as `coder_triage_summary`
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

@@ -123,6 +123,24 @@ pub(super) struct CoderMemoryCandidateCreateInput {
     pub(super) payload: Value,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderTriageSummaryCreateInput {
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) confidence: Option<String>,
+    #[serde(default)]
+    pub(super) affected_files: Vec<String>,
+    #[serde(default)]
+    pub(super) duplicate_candidates: Vec<Value>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) reproduction: Option<Value>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
 fn coder_runs_root(state: &AppState) -> PathBuf {
     state
         .shared_resources_path
@@ -137,14 +155,6 @@ fn coder_run_path(state: &AppState, coder_run_id: &str) -> PathBuf {
 
 fn coder_memory_candidates_dir(state: &AppState, linked_context_run_id: &str) -> PathBuf {
     super::context_runs::context_run_dir(state, linked_context_run_id).join("coder_memory")
-}
-
-fn coder_memory_candidate_path(
-    state: &AppState,
-    linked_context_run_id: &str,
-    candidate_id: &str,
-) -> PathBuf {
-    coder_memory_candidates_dir(state, linked_context_run_id).join(format!("{candidate_id}.json"))
 }
 
 async fn ensure_coder_runs_dir(state: &AppState) -> Result<(), StatusCode> {
@@ -175,6 +185,142 @@ async fn load_coder_run_record(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     serde_json::from_str::<CoderRunRecord>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_repo_memory_candidates(
+    state: &AppState,
+    repo_slug: &str,
+    github_issue_number: Option<u64>,
+    limit: usize,
+) -> Result<Vec<Value>, StatusCode> {
+    let mut hits = Vec::<Value>::new();
+    let root = coder_runs_root(state);
+    if !root.exists() {
+        return Ok(hits);
+    }
+    let mut dir = tokio::fs::read_dir(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|row| row.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = tokio::fs::read_to_string(entry.path())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(record) = serde_json::from_str::<CoderRunRecord>(&raw) else {
+            continue;
+        };
+        if record.repo_binding.repo_slug != repo_slug {
+            continue;
+        }
+        let candidates_dir = coder_memory_candidates_dir(state, &record.linked_context_run_id);
+        if !candidates_dir.exists() {
+            continue;
+        }
+        let mut candidate_dir = tokio::fs::read_dir(candidates_dir)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        while let Ok(Some(candidate_entry)) = candidate_dir.next_entry().await {
+            if !candidate_entry
+                .file_type()
+                .await
+                .map(|row| row.is_file())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let candidate_raw = tokio::fs::read_to_string(candidate_entry.path())
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Ok(candidate_payload) = serde_json::from_str::<Value>(&candidate_raw) else {
+                continue;
+            };
+            let same_issue = github_issue_number.is_some_and(|issue_number| {
+                candidate_payload
+                    .get("github_ref")
+                    .and_then(|row| row.get("number"))
+                    .and_then(Value::as_u64)
+                    == Some(issue_number)
+            });
+            let candidate_kind = candidate_payload
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            hits.push(json!({
+                "candidate_id": candidate_payload.get("candidate_id").cloned().unwrap_or(Value::Null),
+                "kind": candidate_kind,
+                "repo_slug": repo_slug,
+                "same_issue": same_issue,
+                "summary": candidate_payload.get("summary").cloned().unwrap_or(Value::Null),
+                "path": candidate_entry.path(),
+                "source_coder_run_id": candidate_payload.get("coder_run_id").cloned().unwrap_or(Value::Null),
+                "created_at_ms": candidate_payload.get("created_at_ms").cloned().unwrap_or(Value::Null),
+            }));
+        }
+    }
+    hits.sort_by(|a, b| {
+        let a_same_issue = a
+            .get("same_issue")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let b_same_issue = b
+            .get("same_issue")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        b_same_issue.cmp(&a_same_issue).then_with(|| {
+            b.get("created_at_ms")
+                .and_then(Value::as_u64)
+                .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
+        })
+    });
+    hits.truncate(limit.clamp(1, 20));
+    Ok(hits)
+}
+
+async fn write_coder_artifact(
+    state: &AppState,
+    linked_context_run_id: &str,
+    artifact_id: &str,
+    artifact_type: &str,
+    relative_path: &str,
+    payload: &Value,
+) -> Result<ContextBlackboardArtifact, StatusCode> {
+    let path =
+        super::context_runs::context_run_dir(state, linked_context_run_id).join(relative_path);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let raw =
+        serde_json::to_string_pretty(payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(&path, raw)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let artifact = ContextBlackboardArtifact {
+        id: artifact_id.to_string(),
+        ts_ms: crate::now_ms(),
+        path: path.to_string_lossy().to_string(),
+        artifact_type: artifact_type.to_string(),
+        step_id: None,
+        source_event_id: None,
+    };
+    context_run_engine()
+        .commit_blackboard_patch(
+            state,
+            linked_context_run_id,
+            ContextBlackboardPatchOp::AddArtifact,
+            serde_json::to_value(&artifact).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        )
+        .await?;
+    Ok(artifact)
 }
 
 fn project_coder_phase(run: &ContextRunState) -> &'static str {
@@ -367,6 +513,9 @@ async fn seed_issue_triage_tasks(
     let run_id = coder_run.linked_context_run_id.clone();
     let issue_number = coder_run.github_ref.as_ref().map(|row| row.number);
     let workflow_id = "coder_issue_triage".to_string();
+    let candidate_hints =
+        list_repo_memory_candidates(&state, &coder_run.repo_binding.repo_slug, issue_number, 6)
+            .await?;
     let tasks = vec![
         ContextTaskCreateInput {
             command_id: Some(format!("coder:{run_id}:ingest_reference")),
@@ -397,7 +546,8 @@ async fn seed_issue_triage_tasks(
                 "title": "Retrieve similar failures and prior triage memory",
                 "repo_slug": coder_run.repo_binding.repo_slug,
                 "github_issue_number": issue_number,
-                "memory_recipe": "issue_triage"
+                "memory_recipe": "issue_triage",
+                "candidate_hints": candidate_hints,
             }),
             status: Some(ContextBlackboardTaskStatus::Pending),
             workflow_id: Some(workflow_id.clone()),
@@ -689,6 +839,21 @@ pub(super) async fn coder_run_artifacts(
     })))
 }
 
+pub(super) async fn coder_memory_candidate_list(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    let issue_number = record.github_ref.as_ref().map(|row| row.number);
+    let candidates =
+        list_repo_memory_candidates(&state, &record.repo_binding.repo_slug, issue_number, 20)
+            .await?;
+    Ok(Json(json!({
+        "coder_run_id": record.coder_run_id,
+        "candidates": candidates,
+    })))
+}
+
 pub(super) async fn coder_memory_candidate_create(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -699,12 +864,6 @@ pub(super) async fn coder_memory_candidate_create(
         return Err(StatusCode::BAD_REQUEST);
     }
     let candidate_id = format!("memcand-{}", Uuid::new_v4().simple());
-    let path = coder_memory_candidate_path(&state, &record.linked_context_run_id, &candidate_id);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
     let now = crate::now_ms();
     let payload = json!({
         "candidate_id": candidate_id,
@@ -719,28 +878,16 @@ pub(super) async fn coder_memory_candidate_create(
         "github_ref": record.github_ref,
         "created_at_ms": now,
     });
-    let raw =
-        serde_json::to_string_pretty(&payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tokio::fs::write(&path, raw)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let artifact = ContextBlackboardArtifact {
-        id: candidate_id.clone(),
-        ts_ms: now,
-        path: path.to_string_lossy().to_string(),
-        artifact_type: "coder_memory_candidate".to_string(),
-        step_id: None,
-        source_event_id: None,
-    };
-    context_run_engine()
-        .commit_blackboard_patch(
-            &state,
-            &record.linked_context_run_id,
-            ContextBlackboardPatchOp::AddArtifact,
-            serde_json::to_value(&artifact).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        )
-        .await?;
+    let path = format!("coder_memory/{candidate_id}.json");
+    let artifact = write_coder_artifact(
+        &state,
+        &record.linked_context_run_id,
+        &candidate_id,
+        "coder_memory_candidate",
+        &path,
+        &payload,
+    )
+    .await?;
     state.event_bus.publish(EngineEvent::new(
         "coder.memory.candidate_added",
         json!({
@@ -748,12 +895,62 @@ pub(super) async fn coder_memory_candidate_create(
             "linked_context_run_id": record.linked_context_run_id,
             "candidate_id": candidate_id,
             "kind": input.kind,
-            "artifact_path": path,
+            "artifact_path": artifact.path,
         }),
     ));
     Ok(Json(json!({
         "ok": true,
         "candidate_id": candidate_id,
+        "artifact": artifact,
+    })))
+}
+
+pub(super) async fn coder_triage_summary_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderTriageSummaryCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let summary_id = format!("triage-summary-{}", Uuid::new_v4().simple());
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "summary": input.summary,
+        "confidence": input.confidence,
+        "affected_files": input.affected_files,
+        "duplicate_candidates": input.duplicate_candidates,
+        "memory_hits_used": input.memory_hits_used,
+        "reproduction": input.reproduction,
+        "notes": input.notes,
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        &state,
+        &record.linked_context_run_id,
+        &summary_id,
+        "coder_triage_summary",
+        "artifacts/triage.summary.json",
+        &payload,
+    )
+    .await?;
+    state.event_bus.publish(EngineEvent::new(
+        "coder.artifact.added",
+        json!({
+            "coder_run_id": record.coder_run_id,
+            "linked_context_run_id": record.linked_context_run_id,
+            "artifact_id": artifact.id,
+            "artifact_type": artifact.artifact_type,
+            "artifact_path": artifact.path,
+        }),
+    ));
+    Ok(Json(json!({
+        "ok": true,
         "artifact": artifact,
     })))
 }
