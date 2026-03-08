@@ -5089,6 +5089,27 @@ pub(super) async fn coder_issue_fix_pr_submit(
             let mut extra = serde_json::Map::new();
             extra.insert("artifact_id".to_string(), json!(artifact.id));
             extra.insert("title".to_string(), json!(title));
+            extra.insert(
+                "submitted_github_ref".to_string(),
+                submission_payload
+                    .get("submitted_github_ref")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            );
+            extra.insert(
+                "follow_on_runs".to_string(),
+                submission_payload
+                    .get("follow_on_runs")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            );
+            if let Some(number) = submission_payload
+                .get("pull_request")
+                .and_then(|row| row.get("number"))
+                .and_then(Value::as_u64)
+            {
+                extra.insert("pull_request_number".to_string(), json!(number));
+            }
             extra
         });
     }

@@ -1594,6 +1594,7 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
         .refresh_builtin_bindings()
         .await
         .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
     let app = app_router(state.clone());
 
     let create_req = Request::builder()
@@ -1831,6 +1832,31 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(|row| row.get("number"))
             .and_then(Value::as_u64),
         Some(314)
+    );
+
+    let submitted_event = next_event_of_type(&mut rx, "coder.pr.submitted").await;
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("submitted_github_ref")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("pull_request")
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("pull_request_number")
+            .and_then(Value::as_u64),
+        Some(314)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(2)
     );
 }
 
