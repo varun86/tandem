@@ -9886,6 +9886,183 @@ async fn coder_triage_inspection_report_advances_to_reproduction() {
 }
 
 #[tokio::test]
+async fn coder_triage_summary_infers_duplicate_linkage_from_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let seed_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-triage-duplicate-linkage-seed",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 512
+                }
+            })
+            .to_string(),
+        ))
+        .expect("seed request");
+    let seed_resp = app.clone().oneshot(seed_req).await.expect("seed response");
+    assert_eq!(seed_resp.status(), StatusCode::OK);
+
+    let seed_candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-triage-duplicate-linkage-seed/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "duplicate_linkage",
+                "task_id": "retrieve_memory",
+                "summary": "evan/tandem issue #512 is already linked to pull request #913",
+                "payload": {
+                    "type": "duplicate.issue_pr_linkage",
+                    "repo_slug": "evan/tandem",
+                    "project_id": "proj-engine",
+                    "summary": "evan/tandem issue #512 is already linked to pull request #913",
+                    "linked_issue_numbers": [512],
+                    "linked_pr_numbers": [913],
+                    "relationship": "historical_duplicate_linkage",
+                    "artifact_refs": ["artifacts/pr_submission.json"]
+                }
+            })
+            .to_string(),
+        ))
+        .expect("seed candidate request");
+    let seed_candidate_resp = app
+        .clone()
+        .oneshot(seed_candidate_req)
+        .await
+        .expect("seed candidate response");
+    assert_eq!(seed_candidate_resp.status(), StatusCode::OK);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-triage-duplicate-linkage-target",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 512
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-triage-duplicate-linkage-target/triage-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "This issue is likely already covered by an existing pull request.",
+                "confidence": "high"
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
+                .any(|row| row.get("kind").and_then(Value::as_str) == Some("duplicate_linkage"))),
+        Some(true)
+    );
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-triage-duplicate-linkage-target/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    let duplicate_linkage = candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("duplicate_linkage"))
+        })
+        .cloned()
+        .expect("triage duplicate linkage");
+    assert_eq!(
+        duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_issue_numbers"))
+            .cloned(),
+        Some(json!([512]))
+    );
+    assert_eq!(
+        duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_pr_numbers"))
+            .cloned(),
+        Some(json!([913]))
+    );
+    assert_eq!(
+        duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("relationship"))
+            .and_then(Value::as_str),
+        Some("issue_triage_duplicate_inference")
+    );
+}
+
+#[tokio::test]
 async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
     let state = test_state().await;
     state
@@ -10246,8 +10423,10 @@ async fn coder_memory_hits_endpoint_returns_ranked_hits() {
             .cloned(),
         Some(json!([
             "failure_pattern",
+            "regression_signal",
             "duplicate_linkage",
             "triage_memory",
+            "fix_pattern",
             "run_outcome"
         ]))
     );

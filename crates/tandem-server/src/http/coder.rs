@@ -1227,6 +1227,60 @@ fn build_duplicate_linkage_payload(
     })
 }
 
+fn build_inferred_duplicate_linkage_payload(
+    record: &CoderRunRecord,
+    duplicate_candidates: &[Value],
+    artifact_path: &str,
+) -> Option<Value> {
+    let mut linked_issue_numbers = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|reference| vec![reference.number])
+        .unwrap_or_default();
+    for number in duplicate_candidates
+        .iter()
+        .flat_map(|candidate| candidate_linked_numbers(candidate, "linked_issue_numbers"))
+    {
+        linked_issue_numbers.push(number);
+    }
+    linked_issue_numbers.sort_unstable();
+    linked_issue_numbers.dedup();
+
+    let mut linked_pr_numbers = duplicate_candidates
+        .iter()
+        .flat_map(|candidate| candidate_linked_numbers(candidate, "linked_pr_numbers"))
+        .collect::<Vec<_>>();
+    for number in duplicate_candidates.iter().filter_map(|candidate| {
+        (candidate.get("kind").and_then(Value::as_str) == Some("pull_request"))
+            .then(|| candidate.get("number").and_then(Value::as_u64))
+            .flatten()
+    }) {
+        linked_pr_numbers.push(number);
+    }
+    linked_pr_numbers.sort_unstable();
+    linked_pr_numbers.dedup();
+
+    if linked_issue_numbers.is_empty() || linked_pr_numbers.is_empty() {
+        return None;
+    }
+
+    Some(json!({
+        "type": "duplicate.issue_pr_linkage",
+        "repo_slug": record.repo_binding.repo_slug,
+        "project_id": record.repo_binding.project_id,
+        "summary": format!(
+            "{} duplicate triage links issues {:?} to pull requests {:?}",
+            record.repo_binding.repo_slug, linked_issue_numbers, linked_pr_numbers
+        ),
+        "issue_ref": record.github_ref,
+        "linked_issue_numbers": linked_issue_numbers,
+        "linked_pr_numbers": linked_pr_numbers,
+        "relationship": "issue_triage_duplicate_inference",
+        "artifact_refs": [artifact_path],
+    }))
+}
+
 async fn maybe_write_follow_on_duplicate_linkage_candidate(
     state: &AppState,
     record: &CoderRunRecord,
@@ -1558,6 +1612,11 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         {
             4_u8
         }
+        Some("duplicate_linkage")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) =>
+        {
+            3_u8
+        }
         Some("triage_memory") if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) => {
             3_u8
         }
@@ -1591,14 +1650,9 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
             1_u8
         }
         Some("duplicate_linkage")
-            if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) =>
-        {
-            2_u8
-        }
-        Some("duplicate_linkage")
             if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) =>
         {
-            2_u8
+            3_u8
         }
         Some("merge_recommendation_memory")
             if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
@@ -1817,6 +1871,56 @@ fn derive_failure_pattern_duplicate_matches(
         }));
     }
     duplicates.sort_by(compare_failure_pattern_duplicate_matches);
+    duplicates.truncate(limit.clamp(1, 8));
+    duplicates
+}
+
+fn derive_duplicate_linkage_candidates_from_hits(hits: &[Value], limit: usize) -> Vec<Value> {
+    let mut duplicates = Vec::<Value>::new();
+    let mut seen_pr_numbers = HashSet::<u64>::new();
+    for hit in hits {
+        if memory_hit_kind(hit).as_deref() != Some("duplicate_linkage") {
+            continue;
+        }
+        let linked_issue_numbers = candidate_linked_numbers(hit, "linked_issue_numbers");
+        for number in candidate_linked_numbers(hit, "linked_pr_numbers") {
+            if !seen_pr_numbers.insert(number) {
+                continue;
+            }
+            duplicates.push(json!({
+                "id": format!("duplicate-linkage-{number}"),
+                "kind": "pull_request",
+                "number": number,
+                "summary": hit
+                    .get("summary")
+                    .cloned()
+                    .or_else(|| hit.get("metadata").and_then(|row| row.get("summary")).cloned())
+                    .unwrap_or_else(|| json!(format!("historical linked pull request #{number}"))),
+                "linked_issue_numbers": linked_issue_numbers,
+                "linked_pr_numbers": [number],
+                "match_reason": "historical_duplicate_linkage",
+                "source": hit.get("source").cloned().unwrap_or_else(|| json!("unknown")),
+                "memory_id": hit.get("memory_id").cloned().unwrap_or(Value::Null),
+                "candidate_id": hit.get("candidate_id").cloned().unwrap_or(Value::Null),
+                "score": hit.get("score").cloned().unwrap_or(Value::Null),
+                "same_ref": hit.get("same_ref").cloned().unwrap_or(Value::Null),
+                "same_issue": hit.get("same_issue").cloned().unwrap_or(Value::Null),
+                "same_linked_issue": hit.get("same_linked_issue").cloned().unwrap_or(Value::Null),
+                "same_linked_pr": hit.get("same_linked_pr").cloned().unwrap_or(Value::Null),
+            }));
+        }
+    }
+    duplicates.sort_by(|a, b| {
+        b.get("same_linked_issue")
+            .and_then(Value::as_bool)
+            .cmp(&a.get("same_linked_issue").and_then(Value::as_bool))
+            .then_with(|| {
+                b.get("score")
+                    .and_then(Value::as_f64)
+                    .partial_cmp(&a.get("score").and_then(Value::as_f64))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
     duplicates.truncate(limit.clamp(1, 8));
     duplicates
 }
@@ -5707,6 +5811,17 @@ async fn infer_triage_summary_enrichment(
         .unwrap_or_else(|| derive_failure_pattern_duplicate_matches(&hits, None, 3));
     if duplicate_candidates.is_empty() {
         duplicate_candidates = fallback_failure_pattern_duplicates_from_hits(&hits, 3);
+    }
+    let inferred_linkage_candidates = derive_duplicate_linkage_candidates_from_hits(&hits, 3);
+    if !inferred_linkage_candidates.is_empty() {
+        duplicate_candidates.extend(inferred_linkage_candidates);
+        let mut seen_pairs = HashSet::<(Option<u64>, Vec<u64>)>::new();
+        duplicate_candidates.retain(|candidate| {
+            let pr_number = candidate.get("number").and_then(Value::as_u64);
+            let mut linked_prs = candidate_linked_numbers(candidate, "linked_pr_numbers");
+            linked_prs.sort_unstable();
+            seen_pairs.insert((pr_number, linked_prs))
+        });
     }
     let prior_runs_considered = infer_triage_prior_runs_from_hits(&hits, 8);
     let memory_hits_used = infer_triage_memory_hit_ids_from_hits(&hits, 8);
@@ -10318,6 +10433,26 @@ pub(super) async fn coder_triage_summary_create(
             "kind": "failure_pattern",
             "artifact_path": failure_pattern_artifact.path,
         }));
+
+        if let Some(duplicate_linkage_payload) =
+            build_inferred_duplicate_linkage_payload(&record, &duplicate_candidates, &artifact.path)
+        {
+            let (duplicate_linkage_id, duplicate_linkage_artifact) =
+                write_coder_memory_candidate_artifact(
+                    &state,
+                    &record,
+                    CoderMemoryCandidateKind::DuplicateLinkage,
+                    Some(format!("Issue triage duplicate linkage: {summary_text}")),
+                    Some("write_triage_artifact".to_string()),
+                    duplicate_linkage_payload,
+                )
+                .await?;
+            generated_candidates.push(json!({
+                "candidate_id": duplicate_linkage_id,
+                "kind": "duplicate_linkage",
+                "artifact_path": duplicate_linkage_artifact.path,
+            }));
+        }
     }
     let outcome = if duplicate_candidates.is_empty() {
         "triaged"
