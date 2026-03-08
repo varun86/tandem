@@ -998,6 +998,43 @@ async fn memory_promote_missing_source_emits_blocked_event_shape() {
         .get("detail")
         .and_then(Value::as_str)
         .is_some_and(|detail| detail.contains("source memory missing")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-3-missing")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_promote_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_promote")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row.get("source_memory_id").and_then(Value::as_str)
+                        == Some("missing-memory-id")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("source memory missing")
+                                && detail.contains("origin_run_id=run-3-missing")
+                                && detail.contains("project_id=proj-1")
+                        })
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_promote_exists);
 }
 
 #[tokio::test]
