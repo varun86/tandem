@@ -1161,6 +1161,54 @@ async fn workflow_plan_chat_message_switches_to_notification_workflow() {
 }
 
 #[tokio::test]
+async fn workflow_plan_validate_rejects_unsupported_step_id() {
+    let plan = crate::WorkflowPlan {
+        plan_id: "wfplan-test".to_string(),
+        planner_version: "v1".to_string(),
+        plan_source: "test".to_string(),
+        original_prompt: "test prompt".to_string(),
+        normalized_prompt: "test prompt".to_string(),
+        confidence: "medium".to_string(),
+        title: "Test".to_string(),
+        description: Some("desc".to_string()),
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        execution_target: "automation_v2".to_string(),
+        workspace_root: "/tmp".to_string(),
+        steps: vec![crate::WorkflowPlanStep {
+            step_id: "custom_step".to_string(),
+            kind: "custom".to_string(),
+            objective: "Do something custom".to_string(),
+            depends_on: Vec::new(),
+            agent_role: "worker".to_string(),
+            input_refs: Vec::new(),
+            output_contract: None,
+        }],
+        requires_integrations: Vec::new(),
+        allowed_mcp_servers: Vec::new(),
+        operator_preferences: None,
+        save_options: json!({}),
+    };
+    let error = crate::http::workflow_planner::validate_workflow_plan(&plan)
+        .expect_err("expected validation error");
+    assert!(error.contains("unsupported workflow step id"));
+}
+
+#[tokio::test]
+async fn workflow_plan_extract_json_value_from_fenced_text() {
+    let payload = crate::http::workflow_planner::extract_json_value_from_text(
+        "Here is the plan revision:\n```json\n{\"action\":\"keep\",\"assistant_text\":\"no change\"}\n```",
+    )
+    .expect("json value");
+    assert_eq!(payload.get("action").and_then(Value::as_str), Some("keep"));
+}
+
+#[tokio::test]
 async fn workflow_plan_chat_message_updates_execution_mode_preferences() {
     let state = test_state().await;
     let app = app_router(state.clone());

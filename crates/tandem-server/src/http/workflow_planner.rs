@@ -226,8 +226,23 @@ pub(super) async fn workflow_plan_chat_message(
     };
     draft.conversation.updated_at_ms = user_message.created_at_ms;
     draft.conversation.messages.push(user_message);
-    let (revised_plan, assistant_text, change_summary, clarifier) =
+    let (mut revised_plan, mut assistant_text, mut change_summary, mut clarifier) =
         revise_workflow_plan_from_message(&draft.current_plan, message);
+    if change_summary.is_empty()
+        && clarifier
+            .get("field")
+            .and_then(Value::as_str)
+            .is_some_and(|field| field == "general")
+    {
+        if let Some(llm_revision) =
+            try_llm_revise_workflow_plan(&state, &draft.current_plan, message).await
+        {
+            revised_plan = llm_revision.plan;
+            assistant_text = llm_revision.assistant_text;
+            change_summary = llm_revision.change_summary;
+            clarifier = llm_revision.clarifier;
+        }
+    }
     draft.current_plan = revised_plan.clone();
     draft
         .conversation
@@ -249,6 +264,13 @@ pub(super) async fn workflow_plan_chat_message(
         "change_summary": change_summary,
         "clarifier": clarifier,
     })))
+}
+
+struct LlmPlannerRevisionResult {
+    plan: crate::WorkflowPlan,
+    assistant_text: String,
+    change_summary: Vec<String>,
+    clarifier: Value,
 }
 
 pub(super) async fn workflow_plan_chat_reset(
@@ -835,6 +857,13 @@ fn workflow_steps_equal(
     serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
+fn workflow_schedule_equal(
+    left: &crate::AutomationV2Schedule,
+    right: &crate::AutomationV2Schedule,
+) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
+}
+
 fn ensure_analysis_step(plan: &mut crate::WorkflowPlan) -> bool {
     if plan
         .steps
@@ -1171,9 +1200,259 @@ fn extract_workspace_root(message: &str) -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
-fn validate_workflow_plan(plan: &crate::WorkflowPlan) -> Result<(), String> {
+pub(crate) fn validate_workflow_plan(plan: &crate::WorkflowPlan) -> Result<(), String> {
+    if plan.execution_target.trim() != "automation_v2" {
+        return Err("execution_target must be automation_v2".to_string());
+    }
     crate::normalize_absolute_workspace_root(&plan.workspace_root)?;
+    let allowed_step_ids = allowed_workflow_step_ids();
+    let step_ids = plan
+        .steps
+        .iter()
+        .map(|step| step.step_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if step_ids.is_empty() {
+        return Err("workflow plan must include at least one step".to_string());
+    }
+    for step in &plan.steps {
+        if !allowed_step_ids.contains(step.step_id.as_str()) {
+            return Err(format!("unsupported workflow step id `{}`", step.step_id));
+        }
+        for dep in &step.depends_on {
+            if !step_ids.contains(dep.as_str()) {
+                return Err(format!(
+                    "workflow step `{}` depends on unknown step `{}`",
+                    step.step_id, dep
+                ));
+            }
+        }
+        for input in &step.input_refs {
+            if !step_ids.contains(input.from_step_id.as_str()) {
+                return Err(format!(
+                    "workflow step `{}` references unknown input step `{}`",
+                    step.step_id, input.from_step_id
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+fn allowed_workflow_step_ids() -> std::collections::HashSet<&'static str> {
+    [
+        "collect_inputs",
+        "research_sources",
+        "analyze_findings",
+        "generate_report",
+        "compare_results",
+        "notify_user",
+        "execute_goal",
+    ]
+    .into_iter()
+    .collect()
+}
+
+async fn try_llm_revise_workflow_plan(
+    state: &AppState,
+    current_plan: &crate::WorkflowPlan,
+    message: &str,
+) -> Option<LlmPlannerRevisionResult> {
+    let workspace_root = resolve_workspace_root(state, Some(&current_plan.workspace_root))
+        .await
+        .ok()?;
+    let mut session = Session::new(
+        Some("Workflow Planner Revision".to_string()),
+        Some(workspace_root.clone()),
+    );
+    let session_id = session.id.clone();
+    session.workspace_root = Some(workspace_root);
+    state.storage.save_session(session).await.ok()?;
+
+    let request = SendMessageRequest {
+        parts: vec![MessagePartInput::Text {
+            text: build_llm_workflow_revision_prompt(current_plan, message),
+        }],
+        model: planner_model_spec(current_plan.operator_preferences.as_ref()),
+        agent: None,
+        tool_mode: None,
+        tool_allowlist: None,
+        context_mode: None,
+        write_required: None,
+    };
+    state
+        .engine_loop
+        .run_prompt_async_with_context(
+            session_id.clone(),
+            request,
+            Some(format!("workflow-plan-revision:{}", current_plan.plan_id)),
+        )
+        .await
+        .ok()?;
+    let session = state.storage.get_session(&session_id).await?;
+    let output = extract_planner_session_text_output(&session);
+    let payload = extract_json_value_from_text(&output)?;
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("keep")
+        .to_ascii_lowercase();
+    if action == "clarify" {
+        let question = payload
+            .get("clarifier")
+            .and_then(|row| row.get("question"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let assistant_text = payload
+            .get("assistant_text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(question)
+            .to_string();
+        return Some(LlmPlannerRevisionResult {
+            plan: current_plan.clone(),
+            assistant_text,
+            change_summary: Vec::new(),
+            clarifier: json!({
+                "field": payload
+                    .get("clarifier")
+                    .and_then(|row| row.get("field"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("general"),
+                "question": question,
+            }),
+        });
+    }
+    if action != "revise" {
+        return None;
+    }
+    let mut revised_plan: crate::WorkflowPlan =
+        serde_json::from_value(payload.get("plan")?.clone()).ok()?;
+    revised_plan.plan_id = current_plan.plan_id.clone();
+    revised_plan.planner_version = current_plan.planner_version.clone();
+    revised_plan.plan_source = current_plan.plan_source.clone();
+    revised_plan.original_prompt = current_plan.original_prompt.clone();
+    revised_plan.normalized_prompt = current_plan.normalized_prompt.clone();
+    revised_plan.execution_target = "automation_v2".to_string();
+    validate_workflow_plan(&revised_plan).ok()?;
+    if workflow_steps_equal(&revised_plan.steps, &current_plan.steps)
+        && revised_plan.title == current_plan.title
+        && revised_plan.description == current_plan.description
+        && workflow_schedule_equal(&revised_plan.schedule, &current_plan.schedule)
+        && revised_plan.workspace_root == current_plan.workspace_root
+        && revised_plan.allowed_mcp_servers == current_plan.allowed_mcp_servers
+        && revised_plan.operator_preferences == current_plan.operator_preferences
+    {
+        return None;
+    }
+    let change_summary = payload
+        .get("change_summary")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| vec!["updated workflow plan".to_string()]);
+    let assistant_text = payload
+        .get("assistant_text")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("Updated the plan: {}.", change_summary.join(", ")));
+    Some(LlmPlannerRevisionResult {
+        plan: revised_plan,
+        assistant_text,
+        change_summary,
+        clarifier: Value::Null,
+    })
+}
+
+fn planner_model_spec(operator_preferences: Option<&Value>) -> Option<tandem_types::ModelSpec> {
+    let prefs = operator_preferences?;
+    let provider_id = prefs.get("model_provider").and_then(Value::as_str)?.trim();
+    let model_id = prefs.get("model_id").and_then(Value::as_str)?.trim();
+    if provider_id.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    Some(tandem_types::ModelSpec {
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+    })
+}
+
+fn build_llm_workflow_revision_prompt(current_plan: &crate::WorkflowPlan, message: &str) -> String {
+    format!(
+        concat!(
+            "You are revising a Tandem automation workflow plan.\n",
+            "You may only use these step ids: collect_inputs, research_sources, analyze_findings, generate_report, compare_results, notify_user, execute_goal.\n",
+            "Keep execution_target as automation_v2.\n",
+            "Do not invent custom step ids.\n",
+            "Return JSON only with one of these shapes:\n",
+            "{{\"action\":\"revise\",\"assistant_text\":\"...\",\"change_summary\":[\"...\"],\"plan\":{{...full WorkflowPlan...}}}}\n",
+            "{{\"action\":\"clarify\",\"assistant_text\":\"...\",\"clarifier\":{{\"field\":\"general\",\"question\":\"...\"}}}}\n",
+            "{{\"action\":\"keep\",\"assistant_text\":\"...\"}}\n\n",
+            "Current plan JSON:\n{}\n\n",
+            "User revision request:\n{}\n"
+        ),
+        serde_json::to_string_pretty(current_plan).unwrap_or_else(|_| "{}".to_string()),
+        message.trim()
+    )
+}
+
+fn extract_planner_session_text_output(session: &Session) -> String {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::Assistant))
+        .map(|message| {
+            message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    MessagePart::Text { text } | MessagePart::Reasoning { text } => {
+                        Some(text.as_str())
+                    }
+                    MessagePart::ToolInvocation { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn extract_json_value_from_text(text: &str) -> Option<Value> {
+    serde_json::from_str(text.trim())
+        .ok()
+        .or_else(|| {
+            let fenced = text.split("```").find_map(|chunk| {
+                let trimmed = chunk.trim();
+                if trimmed.starts_with('{') {
+                    Some(trimmed)
+                } else if let Some(rest) = trimmed.strip_prefix("json") {
+                    let rest = rest.trim();
+                    rest.starts_with('{').then_some(rest)
+                } else {
+                    None
+                }
+            })?;
+            serde_json::from_str(fenced).ok()
+        })
+        .or_else(|| {
+            let start = text.find('{')?;
+            let end = text.rfind('}')?;
+            (start < end)
+                .then(|| serde_json::from_str::<Value>(&text[start..=end]).ok())
+                .flatten()
+        })
 }
 
 fn normalize_prompt(prompt: &str) -> String {
