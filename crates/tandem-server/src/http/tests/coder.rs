@@ -1550,6 +1550,16 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
         submit_payload.get("dry_run").and_then(Value::as_bool),
         Some(true)
     );
+    assert!(submit_payload
+        .get("submitted_github_ref")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
     assert_eq!(
         submit_payload
             .get("artifact")
@@ -1688,6 +1698,27 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     assert_eq!(
         submit_payload.get("submitted").and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        submit_payload
+            .get("submitted_github_ref")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("pull_request")
+    );
+    assert_eq!(
+        submit_payload
+            .get("pull_request")
+            .and_then(|row| row.get("number"))
+            .and_then(Value::as_u64),
+        Some(314)
+    );
+    assert_eq!(
+        submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(2)
     );
     assert_eq!(
         submit_payload

@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed PR submit MCP tool resolution so builtin raw tool names and runtime namespaced tool names both resolve correctly, and added a real HTTP-backed MCP regression that exercises non-dry-run PR submission end to end
   - added server-side follow-on run creation at `POST /coder/runs/{id}/follow-on-run`, so a successful issue-fix PR submission can spawn `pr_review` or `merge_recommendation` runs from the canonical submitted PR ref without frontend-owned handoff logic
   - PR submit artifacts now also carry machine-readable `follow_on_runs` templates so later review/merge workflows can be chained from the engine-owned submission payload without reconstructing run inputs in the UI
+  - `POST /coder/runs/{id}/pr-submit` now also returns `submitted_github_ref`, `pull_request`, and `follow_on_runs` directly in the API response so clients do not need a second artifact read to continue the workflow
 
 - **Bug Monitor settings foundation and server config/status surface**:
   - added persisted bug-monitor config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent

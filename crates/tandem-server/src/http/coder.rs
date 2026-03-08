@@ -5101,6 +5101,18 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .and_then(Value::as_bool)
             .unwrap_or(false),
         "dry_run": dry_run,
+        "submitted_github_ref": submission_payload
+            .get("submitted_github_ref")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "pull_request": submission_payload
+            .get("pull_request")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "follow_on_runs": submission_payload
+            .get("follow_on_runs")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
     })))
