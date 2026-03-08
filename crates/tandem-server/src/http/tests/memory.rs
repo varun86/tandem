@@ -1884,6 +1884,7 @@ async fn memory_list_and_delete_admin_routes_work() {
 async fn memory_delete_missing_memory_writes_not_found_audit() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
 
     let del_req = Request::builder()
         .method("DELETE")
@@ -1896,6 +1897,35 @@ async fn memory_delete_missing_memory_writes_not_found_audit() {
         .await
         .expect("memory delete response");
     assert_eq!(del_resp.status(), StatusCode::NOT_FOUND);
+    let delete_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.deleted"),
+    )
+    .await
+    .expect("missing memory.deleted event");
+    assert_eq!(
+        delete_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some("missing-delete-memory")
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("not_found")
+    );
+    assert!(delete_event
+        .properties
+        .get("runID")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("memory not found")));
 
     let audit_req = Request::builder()
         .method("GET")
@@ -2185,6 +2215,7 @@ async fn memory_demote_hides_item_from_search_results() {
 async fn memory_demote_missing_memory_writes_not_found_audit() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
 
     let demote_req = Request::builder()
         .method("POST")
@@ -2204,6 +2235,42 @@ async fn memory_demote_missing_memory_writes_not_found_audit() {
         .await
         .expect("demote response");
     assert_eq!(demote_resp.status(), StatusCode::NOT_FOUND);
+    let demote_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.updated"),
+    )
+    .await
+    .expect("missing memory.updated event");
+    assert_eq!(
+        demote_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some("missing-demote-memory")
+    );
+    assert_eq!(
+        demote_event.properties.get("runID").and_then(Value::as_str),
+        Some("run-5-missing")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("action")
+            .and_then(Value::as_str),
+        Some("demote")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("not_found")
+    );
+    assert!(demote_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("memory not found")));
 
     let audit_req = Request::builder()
         .method("GET")

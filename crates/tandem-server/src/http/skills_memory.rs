@@ -1234,10 +1234,11 @@ async fn emit_missing_memory_demote_audit(
     memory_id: &str,
     detail: &str,
 ) -> Result<(), StatusCode> {
+    let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         state,
         crate::MemoryAuditEvent {
-            audit_id: Uuid::new_v4().to_string(),
+            audit_id: audit_id.clone(),
             action: "memory_demote".to_string(),
             run_id: run_id.to_string(),
             memory_id: Some(memory_id.to_string()),
@@ -1250,7 +1251,19 @@ async fn emit_missing_memory_demote_audit(
             created_at_ms: crate::now_ms(),
         },
     )
-    .await
+    .await?;
+    state.event_bus.publish(EngineEvent::new(
+        "memory.updated",
+        json!({
+            "memoryID": memory_id,
+            "runID": run_id,
+            "action": "demote",
+            "status": "not_found",
+            "detail": detail,
+            "auditID": audit_id,
+        }),
+    ));
+    Ok(())
 }
 
 async fn emit_missing_memory_delete_audit(
@@ -1258,10 +1271,11 @@ async fn emit_missing_memory_delete_audit(
     memory_id: &str,
     detail: &str,
 ) -> Result<(), StatusCode> {
+    let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         state,
         crate::MemoryAuditEvent {
-            audit_id: Uuid::new_v4().to_string(),
+            audit_id: audit_id.clone(),
             action: "memory_delete".to_string(),
             run_id: "unknown".to_string(),
             memory_id: Some(memory_id.to_string()),
@@ -1274,7 +1288,18 @@ async fn emit_missing_memory_delete_audit(
             created_at_ms: crate::now_ms(),
         },
     )
-    .await
+    .await?;
+    state.event_bus.publish(EngineEvent::new(
+        "memory.deleted",
+        json!({
+            "memoryID": memory_id,
+            "runID": Value::Null,
+            "status": "not_found",
+            "detail": detail,
+            "auditID": audit_id,
+        }),
+    ));
+    Ok(())
 }
 
 fn memory_promote_metadata(
