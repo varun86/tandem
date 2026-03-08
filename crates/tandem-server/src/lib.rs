@@ -2192,14 +2192,31 @@ impl AppState {
     }
 
     pub async fn load_automations_v2(&self) -> anyhow::Result<()> {
-        if !self.automations_v2_path.exists() {
-            return Ok(());
+        let mut path = self.automations_v2_path.clone();
+        let mut raw = if path.exists() {
+            fs::read_to_string(&path).await?
+        } else {
+            String::new()
+        };
+        let active_is_empty = raw.trim().is_empty() || raw.trim() == "{}";
+        if active_is_empty {
+            if let Some(legacy_path) = legacy_automations_v2_path() {
+                if legacy_path.exists() {
+                    let legacy_raw = fs::read_to_string(&legacy_path).await?;
+                    if !(legacy_raw.trim().is_empty() || legacy_raw.trim() == "{}") {
+                        path = legacy_path;
+                        raw = legacy_raw;
+                    }
+                }
+            }
         }
-        let raw = fs::read_to_string(&self.automations_v2_path).await?;
         let parsed =
             serde_json::from_str::<std::collections::HashMap<String, AutomationV2Spec>>(&raw)
                 .unwrap_or_default();
         *self.automations_v2.write().await = parsed;
+        if path != self.automations_v2_path {
+            let _ = self.persist_automations_v2().await;
+        }
         Ok(())
     }
 
@@ -2216,14 +2233,31 @@ impl AppState {
     }
 
     pub async fn load_automation_v2_runs(&self) -> anyhow::Result<()> {
-        if !self.automation_v2_runs_path.exists() {
-            return Ok(());
+        let mut path = self.automation_v2_runs_path.clone();
+        let mut raw = if path.exists() {
+            fs::read_to_string(&path).await?
+        } else {
+            String::new()
+        };
+        let active_is_empty = raw.trim().is_empty() || raw.trim() == "{}";
+        if active_is_empty {
+            if let Some(legacy_path) = legacy_automation_v2_runs_path() {
+                if legacy_path.exists() {
+                    let legacy_raw = fs::read_to_string(&legacy_path).await?;
+                    if !(legacy_raw.trim().is_empty() || legacy_raw.trim() == "{}") {
+                        path = legacy_path;
+                        raw = legacy_raw;
+                    }
+                }
+            }
         }
-        let raw = fs::read_to_string(&self.automation_v2_runs_path).await?;
         let parsed =
             serde_json::from_str::<std::collections::HashMap<String, AutomationV2RunRecord>>(&raw)
                 .unwrap_or_default();
         *self.automation_v2_runs.write().await = parsed;
+        if path != self.automation_v2_runs_path {
+            let _ = self.persist_automation_v2_runs().await;
+        }
         Ok(())
     }
 
@@ -3774,6 +3808,13 @@ fn resolve_automations_v2_path() -> PathBuf {
     default_state_dir().join("automations_v2.json")
 }
 
+fn legacy_automations_v2_path() -> Option<PathBuf> {
+    resolve_shared_paths()
+        .ok()
+        .map(|paths| paths.canonical_root.join("automations_v2.json"))
+        .filter(|path| path != &resolve_automations_v2_path())
+}
+
 fn resolve_automation_v2_runs_path() -> PathBuf {
     if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = root.trim();
@@ -3782,6 +3823,13 @@ fn resolve_automation_v2_runs_path() -> PathBuf {
         }
     }
     default_state_dir().join("automation_v2_runs.json")
+}
+
+fn legacy_automation_v2_runs_path() -> Option<PathBuf> {
+    resolve_shared_paths()
+        .ok()
+        .map(|paths| paths.canonical_root.join("automation_v2_runs.json"))
+        .filter(|path| path != &resolve_automation_v2_runs_path())
 }
 
 fn resolve_workflow_runs_path() -> PathBuf {
