@@ -2514,6 +2514,12 @@ async fn memory_delete_missing_memory_writes_not_found_audit() {
         })
         .cloned()
         .expect("missing delete audit row");
+    assert!(delete_audit_exists
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| {
+            !detail.contains("origin_run_id=") && !detail.contains("project_id=")
+        }));
     assert_eq!(
         delete_event
             .properties
@@ -2921,6 +2927,12 @@ async fn memory_demote_missing_memory_writes_not_found_audit() {
         })
         .cloned()
         .expect("missing demote audit row");
+    assert!(demote_audit_exists
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| {
+            !detail.contains("origin_run_id=") && !detail.contains("project_id=")
+        }));
     assert_eq!(
         demote_event
             .properties
