@@ -5540,6 +5540,23 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
         .await
         .expect("context run state");
     assert_eq!(run.status, ContextRunStatus::Completed);
+    let blackboard = load_context_blackboard(&state, &linked_context_run_id);
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_issue_triage_worker_session"));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_repo_inspection_report"));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_reproduction_report"));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_triage_summary"));
     for workflow_node_id in [
         "ingest_reference",
         "retrieve_memory",
