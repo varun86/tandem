@@ -8737,7 +8737,9 @@ async fn coder_triage_reproduction_report_infers_memory_and_prior_runs() {
         repro_artifact_payload
             .get("memory_hits_used")
             .and_then(Value::as_array)
-            .map(|rows| rows.iter().any(|row| row.as_str() == Some(seeded_candidate_id.as_str()))),
+            .map(|rows| rows
+                .iter()
+                .any(|row| row.as_str() == Some(seeded_candidate_id.as_str()))),
         Some(true)
     );
     assert_eq!(
@@ -9222,7 +9224,11 @@ async fn coder_memory_hits_endpoint_returns_ranked_hits() {
             .get("retrieval_policy")
             .and_then(|row| row.get("sources"))
             .cloned(),
-        Some(json!(["repo_memory_candidates", "project_memory", "governed_memory"]))
+        Some(json!([
+            "repo_memory_candidates",
+            "project_memory",
+            "governed_memory"
+        ]))
     );
     assert_eq!(
         hits_payload
