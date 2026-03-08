@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - broadened duplicate-linkage memory beyond PR submit so PR review and merge follow-on runs now persist their own issue↔PR linkage candidates from parent issue-fix runs
   - broadened post-failure regression learning beyond Bug Monitor by writing `regression_signal` candidates when issue-triage reproduction fails
   - issue-fix validation failures now also emit `regression_signal` memory with failed validation evidence
+  - issue-fix worker-session failures now also emit rich `run_outcome` memory instead of relying only on generic terminal backfill
     - `GET /coder/projects/{project_id}`
     - `GET /coder/projects/{project_id}/runs`
     - `POST /coder/projects/{project_id}/runs`

@@ -2995,6 +2995,15 @@ async fn dispatch_issue_fix_task(
                         "Issue-fix worker session failed during prepare_fix with status {}.",
                         error
                     );
+                    let generated_candidate = write_worker_failure_run_outcome_candidate(
+                        &state,
+                        record,
+                        "prepare_fix",
+                        "coder_issue_fix_worker_session",
+                        "issue_fix_prepare_failed",
+                        &detail,
+                    )
+                    .await?;
                     fail_claimed_coder_task(
                         &state,
                         record.linked_context_run_id.clone(),
@@ -3015,6 +3024,9 @@ async fn dispatch_issue_fix_task(
                         "ok": false,
                         "error": detail,
                         "code": "CODER_WORKER_SESSION_FAILED",
+                        "generated_candidates": generated_candidate
+                            .map(|candidate| vec![candidate])
+                            .unwrap_or_default(),
                         "run": failed.get("run").cloned().unwrap_or(Value::Null),
                         "coder_run": failed.get("coder_run").cloned().unwrap_or(Value::Null),
                     }));
@@ -3074,6 +3086,15 @@ async fn dispatch_issue_fix_task(
                         "Issue-fix validation worker session failed during validate_fix with status {}.",
                         error
                     );
+                    let generated_candidate = write_worker_failure_run_outcome_candidate(
+                        &state,
+                        record,
+                        "validate_fix",
+                        "coder_issue_fix_validation_session",
+                        "issue_fix_validation_failed",
+                        &detail,
+                    )
+                    .await?;
                     fail_claimed_coder_task(
                         &state,
                         record.linked_context_run_id.clone(),
@@ -3094,6 +3115,9 @@ async fn dispatch_issue_fix_task(
                         "ok": false,
                         "error": detail,
                         "code": "CODER_WORKER_SESSION_FAILED",
+                        "generated_candidates": generated_candidate
+                            .map(|candidate| vec![candidate])
+                            .unwrap_or_default(),
                         "run": failed.get("run").cloned().unwrap_or(Value::Null),
                         "coder_run": failed.get("coder_run").cloned().unwrap_or(Value::Null),
                     }));
@@ -5325,6 +5349,62 @@ async fn ensure_terminal_run_outcome_candidate(
             "final_status": run.status,
             "final_phase": project_coder_phase(run),
             "reason": reason,
+        }),
+    )
+    .await?;
+    Ok(Some(json!({
+        "candidate_id": candidate_id,
+        "kind": "run_outcome",
+        "artifact_path": artifact.path,
+    })))
+}
+
+async fn write_worker_failure_run_outcome_candidate(
+    state: &AppState,
+    record: &CoderRunRecord,
+    task_id: &str,
+    worker_artifact_type: &str,
+    result: &str,
+    summary: &str,
+) -> Result<Option<Value>, StatusCode> {
+    if coder_run_has_run_outcome_candidate(state, record).await {
+        return Ok(None);
+    }
+    let worker_artifact = latest_coder_artifact(state, record, worker_artifact_type);
+    let worker_payload =
+        load_latest_coder_artifact_payload(state, record, worker_artifact_type).await;
+    let (candidate_id, artifact) = write_coder_memory_candidate_artifact(
+        state,
+        record,
+        CoderMemoryCandidateKind::RunOutcome,
+        Some(summary.to_string()),
+        Some(task_id.to_string()),
+        json!({
+            "workflow_mode": record.workflow_mode,
+            "result": result,
+            "summary": summary,
+            "worker_artifact_type": worker_artifact_type,
+            "worker_artifact_path": worker_artifact.as_ref().map(|row| row.path.clone()),
+            "worker_session_id": worker_payload
+                .as_ref()
+                .and_then(|row| row.get("session_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "worker_session_run_id": worker_payload
+                .as_ref()
+                .and_then(|row| row.get("session_run_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "worker_error": worker_payload
+                .as_ref()
+                .and_then(|row| row.get("error"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "worker_status": worker_payload
+                .as_ref()
+                .and_then(|row| row.get("status"))
+                .cloned()
+                .unwrap_or_else(|| json!("error")),
         }),
     )
     .await?;

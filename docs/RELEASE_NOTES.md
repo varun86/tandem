@@ -47,6 +47,7 @@
   - PR review and merge follow-on runs now persist their own `duplicate_linkage` candidates from parent issue-fix runs instead of relying only on the original PR submit artifact
   - failed issue-triage reproduction now also emits `regression_signal` memory, so post-failure analysis is not limited to Bug Monitor triage
   - failed issue-fix validation now also emits `regression_signal` memory with the failing validation evidence
+  - issue-fix worker-session failures now also emit rich `run_outcome` memory with worker artifact and session context
     - `GET /config/bug-monitor`
     - `PATCH /config/bug-monitor`
     - `GET /bug-monitor/status`

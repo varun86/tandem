@@ -971,6 +971,135 @@ async fn coder_issue_fix_failed_validation_writes_regression_signal() {
 }
 
 #[tokio::test]
+async fn coder_issue_fix_worker_failure_writes_run_outcome() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-worker-failure",
+                "workflow_mode": "issue_fix",
+                "model_provider": "missing-provider",
+                "model_id": "missing-model",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 81
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let first_step_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-worker-failure/execute-next")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
+        .expect("first step request");
+    let first_step_resp = app
+        .clone()
+        .oneshot(first_step_req)
+        .await
+        .expect("first step response");
+    assert_eq!(first_step_resp.status(), StatusCode::OK);
+
+    let second_step_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-worker-failure/execute-next")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
+        .expect("second step request");
+    let second_step_resp = app
+        .clone()
+        .oneshot(second_step_req)
+        .await
+        .expect("second step response");
+    assert_eq!(second_step_resp.status(), StatusCode::OK);
+    let second_step_payload: Value = serde_json::from_slice(
+        &to_bytes(second_step_resp.into_body(), usize::MAX)
+            .await
+            .expect("second step body"),
+    )
+    .expect("second step json");
+    assert_eq!(
+        second_step_payload
+            .get("dispatch_result")
+            .and_then(|row| row.get("code"))
+            .and_then(Value::as_str),
+        Some("CODER_WORKER_SESSION_FAILED")
+    );
+    assert_eq!(
+        second_step_payload
+            .get("dispatch_result")
+            .and_then(|row| row.get("generated_candidates"))
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("run_outcome")
+    );
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-issue-fix-worker-failure/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    let run_outcome_payload = candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("run_outcome"))
+        })
+        .and_then(|row| row.get("payload"))
+        .cloned()
+        .expect("run outcome payload");
+    assert_eq!(
+        run_outcome_payload.get("result").and_then(Value::as_str),
+        Some("issue_fix_prepare_failed")
+    );
+    assert_eq!(
+        run_outcome_payload
+            .get("worker_artifact_type")
+            .and_then(Value::as_str),
+        Some("coder_issue_fix_worker_session")
+    );
+}
+
+#[tokio::test]
 async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
     let state = test_state().await;
     state
