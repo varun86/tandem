@@ -314,6 +314,8 @@ pub(super) struct CoderIssueFixPrSubmitInput {
     pub(super) mcp_server: Option<String>,
     #[serde(default)]
     pub(super) dry_run: Option<bool>,
+    #[serde(default)]
+    pub(super) spawn_follow_on_runs: Vec<CoderWorkflowMode>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -4759,6 +4761,29 @@ fn build_follow_on_run_templates(
     .collect::<Vec<_>>()
 }
 
+fn build_follow_on_run_create_input(
+    record: &CoderRunRecord,
+    workflow_mode: CoderWorkflowMode,
+    github_ref: CoderGithubRef,
+    source_client: Option<String>,
+    model_provider: Option<String>,
+    model_id: Option<String>,
+    mcp_servers: Option<Vec<String>>,
+) -> CoderRunCreateInput {
+    CoderRunCreateInput {
+        coder_run_id: None,
+        workflow_mode,
+        repo_binding: record.repo_binding.clone(),
+        github_ref: Some(github_ref),
+        objective: None,
+        source_client,
+        workspace: None,
+        model_provider,
+        model_id,
+        mcp_servers,
+    }
+}
+
 async fn call_create_pull_request(
     state: &AppState,
     server_name: &str,
@@ -4987,6 +5012,14 @@ pub(super) async fn coder_issue_fix_pr_submit(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("coder/issue-fix");
     let dry_run = input.dry_run.unwrap_or(true);
+    for workflow_mode in &input.spawn_follow_on_runs {
+        if !matches!(
+            workflow_mode,
+            CoderWorkflowMode::PrReview | CoderWorkflowMode::MergeRecommendation
+        ) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
     let (owner, repo_name) = split_owner_repo(&record.repo_binding.repo_slug)?;
     let mut submission_payload = json!({
         "coder_run_id": record.coder_run_id,
@@ -5062,6 +5095,36 @@ pub(super) async fn coder_issue_fix_pr_submit(
             }),
         );
     }
+    let mut spawned_follow_on_runs = Vec::<Value>::new();
+    if !dry_run {
+        let submitted_github_ref = submission_payload
+            .get("submitted_github_ref")
+            .and_then(parse_coder_github_ref);
+        if let Some(submitted_github_ref) = submitted_github_ref {
+            for workflow_mode in &input.spawn_follow_on_runs {
+                let create_input = build_follow_on_run_create_input(
+                    &record,
+                    workflow_mode.clone(),
+                    submitted_github_ref.clone(),
+                    record.source_client.clone(),
+                    record.model_provider.clone(),
+                    record.model_id.clone(),
+                    input
+                        .mcp_server
+                        .as_ref()
+                        .map(|server| vec![server.clone()])
+                        .or_else(|| Some(vec!["github".to_string()])),
+                );
+                let response = coder_run_create(State(state.clone()), Json(create_input)).await?;
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                let payload: Value = serde_json::from_slice(&bytes)
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                spawned_follow_on_runs.push(payload);
+            }
+        }
+    }
     let artifact = write_coder_artifact(
         &state,
         &record.linked_context_run_id,
@@ -5134,6 +5197,7 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .get("follow_on_runs")
             .cloned()
             .unwrap_or_else(|| json!([])),
+        "spawned_follow_on_runs": spawned_follow_on_runs,
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
     })))
@@ -5167,20 +5231,19 @@ pub(super) async fn coder_follow_on_run_create(
     }
     let create_input = CoderRunCreateInput {
         coder_run_id: input.coder_run_id,
-        workflow_mode: input.workflow_mode,
-        repo_binding: record.repo_binding.clone(),
-        github_ref: Some(submitted_github_ref),
-        objective: None,
-        source_client: normalize_source_client(input.source_client.as_deref())
-            .or_else(|| record.source_client.clone()),
-        workspace: None,
-        model_provider: normalize_source_client(input.model_provider.as_deref())
-            .or_else(|| record.model_provider.clone()),
-        model_id: normalize_source_client(input.model_id.as_deref())
-            .or_else(|| record.model_id.clone()),
-        mcp_servers: input
-            .mcp_servers
-            .or_else(|| Some(vec!["github".to_string()])),
+        ..build_follow_on_run_create_input(
+            &record,
+            input.workflow_mode,
+            submitted_github_ref,
+            normalize_source_client(input.source_client.as_deref())
+                .or_else(|| record.source_client.clone()),
+            normalize_source_client(input.model_provider.as_deref())
+                .or_else(|| record.model_provider.clone()),
+            normalize_source_client(input.model_id.as_deref()).or_else(|| record.model_id.clone()),
+            input
+                .mcp_servers
+                .or_else(|| Some(vec!["github".to_string()])),
+        )
     };
     coder_run_create(State(state), Json(create_input)).await
 }

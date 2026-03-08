@@ -1562,6 +1562,13 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
     );
     assert_eq!(
         submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        submit_payload
             .get("artifact")
             .and_then(|row| row.get("path"))
             .and_then(Value::as_str)
@@ -1677,7 +1684,8 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
                 "approved_by": "evan",
                 "reason": "Ready to open the draft PR",
                 "dry_run": false,
-                "mcp_server": "github"
+                "mcp_server": "github",
+                "spawn_follow_on_runs": ["pr_review"]
             })
             .to_string(),
         ))
@@ -1720,6 +1728,23 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(2)
+    );
+    assert_eq!(
+        submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("coder_run"))
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("pr_review")
     );
     assert_eq!(
         submit_payload

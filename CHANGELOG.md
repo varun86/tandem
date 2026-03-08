@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - PR submit artifacts now also carry machine-readable `follow_on_runs` templates so later review/merge workflows can be chained from the engine-owned submission payload without reconstructing run inputs in the UI
   - `POST /coder/runs/{id}/pr-submit` now also returns `submitted_github_ref`, `pull_request`, and `follow_on_runs` directly in the API response so clients do not need a second artifact read to continue the workflow
   - `coder.pr.submitted` events now include the canonical submitted PR ref, PR number, and follow-on workflow templates so streaming clients can continue the workflow without a follow-up fetch
+  - `POST /coder/runs/{id}/pr-submit` can now optionally auto-create follow-on `pr_review` and `merge_recommendation` runs through engine-owned chaining, returning those spawned runs directly in `spawned_follow_on_runs`
 
 - **Bug Monitor settings foundation and server config/status surface**:
   - added persisted bug-monitor config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
