@@ -5583,7 +5583,7 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
             .get("merge_submit_policy")
             .and_then(|row| row.get("auto_execute_block_reason"))
             .and_then(Value::as_str),
-        Some("requires_auto_spawned_merge_follow_on")
+        Some("requires_approved_pr_review_follow_on")
     );
     assert_eq!(
         approve_payload
