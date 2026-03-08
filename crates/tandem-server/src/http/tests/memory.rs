@@ -3117,3 +3117,135 @@ async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
         .unwrap_or(false);
     assert!(blocked_search_exists);
 }
+
+#[tokio::test]
+async fn memory_search_rejects_mismatched_capability_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-6-cap-mismatch",
+                "query": "mismatched capability search",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "read_scopes": ["session"],
+                "capability": {
+                    "run_id": "run-6-cap-mismatch",
+                    "subject": "mismatch-user",
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-2",
+                    "memory": {
+                        "read_tiers": ["session"],
+                        "write_tiers": ["session"],
+                        "promote_targets": ["project"],
+                        "require_review_for_promote": true,
+                        "allow_auto_use_tiers": ["curated"]
+                    },
+                    "expires_at": 9999999999999u64
+                },
+                "limit": 5
+            })
+            .to_string(),
+        ))
+        .expect("search request");
+    let search_resp = app
+        .clone()
+        .oneshot(search_req)
+        .await
+        .expect("search response");
+    assert_eq!(search_resp.status(), StatusCode::FORBIDDEN);
+
+    let search_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.search"),
+    )
+    .await
+    .expect("blocked memory.search event");
+    assert_eq!(
+        search_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        search_event.properties.get("query").and_then(Value::as_str),
+        Some("mismatched capability search")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-6-cap-mismatch")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
+    assert!(search_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("capability context mismatch")));
+    assert_eq!(
+        search_event
+            .properties
+            .get("blockedScopes")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["session"])
+    );
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-6-cap-mismatch")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_search_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_search")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("capability context mismatch")
+                                && detail.contains("blocked_scopes=session")
+                                && detail.contains("origin_run_id=run-6-cap-mismatch")
+                                && detail.contains("project_id=proj-1")
+                        })
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_search_exists);
+}
