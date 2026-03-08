@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `POST /coder/runs` now also returns `execution_policy`, so manual follow-on creation responses are immediately truthful about blocked merge-recommendation runs without requiring a follow-up read
   - blocked `execute-next` / `execute-all` responses now also return `coder_run`, `run`, and `execution_policy`, so clients can stay in sync after a policy block without issuing a second fetch
   - blocked `execute-next` / `execute-all` now also emit `coder.run.phase_changed` with `event_type = execution_policy_blocked`, so streaming clients can react to follow-on policy blocks without polling
+  - merge-recommendation summaries that come back `merge` with no remaining blockers/checks/approvals now stop in `awaiting_approval` and emit `coder.approval.required`, instead of looking fully completed before an operator approves the recommendation
 
 - **Bug Monitor settings foundation and server config/status surface**:
   - added persisted bug-monitor config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent

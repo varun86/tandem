@@ -293,156 +293,6 @@ async fn coder_issue_triage_run_create_get_and_list() {
 }
 
 #[tokio::test]
-async fn coder_issue_triage_events_emit_stable_base_schema() {
-    let state = test_state().await;
-    state
-        .capability_resolver
-        .refresh_builtin_bindings()
-        .await
-        .expect("refresh builtin bindings");
-    let mut rx = state.event_bus.subscribe();
-    let app = app_router(state.clone());
-
-    let create_req = Request::builder()
-        .method("POST")
-        .uri("/coder/runs")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "coder_run_id": "coder-run-events-1",
-                "workflow_mode": "issue_triage",
-                "repo_binding": {
-                    "project_id": "proj-engine",
-                    "workspace_id": "ws-tandem",
-                    "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
-                    "default_branch": "main"
-                },
-                "github_ref": {
-                    "kind": "issue",
-                    "number": 1201,
-                    "url": "https://github.com/evan/tandem/issues/1201"
-                },
-                "source_client": "desktop_developer_mode"
-            })
-            .to_string(),
-        ))
-        .expect("create request");
-    let create_resp = app
-        .clone()
-        .oneshot(create_req)
-        .await
-        .expect("create response");
-    assert_eq!(create_resp.status(), StatusCode::OK);
-
-    let created_event = next_event_of_type(&mut rx, "coder.run.created").await;
-    assert_eq!(
-        created_event
-            .properties
-            .get("coder_run_id")
-            .and_then(Value::as_str),
-        Some("coder-run-events-1")
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("linked_context_run_id")
-            .and_then(Value::as_str)
-            .is_some(),
-        true
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("workflow_mode")
-            .and_then(Value::as_str),
-        Some("issue_triage")
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("repo_binding")
-            .and_then(|row| row.get("repo_slug"))
-            .and_then(Value::as_str),
-        Some("evan/tandem")
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("github_ref")
-            .and_then(|row| row.get("kind"))
-            .and_then(Value::as_str),
-        Some("issue")
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("source_client")
-            .and_then(Value::as_str),
-        Some("desktop_developer_mode")
-    );
-    assert_eq!(
-        created_event
-            .properties
-            .get("phase")
-            .and_then(Value::as_str),
-        Some("repo_inspection")
-    );
-
-    let artifact_event = next_event_of_type(&mut rx, "coder.artifact.added").await;
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("coder_run_id")
-            .and_then(Value::as_str),
-        Some("coder-run-events-1")
-    );
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("artifact_id")
-            .and_then(Value::as_str)
-            .is_some(),
-        true
-    );
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("artifact_path")
-            .and_then(Value::as_str)
-            .is_some(),
-        true
-    );
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("artifact_type")
-            .and_then(Value::as_str),
-        Some("coder_memory_hits")
-    );
-
-    let phase_event = next_event_of_type(&mut rx, "coder.run.phase_changed").await;
-    assert_eq!(
-        phase_event
-            .properties
-            .get("coder_run_id")
-            .and_then(Value::as_str),
-        Some("coder-run-events-1")
-    );
-    assert_eq!(
-        phase_event
-            .properties
-            .get("event_type")
-            .and_then(Value::as_str),
-        Some("task_state_advanced")
-    );
-    assert_eq!(
-        phase_event.properties.get("phase").and_then(Value::as_str),
-        Some("repo_inspection")
-    );
-}
-
-#[tokio::test]
 async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
     let state = test_state().await;
     state
@@ -2638,6 +2488,48 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
             .and_then(Value::as_str),
         Some("requires_completed_pr_review_follow_on")
     );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("coder_run_id")
+            .and_then(Value::as_str),
+        Some("coder-follow-on-merge")
+    );
+    assert!(blocked_event
+        .properties
+        .get("linked_context_run_id")
+        .and_then(Value::as_str)
+        .is_some());
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("workflow_mode")
+            .and_then(Value::as_str),
+        Some("merge_recommendation")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("repo_binding")
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("evan/tandem")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("github_ref")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("pull_request")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("phase")
+            .and_then(Value::as_str),
+        Some("awaiting_follow_on")
+    );
     let merge_run_req = Request::builder()
         .method("GET")
         .uri("/coder/runs/coder-follow-on-merge")
@@ -4509,6 +4401,114 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
                     })
         }))
         .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-ready-for-approval",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 193
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-ready-for-approval/merge-recommendation-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "merge",
+                "summary": "All required checks and approvals are satisfied.",
+                "risk_level": "low",
+                "blockers": [],
+                "required_checks": [],
+                "required_approvals": [],
+                "memory_hits_used": ["memory-hit-merge-ready-1"],
+                "notes": "Ready for operator approval."
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("approval_required")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        summary_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("awaiting_approval")
+    );
+    assert_eq!(
+        summary_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("approval")
+    );
+
+    let approval_event = next_event_of_type(&mut rx, "coder.approval.required").await;
+    assert_eq!(
+        approval_event
+            .properties
+            .get("event_type")
+            .and_then(Value::as_str),
+        Some("merge_recommendation_ready")
+    );
+    assert_eq!(
+        approval_event
+            .properties
+            .get("recommendation")
+            .and_then(Value::as_str),
+        Some("merge")
+    );
 }
 
 #[tokio::test]

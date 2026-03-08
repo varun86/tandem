@@ -1744,6 +1744,9 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
     ) {
         return "bootstrapping";
     }
+    if matches!(run.status, ContextRunStatus::AwaitingApproval) {
+        return "approval";
+    }
     if matches!(run.status, ContextRunStatus::Completed) {
         return "completed";
     }
@@ -1783,6 +1786,7 @@ async fn finalize_coder_workflow_run(
     state: &AppState,
     record: &CoderRunRecord,
     workflow_node_ids: &[&str],
+    final_status: ContextRunStatus,
     completion_reason: &str,
 ) -> Result<ContextRunState, StatusCode> {
     let mut run = load_context_run_state(state, &record.linked_context_run_id).await?;
@@ -1848,7 +1852,7 @@ async fn finalize_coder_workflow_run(
             updated_ts: now,
         });
     }
-    run.status = ContextRunStatus::Completed;
+    run.status = final_status;
     run.updated_at_ms = now;
     run.why_next_step = Some(completion_reason.to_string());
     ensure_context_run_dir(state, &record.linked_context_run_id).await?;
@@ -7782,6 +7786,7 @@ pub(super) async fn coder_triage_summary_create(
             "attempt_reproduction",
             "write_triage_artifact",
         ],
+        ContextRunStatus::Completed,
         "Issue triage summary recorded.",
     )
     .await?;
@@ -8348,6 +8353,7 @@ pub(super) async fn coder_pr_review_summary_create(
             "review_pull_request",
             "write_review_artifact",
         ],
+        ContextRunStatus::Completed,
         "PR review summary recorded.",
     )
     .await?;
@@ -8632,6 +8638,7 @@ pub(super) async fn coder_issue_fix_summary_create(
             "validate_fix",
             "write_fix_artifact",
         ],
+        ContextRunStatus::Completed,
         "Issue fix summary recorded.",
     )
     .await?;
@@ -8828,6 +8835,23 @@ pub(super) async fn coder_merge_recommendation_summary_create(
             "artifact_path": run_outcome_artifact.path,
         }));
     }
+    let approval_required = input
+        .recommendation
+        .as_deref()
+        .is_some_and(|row| row.eq_ignore_ascii_case("merge"))
+        && input.blockers.is_empty()
+        && input.required_checks.is_empty()
+        && input.required_approvals.is_empty();
+    let completion_reason = if approval_required {
+        "Merge recommendation recorded and awaiting operator approval."
+    } else {
+        "Merge recommendation summary recorded."
+    };
+    let final_status = if approval_required {
+        ContextRunStatus::AwaitingApproval
+    } else {
+        ContextRunStatus::Completed
+    };
     let final_run = finalize_coder_workflow_run(
         &state,
         &record,
@@ -8837,9 +8861,30 @@ pub(super) async fn coder_merge_recommendation_summary_create(
             "assess_merge_readiness",
             "write_merge_artifact",
         ],
-        "Merge recommendation summary recorded.",
+        final_status,
+        completion_reason,
     )
     .await?;
+    if approval_required {
+        publish_coder_run_event(
+            &state,
+            "coder.approval.required",
+            &record,
+            Some("approval"),
+            {
+                let mut extra = serde_json::Map::new();
+                extra.insert(
+                    "event_type".to_string(),
+                    json!("merge_recommendation_ready"),
+                );
+                extra.insert("artifact_id".to_string(), json!(artifact.id));
+                if let Some(recommendation) = input.recommendation.clone() {
+                    extra.insert("recommendation".to_string(), json!(recommendation));
+                }
+                extra
+            },
+        );
+    }
     record.updated_at_ms = final_run.updated_at_ms;
     save_coder_run_record(&state, &record).await?;
     Ok(Json(json!({
@@ -8847,6 +8892,7 @@ pub(super) async fn coder_merge_recommendation_summary_create(
         "artifact": artifact,
         "readiness_artifact": readiness_artifact,
         "generated_candidates": generated_candidates,
+        "approval_required": approval_required,
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
     })))
