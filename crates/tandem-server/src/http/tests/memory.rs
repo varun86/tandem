@@ -253,6 +253,7 @@ async fn memory_search_preserves_restricted_classification() {
 async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
 
     let capability = json!({
         "run_id": "run-3",
@@ -351,6 +352,65 @@ async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
             .and_then(|v| v.as_str()),
         Some("blocked")
     );
+    let blocked_event = next_event_of_type(&mut rx, "memory.promote").await;
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("sourceMemoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        blocked_event.properties.get("kind").and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("restricted")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&Vec::<Value>::new())
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("private")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("toTier")
+            .and_then(Value::as_str),
+        Some("project")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("scrubStatus")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert!(blocked_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("private key")));
 
     let audit_req = Request::builder()
         .method("GET")

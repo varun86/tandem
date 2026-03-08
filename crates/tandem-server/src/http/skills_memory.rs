@@ -1886,6 +1886,13 @@ pub(super) async fn memory_promote_impl(
             block_reason: Some("source memory missing or previously blocked".to_string()),
         };
         let audit_id = Uuid::new_v4().to_string();
+        let partition_key = format!(
+            "{}/{}/{}/{}",
+            request.partition.org_id,
+            request.partition.workspace_id,
+            request.partition.project_id,
+            request.to_tier
+        );
         append_memory_audit(
             &state,
             crate::MemoryAuditEvent {
@@ -1895,13 +1902,7 @@ pub(super) async fn memory_promote_impl(
                 memory_id: None,
                 source_memory_id: Some(source_memory_id.clone()),
                 to_tier: Some(request.to_tier),
-                partition_key: format!(
-                    "{}/{}/{}/{}",
-                    request.partition.org_id,
-                    request.partition.workspace_id,
-                    request.partition.project_id,
-                    request.to_tier
-                ),
+                partition_key: partition_key.clone(),
                 actor: capability.subject,
                 status: "blocked".to_string(),
                 detail: scrub_report.block_reason.clone(),
@@ -1909,6 +1910,19 @@ pub(super) async fn memory_promote_impl(
             },
         )
         .await?;
+        state.event_bus.publish(EngineEvent::new(
+            "memory.promote",
+            json!({
+                "runID": request.run_id,
+                "sourceMemoryID": source_memory_id,
+                "toTier": request.to_tier,
+                "partitionKey": partition_key,
+                "status": "blocked",
+                "scrubStatus": scrub_report.status,
+                "detail": scrub_report.block_reason.clone(),
+                "auditID": audit_id,
+            }),
+        ));
         return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
@@ -1945,6 +1959,23 @@ pub(super) async fn memory_promote_impl(
             },
         )
         .await?;
+        state.event_bus.publish(EngineEvent::new(
+            "memory.promote",
+            json!({
+                "runID": request.run_id,
+                "sourceMemoryID": source_memory_id,
+                "toTier": request.to_tier,
+                "partitionKey": partition_key,
+                "status": "blocked",
+                "kind": memory_kind_label(&source.source_type),
+                "classification": memory_classification_label(source.metadata.as_ref()),
+                "artifactRefs": memory_artifact_refs(source.metadata.as_ref()),
+                "visibility": source.visibility,
+                "scrubStatus": scrub_report.status,
+                "detail": scrub_report.block_reason.clone(),
+                "auditID": audit_id,
+            }),
+        ));
         return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
