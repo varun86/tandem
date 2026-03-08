@@ -250,6 +250,42 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
 }
 
 #[tokio::test]
+async fn workflow_plan_preview_strips_incomplete_planner_model_override() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/preview")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "prompt": "Research the market and generate a report",
+                "workspace_root": "/tmp/custom-workspace",
+                "operator_preferences": {
+                    "role_models": {
+                        "planner": {
+                            "provider_id": "openai"
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert!(payload
+        .get("plan")
+        .and_then(|row| row.get("operator_preferences"))
+        .and_then(|row| row.get("role_models"))
+        .and_then(|row| row.get("planner"))
+        .is_none());
+}
+
+#[tokio::test]
 async fn workflow_plan_apply_can_export_to_pack_builder_preview() {
     let state = test_state().await;
     state

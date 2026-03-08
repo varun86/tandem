@@ -546,7 +546,35 @@ fn normalize_operator_preferences(raw: Option<Value>) -> Option<Value> {
     } else {
         map.remove("model_id");
     }
-    if !map.get("role_models").is_some_and(Value::is_object) {
+    if let Some(role_models) = map.get_mut("role_models").and_then(Value::as_object_mut) {
+        let invalid_role_keys = role_models
+            .iter()
+            .filter_map(|(key, value)| {
+                let role = value.as_object()?;
+                let provider_id = role
+                    .get("provider_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let model_id = role
+                    .get("model_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if provider_id.is_some() && model_id.is_some() {
+                    None
+                } else {
+                    Some(key.clone())
+                }
+            })
+            .collect::<Vec<_>>();
+        for key in invalid_role_keys {
+            role_models.remove(&key);
+        }
+        if role_models.is_empty() {
+            map.remove("role_models");
+        }
+    } else {
         map.remove("role_models");
     }
     if map.is_empty() {

@@ -58,6 +58,9 @@ It is not a wishlist for future planner features.
   - `None` for cleared MCP constraints
 - [x] Show the latest planned step list in review
 - [x] Add explicit planner-model controls in the Automations wizard so broader planner fallback can be enabled without editing raw role-model JSON
+- [x] Require planner-model fallback to be fully specified:
+  - block half-filled planner-model config in the wizard
+  - strip incomplete `role_models.planner` values in backend normalization
 - [x] Add planner-chat deterministic revisions for:
   - schedule updates
   - switching back to manual execution

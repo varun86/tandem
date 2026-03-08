@@ -199,6 +199,15 @@ function validateWorkspaceRootInput(raw: string) {
   return "";
 }
 
+function validatePlannerModelInput(provider: string, model: string) {
+  const providerValue = String(provider || "").trim();
+  const modelValue = String(model || "").trim();
+  if (!providerValue && !modelValue) return "";
+  if (!providerValue) return "Planner model provider is required when a planner model is set.";
+  if (!modelValue) return "Planner model is required when a planner provider is set.";
+  return "";
+}
+
 function buildOperatorPreferences(wizard: WizardState) {
   let roleModels: Record<string, unknown> | undefined;
   const rawRoleModels = String(wizard.roleModelsJson || "").trim();
@@ -214,7 +223,7 @@ function buildOperatorPreferences(wizard: WizardState) {
   }
   const plannerModelProvider = String(wizard.plannerModelProvider || "").trim();
   const plannerModelId = String(wizard.plannerModelId || "").trim();
-  if (plannerModelProvider || plannerModelId) {
+  if (plannerModelProvider && plannerModelId) {
     roleModels = { ...(roleModels || {}) };
     roleModels.planner = {
       provider_id: plannerModelProvider,
@@ -809,6 +818,7 @@ function Step3Mode({
   onToggleMcpServer,
   onOpenMcpSettings,
   workspaceRootError,
+  plannerModelError,
 }: {
   selected: ExecutionMode;
   onSelect: (mode: ExecutionMode) => void;
@@ -833,6 +843,7 @@ function Step3Mode({
   onToggleMcpServer: (name: string) => void;
   onOpenMcpSettings: () => void;
   workspaceRootError: string;
+  plannerModelError: string;
 }) {
   const modelOptions = providerOptions.find((p) => p.id === providerId)?.models || [];
   const plannerModelOptions = providerOptions.find((p) => p.id === plannerProviderId)?.models || [];
@@ -979,6 +990,9 @@ function Step3Mode({
               ) : null}
             </div>
           </div>
+          {plannerModelError ? (
+            <div className="text-xs text-red-300">{plannerModelError}</div>
+          ) : null}
         </div>
         <div className="grid gap-1">
           <label className="text-xs text-slate-400">Role model overrides (advanced JSON)</label>
@@ -1766,6 +1780,10 @@ function CreateWizard({
   });
 
   const workspaceRootError = validateWorkspaceRootInput(wizard.workspaceRoot);
+  const plannerModelError = validatePlannerModelInput(
+    wizard.plannerModelProvider,
+    wizard.plannerModelId
+  );
   const roleModelsError = validateRoleModelsJsonInput(wizard.roleModelsJson);
 
   const canAdvance =
@@ -1774,7 +1792,7 @@ function CreateWizard({
       : step === 2
         ? !!wizard.schedulePreset || !!wizard.cron.trim()
         : step === 3
-          ? !!wizard.mode && !workspaceRootError && !roleModelsError
+          ? !!wizard.mode && !workspaceRootError && !plannerModelError && !roleModelsError
           : true;
 
   const STEPS = ["What?", "When?", "How?", "Review"];
@@ -1980,6 +1998,7 @@ function CreateWizard({
               }
               onOpenMcpSettings={() => navigate("mcp")}
               workspaceRootError={workspaceRootError}
+              plannerModelError={plannerModelError}
             />
           ) : (
             <Step4Review
