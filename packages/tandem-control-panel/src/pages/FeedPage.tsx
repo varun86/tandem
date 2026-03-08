@@ -59,7 +59,7 @@ export function FeedPage({ client, toast, navigate }: AppPageProps) {
   });
 
   useEngineStream(
-    "/api/engine/global/event",
+    "/api/global/event",
     (event) => {
       try {
         const data = JSON.parse(event.data);

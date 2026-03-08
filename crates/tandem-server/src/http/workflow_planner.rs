@@ -985,10 +985,8 @@ async fn revise_workflow_plan_with_planner_loop(
         request_allowed_mcp_servers: &current_plan.allowed_mcp_servers,
         request_operator_preferences: current_plan.operator_preferences.as_ref(),
     };
-    if let Some(payload) =
-        try_llm_revise_workflow_plan(state, &model, current_plan, conversation, message).await
-    {
-        return parse_llm_revision_payload(current_plan, payload, &normalization_ctx)
+    match try_llm_revise_workflow_plan(state, &model, current_plan, conversation, message).await {
+        Ok(payload) => parse_llm_revision_payload(current_plan, payload, &normalization_ctx)
             .unwrap_or_else(|| {
                 let question = planner_llm_invalid_response_hint();
                 (
@@ -1000,18 +998,23 @@ async fn revise_workflow_plan_with_planner_loop(
                         "question": question,
                     }),
                 )
-            });
+            }),
+        Err(failure) => {
+            let question = failure
+                .detail
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| planner_llm_invalid_response_hint().to_string());
+            (
+                current_plan.clone(),
+                format!("I kept the current plan. Clarification needed: {question}"),
+                Vec::new(),
+                json!({
+                    "field": "general",
+                    "question": question,
+                }),
+            )
+        }
     }
-    let question = planner_llm_invalid_response_hint();
-    (
-        current_plan.clone(),
-        format!("I kept the current plan. Clarification needed: {question}"),
-        Vec::new(),
-        json!({
-            "field": "general",
-            "question": question,
-        }),
-    )
 }
 
 fn planner_llm_unavailable_hint() -> &'static str {

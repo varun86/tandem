@@ -27,6 +27,7 @@ sha2 = "0.10"
 tar = "0.4"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
@@ -44,10 +45,10 @@ tandem-workflows = { path = "../tandem-workflows", version = "0.4.1" }
 tandem-wire = { path = "../tandem-wire", version = "0.4.1" }
 tandem-channels = { path = "../tandem-channels", version = "0.4.1" }
 tandem-browser = { path = "../tandem-browser", version = "0.4.1" }
+tandem-observability = { path = "../tandem-observability", version = "0.4.1" }
 
 [dev-dependencies]
 tower = "0.5"
-
 
 
 

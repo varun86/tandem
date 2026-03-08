@@ -2459,6 +2459,17 @@ function MyAutomations({
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
   const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
   const isWorkflowRun = selectedRunId.startsWith("automation-v2-run-");
+  const workflowAutomationIds = useMemo(
+    () =>
+      toArray(automationsV2Query.data, "automations")
+        .map((automation: any) =>
+          String(
+            automation?.automation_id || automation?.automationId || automation?.id || ""
+          ).trim()
+        )
+        .filter(Boolean),
+    [automationsV2Query.data]
+  );
 
   const automationsQuery = useQuery({
     queryKey: ["automations", "list"],
@@ -2479,6 +2490,25 @@ function MyAutomations({
     queryFn: () =>
       client?.automations?.listRuns?.({ limit: 20 }).catch(() => ({ runs: [] })) ??
       Promise.resolve({ runs: [] }),
+    refetchInterval: 9000,
+  });
+  const workflowRunsQuery = useQuery({
+    queryKey: ["automations", "v2", "runs", workflowAutomationIds],
+    enabled: !!client?.automationsV2?.listRuns,
+    queryFn: async () => {
+      if (!workflowAutomationIds.length) return { runs: [] as any[] };
+      const results = await Promise.all(
+        workflowAutomationIds.map(async (automationId: string) => {
+          const response = await client?.automationsV2
+            ?.listRuns?.(automationId, 12)
+            .catch(() => ({ runs: [] }));
+          return Array.isArray(response?.runs) ? response.runs : [];
+        })
+      );
+      return {
+        runs: results.flat(),
+      };
+    },
     refetchInterval: 9000,
   });
   const runDetailQuery = useQuery({
@@ -2558,12 +2588,18 @@ function MyAutomations({
     mutationFn: async ({
       action,
       runId,
+      family,
       reason,
     }: {
       action: "pause" | "resume";
       runId: string;
+      family: "legacy" | "v2";
       reason?: string;
     }) => {
+      if (family === "v2") {
+        if (action === "pause") return client.automationsV2.pauseRun(runId, reason);
+        return client.automationsV2.resumeRun(runId, reason);
+      }
       if (action === "pause") return client.automations.pauseRun(runId, reason);
       return client.automations.resumeRun(runId, reason);
     },
@@ -2660,10 +2696,35 @@ function MyAutomations({
     }
     return Array.from(byId.values());
   }, [automationsQuery.data]);
-  const runs = toArray(runsQuery.data, "runs");
+  const legacyRuns = toArray(runsQuery.data, "runs");
   const automationsV2 = toArray(automationsV2Query.data, "automations");
+  const workflowRuns = toArray(workflowRunsQuery.data, "runs");
+  const runs = useMemo(() => {
+    const all = [...legacyRuns, ...workflowRuns];
+    const byId = new Map<string, any>();
+    for (const run of all) {
+      const runId = String(run?.run_id || run?.runId || run?.id || "").trim();
+      if (!runId) continue;
+      if (!byId.has(runId)) byId.set(runId, run);
+    }
+    return Array.from(byId.values()).sort((a: any, b: any) => {
+      const aAt = normalizeTimestamp(
+        a?.started_at_ms || a?.startedAtMs || a?.created_at_ms || a?.createdAtMs || 0
+      );
+      const bAt = normalizeTimestamp(
+        b?.started_at_ms || b?.startedAtMs || b?.created_at_ms || b?.createdAtMs || 0
+      );
+      return bAt - aAt;
+    });
+  }, [legacyRuns, workflowRuns]);
   const packs = toArray(packsQuery.data, "packs");
   const activeRuns = runs.filter((run: any) => isActiveRunStatus(run?.status));
+  const failedRuns = runs.filter((run: any) => {
+    const status = String(run?.status || "")
+      .trim()
+      .toLowerCase();
+    return status === "failed" || status === "error";
+  });
   const selectedRun = (runDetailQuery.data as any)?.run || null;
   const runArtifacts = toArray(runArtifactsQuery.data, "artifacts");
   const runHints = deriveRunDebugHints(selectedRun, runArtifacts);
@@ -2772,8 +2833,10 @@ function MyAutomations({
     automations.length,
     automationsV2.length,
     runs.length,
+    workflowRuns.length,
     packs.length,
     activeRuns.length,
+    failedRuns.length,
     !!editDraft,
     !!selectedRunId,
     !!selectedSessionId,
@@ -3144,7 +3207,13 @@ function MyAutomations({
                     </button>
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => runActionMutation.mutate({ action: "pause", runId })}
+                      onClick={() =>
+                        runActionMutation.mutate({
+                          action: "pause",
+                          runId,
+                          family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
+                        })
+                      }
                       disabled={!runId || runActionMutation.isPending}
                     >
                       <i data-lucide="pause"></i>
@@ -3152,7 +3221,13 @@ function MyAutomations({
                     </button>
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => runActionMutation.mutate({ action: "resume", runId })}
+                      onClick={() =>
+                        runActionMutation.mutate({
+                          action: "resume",
+                          runId,
+                          family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
+                        })
+                      }
                       disabled={!runId || runActionMutation.isPending}
                     >
                       <i data-lucide="play"></i>
@@ -3171,6 +3246,63 @@ function MyAutomations({
             </div>
           </div>
         )
+      ) : null}
+
+      {viewMode === "running" && failedRuns.length > 0 ? (
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Recently Failed Runs
+            </p>
+            <span className="tcp-badge-err">{failedRuns.length} failed</span>
+          </div>
+          {failedRuns.slice(0, 10).map((run: any, index: number) => {
+            const runId = String(run?.run_id || run?.id || index).trim();
+            return (
+              <div key={`failed-${runId || index}`} className="tcp-list-item">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="grid gap-0.5">
+                    <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
+                    <span className="tcp-subtle text-xs">{runId || "unknown run"}</span>
+                    {formatRunDateTime(
+                      run?.finished_at_ms ||
+                        run?.finishedAtMs ||
+                        run?.updated_at_ms ||
+                        run?.updatedAtMs
+                    ) ? (
+                      <span className="tcp-subtle text-xs">
+                        Finished:{" "}
+                        {formatRunDateTime(
+                          run?.finished_at_ms ||
+                            run?.finishedAtMs ||
+                            run?.updated_at_ms ||
+                            run?.updatedAtMs
+                        )}
+                      </span>
+                    ) : null}
+                    {runObjectiveText(run) ? (
+                      <span className="text-xs text-slate-400">
+                        {shortText(runObjectiveText(run), 160)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={statusColor(run?.status)}>
+                      {String(run?.status || "failed")}
+                    </span>
+                    <button
+                      className="tcp-btn h-7 px-2 text-xs"
+                      onClick={() => onSelectRunId(runId)}
+                    >
+                      <i data-lucide="bug"></i>
+                      Inspect
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : null}
 
       {/* Recent run history */}
