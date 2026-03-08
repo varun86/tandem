@@ -455,6 +455,16 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
             row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
         }))
         .unwrap_or(false));
+    assert!(get_payload
+        .get("coder_artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+                && row.get("exists").and_then(Value::as_bool) == Some(true)
+                && row.get("payload_format").and_then(Value::as_str) == Some("json")
+                && row.get("payload").is_some()
+        }))
+        .unwrap_or(false));
     assert_eq!(
         get_payload
             .get("run")

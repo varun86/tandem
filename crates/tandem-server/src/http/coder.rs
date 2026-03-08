@@ -4475,6 +4475,54 @@ async fn load_latest_coder_artifact_payload(
     serde_json::from_str::<Value>(&raw).ok()
 }
 
+async fn serialize_coder_artifacts(artifacts: &[ContextBlackboardArtifact]) -> Vec<Value> {
+    let mut serialized = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        let mut row = json!({
+            "id": artifact.id,
+            "ts_ms": artifact.ts_ms,
+            "path": artifact.path,
+            "artifact_type": artifact.artifact_type,
+            "step_id": artifact.step_id,
+            "source_event_id": artifact.source_event_id,
+        });
+        match tokio::fs::read_to_string(&artifact.path).await {
+            Ok(raw) => {
+                let mut extras = serde_json::Map::new();
+                extras.insert("exists".to_string(), json!(true));
+                extras.insert("byte_size".to_string(), json!(raw.len()));
+                match serde_json::from_str::<Value>(&raw) {
+                    Ok(payload) => {
+                        extras.insert("payload_format".to_string(), json!("json"));
+                        extras.insert("payload".to_string(), payload);
+                    }
+                    Err(_) => {
+                        extras.insert("payload_format".to_string(), json!("text"));
+                        extras.insert(
+                            "payload_text".to_string(),
+                            json!(crate::truncate_text(&raw, 8_000)),
+                        );
+                    }
+                }
+                if let Some(obj) = row.as_object_mut() {
+                    obj.extend(extras);
+                }
+            }
+            Err(error) => {
+                if let Some(obj) = row.as_object_mut() {
+                    obj.insert("exists".to_string(), json!(false));
+                    obj.insert(
+                        "load_error".to_string(),
+                        json!(crate::truncate_text(&error.to_string(), 240)),
+                    );
+                }
+            }
+        }
+        serialized.push(row);
+    }
+    serialized
+}
+
 fn build_issue_fix_worker_prompt(
     record: &CoderRunRecord,
     run: &ContextRunState,
@@ -7037,11 +7085,13 @@ pub(super) async fn coder_run_get(
         20,
     )
     .await?;
+    let serialized_artifacts = serialize_coder_artifacts(&blackboard.artifacts).await;
     Ok(Json(json!({
         "coder_run": coder_run_payload(&record, &run),
         "execution_policy": coder_execution_policy_summary(&state, &record).await?,
         "run": run,
         "artifacts": blackboard.artifacts,
+        "coder_artifacts": serialized_artifacts,
         "memory_hits": {
             "query": memory_query,
             "hits": memory_hits,
@@ -7148,7 +7198,17 @@ pub(super) async fn coder_run_execute_next(
 ) -> Result<Json<Value>, StatusCode> {
     let mut record = load_coder_run_record(&state, &id).await?;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
-        return Ok(Json(blocked));
+        let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+        let mut payload = blocked;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("coder_run".to_string(), coder_run_payload(&record, &run));
+            obj.insert(
+                "execution_policy".to_string(),
+                coder_execution_policy_summary(&state, &record).await?,
+            );
+            obj.insert("run".to_string(), json!(run));
+        }
+        return Ok(Json(payload));
     }
     let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
     Ok(Json(
@@ -7163,7 +7223,23 @@ pub(super) async fn coder_run_execute_all(
 ) -> Result<Json<Value>, StatusCode> {
     let mut record = load_coder_run_record(&state, &id).await?;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
-        return Ok(Json(blocked));
+        let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+        let mut payload = blocked;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("coder_run".to_string(), coder_run_payload(&record, &run));
+            obj.insert(
+                "execution_policy".to_string(),
+                coder_execution_policy_summary(&state, &record).await?,
+            );
+            obj.insert("run".to_string(), json!(run));
+            obj.insert("steps".to_string(), json!([]));
+            obj.insert("executed_steps".to_string(), json!(0));
+            obj.insert(
+                "stopped_reason".to_string(),
+                json!("execution_policy_blocked"),
+            );
+        }
+        return Ok(Json(payload));
     }
     let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
     let max_steps = input.max_steps.unwrap_or(16).clamp(1, 64);

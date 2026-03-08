@@ -104,6 +104,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `GET /coder/runs` and `GET /coder/runs/{id}` now return engine-owned `execution_policy` summaries for coder runs, so clients can tell when a merge follow-on is blocked by review policy before attempting execution.
   - PR-submit handoff payloads now also expose follow-on `execution_policy_preview` metadata and live `execution_policy` on spawned follow-on runs, so clients can render review-before-merge gating directly from the submit response, artifact, and event payloads without an extra run fetch.
   - `POST /coder/runs` now also returns `execution_policy`, so manual follow-on creation responses are immediately truthful about blocked merge-recommendation runs without requiring a follow-up read.
+  - Blocked `execute-next` / `execute-all` responses now also return `coder_run`, `run`, and `execution_policy`, so clients can stay in sync after a policy block without issuing a second fetch.
   - Auto-follow-on merge chaining now normalizes through review first, so requesting `merge_recommendation` auto-spawn implicitly schedules `pr_review` ahead of merge instead of trusting the client to order those runs correctly.
   - `issue_triage` coder run creation now seeds a deterministic context-run task template for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing.
   - Added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior.
