@@ -1226,6 +1226,82 @@ async fn workflow_plan_planner_model_spec_prefers_planner_role_model() {
 }
 
 #[tokio::test]
+async fn workflow_plan_chat_message_returns_planner_model_hint_for_broad_revision_without_model() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let start_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/chat/start")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "prompt": "Research the market and generate a report",
+                "plan_source": "automations_page",
+                "workspace_root": "/tmp/initial-workspace"
+            })
+            .to_string(),
+        ))
+        .expect("start request");
+    let start_resp = app
+        .clone()
+        .oneshot(start_req)
+        .await
+        .expect("start response");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body = to_bytes(start_resp.into_body(), usize::MAX)
+        .await
+        .expect("start body");
+    let start_payload: Value = serde_json::from_slice(&start_body).expect("start json");
+    let plan_id = start_payload
+        .get("plan")
+        .and_then(|row| row.get("plan_id"))
+        .and_then(Value::as_str)
+        .expect("plan id")
+        .to_string();
+
+    let message_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/chat/message")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "plan_id": plan_id,
+                "message": "Rewrite this into a five-stage market taxonomy with new custom step types."
+            })
+            .to_string(),
+        ))
+        .expect("message request");
+    let message_resp = app
+        .clone()
+        .oneshot(message_req)
+        .await
+        .expect("message response");
+    assert_eq!(message_resp.status(), StatusCode::OK);
+    let message_body = to_bytes(message_resp.into_body(), usize::MAX)
+        .await
+        .expect("message body");
+    let message_payload: Value = serde_json::from_slice(&message_body).expect("message json");
+    assert_eq!(
+        message_payload
+            .get("clarifier")
+            .and_then(|row| row.get("field"))
+            .and_then(Value::as_str),
+        Some("general")
+    );
+    assert!(message_payload
+        .get("clarifier")
+        .and_then(|row| row.get("question"))
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("planner model settings")));
+    assert!(message_payload
+        .get("assistant_message")
+        .and_then(|row| row.get("text"))
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("planner model settings")));
+}
+
+#[tokio::test]
 async fn workflow_plan_chat_message_updates_execution_mode_preferences() {
     let state = test_state().await;
     let app = app_router(state.clone());

@@ -234,13 +234,24 @@ pub(super) async fn workflow_plan_chat_message(
             .and_then(Value::as_str)
             .is_some_and(|field| field == "general")
     {
-        if let Some(llm_revision) =
-            try_llm_revise_workflow_plan(&state, &draft.current_plan, message).await
-        {
-            revised_plan = llm_revision.plan;
-            assistant_text = llm_revision.assistant_text;
-            change_summary = llm_revision.change_summary;
-            clarifier = llm_revision.clarifier;
+        if planner_model_spec(draft.current_plan.operator_preferences.as_ref()).is_some() {
+            if let Some(llm_revision) =
+                try_llm_revise_workflow_plan(&state, &draft.current_plan, message).await
+            {
+                revised_plan = llm_revision.plan;
+                assistant_text = llm_revision.assistant_text;
+                change_summary = llm_revision.change_summary;
+                clarifier = llm_revision.clarifier;
+            }
+        } else {
+            clarifier = json!({
+                "field": "general",
+                "question": planner_llm_unavailable_hint(),
+            });
+            assistant_text = format!(
+                "I kept the current plan. Clarification needed: {}",
+                planner_llm_unavailable_hint()
+            );
         }
     }
     draft.current_plan = revised_plan.clone();
@@ -822,6 +833,10 @@ fn revise_workflow_plan_from_message(
 
 fn supported_planner_revision_hint() -> &'static str {
     "Supported edits in this slice: title, schedule, workspace root, MCP servers, execution mode, model overrides, switching between safe workflow shapes, adding or removing analysis, and adding or removing notifications."
+}
+
+fn planner_llm_unavailable_hint() -> &'static str {
+    "This revision needs planner model settings before Tandem can attempt a broader workflow rewrite. Add planner model preferences or revise using the supported deterministic edits in this slice."
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
