@@ -13,7 +13,7 @@ use super::*;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::PathBuf;
 use tandem_memory::{
     types::MemoryTier, GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryManager,
@@ -2258,6 +2258,13 @@ async fn dispatch_issue_fix_task(
                 Some("analysis"),
             )
             .await?;
+            let changed_file_artifact = write_issue_fix_changed_file_evidence_artifact(
+                &state,
+                record,
+                &worker_payload,
+                Some("analysis"),
+            )
+            .await?;
             let final_run = advance_coder_workflow_run(
                 &state,
                 record,
@@ -2270,6 +2277,7 @@ async fn dispatch_issue_fix_task(
                 "ok": true,
                 "worker_artifact": worker_artifact,
                 "plan_artifact": plan_artifact,
+                "changed_file_artifact": changed_file_artifact,
                 "worker_session": worker_payload,
                 "run": final_run,
                 "coder_run": coder_run_payload(record, &final_run),
@@ -3772,6 +3780,65 @@ fn count_session_tool_invocations(session: &Session) -> usize {
         .count()
 }
 
+fn normalize_changed_file_path(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.replace('\\', "/"))
+}
+
+fn extract_changed_files_from_value(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(path) = normalize_changed_file_path(text) {
+                out.insert(path);
+            }
+        }
+        Value::Array(rows) => {
+            for row in rows {
+                extract_changed_files_from_value(row, out);
+            }
+        }
+        Value::Object(map) => {
+            for key in ["path", "file", "target_file", "target", "destination"] {
+                if let Some(value) = map.get(key) {
+                    extract_changed_files_from_value(value, out);
+                }
+            }
+            if let Some(value) = map.get("files") {
+                extract_changed_files_from_value(value, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_session_changed_files(session: &Session) -> Vec<String> {
+    let mut out = BTreeSet::<String>::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool, args, result, ..
+            } = part
+            else {
+                continue;
+            };
+            let normalized_tool = tool.trim().to_ascii_lowercase();
+            if matches!(
+                normalized_tool.as_str(),
+                "write" | "edit" | "patch" | "apply_patch" | "str_replace"
+            ) {
+                extract_changed_files_from_value(args, &mut out);
+                if let Some(result) = result {
+                    extract_changed_files_from_value(result, &mut out);
+                }
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 async fn load_latest_coder_artifact_payload(
     state: &AppState,
     record: &CoderRunRecord,
@@ -3869,7 +3936,7 @@ fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
     });
     let root_cause = extract_labeled_section(assistant_text, "Root Cause");
     let fix_strategy = extract_labeled_section(assistant_text, "Fix Strategy");
-    let changed_files = extract_labeled_section(assistant_text, "Changed Files")
+    let mut changed_files = extract_labeled_section(assistant_text, "Changed Files")
         .map(|section| {
             section
                 .lines()
@@ -3880,6 +3947,18 @@ fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    if changed_files.is_empty() {
+        changed_files = worker_payload
+            .get("changed_files")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    }
     let validation_steps = extract_labeled_section(assistant_text, "Validation")
         .map(|section| {
             section
@@ -3942,6 +4021,60 @@ async fn write_issue_fix_plan_artifact(
         extra
     });
     Ok(artifact)
+}
+
+async fn write_issue_fix_changed_file_evidence_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    worker_payload: &Value,
+    phase: Option<&str>,
+) -> Result<Option<ContextBlackboardArtifact>, StatusCode> {
+    let changed_files = worker_payload
+        .get("changed_files")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if changed_files.is_empty() {
+        return Ok(None);
+    }
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "changed_files": changed_files,
+        "worker_session_id": worker_payload.get("session_id").cloned(),
+        "worker_session_run_id": worker_payload.get("session_run_id").cloned(),
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &format!("issue-fix-changed-files-{}", Uuid::new_v4().simple()),
+        "coder_changed_file_evidence",
+        "artifacts/issue_fix.changed_files.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &artifact, phase, {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("changed_file_evidence"));
+        extra.insert(
+            "changed_file_count".to_string(),
+            json!(payload["changed_files"]
+                .as_array()
+                .map(|rows| rows.len())
+                .unwrap_or(0)),
+        );
+        extra
+    });
+    Ok(Some(artifact))
 }
 
 async fn run_issue_fix_worker_session(
@@ -4042,6 +4175,7 @@ async fn run_issue_fix_worker_session(
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let assistant_text = latest_assistant_session_text(&session);
     let tool_invocation_count = count_session_tool_invocations(&session);
+    let changed_files = extract_session_changed_files(&session);
     let payload = json!({
         "coder_run_id": record.coder_run_id,
         "linked_context_run_id": record.linked_context_run_id,
@@ -4057,6 +4191,7 @@ async fn run_issue_fix_worker_session(
         "prompt": prompt,
         "assistant_text": assistant_text,
         "tool_invocation_count": tool_invocation_count,
+        "changed_files": changed_files,
         "message_count": session.messages.len(),
         "messages": compact_session_messages(&session),
         "error": run_result.as_ref().err().map(|error| crate::truncate_text(&error.to_string(), 500)),
@@ -5313,6 +5448,51 @@ pub(super) async fn coder_triage_reproduction_report_create(
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_session_changed_files_reads_tool_invocations() {
+        let mut session = Session::new(Some("coder test".to_string()), Some(".".to_string()));
+        session.messages.push(Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "crates/tandem-server/src/http/coder.rs",
+                        "content": "fn main() {}"
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "edit".to_string(),
+                    args: json!({
+                        "files": [
+                            {"path": "src/App.tsx"},
+                            {"path": "src/components/View.tsx"}
+                        ]
+                    }),
+                    result: None,
+                    error: None,
+                },
+            ],
+        ));
+
+        let changed_files = extract_session_changed_files(&session);
+        assert_eq!(
+            changed_files,
+            vec![
+                "crates/tandem-server/src/http/coder.rs".to_string(),
+                "src/App.tsx".to_string(),
+                "src/components/View.tsx".to_string(),
+            ]
+        );
+    }
 }
 
 pub(super) async fn coder_triage_inspection_report_create(
