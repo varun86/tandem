@@ -88,7 +88,7 @@ It is not a wishlist for future planner features.
 - Current state: `POST /workflow-plans/apply` accepts optional `pack_builder_export` and can persist a Pack Builder preview for pending/apply follow-ups.
 - [~] Expand planner-chat semantics beyond the current safe deterministic field set
 - Current state: with a planner model configured, the LLM revision path can now rewrite mixed workflow graphs across the expanded fixed step catalog, including step objectives, dependencies, input refs, schedules, and output contracts. The current catalog now includes richer research/synthesis steps like `extract_pain_points`, `cluster_topics`, and `compare_with_features`. Remaining follow-up is about going broader than the current fixed engine-owned step catalog, not about staying inside the deterministic presets.
-- [ ] Optionally relocate or further polish the reusable-skill export UI if Step 1 remains confusing
+- [x] Further polish the reusable-skill export UI so it reads as a prompt-based secondary export path and warns when the draft may be stale relative to later planner-chat revisions
 
 ## Explicitly Out Of Scope For This Slice
 - [ ] Dynamic replanning during runtime execution

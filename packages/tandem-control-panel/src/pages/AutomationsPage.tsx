@@ -569,6 +569,9 @@ function Step1Goal({
   topMatches: Array<{ skill_name?: string; confidence?: number }>;
   isMatching: boolean;
 }) {
+  const generatedArtifactKeys = Object.keys(
+    (generatedSkill?.artifacts as Record<string, string>) || {}
+  );
   return (
     <div className="grid gap-4">
       <p className="text-sm text-slate-400">
@@ -632,11 +635,11 @@ function Step1Goal({
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
         <div className="flex items-center justify-between gap-2">
           <span className="uppercase tracking-wide text-slate-500">
-            Advanced: Reusable Skill Export
+            Optional: Reusable Skill Export
           </span>
           <div className="flex items-center gap-2">
             <button className="tcp-btn h-7 px-2 text-xs" onClick={onToggleAdvancedMode}>
-              {advancedMode ? "Hide Advanced" : "Show Advanced"}
+              {advancedMode ? "Hide Export Options" : "Show Export Options"}
             </button>
             <button
               className="tcp-btn h-7 px-2 text-xs"
@@ -655,9 +658,13 @@ function Step1Goal({
           </div>
         </div>
         <p className="mt-1 text-slate-400">
-          This does not power the default automation path. Use it only if you want to generate a
-          reusable skill scaffold from this prompt.
+          This is a secondary prompt-based export path. It does not power the default automation
+          flow, and it does not automatically track planner-chat revisions to the workflow plan.
         </p>
+        <div className="mt-2 rounded-lg border border-slate-800/70 bg-slate-950/30 px-3 py-2 text-xs text-slate-400">
+          Recommended flow: review and finalize the workflow plan first, then generate or regenerate
+          the reusable skill draft if you want a reusable export from the current prompt.
+        </div>
         {advancedMode ? (
           <div className="mt-2 grid gap-2">
             <input
@@ -694,15 +701,18 @@ function Step1Goal({
               Optional scaffold status:{" "}
               <strong>{String(generatedSkill?.status || "generated")}</strong>
             </p>
+            <p className="text-amber-200">
+              This draft was generated from the prompt and export options. If you revise the
+              workflow plan later in review, regenerate this draft before saving it.
+            </p>
             <p>
               Suggested skill:{" "}
               <strong>{String(generatedSkill?.router?.skill_name || "new optional skill")}</strong>
             </p>
             <p className="text-slate-400">
               Artifacts:{" "}
-              {Object.keys((generatedSkill?.artifacts as Record<string, string>) || {}).join(
-                ", "
-              ) || "SKILL.md, workflow.yaml, automation.example.yaml"}
+              {generatedArtifactKeys.join(", ") ||
+                "SKILL.md, workflow.yaml, automation.example.yaml"}
             </p>
             <div className="mt-1 flex items-center gap-2">
               <button className="tcp-btn h-7 px-2 text-xs" onClick={onToggleArtifactPreview}>
@@ -1051,6 +1061,8 @@ function Step4Review({
   onResetPlanningChat,
   isResettingPlanningChat,
   plannerError,
+  generatedSkill,
+  installStatus,
 }: {
   wizard: WizardState;
   onToggleExportPackDraft: () => void;
@@ -1065,6 +1077,8 @@ function Step4Review({
   onResetPlanningChat: () => void;
   isResettingPlanningChat: boolean;
   plannerError: string;
+  generatedSkill: any;
+  installStatus: string;
 }) {
   const [planningNote, setPlanningNote] = useState("");
   const wizardSchedule = wizard.cron
@@ -1379,6 +1393,32 @@ function Step4Review({
           </span>
         </label>
       </div>
+
+      {generatedSkill || installStatus ? (
+        <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
+          <div className="text-xs uppercase tracking-wide text-slate-500">
+            Reusable Skill Export
+          </div>
+          <div className="mt-1 grid gap-1">
+            {generatedSkill ? (
+              <>
+                <span>
+                  Draft status:{" "}
+                  <strong className="text-slate-300">
+                    {String(generatedSkill?.status || "generated")}
+                  </strong>
+                </span>
+                <span className="text-amber-200">
+                  This draft is prompt-based and may be stale if you changed the workflow plan in
+                  planning chat. Regenerate it from Step 1 before saving if you want it to reflect
+                  the latest plan direction.
+                </span>
+              </>
+            ) : null}
+            {installStatus ? <span>{installStatus}</span> : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
         💡 Tandem will save this automation and schedule a{" "}
@@ -2031,6 +2071,8 @@ function CreateWizard({
               }}
               isResettingPlanningChat={planningResetMutation.isPending}
               plannerError={plannerError}
+              generatedSkill={generatedSkill}
+              installStatus={installStatus}
             />
           )}
         </motion.div>
