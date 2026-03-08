@@ -2313,11 +2313,17 @@ function MyAutomations({
   toast,
   navigate,
   viewMode,
+  selectedRunId,
+  onSelectRunId,
+  onOpenRunningView,
 }: {
   client: any;
   toast: any;
   navigate: (route: string) => void;
   viewMode: "list" | "running";
+  selectedRunId: string;
+  onSelectRunId: (runId: string) => void;
+  onOpenRunningView: () => void;
 }) {
   const queryClient = useQueryClient();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -2331,7 +2337,6 @@ function MyAutomations({
     cronExpression: string;
     intervalSeconds: string;
   } | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [selectedLogSource, setSelectedLogSource] = useState<"all" | "automations" | "global">(
     "all"
   );
@@ -2419,6 +2424,19 @@ function MyAutomations({
     onSuccess: async () => {
       toast("ok", "Automation triggered.");
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const runNowV2Mutation = useMutation({
+    mutationFn: (id: string) => client?.automationsV2?.runNow?.(id),
+    onSuccess: async (payload: any) => {
+      const runId = String(payload?.run?.run_id || payload?.run?.runId || "").trim();
+      toast("ok", "Workflow automation triggered.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
@@ -2650,6 +2668,7 @@ function MyAutomations({
     updateAutomationMutation.isPending,
     runActionMutation.isPending,
     runNowMutation.isPending,
+    runNowV2Mutation.isPending,
   ]);
 
   const statusColor = (status: string) => {
@@ -2841,7 +2860,8 @@ function MyAutomations({
                               latestForAutomation?.run_id || latestForAutomation?.id || ""
                             ).trim();
                             if (runId) {
-                              setSelectedRunId(runId);
+                              onSelectRunId(runId);
+                              onOpenRunningView();
                             } else {
                               toast("info", "No runs yet for this automation.");
                             }
@@ -2912,21 +2932,11 @@ function MyAutomations({
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() =>
-                        client.automationsV2
-                          .runNow(id)
-                          .then(() => {
-                            toast("ok", "Workflow automation triggered.");
-                            return queryClient.invalidateQueries({ queryKey: ["automations"] });
-                          })
-                          .catch((error: any) =>
-                            toast("err", error instanceof Error ? error.message : String(error))
-                          )
-                      }
-                      disabled={!id}
+                      onClick={() => runNowV2Mutation.mutate(id)}
+                      disabled={!id || runNowV2Mutation.isPending}
                     >
                       <i data-lucide="play"></i>
-                      Run now
+                      {runNowV2Mutation.isPending ? "Starting..." : "Run now"}
                     </button>
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
@@ -3001,7 +3011,7 @@ function MyAutomations({
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => setSelectedRunId(runId)}
+                      onClick={() => onSelectRunId(runId)}
                     >
                       <i data-lucide="bug"></i>
                       Inspect
@@ -3055,7 +3065,10 @@ function MyAutomations({
                 <span className="tcp-subtle text-xs">{String(run?.run_id || run?.id || "")}</span>
                 <button
                   className="tcp-btn h-7 px-2 text-xs"
-                  onClick={() => setSelectedRunId(String(run?.run_id || run?.id || "").trim())}
+                  onClick={() => {
+                    onSelectRunId(String(run?.run_id || run?.id || "").trim());
+                    onOpenRunningView();
+                  }}
                 >
                   <i data-lucide="info"></i>
                   {viewMode === "running" ? "View logs" : "Details"}
@@ -3079,7 +3092,7 @@ function MyAutomations({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setSelectedRunId("")}
+            onClick={() => onSelectRunId("")}
           >
             <motion.div
               className="tcp-confirm-dialog max-h-[88vh] w-[min(110rem,97vw)] overflow-hidden"
@@ -3147,7 +3160,7 @@ function MyAutomations({
                     <i data-lucide="refresh-cw"></i>
                     Refresh
                   </button>
-                  <button className="tcp-btn h-8 px-2 text-xs" onClick={() => setSelectedRunId("")}>
+                  <button className="tcp-btn h-8 px-2 text-xs" onClick={() => onSelectRunId("")}>
                     <i data-lucide="x"></i>
                     Close
                   </button>
@@ -3482,7 +3495,7 @@ function MyAutomations({
                   <i data-lucide="radio"></i>
                   Open Live Feed
                 </button>
-                <button className="tcp-btn" onClick={() => setSelectedRunId("")}>
+                <button className="tcp-btn" onClick={() => onSelectRunId("")}>
                   <i data-lucide="x"></i>
                   Close
                 </button>
@@ -3788,6 +3801,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
 export function AutomationsPage({ client, api, toast, navigate, providerStatus }: AppPageProps) {
   const [tab, setTab] = useState<ActiveTab>("create");
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
 
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
     { id: "create", label: "Create New", icon: "sparkles" },
@@ -3841,14 +3855,30 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
             </PageCard>
           ) : tab === "list" ? (
             <PageCard title="My Automations" subtitle="Installed packs, routines and run history">
-              <MyAutomations client={client} toast={toast} navigate={navigate} viewMode="list" />
+              <MyAutomations
+                client={client}
+                toast={toast}
+                navigate={navigate}
+                viewMode="list"
+                selectedRunId={selectedRunId}
+                onSelectRunId={setSelectedRunId}
+                onOpenRunningView={() => setTab("running")}
+              />
             </PageCard>
           ) : tab === "running" ? (
             <PageCard
               title="Live Running Tasks"
               subtitle="Inspect active runs and open detailed event logs for each run"
             >
-              <MyAutomations client={client} toast={toast} navigate={navigate} viewMode="running" />
+              <MyAutomations
+                client={client}
+                toast={toast}
+                navigate={navigate}
+                viewMode="running"
+                selectedRunId={selectedRunId}
+                onSelectRunId={setSelectedRunId}
+                onOpenRunningView={() => setTab("running")}
+              />
             </PageCard>
           ) : (
             <PageCard
