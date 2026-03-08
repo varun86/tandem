@@ -107,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added initial `coder.run.created` event emission so clients can observe coder run creation through the engine event bus
   - `issue_triage` now has a first real worker bridge: `execute-next` claims the next runnable context task through the shared lease/claim runtime and dispatches deterministic inspection, reproduction, and final summary actions so the run can complete end to end without frontend-owned orchestration
   - `issue_fix` now uses that same `execute-next` worker bridge: the engine claims fix tasks through the shared task runtime, advances inspection and preparation nodes through workflow progression, and dispatches validation plus final summary handlers to complete the run end to end
+  - `pr_review` now also uses `execute-next`: the engine claims review tasks through the same task runtime, advances the initial inspection node through workflow progression, and dispatches review-evidence plus final summary handlers to complete the run end to end
   - added backend regression coverage for coder run creation, retrieval, list projection, context-run linkage, and artifact projection
   - added the first fail-closed readiness gate for `issue_triage` coder runs:
     - required GitHub issue capability bindings must exist
