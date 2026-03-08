@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `merge-submit` now also fails closed on the approved handoff artifact itself, blocking execution unless the latest `coder_merge_execution_request` still says `recommendation = merge` with no remaining blockers, checks, or approvals
   - `merge-submit` now defaults to `submit_mode = manual` and rejects `submit_mode = auto` unless the follow-on run origin policy explicitly opted into auto merge execution
   - `merge-submit` now also requires an approving sibling `pr_review` for issue-fix follow-on merge runs, so a completed review with blockers or requested changes can no longer be used to push a merge through
+  - `merge-submit` now evaluates the latest completed sibling `pr_review`, so a newer review with requested changes overrides an older approval instead of whichever review record happens to be discovered first
     - `POST /coder/runs/{id}/execute-all`
   - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
   - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`

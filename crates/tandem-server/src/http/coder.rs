@@ -6961,6 +6961,7 @@ async fn find_completed_follow_on_pr_review(
     let Some(parent_coder_run_id) = record.parent_coder_run_id.as_deref() else {
         return Ok(None);
     };
+    let mut latest_completed: Option<(CoderRunRecord, u64)> = None;
     ensure_coder_runs_dir(state).await?;
     let mut dir = tokio::fs::read_dir(coder_runs_root(state))
         .await
@@ -6991,10 +6992,16 @@ async fn find_completed_follow_on_pr_review(
             continue;
         };
         if matches!(run.status, ContextRunStatus::Completed) {
-            return Ok(Some(candidate));
+            let candidate_updated_at = run.updated_at_ms;
+            if latest_completed
+                .as_ref()
+                .is_none_or(|(_, best_updated_at)| candidate_updated_at >= *best_updated_at)
+            {
+                latest_completed = Some((candidate, candidate_updated_at));
+            }
         }
     }
-    Ok(None)
+    Ok(latest_completed.map(|(record, _)| record))
 }
 
 async fn merge_submit_review_policy_block(
