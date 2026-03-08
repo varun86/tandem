@@ -316,6 +316,8 @@ pub(super) struct CoderIssueFixPrSubmitInput {
     pub(super) dry_run: Option<bool>,
     #[serde(default)]
     pub(super) spawn_follow_on_runs: Vec<CoderWorkflowMode>,
+    #[serde(default)]
+    pub(super) allow_auto_merge_recommendation: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -4748,6 +4750,8 @@ fn build_follow_on_run_templates(
     ]
     .into_iter()
     .map(|workflow_mode| {
+        let requires_explicit_auto_spawn =
+            matches!(workflow_mode, CoderWorkflowMode::MergeRecommendation);
         json!({
             "workflow_mode": workflow_mode,
             "repo_binding": record.repo_binding,
@@ -4756,6 +4760,8 @@ fn build_follow_on_run_templates(
             "model_provider": record.model_provider,
             "model_id": record.model_id,
             "mcp_servers": mcp_servers,
+            "auto_spawn_allowed_by_default": !requires_explicit_auto_spawn,
+            "requires_explicit_auto_spawn": requires_explicit_auto_spawn,
         })
     })
     .collect::<Vec<_>>()
@@ -4776,6 +4782,27 @@ fn normalize_follow_on_workflow_modes(requested: &[CoderWorkflowMode]) -> Vec<Co
         normalized.push(CoderWorkflowMode::MergeRecommendation);
     }
     normalized
+}
+
+fn split_auto_spawn_follow_on_workflow_modes(
+    requested: &[CoderWorkflowMode],
+    allow_auto_merge_recommendation: bool,
+) -> (Vec<CoderWorkflowMode>, Vec<Value>) {
+    let mut auto_spawn_modes = Vec::new();
+    let mut skipped = Vec::new();
+    for workflow_mode in normalize_follow_on_workflow_modes(requested) {
+        if matches!(workflow_mode, CoderWorkflowMode::MergeRecommendation)
+            && !allow_auto_merge_recommendation
+        {
+            skipped.push(json!({
+                "workflow_mode": workflow_mode,
+                "reason": "requires_explicit_auto_merge_recommendation_opt_in",
+            }));
+            continue;
+        }
+        auto_spawn_modes.push(workflow_mode);
+    }
+    (auto_spawn_modes, skipped)
 }
 
 fn build_follow_on_run_create_input(
@@ -5029,9 +5056,8 @@ pub(super) async fn coder_issue_fix_pr_submit(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("coder/issue-fix");
     let dry_run = input.dry_run.unwrap_or(true);
-    let normalized_follow_on_modes =
-        normalize_follow_on_workflow_modes(&input.spawn_follow_on_runs);
-    for workflow_mode in &normalized_follow_on_modes {
+    let requested_follow_on_modes = normalize_follow_on_workflow_modes(&input.spawn_follow_on_runs);
+    for workflow_mode in &requested_follow_on_modes {
         if !matches!(
             workflow_mode,
             CoderWorkflowMode::PrReview | CoderWorkflowMode::MergeRecommendation
@@ -5039,6 +5065,12 @@ pub(super) async fn coder_issue_fix_pr_submit(
             return Err(StatusCode::BAD_REQUEST);
         }
     }
+    let allow_auto_merge_recommendation = input.allow_auto_merge_recommendation.unwrap_or(false);
+    let (auto_spawn_follow_on_modes, skipped_follow_on_runs) =
+        split_auto_spawn_follow_on_workflow_modes(
+            &input.spawn_follow_on_runs,
+            allow_auto_merge_recommendation,
+        );
     let (owner, repo_name) = split_owner_repo(&record.repo_binding.repo_slug)?;
     let mut submission_payload = json!({
         "coder_run_id": record.coder_run_id,
@@ -5055,7 +5087,11 @@ pub(super) async fn coder_issue_fix_pr_submit(
         "base_branch": base_branch,
         "head_branch": head_branch,
         "dry_run": dry_run,
+        "requested_spawn_follow_on_runs": requested_follow_on_modes,
+        "allow_auto_merge_recommendation": allow_auto_merge_recommendation,
         "submitted_github_ref": Value::Null,
+        "skipped_follow_on_runs": skipped_follow_on_runs,
+        "spawned_follow_on_runs": [],
         "created_at_ms": crate::now_ms(),
         "readiness": readiness,
     });
@@ -5120,7 +5156,7 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .get("submitted_github_ref")
             .and_then(parse_coder_github_ref);
         if let Some(submitted_github_ref) = submitted_github_ref {
-            for workflow_mode in &normalized_follow_on_modes {
+            for workflow_mode in &auto_spawn_follow_on_modes {
                 let create_input = build_follow_on_run_create_input(
                     &record,
                     workflow_mode.clone(),
@@ -5143,6 +5179,12 @@ pub(super) async fn coder_issue_fix_pr_submit(
                 spawned_follow_on_runs.push(payload);
             }
         }
+    }
+    if let Some(obj) = submission_payload.as_object_mut() {
+        obj.insert(
+            "spawned_follow_on_runs".to_string(),
+            json!(spawned_follow_on_runs),
+        );
     }
     let artifact = write_coder_artifact(
         &state,
@@ -5185,6 +5227,20 @@ pub(super) async fn coder_issue_fix_pr_submit(
                     .cloned()
                     .unwrap_or_else(|| json!([])),
             );
+            extra.insert(
+                "spawned_follow_on_runs".to_string(),
+                submission_payload
+                    .get("spawned_follow_on_runs")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            );
+            extra.insert(
+                "skipped_follow_on_runs".to_string(),
+                submission_payload
+                    .get("skipped_follow_on_runs")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            );
             if let Some(number) = submission_payload
                 .get("pull_request")
                 .and_then(|row| row.get("number"))
@@ -5216,7 +5272,14 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .get("follow_on_runs")
             .cloned()
             .unwrap_or_else(|| json!([])),
-        "spawned_follow_on_runs": spawned_follow_on_runs,
+        "spawned_follow_on_runs": submission_payload
+            .get("spawned_follow_on_runs")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "skipped_follow_on_runs": submission_payload
+            .get("skipped_follow_on_runs")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
     })))
@@ -6900,6 +6963,32 @@ mod tests {
                 CoderWorkflowMode::MergeRecommendation,
             ]
         );
+    }
+
+    #[test]
+    fn split_auto_spawn_follow_on_workflow_modes_requires_explicit_merge_opt_in() {
+        let (auto_spawn, skipped) = split_auto_spawn_follow_on_workflow_modes(
+            &[CoderWorkflowMode::MergeRecommendation],
+            false,
+        );
+        assert_eq!(auto_spawn, vec![CoderWorkflowMode::PrReview]);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(
+            skipped[0].get("workflow_mode").and_then(Value::as_str),
+            Some("merge_recommendation")
+        );
+        let (auto_spawn, skipped) = split_auto_spawn_follow_on_workflow_modes(
+            &[CoderWorkflowMode::MergeRecommendation],
+            true,
+        );
+        assert_eq!(
+            auto_spawn,
+            vec![
+                CoderWorkflowMode::PrReview,
+                CoderWorkflowMode::MergeRecommendation
+            ]
+        );
+        assert!(skipped.is_empty());
     }
 }
 

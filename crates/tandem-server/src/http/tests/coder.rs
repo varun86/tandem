@@ -1569,6 +1569,13 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
     );
     assert_eq!(
         submit_payload
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        submit_payload
             .get("artifact")
             .and_then(|row| row.get("path"))
             .and_then(Value::as_str)
@@ -1803,6 +1810,20 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     );
     assert_eq!(
         artifact_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        artifact_payload
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        artifact_payload
             .get("follow_on_runs")
             .and_then(Value::as_array)
             .and_then(|rows| rows.first())
@@ -1882,6 +1903,207 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(2)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn coder_issue_fix_pr_submit_merge_auto_spawn_requires_opt_in() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-pr-submit-merge-policy",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 313
+                },
+                "mcp_servers": ["github"]
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-pr-submit-merge-policy/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Add missing fallback to startup recovery.",
+                "root_cause": "Recovery skipped the nil-config guard.",
+                "fix_strategy": "restore startup fallback and add a targeted regression",
+                "changed_files": [
+                    "crates/tandem-server/src/http/coder.rs"
+                ],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "startup recovery regression passed"
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let draft_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-pr-submit-merge-policy/pr-draft")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
+        .expect("draft request");
+    let draft_resp = app
+        .clone()
+        .oneshot(draft_req)
+        .await
+        .expect("draft response");
+    assert_eq!(draft_resp.status(), StatusCode::OK);
+
+    let submit_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-pr-submit-merge-policy/pr-submit")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "approved_by": "evan",
+                "reason": "Open the draft PR and queue review",
+                "dry_run": false,
+                "mcp_server": "github",
+                "spawn_follow_on_runs": ["merge_recommendation"]
+            })
+            .to_string(),
+        ))
+        .expect("submit request");
+    let submit_resp = app
+        .clone()
+        .oneshot(submit_req)
+        .await
+        .expect("submit response");
+    server.abort();
+
+    assert_eq!(submit_resp.status(), StatusCode::OK);
+    let submit_payload: Value = serde_json::from_slice(
+        &to_bytes(submit_resp.into_body(), usize::MAX)
+            .await
+            .expect("submit body"),
+    )
+    .expect("submit json");
+    assert_eq!(
+        submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("coder_run"))
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("pr_review")
+    );
+    assert_eq!(
+        submit_payload
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        submit_payload
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("merge_recommendation")
+    );
+    assert_eq!(
+        submit_payload
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str),
+        Some("requires_explicit_auto_merge_recommendation_opt_in")
+    );
+
+    let submitted_event = next_event_of_type(&mut rx, "coder.pr.submitted").await;
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("skipped_follow_on_runs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
     );
 }
 

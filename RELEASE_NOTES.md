@@ -91,6 +91,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `POST /coder/runs/{id}/pr-submit` now also returns `submitted_github_ref`, `pull_request`, and `follow_on_runs` directly in the response so clients do not need a second artifact read to continue the workflow.
   - `coder.pr.submitted` events now also include the canonical submitted PR ref, PR number, and follow-on workflow templates so streaming clients can continue the workflow without a follow-up fetch.
   - `POST /coder/runs/{id}/pr-submit` can now optionally auto-create follow-on `pr_review` and `merge_recommendation` runs through engine-owned chaining, returning those spawned runs directly in `spawned_follow_on_runs`.
+  - Merge auto-follow-ons now require explicit `allow_auto_merge_recommendation` opt-in; otherwise submit auto-spawns review only, records the skipped merge follow-on with a deterministic reason, and emits that policy outcome in the submit response, artifact, and `coder.pr.submitted` event.
   - Auto-follow-on merge chaining now normalizes through review first, so requesting `merge_recommendation` auto-spawn implicitly schedules `pr_review` ahead of merge instead of trusting the client to order those runs correctly.
   - `issue_triage` coder run creation now seeds a deterministic context-run task template for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing.
   - Added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior.
