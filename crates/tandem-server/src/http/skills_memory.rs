@@ -1061,6 +1061,74 @@ async fn emit_blocked_memory_put_guardrail(
     Ok(())
 }
 
+async fn validate_memory_put_capability_with_guardrail(
+    state: &AppState,
+    request: &MemoryPutRequest,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryCapabilityToken, StatusCode> {
+    let cap = capability
+        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
+    if cap.run_id != request.run_id
+        || cap.org_id != request.partition.org_id
+        || cap.workspace_id != request.partition.workspace_id
+        || cap.project_id != request.partition.project_id
+    {
+        emit_blocked_memory_put_guardrail(
+            state,
+            request,
+            cap.subject.clone(),
+            "capability context mismatch",
+        )
+        .await?;
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if cap.expires_at < crate::now_ms() {
+        emit_blocked_memory_put_guardrail(
+            state,
+            request,
+            cap.subject.clone(),
+            "capability expired",
+        )
+        .await?;
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(cap)
+}
+
+async fn validate_memory_promote_capability_with_guardrail(
+    state: &AppState,
+    request: &MemoryPromoteRequest,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryCapabilityToken, StatusCode> {
+    let cap = capability
+        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
+    if cap.run_id != request.run_id
+        || cap.org_id != request.partition.org_id
+        || cap.workspace_id != request.partition.workspace_id
+        || cap.project_id != request.partition.project_id
+    {
+        emit_blocked_memory_promote_guardrail(
+            state,
+            request,
+            cap.subject.clone(),
+            "capability context mismatch",
+        )
+        .await?;
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if cap.expires_at < crate::now_ms() {
+        emit_blocked_memory_promote_guardrail(
+            state,
+            request,
+            cap.subject.clone(),
+            "capability expired",
+        )
+        .await?;
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(cap)
+}
+
 fn memory_promote_metadata(
     metadata: Option<&Value>,
     request: &MemoryPromoteRequest,
@@ -1831,7 +1899,8 @@ pub(super) async fn memory_put_impl(
     request: MemoryPutRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryPutResponse, StatusCode> {
-    let capability = validate_memory_capability(&request.run_id, &request.partition, capability)?;
+    let capability =
+        validate_memory_put_capability_with_guardrail(state, &request, capability).await?;
     if !capability
         .memory
         .write_tiers
@@ -1977,7 +2046,8 @@ pub(super) async fn memory_promote_impl(
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryPromoteResponse, StatusCode> {
     let source_memory_id = request.source_memory_id.clone();
-    let capability = validate_memory_capability(&request.run_id, &request.partition, capability)?;
+    let capability =
+        validate_memory_promote_capability_with_guardrail(state, &request, capability).await?;
     if !capability.memory.promote_targets.contains(&request.to_tier) {
         emit_blocked_memory_promote_guardrail(
             state,
