@@ -608,6 +608,33 @@ fn revise_workflow_plan_from_message(
         }
     }
 
+    let requested_shape = if text.contains("single step")
+        || text.contains("one step")
+        || text.contains("single-step")
+        || text.contains("collapse this workflow")
+        || text.contains("simplify this workflow")
+        || text.contains("make this simpler")
+    {
+        Some(WorkflowPlanShape::Single)
+    } else if text.contains("compare workflow")
+        || text.contains("comparison workflow")
+        || text.contains("compare and report")
+    {
+        Some(WorkflowPlanShape::Compare)
+    } else if text.contains("research workflow")
+        || text.contains("research and report")
+        || text.contains("monitor workflow")
+    {
+        Some(WorkflowPlanShape::Research)
+    } else {
+        None
+    };
+    if let Some(shape) = requested_shape {
+        if apply_plan_shape(&mut revised, shape) {
+            changes.push("updated workflow shape".to_string());
+        }
+    }
+
     let wants_add_analysis = text.contains("add analysis")
         || text.contains("add an analysis step")
         || text.contains("analyze findings")
@@ -765,7 +792,38 @@ fn revise_workflow_plan_from_message(
 }
 
 fn supported_planner_revision_hint() -> &'static str {
-    "Supported edits in this slice: title, schedule, workspace root, MCP servers, execution mode, model overrides, adding or removing analysis, and adding or removing notifications."
+    "Supported edits in this slice: title, schedule, workspace root, MCP servers, execution mode, model overrides, switching between safe workflow shapes, adding or removing analysis, and adding or removing notifications."
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkflowPlanShape {
+    Single,
+    Compare,
+    Research,
+}
+
+fn apply_plan_shape(plan: &mut crate::WorkflowPlan, shape: WorkflowPlanShape) -> bool {
+    let (next_confidence, next_steps, next_description) = match shape {
+        WorkflowPlanShape::Single => single_shape_definition(),
+        WorkflowPlanShape::Compare => compare_shape_definition(),
+        WorkflowPlanShape::Research => research_shape_definition(),
+    };
+    let changed = plan.confidence != next_confidence
+        || plan.description.as_deref() != Some(next_description.as_str())
+        || !workflow_steps_equal(&plan.steps, &next_steps);
+    if changed {
+        plan.confidence = next_confidence.to_string();
+        plan.description = Some(next_description);
+        plan.steps = next_steps;
+    }
+    changed
+}
+
+fn workflow_steps_equal(
+    left: &[crate::WorkflowPlanStep],
+    right: &[crate::WorkflowPlanStep],
+) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
 fn ensure_analysis_step(plan: &mut crate::WorkflowPlan) -> bool {
@@ -1275,36 +1333,7 @@ fn choose_plan_shape(
         normalized_prompt,
         &["compare", "versus", "vs ", "difference"],
     ) {
-        return (
-            "high",
-            vec![
-                plan_step(
-                    "collect_inputs",
-                    "collect",
-                    "Gather the inputs needed for comparison.",
-                    "researcher",
-                ),
-                plan_step_with_dep(
-                    "compare_results",
-                    "compare",
-                    "Compare the gathered inputs and identify the important differences.",
-                    "analyst",
-                    &["collect_inputs"],
-                    vec![input_ref("collect_inputs", "comparison_inputs")],
-                    Some("structured_json"),
-                ),
-                plan_step_with_dep(
-                    "generate_report",
-                    "report",
-                    "Generate the final report from the comparison findings.",
-                    "writer",
-                    &["compare_results"],
-                    vec![input_ref("compare_results", "comparison_findings")],
-                    Some("report_markdown"),
-                ),
-            ],
-            "Collect inputs, compare them, and produce a report.".to_string(),
-        );
+        return compare_shape_definition();
     }
     if contains_any(
         normalized_prompt,
@@ -1317,39 +1346,7 @@ fn choose_plan_shape(
             "report",
         ],
     ) {
-        return (
-            "high",
-            vec![
-                plan_step_with_dep(
-                    "research_sources",
-                    "research",
-                    "Collect current source material relevant to the prompt.",
-                    "researcher",
-                    &[],
-                    Vec::new(),
-                    Some("structured_json"),
-                ),
-                plan_step_with_dep(
-                    "analyze_findings",
-                    "analyze",
-                    "Analyze the collected findings and identify the important takeaways.",
-                    "analyst",
-                    &["research_sources"],
-                    vec![input_ref("research_sources", "source_findings")],
-                    Some("structured_json"),
-                ),
-                plan_step_with_dep(
-                    "generate_report",
-                    "report",
-                    "Generate a concise markdown report from the analyzed findings.",
-                    "writer",
-                    &["analyze_findings"],
-                    vec![input_ref("analyze_findings", "analysis")],
-                    Some("report_markdown"),
-                ),
-            ],
-            "Research, analyze, and produce a report.".to_string(),
-        );
+        return research_shape_definition();
     }
     if contains_any(normalized_prompt, &["notify", "alert", "post", "send"]) {
         return (
@@ -1378,22 +1375,89 @@ fn choose_plan_shape(
         );
     }
     if normalized_prompt.split_whitespace().count() >= 5 {
-        return (
-            "medium",
-            vec![plan_step_with_dep(
-                "execute_goal",
-                "execute",
-                "Execute the requested goal as a single automation step.",
-                "worker",
+        return single_shape_definition_with_confidence("medium");
+    }
+    single_shape_definition_with_confidence("low")
+}
+
+fn compare_shape_definition() -> (&'static str, Vec<crate::WorkflowPlanStep>, String) {
+    (
+        "high",
+        vec![
+            plan_step(
+                "collect_inputs",
+                "collect",
+                "Gather the inputs needed for comparison.",
+                "researcher",
+            ),
+            plan_step_with_dep(
+                "compare_results",
+                "compare",
+                "Compare the gathered inputs and identify the important differences.",
+                "analyst",
+                &["collect_inputs"],
+                vec![input_ref("collect_inputs", "comparison_inputs")],
+                Some("structured_json"),
+            ),
+            plan_step_with_dep(
+                "generate_report",
+                "report",
+                "Generate the final report from the comparison findings.",
+                "writer",
+                &["compare_results"],
+                vec![input_ref("compare_results", "comparison_findings")],
+                Some("report_markdown"),
+            ),
+        ],
+        "Collect inputs, compare them, and produce a report.".to_string(),
+    )
+}
+
+fn research_shape_definition() -> (&'static str, Vec<crate::WorkflowPlanStep>, String) {
+    (
+        "high",
+        vec![
+            plan_step_with_dep(
+                "research_sources",
+                "research",
+                "Collect current source material relevant to the prompt.",
+                "researcher",
                 &[],
                 Vec::new(),
                 Some("structured_json"),
-            )],
-            "Execute the goal in a single step because the prompt is broad.".to_string(),
-        );
-    }
+            ),
+            plan_step_with_dep(
+                "analyze_findings",
+                "analyze",
+                "Analyze the collected findings and identify the important takeaways.",
+                "analyst",
+                &["research_sources"],
+                vec![input_ref("research_sources", "source_findings")],
+                Some("structured_json"),
+            ),
+            plan_step_with_dep(
+                "generate_report",
+                "report",
+                "Generate a concise markdown report from the analyzed findings.",
+                "writer",
+                &["analyze_findings"],
+                vec![input_ref("analyze_findings", "analysis")],
+                Some("report_markdown"),
+            ),
+        ],
+        "Research, analyze, and produce a report.".to_string(),
+    )
+}
+
+fn single_shape_definition() -> (&'static str, Vec<crate::WorkflowPlanStep>, String) {
+    single_shape_definition_with_confidence("medium")
+}
+
+fn single_shape_definition_with_confidence(
+    confidence: &'static str,
+) -> (&'static str, Vec<crate::WorkflowPlanStep>, String) {
     (
-        "low",
+        confidence,
         vec![plan_step_with_dep(
             "execute_goal",
             "execute",
@@ -1403,7 +1467,11 @@ fn choose_plan_shape(
             Vec::new(),
             Some("structured_json"),
         )],
-        "Use a single-step automation because the prompt is ambiguous.".to_string(),
+        if confidence == "low" {
+            "Use a single-step automation because the prompt is ambiguous.".to_string()
+        } else {
+            "Execute the goal in a single step because the prompt is broad.".to_string()
+        },
     )
 }
 
