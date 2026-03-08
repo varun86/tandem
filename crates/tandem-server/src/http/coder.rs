@@ -8047,6 +8047,114 @@ pub(super) async fn coder_project_list(
     })))
 }
 
+pub(super) async fn coder_status(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    ensure_coder_runs_dir(&state).await?;
+    let mut total_runs = 0_u64;
+    let mut active_runs = 0_u64;
+    let mut awaiting_approval_runs = 0_u64;
+    let mut workflow_counts = serde_json::Map::<String, Value>::new();
+    let mut status_counts = serde_json::Map::<String, Value>::new();
+    let mut projects = std::collections::BTreeSet::<String>::new();
+    let mut latest_run: Option<Value> = None;
+    let mut dir = tokio::fs::read_dir(coder_runs_root(&state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|row| row.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = tokio::fs::read_to_string(entry.path())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(record) = serde_json::from_str::<CoderRunRecord>(&raw) else {
+            continue;
+        };
+        let Ok(run) = load_context_run_state(&state, &record.linked_context_run_id).await else {
+            continue;
+        };
+        total_runs += 1;
+        projects.insert(record.repo_binding.project_id.clone());
+        let workflow_key = serde_json::to_value(&record.workflow_mode)
+            .ok()
+            .and_then(|row| row.as_str().map(ToString::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        let workflow_count = workflow_counts
+            .entry(workflow_key)
+            .or_insert_with(|| json!(0))
+            .as_u64()
+            .unwrap_or(0);
+        *workflow_counts
+            .entry(
+                serde_json::to_value(&record.workflow_mode)
+                    .ok()
+                    .and_then(|row| row.as_str().map(ToString::to_string))
+                    .unwrap_or_else(|| "unknown".to_string()),
+            )
+            .or_insert_with(|| json!(0)) = json!(workflow_count + 1);
+        let status_key = match run.status {
+            ContextRunStatus::Queued => "queued",
+            ContextRunStatus::Planning => "planning",
+            ContextRunStatus::Running => "running",
+            ContextRunStatus::AwaitingApproval => "awaiting_approval",
+            ContextRunStatus::Completed => "completed",
+            ContextRunStatus::Failed => "failed",
+            ContextRunStatus::Paused => "paused",
+            ContextRunStatus::Blocked => "blocked",
+            ContextRunStatus::Cancelled => "cancelled",
+        }
+        .to_string();
+        let status_count = status_counts
+            .entry(status_key.clone())
+            .or_insert_with(|| json!(0))
+            .as_u64()
+            .unwrap_or(0);
+        *status_counts
+            .entry(status_key.clone())
+            .or_insert_with(|| json!(0)) = json!(status_count + 1);
+        if matches!(run.status, ContextRunStatus::Running) {
+            active_runs += 1;
+        }
+        if matches!(run.status, ContextRunStatus::AwaitingApproval) {
+            awaiting_approval_runs += 1;
+            active_runs += 1;
+        }
+        let summary = json!({
+            "coder_run_id": record.coder_run_id,
+            "workflow_mode": record.workflow_mode,
+            "status": run.status,
+            "phase": project_coder_phase(&run),
+            "project_id": record.repo_binding.project_id,
+            "repo_slug": record.repo_binding.repo_slug,
+            "updated_at_ms": run.updated_at_ms,
+        });
+        if latest_run
+            .as_ref()
+            .and_then(|row| row.get("updated_at_ms"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            <= run.updated_at_ms
+        {
+            latest_run = Some(summary);
+        }
+    }
+    Ok(Json(json!({
+        "status": {
+            "total_runs": total_runs,
+            "active_runs": active_runs,
+            "awaiting_approval_runs": awaiting_approval_runs,
+            "project_count": projects.len(),
+            "workflow_counts": workflow_counts,
+            "run_status_counts": status_counts,
+            "latest_run": latest_run,
+        }
+    })))
+}
+
 pub(super) async fn coder_project_policy_put(
     State(state): State<AppState>,
     Path(project_id): Path<String>,

@@ -5273,6 +5273,183 @@ async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
 }
 
 #[tokio::test]
+async fn coder_status_summarizes_active_and_approval_runs() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    for payload in [
+        json!({
+            "coder_run_id": "coder-status-issue-fix",
+            "workflow_mode": "issue_fix",
+            "repo_binding": {
+                "project_id": "proj-engine",
+                "workspace_id": "ws-tandem",
+                "workspace_root": "/tmp/tandem-repo",
+                "repo_slug": "evan/tandem"
+            },
+            "github_ref": {
+                "kind": "issue",
+                "number": 323
+            },
+            "mcp_servers": ["github"]
+        }),
+        json!({
+            "coder_run_id": "coder-status-merge",
+            "workflow_mode": "merge_recommendation",
+            "repo_binding": {
+                "project_id": "proj-engine",
+                "workspace_id": "ws-tandem",
+                "workspace_root": "/tmp/tandem-repo",
+                "repo_slug": "evan/tandem"
+            },
+            "github_ref": {
+                "kind": "pull_request",
+                "number": 324
+            },
+            "mcp_servers": ["github"]
+        }),
+    ] {
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/coder/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+    }
+
+    let merge_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-status-merge/merge-recommendation-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "merge",
+                "summary": "Everything looks ready from the merge side.",
+                "blockers": [],
+                "required_checks": [],
+                "required_approvals": []
+            })
+            .to_string(),
+        ))
+        .expect("merge summary request");
+    let merge_summary_resp = app
+        .clone()
+        .oneshot(merge_summary_req)
+        .await
+        .expect("merge summary response");
+    assert_eq!(merge_summary_resp.status(), StatusCode::OK);
+
+    let status_req = Request::builder()
+        .method("GET")
+        .uri("/coder/status")
+        .body(Body::empty())
+        .expect("status request");
+    let status_resp = app
+        .clone()
+        .oneshot(status_req)
+        .await
+        .expect("status response");
+    server.abort();
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status_payload: Value = serde_json::from_slice(
+        &to_bytes(status_resp.into_body(), usize::MAX)
+            .await
+            .expect("status body"),
+    )
+    .expect("status json");
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("total_runs"))
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("active_runs"))
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("awaiting_approval_runs"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("project_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("workflow_counts"))
+            .and_then(|row| row.get("issue_fix"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("workflow_counts"))
+            .and_then(|row| row.get("merge_recommendation"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("run_status_counts"))
+            .and_then(|row| row.get("running"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("run_status_counts"))
+            .and_then(|row| row.get("awaiting_approval"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        status_payload
+            .get("status")
+            .and_then(|row| row.get("latest_run"))
+            .and_then(|row| row.get("coder_run_id"))
+            .and_then(Value::as_str),
+        Some("coder-status-merge")
+    );
+}
+
+#[tokio::test]
 async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
 
