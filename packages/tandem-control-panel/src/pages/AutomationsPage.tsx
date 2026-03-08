@@ -53,6 +53,23 @@ interface McpServerOption {
   enabled: boolean;
 }
 
+interface WorkflowEditDraft {
+  automationId: string;
+  name: string;
+  description: string;
+  scheduleKind: "manual" | "cron" | "interval";
+  cronExpression: string;
+  intervalSeconds: string;
+  workspaceRoot: string;
+  executionMode: ExecutionMode;
+  maxParallelAgents: string;
+  modelProvider: string;
+  modelId: string;
+  plannerModelProvider: string;
+  plannerModelId: string;
+  selectedMcpServers: string[];
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const SCHEDULE_PRESETS: SchedulePreset[] = [
@@ -208,6 +225,15 @@ function validatePlannerModelInput(provider: string, model: string) {
   return "";
 }
 
+function validateModelInput(provider: string, model: string) {
+  const providerValue = String(provider || "").trim();
+  const modelValue = String(model || "").trim();
+  if (!providerValue && !modelValue) return "";
+  if (!providerValue) return "Model provider is required when a model is set.";
+  if (!modelValue) return "Model is required when a provider is set.";
+  return "";
+}
+
 function buildOperatorPreferences(wizard: WizardState) {
   let roleModels: Record<string, unknown> | undefined;
   const rawRoleModels = String(wizard.roleModelsJson || "").trim();
@@ -265,19 +291,219 @@ function validateRoleModelsJsonInput(raw: string) {
 }
 
 function scheduleToEditor(schedule: any) {
+  const type = String(schedule?.type || "")
+    .trim()
+    .toLowerCase();
   const cronExpression = String(
     schedule?.cron?.expression || schedule?.cron_expression || schedule?.cron || ""
   ).trim();
   const intervalValue = Number(
-    schedule?.interval_seconds?.seconds || schedule?.interval_seconds || 3600
+    schedule?.interval_seconds?.seconds ||
+      schedule?.interval_seconds ||
+      schedule?.intervalSeconds ||
+      3600
   );
   const intervalSeconds =
     Number.isFinite(intervalValue) && intervalValue > 0 ? Math.round(intervalValue) : 3600;
   return {
-    scheduleKind: cronExpression ? ("cron" as const) : ("interval" as const),
+    scheduleKind:
+      type === "manual"
+        ? ("manual" as const)
+        : cronExpression
+          ? ("cron" as const)
+          : ("interval" as const),
     cronExpression,
     intervalSeconds,
   };
+}
+
+function normalizeMcpServerNamespace(raw: string) {
+  let out = "";
+  let previousUnderscore = false;
+  for (const ch of String(raw || "").trim()) {
+    if (/^[a-z0-9]$/i.test(ch)) {
+      out += ch.toLowerCase();
+      previousUnderscore = false;
+    } else if (!previousUnderscore) {
+      out += "_";
+      previousUnderscore = true;
+    }
+  }
+  return out.replace(/^_+|_+$/g, "") || "mcp";
+}
+
+function normalizeAllowedTools(raw: string[]) {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const row of raw) {
+    const value = String(row || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    values.push(value);
+  }
+  return values;
+}
+
+function compileWorkflowToolAllowlist(selectedMcpServers: string[]) {
+  return normalizeAllowedTools([
+    "read",
+    "websearch",
+    "webfetch",
+    "webfetch_html",
+    ...selectedMcpServers.map((server) => `mcp.${normalizeMcpServerNamespace(server)}.*`),
+  ]);
+}
+
+function extractAutomationOperatorPreferences(automation: any) {
+  const metadataPrefs =
+    automation?.metadata?.operator_preferences || automation?.metadata?.operatorPreferences;
+  if (metadataPrefs && typeof metadataPrefs === "object") {
+    return metadataPrefs as Record<string, any>;
+  }
+  const firstAgent = Array.isArray(automation?.agents) ? automation.agents[0] : null;
+  const defaultModel =
+    firstAgent?.model_policy?.default_model || firstAgent?.modelPolicy?.defaultModel || null;
+  const roleModels =
+    firstAgent?.model_policy?.role_models || firstAgent?.modelPolicy?.roleModels || null;
+  const fallback: Record<string, any> = {};
+  if (defaultModel?.provider_id || defaultModel?.providerId) {
+    fallback.model_provider = defaultModel.provider_id || defaultModel.providerId;
+  }
+  if (defaultModel?.model_id || defaultModel?.modelId) {
+    fallback.model_id = defaultModel.model_id || defaultModel.modelId;
+  }
+  if (roleModels && typeof roleModels === "object") {
+    fallback.role_models = roleModels;
+  }
+  if (automation?.execution?.max_parallel_agents || automation?.execution?.maxParallelAgents) {
+    fallback.max_parallel_agents =
+      automation.execution.max_parallel_agents || automation.execution.maxParallelAgents;
+  }
+  return fallback;
+}
+
+function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | null {
+  const automationId = String(
+    automation?.automation_id || automation?.automationId || automation?.id || ""
+  ).trim();
+  if (!automationId) return null;
+  const scheduleEditor = scheduleToEditor(automation?.schedule);
+  const prefs = extractAutomationOperatorPreferences(automation);
+  const plannerRoleModel = prefs?.role_models?.planner || prefs?.roleModels?.planner || {};
+  const maxParallelRaw = Number(
+    prefs?.max_parallel_agents ??
+      prefs?.maxParallelAgents ??
+      automation?.execution?.max_parallel_agents ??
+      automation?.execution?.maxParallelAgents ??
+      1
+  );
+  const executionMode = String(prefs?.execution_mode || prefs?.executionMode || "").trim();
+  const selectedMcpServers = Array.isArray(automation?.metadata?.allowed_mcp_servers)
+    ? automation.metadata.allowed_mcp_servers
+    : Array.isArray(automation?.agents?.[0]?.mcp_policy?.allowed_servers)
+      ? automation.agents[0].mcp_policy.allowed_servers
+      : [];
+  return {
+    automationId,
+    name: String(automation?.name || automationId).trim(),
+    description: String(automation?.description || "").trim(),
+    scheduleKind: scheduleEditor.scheduleKind,
+    cronExpression: scheduleEditor.cronExpression,
+    intervalSeconds: String(scheduleEditor.intervalSeconds),
+    workspaceRoot: String(
+      automation?.workspace_root ||
+        automation?.workspaceRoot ||
+        automation?.metadata?.workspace_root ||
+        ""
+    ).trim(),
+    executionMode:
+      executionMode === "single" || executionMode === "swarm" || executionMode === "team"
+        ? (executionMode as ExecutionMode)
+        : maxParallelRaw > 1
+          ? "swarm"
+          : "team",
+    maxParallelAgents: String(
+      Number.isFinite(maxParallelRaw) && maxParallelRaw > 0 ? Math.round(maxParallelRaw) : 1
+    ),
+    modelProvider: String(prefs?.model_provider || prefs?.modelProvider || "").trim(),
+    modelId: String(prefs?.model_id || prefs?.modelId || "").trim(),
+    plannerModelProvider: String(
+      plannerRoleModel?.provider_id || plannerRoleModel?.providerId || ""
+    ).trim(),
+    plannerModelId: String(plannerRoleModel?.model_id || plannerRoleModel?.modelId || "").trim(),
+    selectedMcpServers: selectedMcpServers
+      .map((row: any) => String(row || "").trim())
+      .filter(Boolean),
+  };
+}
+
+function workflowEditToSchedule(draft: WorkflowEditDraft) {
+  if (draft.scheduleKind === "manual") {
+    return {
+      type: "manual",
+      timezone: "UTC",
+      misfire_policy: "run_once",
+    };
+  }
+  if (draft.scheduleKind === "cron") {
+    return {
+      type: "cron",
+      cron_expression: String(draft.cronExpression || "").trim(),
+      timezone: "UTC",
+      misfire_policy: "run_once",
+    };
+  }
+  return {
+    type: "interval",
+    interval_seconds: Math.max(
+      1,
+      Number.parseInt(String(draft.intervalSeconds || "3600"), 10) || 3600
+    ),
+    timezone: "UTC",
+    misfire_policy: "run_once",
+  };
+}
+
+function workflowEditToOperatorPreferences(draft: WorkflowEditDraft) {
+  const prefs: Record<string, any> = {
+    execution_mode: draft.executionMode,
+    max_parallel_agents:
+      draft.executionMode === "swarm"
+        ? Math.max(
+            1,
+            Math.min(16, Number.parseInt(String(draft.maxParallelAgents || "4"), 10) || 4)
+          )
+        : 1,
+  };
+  const modelProvider = String(draft.modelProvider || "").trim();
+  const modelId = String(draft.modelId || "").trim();
+  if (modelProvider) prefs.model_provider = modelProvider;
+  if (modelId) prefs.model_id = modelId;
+  const plannerProvider = String(draft.plannerModelProvider || "").trim();
+  const plannerModel = String(draft.plannerModelId || "").trim();
+  if (plannerProvider && plannerModel) {
+    prefs.role_models = {
+      planner: {
+        provider_id: plannerProvider,
+        model_id: plannerModel,
+      },
+    };
+  }
+  return prefs;
+}
+
+function compileWorkflowModelPolicy(operatorPreferences: Record<string, any>) {
+  const payload: Record<string, any> = {};
+  if (operatorPreferences.model_provider && operatorPreferences.model_id) {
+    payload.default_model = {
+      provider_id: operatorPreferences.model_provider,
+      model_id: operatorPreferences.model_id,
+    };
+  }
+  if (operatorPreferences.role_models && typeof operatorPreferences.role_models === "object") {
+    payload.role_models = operatorPreferences.role_models;
+  }
+  return Object.keys(payload).length ? payload : null;
 }
 
 function isActiveRunStatus(status: string) {
@@ -2458,6 +2684,7 @@ function MyAutomations({
   );
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
   const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
+  const [workflowEditDraft, setWorkflowEditDraft] = useState<WorkflowEditDraft | null>(null);
   const isWorkflowRun = selectedRunId.startsWith("automation-v2-run-");
   const workflowAutomationIds = useMemo(
     () =>
@@ -2484,6 +2711,19 @@ function MyAutomations({
       client?.automationsV2?.list?.().catch(() => ({ automations: [] })) ??
       Promise.resolve({ automations: [] }),
     refetchInterval: 20000,
+  });
+  const providerCatalogQuery = useQuery({
+    queryKey: ["providers", "catalog", "workflow-edit"],
+    queryFn: () =>
+      client?.providers?.catalog?.().catch(() => ({ providers: [] })) ??
+      Promise.resolve({ providers: [] }),
+    refetchInterval: 30000,
+  });
+  const mcpServersQuery = useQuery({
+    queryKey: ["mcp", "servers", "workflow-edit"],
+    queryFn: () =>
+      client?.mcp?.list?.().catch(() => ({ servers: [] })) ?? Promise.resolve({ servers: [] }),
+    refetchInterval: 15000,
   });
   const runsQuery = useQuery({
     queryKey: ["automations", "runs"],
@@ -2654,6 +2894,93 @@ function MyAutomations({
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
+  const updateWorkflowAutomationMutation = useMutation({
+    mutationFn: async (draft: WorkflowEditDraft) => {
+      const name = String(draft.name || "").trim();
+      const description = String(draft.description || "").trim();
+      const workspaceRoot = String(draft.workspaceRoot || "").trim();
+      const modelError = validateModelInput(draft.modelProvider, draft.modelId);
+      const plannerModelError = validatePlannerModelInput(
+        draft.plannerModelProvider,
+        draft.plannerModelId
+      );
+      const workspaceError = validateWorkspaceRootInput(workspaceRoot);
+      if (!name) throw new Error("Automation name is required.");
+      if (workspaceError) throw new Error(workspaceError);
+      if (modelError) throw new Error(modelError);
+      if (plannerModelError) throw new Error(plannerModelError);
+      if (draft.scheduleKind === "cron" && !String(draft.cronExpression || "").trim()) {
+        throw new Error("Cron expression is required.");
+      }
+      if (
+        draft.scheduleKind === "interval" &&
+        (!Number.isFinite(Number(draft.intervalSeconds)) || Number(draft.intervalSeconds) <= 0)
+      ) {
+        throw new Error("Interval seconds must be greater than zero.");
+      }
+      const operatorPreferences = workflowEditToOperatorPreferences(draft);
+      const modelPolicy = compileWorkflowModelPolicy(operatorPreferences);
+      const selectedMcpServers = draft.selectedMcpServers
+        .map((row) => String(row || "").trim())
+        .filter(Boolean);
+      const toolAllowlist = compileWorkflowToolAllowlist(selectedMcpServers);
+      const existing = automationsV2.find(
+        (row: any) =>
+          String(row?.automation_id || row?.automationId || row?.id || "").trim() ===
+          draft.automationId
+      );
+      const agents = Array.isArray(existing?.agents)
+        ? existing.agents.map((agent: any) => ({
+            ...agent,
+            model_policy: modelPolicy,
+            modelPolicy: undefined,
+            tool_policy: {
+              ...(agent?.tool_policy || {}),
+              allowlist: toolAllowlist,
+              denylist: Array.isArray(agent?.tool_policy?.denylist)
+                ? agent.tool_policy.denylist
+                : [],
+            },
+            mcp_policy: {
+              ...(agent?.mcp_policy || {}),
+              allowed_servers: selectedMcpServers,
+              allowed_tools: null,
+            },
+          }))
+        : [];
+      const existingMetadata =
+        existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {};
+      return client.automationsV2.update(draft.automationId, {
+        name,
+        description: description || null,
+        schedule: workflowEditToSchedule(draft),
+        workspace_root: workspaceRoot,
+        execution: {
+          ...(existing?.execution || {}),
+          max_parallel_agents:
+            draft.executionMode === "swarm"
+              ? Math.max(
+                  1,
+                  Math.min(16, Number.parseInt(String(draft.maxParallelAgents || "4"), 10) || 4)
+                )
+              : 1,
+        },
+        agents,
+        metadata: {
+          ...existingMetadata,
+          workspace_root: workspaceRoot,
+          operator_preferences: operatorPreferences,
+          allowed_mcp_servers: selectedMcpServers,
+        },
+      });
+    },
+    onSuccess: async () => {
+      toast("ok", "Workflow automation updated.");
+      setWorkflowEditDraft(null);
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
   const automationActionMutation = useMutation({
     mutationFn: async ({
       action,
@@ -2698,6 +3025,24 @@ function MyAutomations({
   }, [automationsQuery.data]);
   const legacyRuns = toArray(runsQuery.data, "runs");
   const automationsV2 = toArray(automationsV2Query.data, "automations");
+  const providerOptions = useMemo<ProviderOption[]>(() => {
+    const rows = Array.isArray((providerCatalogQuery.data as any)?.providers)
+      ? (providerCatalogQuery.data as any).providers
+      : [];
+    return rows
+      .map((provider: any) => ({
+        id: String(provider?.id || "").trim(),
+        models: Array.isArray(provider?.models)
+          ? provider.models.map((row: any) => String(row || "").trim()).filter(Boolean)
+          : [],
+      }))
+      .filter((provider: ProviderOption) => provider.id)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }, [providerCatalogQuery.data]);
+  const mcpServers = useMemo(
+    () => normalizeMcpServers(mcpServersQuery.data),
+    [mcpServersQuery.data]
+  );
   const workflowRuns = toArray(workflowRunsQuery.data, "runs");
   const runs = useMemo(() => {
     const all = [...legacyRuns, ...workflowRuns];
@@ -3100,7 +3445,20 @@ function MyAutomations({
                       <span>🧩</span>
                       <strong>{String(automation?.name || id || "Workflow automation")}</strong>
                     </div>
-                    <span className={statusColor(status)}>{status}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() =>
+                          setWorkflowEditDraft(workflowAutomationToEditDraft(automation))
+                        }
+                        disabled={!id}
+                        title="Edit workflow automation"
+                        aria-label="Edit workflow automation"
+                      >
+                        <i data-lucide="pencil"></i>
+                      </button>
+                      <span className={statusColor(status)}>{status}</span>
+                    </div>
                   </div>
                   {String(automation?.description || "").trim() ? (
                     <div className="tcp-subtle text-xs">{String(automation.description)}</div>
@@ -3973,6 +4331,363 @@ function MyAutomations({
                 >
                   <i data-lucide="check"></i>
                   Save
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+        {workflowEditDraft ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setWorkflowEditDraft(null)}
+          >
+            <motion.div
+              className="tcp-confirm-dialog w-[min(56rem,96vw)]"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="tcp-confirm-title">Edit workflow automation</h3>
+              <div className="grid gap-3">
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Name</label>
+                  <input
+                    className="tcp-input"
+                    value={workflowEditDraft.name}
+                    onInput={(e) =>
+                      setWorkflowEditDraft((current) =>
+                        current
+                          ? { ...current, name: (e.target as HTMLInputElement).value }
+                          : current
+                      )
+                    }
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Notes / description</label>
+                  <textarea
+                    className="tcp-input min-h-[96px]"
+                    value={workflowEditDraft.description}
+                    onInput={(e) =>
+                      setWorkflowEditDraft((current) =>
+                        current
+                          ? { ...current, description: (e.target as HTMLTextAreaElement).value }
+                          : current
+                      )
+                    }
+                    placeholder="Add notes, delivery expectations, or operator guidance."
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Workspace root</label>
+                  <input
+                    className={`tcp-input ${
+                      validateWorkspaceRootInput(workflowEditDraft.workspaceRoot)
+                        ? "border-red-500/70 text-red-100"
+                        : ""
+                    }`}
+                    value={workflowEditDraft.workspaceRoot}
+                    onInput={(e) =>
+                      setWorkflowEditDraft((current) =>
+                        current
+                          ? { ...current, workspaceRoot: (e.target as HTMLInputElement).value }
+                          : current
+                      )
+                    }
+                  />
+                  {validateWorkspaceRootInput(workflowEditDraft.workspaceRoot) ? (
+                    <div className="text-xs text-red-300">
+                      {validateWorkspaceRootInput(workflowEditDraft.workspaceRoot)}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="grid gap-1 sm:grid-cols-3 sm:gap-2">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Schedule type</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.scheduleKind}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                scheduleKind: (e.target as HTMLSelectElement).value as
+                                  | "manual"
+                                  | "cron"
+                                  | "interval",
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="manual">manual</option>
+                      <option value="cron">cron</option>
+                      <option value="interval">interval</option>
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Execution mode</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.executionMode}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                executionMode: (e.target as HTMLSelectElement)
+                                  .value as ExecutionMode,
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      {EXECUTION_MODES.map((mode) => (
+                        <option key={mode.id} value={mode.id}>
+                          {mode.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Max parallel agents</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="16"
+                      className="tcp-input"
+                      value={workflowEditDraft.maxParallelAgents}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                maxParallelAgents: (e.target as HTMLInputElement).value,
+                              }
+                            : current
+                        )
+                      }
+                      disabled={workflowEditDraft.executionMode !== "swarm"}
+                    />
+                  </div>
+                </div>
+                {workflowEditDraft.scheduleKind === "cron" ? (
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Cron expression</label>
+                    <input
+                      className="tcp-input font-mono"
+                      value={workflowEditDraft.cronExpression}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? { ...current, cronExpression: (e.target as HTMLInputElement).value }
+                            : current
+                        )
+                      }
+                    />
+                  </div>
+                ) : workflowEditDraft.scheduleKind === "interval" ? (
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Interval seconds</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className="tcp-input"
+                      value={workflowEditDraft.intervalSeconds}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? { ...current, intervalSeconds: (e.target as HTMLInputElement).value }
+                            : current
+                        )
+                      }
+                    />
+                  </div>
+                ) : null}
+                <div className="grid gap-1 sm:grid-cols-2 sm:gap-2">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Model provider</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.modelProvider}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                modelProvider: (e.target as HTMLSelectElement).value,
+                                modelId: "",
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="">Workspace default</option>
+                      {providerOptions.map((provider) => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Model</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.modelId}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? { ...current, modelId: (e.target as HTMLSelectElement).value }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="">Workspace default</option>
+                      {(
+                        providerOptions.find(
+                          (provider) => provider.id === workflowEditDraft.modelProvider
+                        )?.models || []
+                      ).map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                    {validateModelInput(
+                      workflowEditDraft.modelProvider,
+                      workflowEditDraft.modelId
+                    ) ? (
+                      <div className="text-xs text-red-300">
+                        {validateModelInput(
+                          workflowEditDraft.modelProvider,
+                          workflowEditDraft.modelId
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid gap-1 sm:grid-cols-2 sm:gap-2">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Planner provider</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.plannerModelProvider}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                plannerModelProvider: (e.target as HTMLSelectElement).value,
+                                plannerModelId: "",
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="">Use workflow model</option>
+                      {providerOptions.map((provider) => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-slate-400">Planner model</label>
+                    <select
+                      className="tcp-input"
+                      value={workflowEditDraft.plannerModelId}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? { ...current, plannerModelId: (e.target as HTMLSelectElement).value }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="">Use workflow model</option>
+                      {(
+                        providerOptions.find(
+                          (provider) => provider.id === workflowEditDraft.plannerModelProvider
+                        )?.models || []
+                      ).map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                    {validatePlannerModelInput(
+                      workflowEditDraft.plannerModelProvider,
+                      workflowEditDraft.plannerModelId
+                    ) ? (
+                      <div className="text-xs text-red-300">
+                        {validatePlannerModelInput(
+                          workflowEditDraft.plannerModelProvider,
+                          workflowEditDraft.plannerModelId
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">MCP Servers</div>
+                  {mcpServers.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {mcpServers.map((server) => {
+                        const isSelected = workflowEditDraft.selectedMcpServers.includes(
+                          server.name
+                        );
+                        return (
+                          <button
+                            key={server.name}
+                            className={`tcp-btn h-7 px-2 text-xs ${
+                              isSelected ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""
+                            }`}
+                            onClick={() =>
+                              setWorkflowEditDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      selectedMcpServers: isSelected
+                                        ? current.selectedMcpServers.filter(
+                                            (name) => name !== server.name
+                                          )
+                                        : [...current.selectedMcpServers, server.name].sort(),
+                                    }
+                                  : current
+                              )
+                            }
+                          >
+                            {server.name} {server.connected ? "• connected" : "• disconnected"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-400">No MCP servers configured yet.</div>
+                  )}
+                </div>
+              </div>
+              <div className="tcp-confirm-actions mt-3">
+                <button className="tcp-btn" onClick={() => setWorkflowEditDraft(null)}>
+                  <i data-lucide="x-circle"></i>
+                  Cancel
+                </button>
+                <button
+                  className="tcp-btn-primary"
+                  onClick={() =>
+                    workflowEditDraft && updateWorkflowAutomationMutation.mutate(workflowEditDraft)
+                  }
+                  disabled={updateWorkflowAutomationMutation.isPending}
+                >
+                  <i data-lucide="check"></i>
+                  {updateWorkflowAutomationMutation.isPending ? "Saving..." : "Save"}
                 </button>
               </div>
             </motion.div>
