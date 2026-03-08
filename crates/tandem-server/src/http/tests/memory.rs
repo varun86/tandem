@@ -464,6 +464,122 @@ async fn memory_put_rejects_expired_capability_and_emits_blocked_audit() {
 }
 
 #[tokio::test]
+async fn memory_put_rejects_mismatched_capability_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-1-cap-mismatch",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "note",
+                "content": "mismatched capability should fail",
+                "classification": "internal",
+                "capability": {
+                    "run_id": "run-1-cap-mismatch",
+                    "subject": "mismatch-user",
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-2",
+                    "memory": {
+                        "read_tiers": ["session"],
+                        "write_tiers": ["session"],
+                        "promote_targets": ["project"],
+                        "require_review_for_promote": true,
+                        "allow_auto_use_tiers": ["curated"]
+                    },
+                    "expires_at": 9999999999999u64
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let blocked_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.put"),
+    )
+    .await
+    .expect("blocked memory.put event");
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-1-cap-mismatch")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
+    assert!(blocked_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("capability context mismatch")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-1-cap-mismatch")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_put_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_put")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("capability context mismatch")
+                                && detail.contains("origin_run_id=run-1-cap-mismatch")
+                                && detail.contains("project_id=proj-1")
+                        })
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_put_exists);
+}
+
+#[tokio::test]
 async fn memory_search_preserves_restricted_classification() {
     let state = test_state().await;
     let app = app_router(state.clone());
