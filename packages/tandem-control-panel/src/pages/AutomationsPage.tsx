@@ -1413,7 +1413,9 @@ function Step4Review({
               ) : null}
             </div>
           ) : (
-            <span className="text-sm text-slate-400">No workflow plan available yet.</span>
+            <span className="text-sm text-slate-400">
+              Workflow preview has not been generated yet.
+            </span>
           )}
         </div>
       </div>
@@ -1439,61 +1441,66 @@ function Step4Review({
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 grid gap-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-slate-500 uppercase tracking-wide">Planning Chat</span>
-          <button
-            className="tcp-btn h-7 px-2 text-xs"
-            disabled={isResettingPlanningChat || !planPreview?.plan_id}
-            onClick={onResetPlanningChat}
-          >
-            {isResettingPlanningChat ? "Resetting…" : "Reset Plan"}
-          </button>
+      {planPreview ? (
+        <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 grid gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-500 uppercase tracking-wide">Planning Chat</span>
+            <button
+              className="tcp-btn h-7 px-2 text-xs"
+              disabled={isResettingPlanningChat || !planPreview?.plan_id}
+              onClick={onResetPlanningChat}
+            >
+              {isResettingPlanningChat ? "Resetting…" : "Reset Plan"}
+            </button>
+          </div>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+            {plannerFallbackEnabled
+              ? "With a planner model configured, planning chat can attempt broader natural-language workflow rewrites across the allowed fixed step ids. Deterministic edits still act as the safety net for schedule, workspace root, title, MCP servers, execution mode, model overrides, safe workflow shapes, small workflow-step changes, and terminal output-style changes. Custom step types are still not supported in this slice."
+              : "Planning chat is currently limited to deterministic edits like schedule, workspace root, title, MCP servers, execution mode, model overrides, switching between safe workflow shapes, small workflow-step changes like adding or removing input collection, analysis, or notifications, and terminal output-style changes like JSON, markdown, summary, URLs, or citations. Broader workflow rewrites require a planner model and custom step types are still not supported in this slice."}
+          </div>
+          <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+            {Array.isArray(planningConversation?.messages) &&
+            planningConversation.messages.length ? (
+              <div className="grid gap-3">
+                {planningConversation.messages.map((message: any, index: number) => (
+                  <div key={`${message?.created_at_ms || index}-${index}`} className="grid gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-slate-500">
+                      {String(message?.role || "assistant")}
+                    </span>
+                    <div className="text-sm text-slate-200">
+                      {String(message?.text || "").trim()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-slate-400">
+                Add planning notes here to revise the workflow before creating it.
+              </div>
+            )}
+          </div>
+          <textarea
+            className="tcp-input min-h-[84px] text-sm"
+            value={planningNote}
+            onInput={(e) => setPlanningNote((e.target as HTMLTextAreaElement).value)}
+            placeholder='Example: "Make this weekly, run it from /srv/acme/app, and remove notifications."'
+          />
+          <div className="flex justify-end">
+            <button
+              className="tcp-btn-primary"
+              disabled={isSendingPlanningMessage || !planningNote.trim() || !planPreview?.plan_id}
+              onClick={() => {
+                const note = planningNote.trim();
+                if (!note) return;
+                onSendPlanningMessage(note);
+                setPlanningNote("");
+              }}
+            >
+              {isSendingPlanningMessage ? "Updating plan…" : "Update Plan"}
+            </button>
+          </div>
         </div>
-        <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
-          {plannerFallbackEnabled
-            ? "With a planner model configured, planning chat can attempt broader natural-language workflow rewrites across the allowed fixed step ids. Deterministic edits still act as the safety net for schedule, workspace root, title, MCP servers, execution mode, model overrides, safe workflow shapes, small workflow-step changes, and terminal output-style changes. Custom step types are still not supported in this slice."
-            : "Planning chat is currently limited to deterministic edits like schedule, workspace root, title, MCP servers, execution mode, model overrides, switching between safe workflow shapes, small workflow-step changes like adding or removing input collection, analysis, or notifications, and terminal output-style changes like JSON, markdown, summary, URLs, or citations. Broader workflow rewrites require a planner model and custom step types are still not supported in this slice."}
-        </div>
-        <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-          {Array.isArray(planningConversation?.messages) && planningConversation.messages.length ? (
-            <div className="grid gap-3">
-              {planningConversation.messages.map((message: any, index: number) => (
-                <div key={`${message?.created_at_ms || index}-${index}`} className="grid gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-slate-500">
-                    {String(message?.role || "assistant")}
-                  </span>
-                  <div className="text-sm text-slate-200">{String(message?.text || "").trim()}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm text-slate-400">
-              Add planning notes here to revise the workflow before creating it.
-            </div>
-          )}
-        </div>
-        <textarea
-          className="tcp-input min-h-[84px] text-sm"
-          value={planningNote}
-          onInput={(e) => setPlanningNote((e.target as HTMLTextAreaElement).value)}
-          placeholder='Example: "Make this weekly, run it from /srv/acme/app, and remove notifications."'
-        />
-        <div className="flex justify-end">
-          <button
-            className="tcp-btn-primary"
-            disabled={isSendingPlanningMessage || !planningNote.trim() || !planPreview?.plan_id}
-            onClick={() => {
-              const note = planningNote.trim();
-              if (!note) return;
-              onSendPlanningMessage(note);
-              setPlanningNote("");
-            }}
-          >
-            {isSendingPlanningMessage ? "Updating plan…" : "Update Plan"}
-          </button>
-        </div>
-      </div>
+      ) : null}
 
       <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
         <label className="flex items-start gap-3 rounded-lg border border-slate-700/50 bg-slate-900/30 p-3 text-sm text-slate-300">
@@ -2020,14 +2027,18 @@ function CreateWizard({
       setRouterMatches(top);
     }
     const next = (step + 1) as WizardStep;
-    setStep(next);
     if (next === 4) {
       setPlannerError("");
       setPlanPreview(null);
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
-      void compileMutation.mutateAsync();
+      try {
+        await compileMutation.mutateAsync();
+      } catch {
+        return;
+      }
     }
+    setStep(next);
   };
 
   useEffect(() => {
