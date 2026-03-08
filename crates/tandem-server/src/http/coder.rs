@@ -416,6 +416,14 @@ pub(super) struct CoderProjectPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct CoderProjectBinding {
+    pub(super) project_id: String,
+    pub(super) repo_binding: CoderRepoBinding,
+    #[serde(default)]
+    pub(super) updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct CoderProjectSummary {
     pub(super) project_id: String,
     pub(super) repo_binding: CoderRepoBinding,
@@ -477,8 +485,20 @@ fn coder_project_policies_root(state: &AppState) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".tandem").join("coder_project_policies"))
 }
 
+fn coder_project_bindings_root(state: &AppState) -> PathBuf {
+    state
+        .shared_resources_path
+        .parent()
+        .map(|parent| parent.join("coder_project_bindings"))
+        .unwrap_or_else(|| PathBuf::from(".tandem").join("coder_project_bindings"))
+}
+
 fn coder_project_policy_path(state: &AppState, project_id: &str) -> PathBuf {
     coder_project_policies_root(state).join(format!("{project_id}.json"))
+}
+
+fn coder_project_binding_path(state: &AppState, project_id: &str) -> PathBuf {
+    coder_project_bindings_root(state).join(format!("{project_id}.json"))
 }
 
 fn coder_run_path(state: &AppState, coder_run_id: &str) -> PathBuf {
@@ -505,6 +525,12 @@ async fn ensure_coder_runs_dir(state: &AppState) -> Result<(), StatusCode> {
 
 async fn ensure_coder_project_policies_dir(state: &AppState) -> Result<(), StatusCode> {
     tokio::fs::create_dir_all(coder_project_policies_root(state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn ensure_coder_project_bindings_dir(state: &AppState) -> Result<(), StatusCode> {
+    tokio::fs::create_dir_all(coder_project_bindings_root(state))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -541,6 +567,43 @@ async fn save_coder_project_policy(
         serde_json::to_string_pretty(policy).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tokio::fs::write(
         coder_project_policy_path(state, &policy.project_id),
+        payload,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn load_coder_project_binding(
+    state: &AppState,
+    project_id: &str,
+) -> Result<Option<CoderProjectBinding>, StatusCode> {
+    let path = coder_project_binding_path(state, project_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut binding = serde_json::from_str::<CoderProjectBinding>(&raw)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if binding.project_id.trim().is_empty() {
+        binding.project_id = project_id.to_string();
+    }
+    if binding.repo_binding.project_id.trim().is_empty() {
+        binding.repo_binding.project_id = project_id.to_string();
+    }
+    Ok(Some(binding))
+}
+
+async fn save_coder_project_binding(
+    state: &AppState,
+    binding: &CoderProjectBinding,
+) -> Result<(), StatusCode> {
+    ensure_coder_project_bindings_dir(state).await?;
+    let payload =
+        serde_json::to_string_pretty(binding).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(
+        coder_project_binding_path(state, &binding.project_id),
         payload,
     )
     .await
@@ -8011,11 +8074,15 @@ pub(super) async fn coder_project_list(
         };
         let project_id = record.repo_binding.project_id.clone();
         let project_policy = load_coder_project_policy(&state, &project_id).await?;
+        let explicit_binding = load_coder_project_binding(&state, &project_id).await?;
         let entry = projects
             .entry(project_id.clone())
             .or_insert_with(|| CoderProjectSummary {
                 project_id: project_id.clone(),
-                repo_binding: record.repo_binding.clone(),
+                repo_binding: explicit_binding
+                    .as_ref()
+                    .map(|row| row.repo_binding.clone())
+                    .unwrap_or_else(|| record.repo_binding.clone()),
                 latest_coder_run_id: Some(record.coder_run_id.clone()),
                 latest_updated_at_ms: record.updated_at_ms,
                 run_count: 0,
@@ -8029,7 +8096,10 @@ pub(super) async fn coder_project_list(
         if record.updated_at_ms >= entry.latest_updated_at_ms {
             entry.latest_updated_at_ms = record.updated_at_ms;
             entry.latest_coder_run_id = Some(record.coder_run_id.clone());
-            entry.repo_binding = record.repo_binding.clone();
+            entry.repo_binding = explicit_binding
+                .as_ref()
+                .map(|row| row.repo_binding.clone())
+                .unwrap_or_else(|| record.repo_binding.clone());
         }
     }
     let mut rows = projects.into_values().collect::<Vec<_>>();
@@ -8044,6 +8114,44 @@ pub(super) async fn coder_project_list(
     rows.sort_by(|a, b| b.latest_updated_at_ms.cmp(&a.latest_updated_at_ms));
     Ok(Json(json!({
         "projects": rows,
+    })))
+}
+
+pub(super) async fn coder_project_binding_get(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    if project_id.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(Json(json!({
+        "binding": load_coder_project_binding(&state, project_id.trim()).await?,
+    })))
+}
+
+pub(super) async fn coder_project_binding_put(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Json(mut repo_binding): Json<CoderRepoBinding>,
+) -> Result<Json<Value>, StatusCode> {
+    let project_id = project_id.trim();
+    if project_id.is_empty()
+        || repo_binding.workspace_id.trim().is_empty()
+        || repo_binding.workspace_root.trim().is_empty()
+        || repo_binding.repo_slug.trim().is_empty()
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    repo_binding.project_id = project_id.to_string();
+    let binding = CoderProjectBinding {
+        project_id: project_id.to_string(),
+        repo_binding,
+        updated_at_ms: crate::now_ms(),
+    };
+    save_coder_project_binding(&state, &binding).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "binding": binding,
     })))
 }
 

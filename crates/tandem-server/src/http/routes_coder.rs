@@ -9,6 +9,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/coder/status", get(coder_status))
         .route("/coder/projects", get(coder_project_list))
         .route(
+            "/coder/projects/{project_id}/bindings",
+            get(coder_project_binding_get).put(coder_project_binding_put),
+        )
+        .route(
             "/coder/projects/{project_id}/policy",
             get(coder_project_policy_get).put(coder_project_policy_put),
         )

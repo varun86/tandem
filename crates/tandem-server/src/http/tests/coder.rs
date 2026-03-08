@@ -5273,6 +5273,148 @@ async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
 }
 
 #[tokio::test]
+async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/bindings")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "project_id": "ignored-by-endpoint",
+                "workspace_id": "ws-explicit",
+                "workspace_root": "/tmp/explicit-repo",
+                "repo_slug": "evan/tandem-explicit"
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_payload: Value = serde_json::from_slice(
+        &to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .expect("put body"),
+    )
+    .expect("put json");
+    assert_eq!(
+        put_payload
+            .get("binding")
+            .and_then(|row| row.get("repo_binding"))
+            .and_then(|row| row.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-engine")
+    );
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects/proj-engine/bindings")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_payload: Value = serde_json::from_slice(
+        &to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body"),
+    )
+    .expect("get json");
+    assert_eq!(
+        get_payload
+            .get("binding")
+            .and_then(|row| row.get("repo_binding"))
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("evan/tandem-explicit")
+    );
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-project-binding-run",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-derived",
+                    "workspace_root": "/tmp/derived-repo",
+                    "repo_slug": "evan/tandem-derived"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 325
+                },
+                "mcp_servers": ["github"]
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects")
+        .body(Body::empty())
+        .expect("list request");
+    let list_resp = app.clone().oneshot(list_req).await.expect("list response");
+    server.abort();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_payload: Value = serde_json::from_slice(
+        &to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("list body"),
+    )
+    .expect("list json");
+    let engine_project = list_payload
+        .get("projects")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("project_id").and_then(Value::as_str) == Some("proj-engine"))
+        })
+        .expect("engine project");
+    assert_eq!(
+        engine_project
+            .get("repo_binding")
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("evan/tandem-explicit")
+    );
+    assert_eq!(
+        engine_project
+            .get("repo_binding")
+            .and_then(|row| row.get("workspace_root"))
+            .and_then(Value::as_str),
+        Some("/tmp/explicit-repo")
+    );
+}
+
+#[tokio::test]
 async fn coder_status_summarizes_active_and_approval_runs() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
     let state = test_state().await;
