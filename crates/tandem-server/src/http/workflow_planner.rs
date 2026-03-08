@@ -2255,7 +2255,9 @@ fn compile_plan_to_automation_v2(
                 depends_on: step.depends_on.clone(),
                 input_refs: step.input_refs.clone(),
                 output_contract: step.output_contract.clone(),
-                retry_policy: None,
+                retry_policy: Some(json!({
+                    "max_attempts": 3
+                })),
                 timeout_ms: None,
             })
             .collect(),

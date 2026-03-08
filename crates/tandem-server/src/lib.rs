@@ -770,6 +770,8 @@ pub struct AutomationRunCheckpoint {
     pub pending_nodes: Vec<String>,
     #[serde(default)]
     pub node_outputs: std::collections::HashMap<String, Value>,
+    #[serde(default)]
+    pub node_attempts: std::collections::HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3306,6 +3308,7 @@ impl AppState {
                 completed_nodes: Vec::new(),
                 pending_nodes,
                 node_outputs: std::collections::HashMap::new(),
+                node_attempts: std::collections::HashMap::new(),
             },
             pause_reason: None,
             resume_reason: None,
@@ -5694,6 +5697,15 @@ fn wrap_automation_node_output(
     })
 }
 
+fn automation_node_max_attempts(node: &AutomationFlowNode) -> u32 {
+    node.retry_policy
+        .as_ref()
+        .and_then(|value| value.get("max_attempts"))
+        .and_then(Value::as_u64)
+        .map(|value| value.clamp(1, 10) as u32)
+        .unwrap_or(3)
+}
+
 async fn resolve_automation_v2_workspace_root(
     state: &AppState,
     automation: &AutomationV2Spec,
@@ -5902,6 +5914,23 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 break;
             }
 
+            let runnable_node_ids = runnable
+                .iter()
+                .map(|node| node.node_id.clone())
+                .collect::<Vec<_>>();
+            let _ = state
+                .update_automation_v2_run(&run.run_id, |row| {
+                    for node_id in &runnable_node_ids {
+                        let attempts = row
+                            .checkpoint
+                            .node_attempts
+                            .entry(node_id.clone())
+                            .or_insert(0);
+                        *attempts += 1;
+                    }
+                })
+                .await;
+
             let tasks = runnable
                 .iter()
                 .map(|node| {
@@ -5932,7 +5961,12 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 .collect::<Vec<_>>();
             let outcomes = join_all(tasks).await;
 
-            let mut any_failed = false;
+            let mut terminal_failure = None::<String>;
+            let latest_attempts = state
+                .get_automation_v2_run(&run.run_id)
+                .await
+                .map(|row| row.checkpoint.node_attempts)
+                .unwrap_or_default();
             for (node_id, result) in outcomes {
                 match result {
                     Ok(output) => {
@@ -5952,7 +5986,6 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .await;
                     }
                     Err(error) => {
-                        any_failed = true;
                         let is_paused = state
                             .get_automation_v2_run(&run.run_id)
                             .await
@@ -5962,16 +5995,39 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             break;
                         }
                         let detail = truncate_text(&error.to_string(), 500);
+                        let attempts = latest_attempts.get(&node_id).copied().unwrap_or(1);
+                        let max_attempts = automation
+                            .flow
+                            .nodes
+                            .iter()
+                            .find(|row| row.node_id == node_id)
+                            .map(automation_node_max_attempts)
+                            .unwrap_or(1);
+                        if attempts >= max_attempts {
+                            terminal_failure = Some(format!(
+                                "node `{}` failed after {}/{} attempts: {}",
+                                node_id, attempts, max_attempts, detail
+                            ));
+                            break;
+                        }
                         let _ = state
                             .update_automation_v2_run(&run.run_id, |row| {
-                                row.status = AutomationRunStatus::Failed;
-                                row.detail = Some(detail.clone());
+                                row.detail = Some(format!(
+                                    "retrying node `{}` after attempt {}/{} failed: {}",
+                                    node_id, attempts, max_attempts, detail
+                                ));
                             })
                             .await;
                     }
                 }
             }
-            if any_failed {
+            if let Some(detail) = terminal_failure {
+                let _ = state
+                    .update_automation_v2_run(&run.run_id, |row| {
+                        row.status = AutomationRunStatus::Failed;
+                        row.detail = Some(detail);
+                    })
+                    .await;
                 break;
             }
         }
