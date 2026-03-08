@@ -742,6 +742,24 @@ fn revise_workflow_plan_from_message(
         changes.push("removed analysis step".to_string());
     }
 
+    let wants_add_collect_inputs = text.contains("add input collection")
+        || text.contains("add collect inputs")
+        || text.contains("collect inputs first")
+        || text.contains("gather inputs first")
+        || text.contains("start by collecting inputs");
+    if wants_add_collect_inputs && ensure_collect_inputs_step(&mut revised) {
+        changes.push("added input collection step".to_string());
+    }
+
+    let wants_remove_collect_inputs = text.contains("remove input collection")
+        || text.contains("remove collect inputs")
+        || text.contains("skip input collection")
+        || text.contains("without collecting inputs")
+        || text.contains("do not collect inputs first");
+    if wants_remove_collect_inputs && remove_collect_inputs_step(&mut revised) {
+        changes.push("removed input collection step".to_string());
+    }
+
     if let Some(updated_preferences) =
         revise_operator_preferences(revised.operator_preferences.clone(), &text)
     {
@@ -897,7 +915,7 @@ fn revise_workflow_plan_from_message(
 }
 
 fn supported_planner_revision_hint() -> &'static str {
-    "Supported edits in this slice: title, schedule, workspace root, MCP servers, execution mode, model overrides, switching between safe workflow shapes, adding or removing analysis, adding or removing notifications, and changing the terminal output style (JSON, markdown, summary, URLs, citations)."
+    "Supported edits in this slice: title, schedule, workspace root, MCP servers, execution mode, model overrides, switching between safe workflow shapes, adding or removing input collection, adding or removing analysis, adding or removing notifications, and changing the terminal output style (JSON, markdown, summary, URLs, citations)."
 }
 
 fn planner_llm_unavailable_hint() -> &'static str {
@@ -997,6 +1015,59 @@ fn ensure_analysis_step(plan: &mut crate::WorkflowPlan) -> bool {
     {
         report_step.depends_on = vec!["analyze_findings".to_string()];
         report_step.input_refs = vec![input_ref("analyze_findings", "analysis")];
+    }
+    true
+}
+
+fn ensure_collect_inputs_step(plan: &mut crate::WorkflowPlan) -> bool {
+    if plan
+        .steps
+        .iter()
+        .any(|step| step.step_id == "collect_inputs")
+    {
+        return false;
+    }
+    let Some(first_step) = plan.steps.first_mut() else {
+        return false;
+    };
+    let alias = match first_step.step_id.as_str() {
+        "research_sources" => "research_inputs",
+        "analyze_findings" => "analysis_inputs",
+        "notify_user" => "notification_inputs",
+        "generate_report" => "report_inputs",
+        "execute_goal" => "goal_inputs",
+        _ => "workflow_inputs",
+    };
+    first_step.depends_on = vec!["collect_inputs".to_string()];
+    first_step.input_refs = vec![input_ref("collect_inputs", alias)];
+    plan.steps.insert(
+        0,
+        plan_step_with_dep(
+            "collect_inputs",
+            "collect",
+            "Collect the initial inputs needed for the workflow.",
+            "researcher",
+            &[],
+            Vec::new(),
+            Some("structured_json"),
+        ),
+    );
+    true
+}
+
+fn remove_collect_inputs_step(plan: &mut crate::WorkflowPlan) -> bool {
+    let Some(index) = plan
+        .steps
+        .iter()
+        .position(|step| step.step_id == "collect_inputs")
+    else {
+        return false;
+    };
+    plan.steps.remove(index);
+    for step in &mut plan.steps {
+        step.depends_on.retain(|dep| dep != "collect_inputs");
+        step.input_refs
+            .retain(|input| input.from_step_id != "collect_inputs");
     }
     true
 }
@@ -1157,9 +1228,13 @@ fn terminal_output_objective(step_id: &str, kind: &str) -> String {
         _ => "Return the final result as structured JSON.",
     };
     match step_id {
-        "notify_user" => format!("Prepare the final notification using the upstream workflow output. {suffix}"),
+        "notify_user" => {
+            format!("Prepare the final notification using the upstream workflow output. {suffix}")
+        }
         "execute_goal" => format!("Execute the requested automation goal directly. {suffix}"),
-        "generate_report" => format!("Generate the final workflow result from the upstream inputs. {suffix}"),
+        "generate_report" => {
+            format!("Generate the final workflow result from the upstream inputs. {suffix}")
+        }
         _ => suffix.to_string(),
     }
 }

@@ -1320,9 +1320,10 @@ function Step4Review({
         <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
           Planning chat is currently limited to deterministic edits like schedule, workspace root,
           title, MCP servers, execution mode, model overrides, switching between safe workflow
-          shapes, small workflow-step changes like adding or removing analysis/notifications, and
-          terminal output-style changes like JSON, markdown, summary, URLs, or citations. Broader
-          workflow rewrites and custom step types are not supported in this slice yet.
+          shapes, small workflow-step changes like adding or removing input collection, analysis, or
+          notifications, and terminal output-style changes like JSON, markdown, summary, URLs, or
+          citations. Broader workflow rewrites and custom step types are not supported in this slice
+          yet.
         </div>
         <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3">
           {Array.isArray(planningConversation?.messages) && planningConversation.messages.length ? (
