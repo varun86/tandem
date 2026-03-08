@@ -1406,6 +1406,129 @@ async fn memory_promote_rejects_mismatched_capability_and_emits_blocked_audit() 
 }
 
 #[tokio::test]
+async fn memory_promote_rejects_expired_capability_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri("/memory/promote")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3-expired",
+                "source_memory_id": "expired-memory",
+                "from_tier": "session",
+                "to_tier": "project",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "reason": "expired capability test",
+                "review": {
+                    "required": false
+                },
+                "capability": {
+                    "run_id": "run-3-expired",
+                    "subject": "expired-user",
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "memory": {
+                        "read_tiers": ["session", "project"],
+                        "write_tiers": ["session"],
+                        "promote_targets": ["project"],
+                        "require_review_for_promote": false,
+                        "allow_auto_use_tiers": ["curated"]
+                    },
+                    "expires_at": 1
+                }
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::UNAUTHORIZED);
+
+    let blocked_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.promote"),
+    )
+    .await
+    .expect("blocked memory.promote event");
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-3-expired")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
+    assert!(blocked_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("capability expired")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-3-expired")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_promote_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_promote")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("capability expired")
+                                && detail.contains("origin_run_id=run-3-expired")
+                                && detail.contains("project_id=proj-1")
+                        })
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_promote_exists);
+}
+
+#[tokio::test]
 async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
     let state = test_state().await;
     let app = app_router(state.clone());
