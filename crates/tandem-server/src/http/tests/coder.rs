@@ -5415,6 +5415,176 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
 }
 
 #[tokio::test]
+async fn coder_project_get_returns_policy_binding_and_recent_runs() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let policy_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/policy")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "auto_merge_enabled": true
+            })
+            .to_string(),
+        ))
+        .expect("policy request");
+    let policy_resp = app
+        .clone()
+        .oneshot(policy_req)
+        .await
+        .expect("policy response");
+    assert_eq!(policy_resp.status(), StatusCode::OK);
+
+    let binding_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/bindings")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "project_id": "ignored-by-endpoint",
+                "workspace_id": "ws-explicit",
+                "workspace_root": "/tmp/explicit-repo",
+                "repo_slug": "evan/tandem-explicit",
+                "default_branch": "main"
+            })
+            .to_string(),
+        ))
+        .expect("binding request");
+    let binding_resp = app
+        .clone()
+        .oneshot(binding_req)
+        .await
+        .expect("binding response");
+    assert_eq!(binding_resp.status(), StatusCode::OK);
+
+    for (coder_run_id, workflow_mode, number) in [
+        ("coder-project-detail-triage", "issue_triage", 41_u64),
+        ("coder-project-detail-fix", "issue_fix", 42_u64),
+    ] {
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/coder/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "coder_run_id": coder_run_id,
+                    "workflow_mode": workflow_mode,
+                    "repo_binding": {
+                        "project_id": "proj-engine",
+                        "workspace_id": "ws-derived",
+                        "workspace_root": "/tmp/derived-repo",
+                        "repo_slug": "evan/tandem-derived"
+                    },
+                    "github_ref": {
+                        "kind": "issue",
+                        "number": number
+                    },
+                    "mcp_servers": ["github"]
+                })
+                .to_string(),
+            ))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+    }
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects/proj-engine")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    server.abort();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_payload: Value = serde_json::from_slice(
+        &to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body"),
+    )
+    .expect("get json");
+    assert_eq!(
+        get_payload
+            .get("project")
+            .and_then(|row| row.get("repo_binding"))
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("evan/tandem-explicit")
+    );
+    assert_eq!(
+        get_payload
+            .get("binding")
+            .and_then(|row| row.get("repo_binding"))
+            .and_then(|row| row.get("workspace_root"))
+            .and_then(Value::as_str),
+        Some("/tmp/explicit-repo")
+    );
+    assert_eq!(
+        get_payload
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        get_payload
+            .get("project")
+            .and_then(|row| row.get("run_count"))
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        get_payload
+            .get("project")
+            .and_then(|row| row.get("workflow_modes"))
+            .cloned(),
+        Some(json!(["issue_fix", "issue_triage"]))
+    );
+    let recent_runs = get_payload
+        .get("recent_runs")
+        .and_then(Value::as_array)
+        .expect("recent runs");
+    assert_eq!(recent_runs.len(), 2);
+    assert_eq!(
+        recent_runs
+            .first()
+            .and_then(|row| row.get("coder_run"))
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("issue_fix")
+    );
+    assert!(
+        recent_runs
+            .first()
+            .and_then(|row| row.get("execution_policy"))
+            .map(Value::is_object)
+            .unwrap_or(false),
+        "expected execution policy on recent run"
+    );
+}
+
+#[tokio::test]
 async fn coder_status_summarizes_active_and_approval_runs() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
     let state = test_state().await;

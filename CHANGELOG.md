@@ -38,11 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Initial Tandem Coder engine API foundation**:
   - added engine-owned coder workflow runtime control through:
     - `GET /coder/status`
+    - `GET /coder/projects/{project_id}`
     - `GET /coder/projects/{project_id}/bindings`
     - `PUT /coder/projects/{project_id}/bindings`
     - `POST /coder/runs/{id}/execute-next`
   - `GET /coder/status` now summarizes total runs, active/awaiting-approval counts, workflow distribution, run-status distribution, project count, and the latest coder run directly from engine-owned run state
   - added `GET /coder/projects`, which summarizes known repo bindings, workflow coverage, latest run metadata, and project-level coder policy from existing engine-owned run state
+  - added `GET /coder/projects/{project_id}`, which returns project policy, explicit binding, and recent run state in one engine-backed payload
   - explicit project bindings can now be stored independently of runs, and `/coder/projects` now prefers those saved bindings over derived run bindings when both exist
   - merge-ready `merge_recommendation` runs now stop in `awaiting_approval`, emit `coder.approval.required`, and complete cleanly on `/coder/runs/{id}/approve` instead of bouncing back into `running`
   - approving a merge-ready recommendation now also writes an engine-owned `coder_merge_execution_request` artifact and emits `coder.merge.recommended`, so the post-approval merge handoff is explicit even before a real GitHub merge capability is wired

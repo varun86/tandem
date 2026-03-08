@@ -8049,6 +8049,93 @@ pub(super) async fn coder_project_policy_get(
     })))
 }
 
+pub(super) async fn coder_project_get(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    ensure_coder_runs_dir(&state).await?;
+    let project_policy = load_coder_project_policy(&state, project_id).await?;
+    let explicit_binding = load_coder_project_binding(&state, project_id).await?;
+    let mut run_records = Vec::<CoderRunRecord>::new();
+    let mut dir = tokio::fs::read_dir(coder_runs_root(&state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|row| row.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = tokio::fs::read_to_string(entry.path())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(record) = serde_json::from_str::<CoderRunRecord>(&raw) else {
+            continue;
+        };
+        if record.repo_binding.project_id == project_id {
+            run_records.push(record);
+        }
+    }
+    run_records.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    let summary_repo_binding = explicit_binding
+        .as_ref()
+        .map(|row| row.repo_binding.clone())
+        .or_else(|| run_records.first().map(|row| row.repo_binding.clone()));
+    let Some(repo_binding) = summary_repo_binding else {
+        return Ok(Json(json!({
+            "project": null,
+            "binding": explicit_binding,
+            "project_policy": project_policy,
+            "recent_runs": [],
+        })));
+    };
+    let mut workflow_modes = run_records
+        .iter()
+        .map(|row| row.workflow_mode.clone())
+        .collect::<Vec<_>>();
+    workflow_modes.sort_by_key(|mode| match mode {
+        CoderWorkflowMode::IssueFix => 0,
+        CoderWorkflowMode::IssueTriage => 1,
+        CoderWorkflowMode::MergeRecommendation => 2,
+        CoderWorkflowMode::PrReview => 3,
+    });
+    workflow_modes.dedup();
+    let summary = CoderProjectSummary {
+        project_id: project_id.to_string(),
+        repo_binding,
+        latest_coder_run_id: run_records.first().map(|row| row.coder_run_id.clone()),
+        latest_updated_at_ms: run_records
+            .first()
+            .map(|row| row.updated_at_ms)
+            .unwrap_or(0),
+        run_count: run_records.len() as u64,
+        workflow_modes,
+        project_policy: project_policy.clone(),
+    };
+    let mut recent_runs = Vec::new();
+    for record in run_records.iter().take(10) {
+        let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+        recent_runs.push(json!({
+            "coder_run": coder_run_payload(record, &run),
+            "execution_policy": coder_execution_policy_summary(&state, record).await?,
+            "merge_submit_policy": coder_merge_submit_policy_summary(&state, record).await?,
+        }));
+    }
+    Ok(Json(json!({
+        "project": summary,
+        "binding": explicit_binding,
+        "project_policy": project_policy,
+        "recent_runs": recent_runs,
+    })))
+}
+
 pub(super) async fn coder_project_list(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {

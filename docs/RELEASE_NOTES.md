@@ -80,6 +80,7 @@
   - added the first engine-owned coder endpoints:
     - `GET /coder/status`
     - `GET /coder/projects`
+    - `GET /coder/projects/{project_id}`
     - `GET /coder/projects/{project_id}/bindings`
     - `PUT /coder/projects/{project_id}/bindings`
     - `POST /coder/runs`
@@ -90,6 +91,7 @@
     - `POST /coder/runs/{id}/execute-all`
   - `GET /coder/status` now summarizes total runs, active/awaiting-approval counts, workflow distribution, run-status distribution, project count, and the latest coder run directly from engine-owned run state
   - `GET /coder/projects` now summarizes known repo bindings, workflow coverage, latest run metadata, and project-level coder policy from existing engine-owned run state
+  - `GET /coder/projects/{project_id}` now returns project policy, explicit binding, and recent run state in one engine-backed payload
   - explicit project bindings can now be stored independently of runs, and `/coder/projects` now prefers those saved bindings over derived run bindings when both exist
   - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
   - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`
