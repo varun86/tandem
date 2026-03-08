@@ -3796,6 +3796,18 @@ fn change_preview_from_value(value: Option<&Value>) -> Option<String> {
     Some(crate::truncate_text(text, 240))
 }
 
+fn change_preview_from_bytes(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let excerpt = String::from_utf8_lossy(&bytes[..bytes.len().min(1_200)]);
+    let trimmed = excerpt.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(crate::truncate_text(trimmed, 240))
+}
+
 fn extract_changed_files_from_value(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::String(text) => {
@@ -3879,6 +3891,51 @@ fn extract_session_changed_files(session: &Session) -> Vec<String> {
                 .map(ToString::to_string)
         })
         .collect()
+}
+
+async fn collect_workspace_file_snapshots(
+    workspace_root: &str,
+    changed_files: &[String],
+) -> Vec<Value> {
+    let mut snapshots = Vec::<Value>::new();
+    let root = PathBuf::from(workspace_root);
+    for path in changed_files.iter().take(20) {
+        let rel = match crate::http::global::sanitize_relative_subpath(Some(path)) {
+            Ok(value) => value,
+            Err(_) => {
+                snapshots.push(json!({
+                    "path": path,
+                    "exists": false,
+                    "error": "invalid_relative_path",
+                }));
+                continue;
+            }
+        };
+        let full_path = root.join(&rel);
+        match tokio::fs::read(&full_path).await {
+            Ok(bytes) => {
+                let preview = change_preview_from_bytes(&bytes);
+                let line_count = if bytes.is_empty() {
+                    0
+                } else {
+                    bytes.iter().filter(|byte| **byte == b'\n').count() + 1
+                };
+                snapshots.push(json!({
+                    "path": path,
+                    "exists": true,
+                    "byte_size": bytes.len(),
+                    "line_count": line_count,
+                    "preview": preview,
+                }));
+            }
+            Err(error) => snapshots.push(json!({
+                "path": path,
+                "exists": false,
+                "error": crate::truncate_text(&error.to_string(), 160),
+            })),
+        }
+    }
+    snapshots
 }
 
 async fn load_latest_coder_artifact_payload(
@@ -4084,6 +4141,8 @@ async fn write_issue_fix_changed_file_evidence_artifact(
     if changed_files.is_empty() {
         return Ok(None);
     }
+    let workspace_snapshots =
+        collect_workspace_file_snapshots(&record.repo_binding.workspace_root, &changed_files).await;
     let payload = json!({
         "coder_run_id": record.coder_run_id,
         "linked_context_run_id": record.linked_context_run_id,
@@ -4092,6 +4151,7 @@ async fn write_issue_fix_changed_file_evidence_artifact(
         "github_ref": record.github_ref,
         "changed_files": changed_files,
         "entries": worker_payload.get("changed_file_entries").cloned().unwrap_or_else(|| json!([])),
+        "workspace_snapshots": workspace_snapshots,
         "worker_session_id": worker_payload.get("session_id").cloned(),
         "worker_session_run_id": worker_payload.get("session_run_id").cloned(),
         "created_at_ms": crate::now_ms(),
@@ -4138,6 +4198,8 @@ async fn write_issue_fix_patch_summary_artifact(
     {
         return Ok(None);
     }
+    let workspace_snapshots =
+        collect_workspace_file_snapshots(&record.repo_binding.workspace_root, changed_files).await;
     let payload = json!({
         "coder_run_id": record.coder_run_id,
         "linked_context_run_id": record.linked_context_run_id,
@@ -4152,6 +4214,7 @@ async fn write_issue_fix_patch_summary_artifact(
             .and_then(|payload| payload.get("changed_file_entries"))
             .cloned()
             .unwrap_or_else(|| json!([])),
+        "workspace_snapshots": workspace_snapshots,
         "validation_results": validation_results,
         "worker_session_id": worker_session.and_then(|payload| payload.get("session_id")).cloned(),
         "worker_session_run_id": worker_session.and_then(|payload| payload.get("session_run_id")).cloned(),
@@ -5618,6 +5681,42 @@ mod tests {
             .and_then(|row| row.get("preview"))
             .and_then(Value::as_str)
             .is_some_and(|preview| preview.contains("fn main()")));
+    }
+
+    #[tokio::test]
+    async fn collect_workspace_file_snapshots_reads_workspace_files() {
+        let root = std::env::temp_dir().join(format!("tandem-coder-snapshots-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).expect("create snapshot dir");
+        std::fs::write(
+            root.join("src/app.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .expect("write workspace file");
+
+        let snapshots = collect_workspace_file_snapshots(
+            root.to_str().expect("snapshot root"),
+            &["src/app.rs".to_string(), "../escape.rs".to_string()],
+        )
+        .await;
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(
+            snapshots[0].get("path").and_then(Value::as_str),
+            Some("src/app.rs")
+        );
+        assert_eq!(
+            snapshots[0].get("exists").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(snapshots[0]
+            .get("preview")
+            .and_then(Value::as_str)
+            .is_some_and(|preview| preview.contains("println!")));
+        assert_eq!(
+            snapshots[1].get("error").and_then(Value::as_str),
+            Some("invalid_relative_path")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
