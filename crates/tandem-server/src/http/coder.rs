@@ -7110,13 +7110,20 @@ fn allowed_merge_submit_policy(mode: &str) -> Value {
     })
 }
 
-fn merge_submit_policy_envelope(manual: Value, auto: Value, preferred_submit_mode: &str) -> Value {
+fn merge_submit_policy_envelope(
+    manual: Value,
+    auto: Value,
+    preferred_submit_mode: &str,
+    auto_execute_block_reason: &str,
+) -> Value {
     json!({
         "manual": manual,
         "auto": auto,
         "preferred_submit_mode": preferred_submit_mode,
         "explicit_submit_required": true,
         "auto_execute_after_approval": false,
+        "auto_execute_eligible": false,
+        "auto_execute_block_reason": auto_execute_block_reason,
     })
 }
 
@@ -7150,6 +7157,7 @@ async fn coder_merge_submit_policy_summary(
                 }),
             ),
             "manual",
+            "preferred_submit_mode_manual",
         ));
     };
     if let Some(policy) = merge_submit_request_readiness_block(&merge_request_payload) {
@@ -7157,6 +7165,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy.clone()),
             blocked_merge_submit_policy("auto", policy),
             "manual",
+            "preferred_submit_mode_manual",
         ));
     }
     if let Some(policy) = merge_submit_review_policy_block(state, record).await? {
@@ -7166,6 +7175,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy),
             blocked_merge_submit_policy("auto", auto_policy),
             "manual",
+            "preferred_submit_mode_manual",
         ));
     }
     let auto = if let Some(policy) = merge_submit_auto_mode_policy_block(record) {
@@ -7186,6 +7196,7 @@ async fn coder_merge_submit_policy_summary(
         allowed_merge_submit_policy("manual"),
         auto,
         preferred_submit_mode,
+        "explicit_submit_required_policy",
     ))
 }
 

@@ -125,6 +125,7 @@
   - `merge-submit` now also requires the merge run itself to be an auto-spawned follow-on before `submit_mode = auto` is eligible, so a manual follow-on merge run cannot escalate into auto merge execution even if the parent PR submit opted into auto merge recommendation
   - `merge_submit_policy` summaries now also include `preferred_submit_mode`, so clients and future automation can consume an engine-owned recommendation instead of inferring manual-vs-auto behavior from blocked flags alone
   - `merge_submit_policy` summaries now also make the current execution contract explicit with `explicit_submit_required = true` and `auto_execute_after_approval = false`, so clients know approval alone never auto-merges today
+  - `merge_submit_policy` summaries now also include `auto_execute_eligible` and `auto_execute_block_reason`, so clients can distinguish “auto is preferred later” from “auto can run now” without reverse-engineering that from other flags
   - coder runs now persist as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - creating an `issue_triage` coder run now seeds a deterministic context-run task graph for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior

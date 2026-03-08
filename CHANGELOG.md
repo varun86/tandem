@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `merge-submit` now requires the merge run itself to be an auto-spawned follow-on before `submit_mode = auto` is eligible, so a manual follow-on merge run cannot escalate into auto merge execution even if the parent PR submit opted into auto merge recommendation
   - `merge_submit_policy` summaries now also include `preferred_submit_mode`, so clients and future automation can consume an engine-owned recommendation instead of inferring manual-vs-auto behavior from blocked flags alone
   - `merge_submit_policy` summaries now also make the current execution contract explicit with `explicit_submit_required = true` and `auto_execute_after_approval = false`, so clients know approval alone never auto-merges today
+  - `merge_submit_policy` summaries now also include `auto_execute_eligible` and `auto_execute_block_reason`, so clients can distinguish “auto is preferred later” from “auto can run now” without reverse-engineering that from other flags
     - `POST /coder/runs/{id}/execute-all`
   - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
   - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`

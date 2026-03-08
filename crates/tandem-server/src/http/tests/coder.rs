@@ -4624,6 +4624,20 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
     assert_eq!(
         merge_execution_artifact_payload
             .get("merge_submit_policy_preview")
+            .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        merge_execution_artifact_payload
+            .get("merge_submit_policy_preview")
+            .and_then(|row| row.get("auto_execute_block_reason"))
+            .and_then(Value::as_str),
+        Some("explicit_submit_required_policy")
+    );
+    assert_eq!(
+        merge_execution_artifact_payload
+            .get("merge_submit_policy_preview")
             .and_then(|row| row.get("manual"))
             .and_then(|row| row.get("blocked"))
             .and_then(Value::as_bool),
@@ -4649,6 +4663,20 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
             .and_then(|row| row.get("auto_execute_after_approval"))
             .and_then(Value::as_bool),
         Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_block_reason"))
+            .and_then(Value::as_str),
+        Some("explicit_submit_required_policy")
     );
     assert_eq!(
         approve_payload
@@ -4706,6 +4734,14 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
             .and_then(|row| row.get("explicit_submit_required"))
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        merge_event
+            .properties
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(false)
     );
     assert_eq!(
         merge_event
@@ -5399,6 +5435,20 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
             .and_then(|row| row.get("explicit_submit_required"))
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_block_reason"))
+            .and_then(Value::as_str),
+        Some("preferred_submit_mode_manual")
     );
     assert_eq!(
         approve_payload
