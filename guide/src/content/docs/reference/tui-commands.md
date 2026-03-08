@@ -106,6 +106,31 @@ Show masked engine token or full token.
 /engine token show
 ```
 
+### `/diff`
+
+Open the current workspace git diff in the pager overlay.
+
+```text
+/diff
+```
+
+### `/files [query]`
+
+Open fuzzy file search and insert the selected path as an `@mention`.
+
+```text
+/files
+/files src/client
+```
+
+### `/edit`
+
+Edit the current draft in `$VISUAL` or `$EDITOR`, then return to the TUI.
+
+```text
+/edit
+```
+
 ### `/workspace [show|use <path>]`
 
 Show or switch the active workspace directory used by the current TUI process.
