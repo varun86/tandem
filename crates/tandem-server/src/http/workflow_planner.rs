@@ -1257,6 +1257,7 @@ async fn try_llm_revise_workflow_plan(
     current_plan: &crate::WorkflowPlan,
     message: &str,
 ) -> Option<LlmPlannerRevisionResult> {
+    let model = planner_model_spec(current_plan.operator_preferences.as_ref())?;
     let workspace_root = resolve_workspace_root(state, Some(&current_plan.workspace_root))
         .await
         .ok()?;
@@ -1272,7 +1273,7 @@ async fn try_llm_revise_workflow_plan(
         parts: vec![MessagePartInput::Text {
             text: build_llm_workflow_revision_prompt(current_plan, message),
         }],
-        model: planner_model_spec(current_plan.operator_preferences.as_ref()),
+        model: Some(model),
         agent: None,
         tool_mode: None,
         tool_allowlist: None,

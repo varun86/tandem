@@ -73,7 +73,7 @@ It is not a wishlist for future planner features.
 
 ## Deferred After This Slice
 - [~] Replace deterministic planner-chat rules with a true LLM-backed revision loop
-- Current state: planner chat now has an engine-owned LLM fallback path for unsupported general revisions, but deterministic revisions still remain the primary path and provider-backed coverage is not yet in place.
+- Current state: planner chat now has an engine-owned LLM fallback path for unsupported general revisions when explicit planner model preferences are present, but deterministic revisions still remain the primary path and provider-backed coverage is not yet in place.
 - [~] Add optional export/persistence to Pack Builder after planning
 - Current state: `POST /workflow-plans/apply` accepts optional `pack_builder_export` and can persist a Pack Builder preview for pending/apply follow-ups.
 - [ ] Expand planner-chat semantics beyond the current safe deterministic field set
