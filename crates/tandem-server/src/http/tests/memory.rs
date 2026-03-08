@@ -621,6 +621,248 @@ async fn memory_promote_missing_source_emits_blocked_event_shape() {
 }
 
 #[tokio::test]
+async fn memory_promote_requires_review_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let capability = json!({
+        "run_id": "run-3-review",
+        "subject": "reviewer-user",
+        "org_id": "org-1",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "memory": {
+            "read_tiers": ["session", "project"],
+            "write_tiers": ["session"],
+            "promote_targets": ["project"],
+            "require_review_for_promote": true,
+            "allow_auto_use_tiers": ["curated"]
+        },
+        "expires_at": 9999999999999u64
+    });
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri("/memory/promote")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3-review",
+                "source_memory_id": "review-guardrail-memory",
+                "from_tier": "session",
+                "to_tier": "project",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "reason": "review required test",
+                "review": {
+                    "required": true
+                },
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::FORBIDDEN);
+
+    let blocked_event = next_event_of_type(&mut rx, "memory.promote").await;
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("sourceMemoryID")
+            .and_then(Value::as_str),
+        Some("review-guardrail-memory")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert!(blocked_event
+        .properties
+        .get("kind")
+        .is_some_and(Value::is_null));
+    assert!(blocked_event
+        .properties
+        .get("classification")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert!(blocked_event
+        .properties
+        .get("visibility")
+        .is_some_and(Value::is_null));
+    assert!(blocked_event
+        .properties
+        .get("scrubStatus")
+        .is_some_and(Value::is_null));
+    assert!(blocked_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("review approval required")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-3-review")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_promote_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_promote")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row.get("source_memory_id").and_then(Value::as_str)
+                        == Some("review-guardrail-memory")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| detail.contains("review approval required"))
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_promote_exists);
+}
+
+#[tokio::test]
+async fn memory_promote_rejects_disallowed_target_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let capability = json!({
+        "run_id": "run-3-target",
+        "subject": "reviewer-user",
+        "org_id": "org-1",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "memory": {
+            "read_tiers": ["session", "project"],
+            "write_tiers": ["session"],
+            "promote_targets": ["team"],
+            "require_review_for_promote": false,
+            "allow_auto_use_tiers": ["curated"]
+        },
+        "expires_at": 9999999999999u64
+    });
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri("/memory/promote")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3-target",
+                "source_memory_id": "target-guardrail-memory",
+                "from_tier": "session",
+                "to_tier": "project",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "reason": "disallowed target test",
+                "review": {
+                    "required": false
+                },
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::FORBIDDEN);
+
+    let blocked_event = next_event_of_type(&mut rx, "memory.promote").await;
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("sourceMemoryID")
+            .and_then(Value::as_str),
+        Some("target-guardrail-memory")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert!(blocked_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("promotion target not allowed")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-3-target")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_promote_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_promote")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row.get("source_memory_id").and_then(Value::as_str)
+                        == Some("target-guardrail-memory")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| detail.contains("promotion target not allowed"))
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_promote_exists);
+}
+
+#[tokio::test]
 async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
     let state = test_state().await;
     let app = app_router(state.clone());

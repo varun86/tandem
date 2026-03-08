@@ -967,6 +967,57 @@ fn memory_put_provenance(
     })
 }
 
+async fn emit_blocked_memory_promote_guardrail(
+    state: &AppState,
+    request: &MemoryPromoteRequest,
+    actor: String,
+    detail: &str,
+) -> Result<(), StatusCode> {
+    let audit_id = Uuid::new_v4().to_string();
+    let partition_key = format!(
+        "{}/{}/{}/{}",
+        request.partition.org_id,
+        request.partition.workspace_id,
+        request.partition.project_id,
+        request.to_tier
+    );
+    append_memory_audit(
+        state,
+        crate::MemoryAuditEvent {
+            audit_id: audit_id.clone(),
+            action: "memory_promote".to_string(),
+            run_id: request.run_id.clone(),
+            memory_id: None,
+            source_memory_id: Some(request.source_memory_id.clone()),
+            to_tier: Some(request.to_tier),
+            partition_key: partition_key.clone(),
+            actor,
+            status: "blocked".to_string(),
+            detail: Some(detail.to_string()),
+            created_at_ms: crate::now_ms(),
+        },
+    )
+    .await?;
+    state.event_bus.publish(EngineEvent::new(
+        "memory.promote",
+        json!({
+            "runID": request.run_id,
+            "sourceMemoryID": request.source_memory_id,
+            "toTier": request.to_tier,
+            "partitionKey": partition_key,
+            "status": "blocked",
+            "kind": Value::Null,
+            "classification": Value::Null,
+            "artifactRefs": [],
+            "visibility": Value::Null,
+            "scrubStatus": Value::Null,
+            "detail": detail,
+            "auditID": audit_id,
+        }),
+    ));
+    Ok(())
+}
+
 fn memory_promote_metadata(
     metadata: Option<&Value>,
     request: &MemoryPromoteRequest,
@@ -1878,11 +1929,25 @@ pub(super) async fn memory_promote_impl(
     let source_memory_id = request.source_memory_id.clone();
     let capability = validate_memory_capability(&request.run_id, &request.partition, capability)?;
     if !capability.memory.promote_targets.contains(&request.to_tier) {
+        emit_blocked_memory_promote_guardrail(
+            state,
+            &request,
+            capability.subject.clone(),
+            "promotion target not allowed by capability",
+        )
+        .await?;
         return Err(StatusCode::FORBIDDEN);
     }
     if capability.memory.require_review_for_promote
         && (request.review.approval_id.is_none() || request.review.reviewer_id.is_none())
     {
+        emit_blocked_memory_promote_guardrail(
+            state,
+            &request,
+            capability.subject.clone(),
+            "review approval required for promote",
+        )
+        .await?;
         return Err(StatusCode::FORBIDDEN);
     }
     let db = open_global_memory_db()
