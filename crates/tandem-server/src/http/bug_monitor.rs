@@ -1595,6 +1595,8 @@ pub(super) async fn approve_bug_monitor_draft(
             let issue_draft = ensure_bug_monitor_issue_draft(state.clone(), &draft.draft_id, true)
                 .await
                 .ok();
+            let (duplicate_summary, duplicate_matches) =
+                bug_monitor_duplicate_match_context(&state, draft.triage_run_id.as_deref()).await;
             let (triage_summary_artifact, issue_draft_artifact, duplicate_matches_artifact) =
                 bug_monitor_triage_artifacts(&state, draft.triage_run_id.as_deref());
             match bug_monitor_github::publish_draft(
@@ -1611,6 +1613,8 @@ pub(super) async fn approve_bug_monitor_draft(
                     "action": outcome.action,
                     "failure_pattern_memory": approval_failure_pattern_memory,
                     "issue_draft": issue_draft,
+                    "duplicate_summary": duplicate_summary,
+                    "duplicate_matches": duplicate_matches,
                     "triage_summary_artifact": triage_summary_artifact,
                     "issue_draft_artifact": issue_draft_artifact,
                     "duplicate_matches_artifact": duplicate_matches_artifact,
@@ -1637,6 +1641,8 @@ pub(super) async fn approve_bug_monitor_draft(
                         "action": "approved",
                         "failure_pattern_memory": approval_failure_pattern_memory,
                         "issue_draft": issue_draft,
+                        "duplicate_summary": duplicate_summary,
+                        "duplicate_matches": duplicate_matches,
                         "triage_summary_artifact": triage_summary_artifact,
                         "issue_draft_artifact": issue_draft_artifact,
                         "duplicate_matches_artifact": duplicate_matches_artifact,

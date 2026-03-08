@@ -788,6 +788,20 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
         .and_then(|row| row.get("rendered_body"))
         .and_then(Value::as_str)
         .is_some_and(|body| body.contains("boom")));
+    assert_eq!(
+        approve_payload
+            .get("duplicate_summary")
+            .and_then(|row| row.get("match_count"))
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        approve_payload
+            .get("duplicate_matches")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
     assert!(
         approve_payload.get("triage_summary_artifact").is_none()
             || approve_payload
