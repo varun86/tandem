@@ -1061,37 +1061,49 @@ async fn emit_blocked_memory_put_guardrail(
     Ok(())
 }
 
+fn validate_memory_capability_guardrail_context(
+    run_id: &str,
+    partition: &tandem_memory::MemoryPartition,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryCapabilityToken, (String, &'static str, StatusCode)> {
+    let cap = capability.unwrap_or_else(|| default_memory_capability_for(run_id, partition));
+    if cap.run_id != run_id
+        || cap.org_id != partition.org_id
+        || cap.workspace_id != partition.workspace_id
+        || cap.project_id != partition.project_id
+    {
+        return Err((
+            cap.subject.clone(),
+            "capability context mismatch",
+            StatusCode::FORBIDDEN,
+        ));
+    }
+    if cap.expires_at < crate::now_ms() {
+        return Err((
+            cap.subject.clone(),
+            "capability expired",
+            StatusCode::UNAUTHORIZED,
+        ));
+    }
+    Ok(cap)
+}
+
 async fn validate_memory_put_capability_with_guardrail(
     state: &AppState,
     request: &MemoryPutRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
-    let cap = capability
-        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
-    if cap.run_id != request.run_id
-        || cap.org_id != request.partition.org_id
-        || cap.workspace_id != request.partition.workspace_id
-        || cap.project_id != request.partition.project_id
-    {
-        emit_blocked_memory_put_guardrail(
-            state,
-            request,
-            cap.subject.clone(),
-            "capability context mismatch",
-        )
-        .await?;
-        return Err(StatusCode::FORBIDDEN);
-    }
-    if cap.expires_at < crate::now_ms() {
-        emit_blocked_memory_put_guardrail(
-            state,
-            request,
-            cap.subject.clone(),
-            "capability expired",
-        )
-        .await?;
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    let cap = match validate_memory_capability_guardrail_context(
+        &request.run_id,
+        &request.partition,
+        capability,
+    ) {
+        Ok(cap) => cap,
+        Err((actor, detail, status)) => {
+            emit_blocked_memory_put_guardrail(state, request, actor, detail).await?;
+            return Err(status);
+        }
+    };
     Ok(cap)
 }
 
@@ -1100,32 +1112,17 @@ async fn validate_memory_promote_capability_with_guardrail(
     request: &MemoryPromoteRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
-    let cap = capability
-        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
-    if cap.run_id != request.run_id
-        || cap.org_id != request.partition.org_id
-        || cap.workspace_id != request.partition.workspace_id
-        || cap.project_id != request.partition.project_id
-    {
-        emit_blocked_memory_promote_guardrail(
-            state,
-            request,
-            cap.subject.clone(),
-            "capability context mismatch",
-        )
-        .await?;
-        return Err(StatusCode::FORBIDDEN);
-    }
-    if cap.expires_at < crate::now_ms() {
-        emit_blocked_memory_promote_guardrail(
-            state,
-            request,
-            cap.subject.clone(),
-            "capability expired",
-        )
-        .await?;
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    let cap = match validate_memory_capability_guardrail_context(
+        &request.run_id,
+        &request.partition,
+        capability,
+    ) {
+        Ok(cap) => cap,
+        Err((actor, detail, status)) => {
+            emit_blocked_memory_promote_guardrail(state, request, actor, detail).await?;
+            return Err(status);
+        }
+    };
     Ok(cap)
 }
 
@@ -1134,42 +1131,38 @@ async fn validate_memory_search_capability_with_guardrail(
     request: &MemorySearchRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
-    let cap = capability
-        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
+    let cap = match validate_memory_capability_guardrail_context(
+        &request.run_id,
+        &request.partition,
+        capability,
+    ) {
+        Ok(cap) => cap,
+        Err((actor, detail, status)) => {
+            let requested_scopes = if request.read_scopes.is_empty() {
+                default_memory_capability_for(&request.run_id, &request.partition)
+                    .memory
+                    .read_tiers
+            } else {
+                request.read_scopes.clone()
+            };
+            return emit_blocked_memory_search_guardrail(
+                status,
+                detail,
+                actor,
+                state,
+                request,
+                &requested_scopes,
+                &request.partition.key(),
+            )
+            .await;
+        }
+    };
     let requested_scopes = if request.read_scopes.is_empty() {
         cap.memory.read_tiers.clone()
     } else {
         request.read_scopes.clone()
     };
     let partition_key = request.partition.key();
-    if cap.run_id != request.run_id
-        || cap.org_id != request.partition.org_id
-        || cap.workspace_id != request.partition.workspace_id
-        || cap.project_id != request.partition.project_id
-    {
-        return emit_blocked_memory_search_guardrail(
-            StatusCode::FORBIDDEN,
-            "capability context mismatch",
-            cap.subject.clone(),
-            state,
-            request,
-            &requested_scopes,
-            &partition_key,
-        )
-        .await;
-    }
-    if cap.expires_at < crate::now_ms() {
-        return emit_blocked_memory_search_guardrail(
-            StatusCode::UNAUTHORIZED,
-            "capability expired",
-            cap.subject.clone(),
-            state,
-            request,
-            &requested_scopes,
-            &partition_key,
-        )
-        .await;
-    }
     Ok(cap)
 }
 
@@ -1348,25 +1341,6 @@ fn memory_classification_label(metadata: Option<&Value>) -> &str {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("internal")
-}
-
-pub(super) fn validate_memory_capability(
-    run_id: &str,
-    partition: &tandem_memory::MemoryPartition,
-    capability: Option<MemoryCapabilityToken>,
-) -> Result<MemoryCapabilityToken, StatusCode> {
-    let cap = capability.unwrap_or_else(|| default_memory_capability_for(run_id, partition));
-    if cap.run_id != run_id
-        || cap.org_id != partition.org_id
-        || cap.workspace_id != partition.workspace_id
-        || cap.project_id != partition.project_id
-    {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    if cap.expires_at < crate::now_ms() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(cap)
 }
 
 pub(super) fn scrub_content(input: &str) -> ScrubReport {
