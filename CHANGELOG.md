@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - merge-ready `merge_recommendation` runs now stop in `awaiting_approval`, emit `coder.approval.required`, and complete cleanly on `/coder/runs/{id}/approve` instead of bouncing back into `running`
   - approving a merge-ready recommendation now also writes an engine-owned `coder_merge_execution_request` artifact and emits `coder.merge.recommended`, so the post-approval merge handoff is explicit even before a real GitHub merge capability is wired
   - added `POST /coder/runs/{id}/merge-submit` with fail-closed `github.merge_pull_request` readiness, a persisted `coder_merge_submission` artifact, and a real MCP-backed merge path for approved merge recommendations
+  - `merge-submit` now also fails closed on the approved handoff artifact itself, blocking execution unless the latest `coder_merge_execution_request` still says `recommendation = merge` with no remaining blockers, checks, or approvals
     - `POST /coder/runs/{id}/execute-all`
   - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
   - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`

@@ -6290,6 +6290,37 @@ pub(super) async fn coder_merge_submit(
         load_latest_coder_artifact_payload(&state, &record, "coder_merge_execution_request")
             .await
             .ok_or(StatusCode::CONFLICT)?;
+    let recommendation = merge_request_payload
+        .get("recommendation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let has_blockers = merge_request_payload
+        .get("blockers")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    let has_required_checks = merge_request_payload
+        .get("required_checks")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    let has_required_approvals = merge_request_payload
+        .get("required_approvals")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    if recommendation != "merge" || has_blockers || has_required_checks || has_required_approvals {
+        return Ok(Json(json!({
+            "ok": false,
+            "code": "CODER_MERGE_SUBMIT_POLICY_BLOCKED",
+            "policy": {
+                "reason": "merge_execution_request_not_merge_ready",
+                "recommendation": merge_request_payload.get("recommendation").cloned().unwrap_or(Value::Null),
+                "has_blockers": has_blockers,
+                "has_required_checks": has_required_checks,
+                "has_required_approvals": has_required_approvals,
+            }
+        })));
+    }
     let github_ref = record.github_ref.clone().ok_or(StatusCode::CONFLICT)?;
     if !matches!(github_ref.kind, CoderGithubRefKind::PullRequest) {
         return Err(StatusCode::CONFLICT);
