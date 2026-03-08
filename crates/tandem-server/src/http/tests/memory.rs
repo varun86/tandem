@@ -102,8 +102,8 @@ async fn memory_put_enforces_default_write_scope() {
     let blocked_put_exists = audit_payload
         .get("events")
         .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter().any(|row| {
+        .and_then(|rows| {
+            rows.iter().find(|row| {
                 row.get("action").and_then(Value::as_str) == Some("memory_put")
                     && row.get("status").and_then(Value::as_str) == Some("blocked")
                     && row
@@ -116,8 +116,15 @@ async fn memory_put_enforces_default_write_scope() {
                         })
             })
         })
-        .unwrap_or(false);
-    assert!(blocked_put_exists);
+        .cloned()
+        .expect("blocked memory_put audit row");
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        blocked_put_exists.get("audit_id").and_then(Value::as_str)
+    );
 }
 
 #[tokio::test]
@@ -445,8 +452,8 @@ async fn memory_put_rejects_expired_capability_and_emits_blocked_audit() {
     let blocked_put_exists = audit_payload
         .get("events")
         .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter().any(|row| {
+        .and_then(|rows| {
+            rows.iter().find(|row| {
                 row.get("action").and_then(Value::as_str) == Some("memory_put")
                     && row.get("status").and_then(Value::as_str) == Some("blocked")
                     && row
@@ -459,8 +466,15 @@ async fn memory_put_rejects_expired_capability_and_emits_blocked_audit() {
                         })
             })
         })
-        .unwrap_or(false);
-    assert!(blocked_put_exists);
+        .cloned()
+        .expect("expired memory_put audit row");
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        blocked_put_exists.get("audit_id").and_then(Value::as_str)
+    );
 }
 
 #[tokio::test]
@@ -561,8 +575,8 @@ async fn memory_put_rejects_mismatched_capability_and_emits_blocked_audit() {
     let blocked_put_exists = audit_payload
         .get("events")
         .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter().any(|row| {
+        .and_then(|rows| {
+            rows.iter().find(|row| {
                 row.get("action").and_then(Value::as_str) == Some("memory_put")
                     && row.get("status").and_then(Value::as_str) == Some("blocked")
                     && row
@@ -575,8 +589,15 @@ async fn memory_put_rejects_mismatched_capability_and_emits_blocked_audit() {
                         })
             })
         })
-        .unwrap_or(false);
-    assert!(blocked_put_exists);
+        .cloned()
+        .expect("mismatched memory_put audit row");
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        blocked_put_exists.get("audit_id").and_then(Value::as_str)
+    );
 }
 
 #[tokio::test]
