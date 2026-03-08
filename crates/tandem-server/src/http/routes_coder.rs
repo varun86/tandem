@@ -6,6 +6,10 @@ use crate::AppState;
 
 pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router
+        .route(
+            "/coder/projects/{project_id}/policy",
+            get(coder_project_policy_get).put(coder_project_policy_put),
+        )
         .route("/coder/runs", post(coder_run_create).get(coder_run_list))
         .route("/coder/runs/{id}", get(coder_run_get))
         .route(

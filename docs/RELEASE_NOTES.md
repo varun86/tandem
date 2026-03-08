@@ -126,6 +126,7 @@
   - `merge_submit_policy` summaries now also include `preferred_submit_mode`, so clients and future automation can consume an engine-owned recommendation instead of inferring manual-vs-auto behavior from blocked flags alone
   - `merge_submit_policy` summaries now also make the current execution contract explicit with `explicit_submit_required = true` and `auto_execute_after_approval = false`, so clients know approval alone never auto-merges today
   - `merge_submit_policy` summaries now also include `auto_execute_eligible` and `auto_execute_block_reason`, so clients can distinguish “auto is preferred later” from “auto can run now” without reverse-engineering that from other flags
+  - added `GET /coder/projects/{project_id}/policy` and `PUT /coder/projects/{project_id}/policy`, with a default-off project-level `auto_merge_enabled` switch that now feeds `merge_submit_policy.auto_execute_policy_enabled` and changes merge-ready auto-execution blocking to `project_auto_merge_policy_disabled` until a project explicitly opts in
   - coder runs now persist as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - creating an `issue_triage` coder run now seeds a deterministic context-run task graph for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior

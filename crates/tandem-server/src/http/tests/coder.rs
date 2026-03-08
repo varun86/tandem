@@ -4631,9 +4631,16 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
     assert_eq!(
         merge_execution_artifact_payload
             .get("merge_submit_policy_preview")
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        merge_execution_artifact_payload
+            .get("merge_submit_policy_preview")
             .and_then(|row| row.get("auto_execute_block_reason"))
             .and_then(Value::as_str),
-        Some("explicit_submit_required_policy")
+        Some("project_auto_merge_policy_disabled")
     );
     assert_eq!(
         merge_execution_artifact_payload
@@ -4674,9 +4681,16 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
     assert_eq!(
         approve_payload
             .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
             .and_then(|row| row.get("auto_execute_block_reason"))
             .and_then(Value::as_str),
-        Some("explicit_submit_required_policy")
+        Some("project_auto_merge_policy_disabled")
     );
     assert_eq!(
         approve_payload
@@ -4910,6 +4924,97 @@ async fn coder_merge_submit_real_submit_writes_merge_artifact() {
             .and_then(|row| row.get("number"))
             .and_then(Value::as_u64),
         Some(314)
+    );
+}
+
+#[tokio::test]
+async fn coder_project_policy_get_and_put_controls_auto_merge_flag() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let get_before_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects/proj-engine/policy")
+        .body(Body::empty())
+        .expect("get before request");
+    let get_before_resp = app
+        .clone()
+        .oneshot(get_before_req)
+        .await
+        .expect("get before response");
+    assert_eq!(get_before_resp.status(), StatusCode::OK);
+    let get_before_payload: Value = serde_json::from_slice(
+        &to_bytes(get_before_resp.into_body(), usize::MAX)
+            .await
+            .expect("get before body"),
+    )
+    .expect("get before json");
+    assert_eq!(
+        get_before_payload
+            .get("project_policy")
+            .and_then(|row| row.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-engine")
+    );
+    assert_eq!(
+        get_before_payload
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let put_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/policy")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "auto_merge_enabled": true
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_payload: Value = serde_json::from_slice(
+        &to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .expect("put body"),
+    )
+    .expect("put json");
+    assert_eq!(put_payload.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        put_payload
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let get_after_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects/proj-engine/policy")
+        .body(Body::empty())
+        .expect("get after request");
+    let get_after_resp = app
+        .clone()
+        .oneshot(get_after_req)
+        .await
+        .expect("get after response");
+    assert_eq!(get_after_resp.status(), StatusCode::OK);
+    let get_after_payload: Value = serde_json::from_slice(
+        &to_bytes(get_after_resp.into_body(), usize::MAX)
+            .await
+            .expect("get after body"),
+    )
+    .expect("get after json");
+    assert_eq!(
+        get_after_payload
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
     );
 }
 
@@ -5440,6 +5545,13 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
         approve_payload
             .get("merge_submit_policy")
             .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
             .and_then(Value::as_bool),
         Some(false)
     );

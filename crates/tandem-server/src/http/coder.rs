@@ -404,6 +404,21 @@ pub(super) struct CoderRunControlInput {
     pub(super) reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(super) struct CoderProjectPolicy {
+    pub(super) project_id: String,
+    #[serde(default)]
+    pub(super) auto_merge_enabled: bool,
+    #[serde(default)]
+    pub(super) updated_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderProjectPolicyPutInput {
+    #[serde(default)]
+    pub(super) auto_merge_enabled: bool,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderRunExecuteNextInput {
     #[serde(default)]
@@ -441,6 +456,18 @@ fn coder_runs_root(state: &AppState) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".tandem").join("coder_runs"))
 }
 
+fn coder_project_policies_root(state: &AppState) -> PathBuf {
+    state
+        .shared_resources_path
+        .parent()
+        .map(|parent| parent.join("coder_project_policies"))
+        .unwrap_or_else(|| PathBuf::from(".tandem").join("coder_project_policies"))
+}
+
+fn coder_project_policy_path(state: &AppState, project_id: &str) -> PathBuf {
+    coder_project_policies_root(state).join(format!("{project_id}.json"))
+}
+
 fn coder_run_path(state: &AppState, coder_run_id: &str) -> PathBuf {
     coder_runs_root(state).join(format!("{coder_run_id}.json"))
 }
@@ -461,6 +488,50 @@ async fn ensure_coder_runs_dir(state: &AppState) -> Result<(), StatusCode> {
     tokio::fs::create_dir_all(coder_runs_root(state))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn ensure_coder_project_policies_dir(state: &AppState) -> Result<(), StatusCode> {
+    tokio::fs::create_dir_all(coder_project_policies_root(state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn load_coder_project_policy(
+    state: &AppState,
+    project_id: &str,
+) -> Result<CoderProjectPolicy, StatusCode> {
+    let path = coder_project_policy_path(state, project_id);
+    if !path.exists() {
+        return Ok(CoderProjectPolicy {
+            project_id: project_id.to_string(),
+            auto_merge_enabled: false,
+            updated_at_ms: 0,
+        });
+    }
+    let raw = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut policy = serde_json::from_str::<CoderProjectPolicy>(&raw)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if policy.project_id.trim().is_empty() {
+        policy.project_id = project_id.to_string();
+    }
+    Ok(policy)
+}
+
+async fn save_coder_project_policy(
+    state: &AppState,
+    policy: &CoderProjectPolicy,
+) -> Result<(), StatusCode> {
+    ensure_coder_project_policies_dir(state).await?;
+    let payload =
+        serde_json::to_string_pretty(policy).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(
+        coder_project_policy_path(state, &policy.project_id),
+        payload,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn save_coder_run_record(
@@ -7114,6 +7185,7 @@ fn merge_submit_policy_envelope(
     manual: Value,
     auto: Value,
     preferred_submit_mode: &str,
+    auto_execute_policy_enabled: bool,
     auto_execute_block_reason: &str,
 ) -> Value {
     json!({
@@ -7123,6 +7195,7 @@ fn merge_submit_policy_envelope(
         "explicit_submit_required": true,
         "auto_execute_after_approval": false,
         "auto_execute_eligible": false,
+        "auto_execute_policy_enabled": auto_execute_policy_enabled,
         "auto_execute_block_reason": auto_execute_block_reason,
     })
 }
@@ -7134,6 +7207,7 @@ async fn coder_merge_submit_policy_summary(
     if record.workflow_mode != CoderWorkflowMode::MergeRecommendation {
         return Ok(Value::Null);
     }
+    let project_policy = load_coder_project_policy(state, &record.repo_binding.project_id).await?;
     let Some(merge_request_payload) =
         load_latest_coder_artifact_payload(state, record, "coder_merge_execution_request").await
     else {
@@ -7157,6 +7231,7 @@ async fn coder_merge_submit_policy_summary(
                 }),
             ),
             "manual",
+            project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
     };
@@ -7165,6 +7240,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy.clone()),
             blocked_merge_submit_policy("auto", policy),
             "manual",
+            project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
     }
@@ -7175,6 +7251,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy),
             blocked_merge_submit_policy("auto", auto_policy),
             "manual",
+            project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
     }
@@ -7192,11 +7269,17 @@ async fn coder_merge_submit_policy_summary(
     } else {
         "auto"
     };
+    let auto_execute_block_reason = if !project_policy.auto_merge_enabled {
+        "project_auto_merge_policy_disabled"
+    } else {
+        "explicit_submit_required_policy"
+    };
     Ok(merge_submit_policy_envelope(
         allowed_merge_submit_policy("manual"),
         auto,
         preferred_submit_mode,
-        "explicit_submit_required_policy",
+        project_policy.auto_merge_enabled,
+        auto_execute_block_reason,
     ))
 }
 
@@ -7764,6 +7847,40 @@ pub(super) async fn coder_run_get(
             "hits": memory_hits,
         },
         "memory_candidates": memory_candidates,
+    })))
+}
+
+pub(super) async fn coder_project_policy_get(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    if project_id.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let policy = load_coder_project_policy(&state, project_id.trim()).await?;
+    Ok(Json(json!({
+        "project_policy": policy,
+    })))
+}
+
+pub(super) async fn coder_project_policy_put(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Json(input): Json<CoderProjectPolicyPutInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let policy = CoderProjectPolicy {
+        project_id: project_id.to_string(),
+        auto_merge_enabled: input.auto_merge_enabled,
+        updated_at_ms: crate::now_ms(),
+    };
+    save_coder_project_policy(&state, &policy).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "project_policy": policy,
     })))
 }
 
