@@ -8998,6 +8998,125 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
 }
 
 #[tokio::test]
+async fn coder_triage_summary_writes_run_outcome_without_summary_text() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-triage-outcome-only",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 191
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-triage-outcome-only/triage-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "confidence": "low",
+                "reproduction": {
+                    "outcome": "failed_to_reproduce",
+                    "steps": ["cargo test -p tandem-server missing_case -- --test-threads=1"]
+                },
+                "notes": "Issue triage failed before reliable reproduction but should still keep an outcome."
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
+                .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
+        Some(true)
+    );
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
+                .any(|row| { row.get("kind").and_then(Value::as_str) == Some("triage_memory") })),
+        Some(false)
+    );
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-triage-outcome-only/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    let run_outcome_payload = candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("run_outcome"))
+        })
+        .and_then(|row| row.get("payload"))
+        .cloned()
+        .expect("run outcome payload");
+    assert_eq!(
+        run_outcome_payload.get("summary").and_then(Value::as_str),
+        Some("Issue triage reproduction outcome: failed_to_reproduce")
+    );
+}
+
+#[tokio::test]
 async fn coder_memory_candidate_promote_stores_governed_memory() {
     let state = test_state().await;
     state

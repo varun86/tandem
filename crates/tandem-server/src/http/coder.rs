@@ -122,6 +122,35 @@ pub(super) struct CoderRunCreateInput {
     pub(super) origin_policy: Option<Value>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct CoderProjectRunCreateInput {
+    #[serde(default)]
+    pub(super) coder_run_id: Option<String>,
+    pub(super) workflow_mode: CoderWorkflowMode,
+    #[serde(default)]
+    pub(super) github_ref: Option<CoderGithubRef>,
+    #[serde(default)]
+    pub(super) objective: Option<String>,
+    #[serde(default)]
+    pub(super) source_client: Option<String>,
+    #[serde(default)]
+    pub(super) workspace: Option<ContextWorkspaceLease>,
+    #[serde(default)]
+    pub(super) model_provider: Option<String>,
+    #[serde(default)]
+    pub(super) model_id: Option<String>,
+    #[serde(default)]
+    pub(super) mcp_servers: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) parent_coder_run_id: Option<String>,
+    #[serde(default)]
+    pub(super) origin: Option<String>,
+    #[serde(default)]
+    pub(super) origin_artifact_type: Option<String>,
+    #[serde(default)]
+    pub(super) origin_policy: Option<Value>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderRunListQuery {
     #[serde(default)]
@@ -7568,9 +7597,9 @@ fn follow_on_execution_policy_preview(
     })
 }
 
-pub(super) async fn coder_run_create(
-    State(state): State<AppState>,
-    Json(input): Json<CoderRunCreateInput>,
+async fn coder_run_create_inner(
+    state: AppState,
+    input: CoderRunCreateInput,
 ) -> Result<Response, StatusCode> {
     if input.repo_binding.project_id.trim().is_empty()
         || input.repo_binding.workspace_id.trim().is_empty()
@@ -7930,6 +7959,55 @@ pub(super) async fn coder_run_create(
         "run": final_run,
     }))
     .into_response())
+}
+
+pub(super) async fn coder_run_create(
+    State(state): State<AppState>,
+    Json(input): Json<CoderRunCreateInput>,
+) -> Result<Response, StatusCode> {
+    coder_run_create_inner(state, input).await
+}
+
+pub(super) async fn coder_project_run_create(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Json(input): Json<CoderProjectRunCreateInput>,
+) -> Result<Response, StatusCode> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let Some(binding) = load_coder_project_binding(&state, project_id).await? else {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Coder project binding is required before creating a project-scoped run",
+                "code": "CODER_PROJECT_BINDING_REQUIRED",
+                "project_id": project_id,
+            })),
+        )
+            .into_response());
+    };
+    coder_run_create_inner(
+        state,
+        CoderRunCreateInput {
+            coder_run_id: input.coder_run_id,
+            workflow_mode: input.workflow_mode,
+            repo_binding: binding.repo_binding,
+            github_ref: input.github_ref,
+            objective: input.objective,
+            source_client: input.source_client,
+            workspace: input.workspace,
+            model_provider: input.model_provider,
+            model_id: input.model_id,
+            mcp_servers: input.mcp_servers,
+            parent_coder_run_id: input.parent_coder_run_id,
+            origin: input.origin,
+            origin_artifact_type: input.origin_artifact_type,
+            origin_policy: input.origin_policy,
+        },
+    )
+    .await
 }
 
 pub(super) async fn coder_run_list(
@@ -9039,6 +9117,14 @@ pub(super) async fn coder_triage_summary_create(
         .map(str::trim)
         .filter(|row| !row.is_empty())
         .map(ToString::to_string);
+    let reproduction_outcome = input
+        .reproduction
+        .as_ref()
+        .and_then(|row| row.get("outcome"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(ToString::to_string);
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = triage_summary.clone() {
         let (triage_memory_id, triage_memory_artifact) = write_coder_memory_candidate_artifact(
@@ -9087,12 +9173,28 @@ pub(super) async fn coder_triage_summary_create(
             "kind": "failure_pattern",
             "artifact_path": failure_pattern_artifact.path,
         }));
-
-        let outcome = if input.duplicate_candidates.is_empty() {
-            "triaged"
-        } else {
-            "triaged_duplicate_candidate"
-        };
+    }
+    let outcome = if input.duplicate_candidates.is_empty() {
+        "triaged"
+    } else {
+        "triaged_duplicate_candidate"
+    };
+    let outcome_summary = triage_summary
+        .clone()
+        .or_else(|| {
+            reproduction_outcome
+                .as_ref()
+                .map(|outcome_text| format!("Issue triage reproduction outcome: {outcome_text}"))
+        })
+        .or_else(|| {
+            input
+                .notes
+                .as_deref()
+                .map(str::trim)
+                .filter(|row| !row.is_empty())
+                .map(ToString::to_string)
+        });
+    if let Some(summary_text) = outcome_summary {
         let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
             &state,
             &record,
