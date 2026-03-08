@@ -38,6 +38,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Generalized GitHub MCP capability readiness so arbitrary MCP server instance names can satisfy reporter issue capabilities.
   - Added reporter HTTP endpoints:
     - `GET /config/bug-monitor`
+
+- Tandem Coder memory promotion guardrails
+  - Hardened coder-side promotion rules for newer memory kinds before they enter governed memory.
+  - `duplicate_linkage` promotion now requires both linked issue and linked PR numbers.
+  - `regression_signal` promotion now requires structured regression entries plus supporting evidence artifacts.
+  - Generic terminal `run_outcome` backfills are no longer promotable without workflow evidence artifacts.
     - `PATCH /config/bug-monitor`
     - `GET /bug-monitor/status`
     - `GET /bug-monitor/drafts`

@@ -11101,6 +11101,295 @@ async fn coder_promoted_merge_outcome_reuses_across_pull_requests() {
 }
 
 #[tokio::test]
+async fn coder_duplicate_linkage_promotion_requires_linked_issue_and_pr() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-duplicate-linkage-guard",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 991
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let create_candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-duplicate-linkage-guard/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "duplicate_linkage",
+                "summary": "Link issue to follow-on PR",
+                "payload": {
+                    "linked_issue_numbers": [991]
+                }
+            })
+            .to_string(),
+        ))
+        .expect("candidate request");
+    let create_candidate_resp = app
+        .clone()
+        .oneshot(create_candidate_req)
+        .await
+        .expect("candidate response");
+    assert_eq!(create_candidate_resp.status(), StatusCode::OK);
+    let create_candidate_payload: Value = serde_json::from_slice(
+        &to_bytes(create_candidate_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidate body"),
+    )
+    .expect("candidate json");
+    let candidate_id = create_candidate_payload
+        .get("candidate_id")
+        .and_then(Value::as_str)
+        .expect("candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-duplicate-linkage-guard/memory-candidates/{candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "attempted reusable duplicate linkage"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn coder_regression_signal_promotion_requires_structured_signals() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-regression-guard",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 992
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let create_candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-regression-guard/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "regression_signal",
+                "summary": "Historical deploy regression repeated",
+                "payload": {
+                    "workflow_mode": "pr_review",
+                    "summary_artifact_path": "/tmp/fake-summary.json",
+                    "regression_signals": []
+                }
+            })
+            .to_string(),
+        ))
+        .expect("candidate request");
+    let create_candidate_resp = app
+        .clone()
+        .oneshot(create_candidate_req)
+        .await
+        .expect("candidate response");
+    assert_eq!(create_candidate_resp.status(), StatusCode::OK);
+    let create_candidate_payload: Value = serde_json::from_slice(
+        &to_bytes(create_candidate_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidate body"),
+    )
+    .expect("candidate json");
+    let candidate_id = create_candidate_payload
+        .get("candidate_id")
+        .and_then(Value::as_str)
+        .expect("candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-regression-guard/memory-candidates/{candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "attempted reusable regression signal"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn coder_terminal_run_outcome_promotion_requires_workflow_evidence() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-outcome-guard",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 993
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let cancel_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-outcome-guard/cancel")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "stop this coder run"
+            })
+            .to_string(),
+        ))
+        .expect("cancel request");
+    let cancel_resp = app
+        .clone()
+        .oneshot(cancel_req)
+        .await
+        .expect("cancel response");
+    assert_eq!(cancel_resp.status(), StatusCode::OK);
+    let cancel_payload: Value = serde_json::from_slice(
+        &to_bytes(cancel_resp.into_body(), usize::MAX)
+            .await
+            .expect("cancel body"),
+    )
+    .expect("cancel json");
+    let candidate_id = cancel_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("candidate_id"))
+        .and_then(Value::as_str)
+        .expect("run outcome candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-run-outcome-guard/memory-candidates/{candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "attempted reusable cancelled outcome"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn coder_promoted_review_memory_reuses_requested_changes_across_pull_requests() {
     let state = test_state().await;
     state

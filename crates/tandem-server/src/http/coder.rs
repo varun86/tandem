@@ -1789,6 +1789,71 @@ fn merge_recommendation_promotion_allowed(candidate_payload: &Value) -> bool {
         })
 }
 
+fn duplicate_linkage_promotion_allowed(candidate_payload: &Value) -> bool {
+    let payload = candidate_payload.get("payload");
+    payload
+        .and_then(|row| row.get("linked_issue_numbers"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty())
+        && payload
+            .and_then(|row| row.get("linked_pr_numbers"))
+            .and_then(Value::as_array)
+            .is_some_and(|rows| !rows.is_empty())
+}
+
+fn regression_signal_promotion_allowed(candidate_payload: &Value) -> bool {
+    let payload = candidate_payload.get("payload");
+    payload
+        .and_then(|row| row.get("regression_signals"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty())
+        && (payload
+            .and_then(|row| row.get("summary_artifact_path"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+            || payload
+                .and_then(|row| row.get("review_evidence_artifact_path"))
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty()))
+}
+
+fn run_outcome_promotion_allowed(candidate_payload: &Value) -> bool {
+    let payload = candidate_payload.get("payload");
+    [
+        "summary_artifact_path",
+        "reproduction_artifact_path",
+        "validation_artifact_path",
+        "review_evidence_artifact_path",
+        "readiness_artifact_path",
+    ]
+    .iter()
+    .any(|field| {
+        payload
+            .and_then(|row| row.get(*field))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    })
+}
+
+fn coder_memory_candidate_promotion_allowed(
+    kind: &CoderMemoryCandidateKind,
+    candidate_payload: &Value,
+) -> bool {
+    match kind {
+        CoderMemoryCandidateKind::MergeRecommendationMemory => {
+            merge_recommendation_promotion_allowed(candidate_payload)
+        }
+        CoderMemoryCandidateKind::DuplicateLinkage => {
+            duplicate_linkage_promotion_allowed(candidate_payload)
+        }
+        CoderMemoryCandidateKind::RegressionSignal => {
+            regression_signal_promotion_allowed(candidate_payload)
+        }
+        CoderMemoryCandidateKind::RunOutcome => run_outcome_promotion_allowed(candidate_payload),
+        _ => true,
+    }
+}
+
 pub(crate) fn failure_pattern_fingerprint(
     repo_slug: &str,
     summary: &str,
@@ -9615,9 +9680,7 @@ pub(super) async fn coder_memory_candidate_promote(
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if matches!(kind, CoderMemoryCandidateKind::MergeRecommendationMemory)
-        && !merge_recommendation_promotion_allowed(&candidate_payload)
-    {
+    if !coder_memory_candidate_promotion_allowed(&kind, &candidate_payload) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let content =

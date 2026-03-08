@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Initial Tandem Coder engine API foundation**:
   - added engine-owned coder workflow runtime control through:
     - `GET /coder/status`
+  - hardened coder memory promotion rules for newer memory kinds:
+    - `duplicate_linkage` now requires both linked issue and linked pull-request numbers before promotion
+    - `regression_signal` now requires structured regression entries plus supporting review/summary evidence
+    - generic terminal `run_outcome` backfills can no longer be promoted without workflow evidence artifacts
     - `GET /coder/projects/{project_id}`
     - `GET /coder/projects/{project_id}/runs`
     - `POST /coder/projects/{project_id}/runs`
