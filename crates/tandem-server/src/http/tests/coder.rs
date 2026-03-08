@@ -1767,6 +1767,16 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     );
     assert_eq!(
         submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("execution_policy_preview"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        submit_payload
             .get("spawned_follow_on_runs")
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
@@ -1812,6 +1822,16 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(|row| row.get("spawn_mode"))
             .and_then(Value::as_str),
         Some("auto")
+    );
+    assert_eq!(
+        submit_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("execution_policy"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(false)
     );
     assert_eq!(
         submit_payload
@@ -1900,6 +1920,26 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(|row| row.get("workflow_mode"))
             .and_then(Value::as_str),
         Some("pr_review")
+    );
+    assert_eq!(
+        artifact_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("execution_policy_preview"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        artifact_payload
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("execution_policy"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(false)
     );
 
     let follow_on_req = Request::builder()
@@ -2015,10 +2055,32 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     assert_eq!(
         submitted_event
             .properties
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("execution_policy_preview"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
             .get("spawned_follow_on_runs")
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(1)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("spawned_follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("execution_policy"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(false)
     );
     assert_eq!(
         submitted_event

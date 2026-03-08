@@ -5455,6 +5455,10 @@ fn build_follow_on_run_templates(
             "auto_spawn_allowed_by_default": !requires_explicit_auto_spawn,
             "requires_explicit_auto_spawn": requires_explicit_auto_spawn,
             "required_completed_workflow_modes": required_completed_workflow_modes,
+            "execution_policy_preview": follow_on_execution_policy_preview(
+                &workflow_mode,
+                &required_completed_workflow_modes,
+            ),
         })
     })
     .collect::<Vec<_>>()
@@ -5892,8 +5896,20 @@ pub(super) async fn coder_issue_fix_pr_submit(
                 let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                let payload: Value = serde_json::from_slice(&bytes)
+                let mut payload: Value = serde_json::from_slice(&bytes)
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                if let Some(obj) = payload.as_object_mut() {
+                    let coder_run_id = obj
+                        .get("coder_run")
+                        .and_then(|row| row.get("coder_run_id"))
+                        .and_then(Value::as_str)
+                        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+                    let created_record = load_coder_run_record(&state, coder_run_id).await?;
+                    obj.insert(
+                        "execution_policy".to_string(),
+                        coder_execution_policy_summary(&state, &created_record).await?,
+                    );
+                }
                 spawned_follow_on_runs.push(payload);
             }
         }
@@ -6546,6 +6562,28 @@ async fn coder_execution_policy_summary(
     Ok(json!({
         "blocked": false,
     }))
+}
+
+fn follow_on_execution_policy_preview(
+    workflow_mode: &CoderWorkflowMode,
+    required_completed_workflow_modes: &[Value],
+) -> Value {
+    if matches!(workflow_mode, CoderWorkflowMode::MergeRecommendation)
+        && !required_completed_workflow_modes.is_empty()
+    {
+        return json!({
+            "blocked": true,
+            "code": "CODER_EXECUTION_POLICY_BLOCKED",
+            "error": "merge recommendation is blocked until required review follow-ons complete",
+            "policy": {
+                "reason": "requires_completed_pr_review_follow_on",
+                "required_completed_workflow_modes": required_completed_workflow_modes,
+            }
+        });
+    }
+    json!({
+        "blocked": false,
+    })
 }
 
 pub(super) async fn coder_run_create(

@@ -145,6 +145,10 @@ pub(super) struct AutomationV2CreateInput {
     pub output_targets: Option<Vec<String>>,
     #[serde(default)]
     pub creator_id: Option<String>,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -165,6 +169,10 @@ pub(super) struct AutomationV2PatchInput {
     pub execution: Option<AutomationExecutionPolicy>,
     #[serde(default)]
     pub output_targets: Option<Vec<String>>,
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1767,6 +1775,8 @@ pub(super) async fn automations_v2_create(
         created_at_ms: now,
         updated_at_ms: now,
         creator_id: input.creator_id.unwrap_or_else(|| "unknown".to_string()),
+        workspace_root: input.workspace_root,
+        metadata: input.metadata,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
     };
@@ -1844,6 +1854,12 @@ pub(super) async fn automations_v2_patch(
     }
     if let Some(output_targets) = input.output_targets {
         automation.output_targets = output_targets;
+    }
+    if let Some(workspace_root) = input.workspace_root {
+        automation.workspace_root = Some(workspace_root);
+    }
+    if let Some(metadata) = input.metadata {
+        automation.metadata = Some(metadata);
     }
     let stored = state.put_automation_v2(automation).await.map_err(|error| {
         (
