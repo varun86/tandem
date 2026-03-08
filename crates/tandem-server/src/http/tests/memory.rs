@@ -332,8 +332,8 @@ async fn memory_put_then_search_in_session_scope() {
     let search_audit_exists = audit_payload
         .get("events")
         .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter().any(|row| {
+        .and_then(|rows| {
+            rows.iter().find(|row| {
                 row.get("action").and_then(Value::as_str) == Some("memory_search")
                     && row.get("status").and_then(Value::as_str) == Some("ok")
                     && row
@@ -350,8 +350,15 @@ async fn memory_put_then_search_in_session_scope() {
                         })
             })
         })
-        .unwrap_or(false);
-    assert!(search_audit_exists);
+        .cloned()
+        .expect("successful memory_search audit row");
+    assert_eq!(
+        search_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        search_audit_exists.get("audit_id").and_then(Value::as_str)
+    );
 }
 
 #[tokio::test]
