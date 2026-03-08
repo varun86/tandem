@@ -1512,6 +1512,7 @@ fn coder_memory_retrieval_policy(record: &CoderRunRecord, query: &str, limit: us
         CoderWorkflowMode::PrReview => {
             vec![
                 "review_memory",
+                "merge_recommendation_memory",
                 "duplicate_linkage",
                 "regression_signal",
                 "run_outcome",
@@ -1520,6 +1521,7 @@ fn coder_memory_retrieval_policy(record: &CoderRunRecord, query: &str, limit: us
         CoderWorkflowMode::MergeRecommendation => {
             vec![
                 "merge_recommendation_memory",
+                "review_memory",
                 "duplicate_linkage",
                 "run_outcome",
                 "regression_signal",
@@ -1659,6 +1661,11 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         {
             4_u8
         }
+        Some("review_memory")
+            if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
+        {
+            3_u8
+        }
         Some("run_outcome")
             if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation)
                 && memory_hit_workflow_mode(hit).as_deref() == Some("merge_recommendation") =>
@@ -1672,6 +1679,11 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         }
         Some("review_memory") if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) => {
             4_u8
+        }
+        Some("merge_recommendation_memory")
+            if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) =>
+        {
+            3_u8
         }
         Some("duplicate_linkage")
             if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) =>

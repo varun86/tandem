@@ -12374,6 +12374,267 @@ async fn coder_terminal_run_outcome_promotion_requires_workflow_evidence() {
 }
 
 #[tokio::test]
+async fn coder_pr_review_reuses_prior_merge_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_merge_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-merge-memory-source",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 190
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create merge request");
+    let create_merge_resp = app
+        .clone()
+        .oneshot(create_merge_req)
+        .await
+        .expect("create merge response");
+    assert_eq!(create_merge_resp.status(), StatusCode::OK);
+
+    let merge_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-pr-review-merge-memory-source/merge-recommendation-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "hold",
+                "summary": "Hold merge until rollout validation completes.",
+                "blockers": ["Rollout validation still pending"],
+                "required_checks": ["staging-rollout"]
+            })
+            .to_string(),
+        ))
+        .expect("merge summary request");
+    let merge_summary_resp = app
+        .clone()
+        .oneshot(merge_summary_req)
+        .await
+        .expect("merge summary response");
+    assert_eq!(merge_summary_resp.status(), StatusCode::OK);
+
+    let create_review_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-merge-memory-target",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 190
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create review request");
+    let create_review_resp = app
+        .clone()
+        .oneshot(create_review_req)
+        .await
+        .expect("create review response");
+    assert_eq!(create_review_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-merge-memory-target/memory-hits?q=rollout%20validation%20pending")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    let merge_hit = hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row.get("kind").and_then(Value::as_str) == Some("merge_recommendation_memory")
+            })
+        })
+        .cloned()
+        .expect("merge recommendation hit");
+    assert_eq!(
+        merge_hit.get("same_ref").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        hits_payload
+            .get("retrieval_policy")
+            .and_then(|row| row.get("prioritized_kinds"))
+            .cloned(),
+        Some(json!([
+            "review_memory",
+            "merge_recommendation_memory",
+            "duplicate_linkage",
+            "regression_signal",
+            "run_outcome"
+        ]))
+    );
+}
+
+#[tokio::test]
+async fn coder_merge_recommendation_reuses_prior_review_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_review_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-review-memory-source",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 191
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create review request");
+    let create_review_resp = app
+        .clone()
+        .oneshot(create_review_req)
+        .await
+        .expect("create review response");
+    assert_eq!(create_review_resp.status(), StatusCode::OK);
+
+    let review_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-review-memory-source/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "Require rollout approval evidence before merge.",
+                "requested_changes": ["Attach rollout approval evidence"],
+                "blockers": ["Approval evidence missing"]
+            })
+            .to_string(),
+        ))
+        .expect("review summary request");
+    let review_summary_resp = app
+        .clone()
+        .oneshot(review_summary_req)
+        .await
+        .expect("review summary response");
+    assert_eq!(review_summary_resp.status(), StatusCode::OK);
+
+    let create_merge_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-review-memory-target",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 191
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create merge request");
+    let create_merge_resp = app
+        .clone()
+        .oneshot(create_merge_req)
+        .await
+        .expect("create merge response");
+    assert_eq!(create_merge_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-merge-review-memory-target/memory-hits?q=approval%20evidence%20missing")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    let review_hit = hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("review_memory"))
+        })
+        .cloned()
+        .expect("review memory hit");
+    assert_eq!(
+        review_hit.get("same_ref").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        hits_payload
+            .get("retrieval_policy")
+            .and_then(|row| row.get("prioritized_kinds"))
+            .cloned(),
+        Some(json!([
+            "merge_recommendation_memory",
+            "review_memory",
+            "duplicate_linkage",
+            "run_outcome",
+            "regression_signal"
+        ]))
+    );
+}
+
+#[tokio::test]
 async fn coder_promoted_review_memory_reuses_requested_changes_across_pull_requests() {
     let state = test_state().await;
     state
