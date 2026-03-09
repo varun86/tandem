@@ -11,6 +11,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added a shared `service-runner` entrypoint so managed services start through the same env-loading contract.
   - Added focused tests for bootstrap env generation, `systemd` units, `launchd` plists, and `doctor`.
 
+- Agent standups, reusable agent personalities, and workspace memory defaults
+  - Added reusable agent personalities in the control panel with persistent prompts, default models, and avatar upload.
+  - Added server-side standup workflow composition on top of Automation V2 using saved agent personalities.
+  - Added workspace-aware memory defaults so chats and automations can use `memory_search`, `memory_store`, and `memory_list` without manually supplying `session_id` or `project_id`.
+  - Added deterministic `project_id` binding for workspace-backed sessions to improve recall across prior conversations in the same workspace.
+  - Updated standup workflows to combine memory recall with workspace inspection through `glob`, `grep`, and `read`.
+
 - Control-panel runtime/bootstrap refinements
   - Made `tandem-setup init` the documented bootstrap path while keeping legacy `tandem-control-panel --init` compatibility.
   - Switched official bootstrap to canonical OS config/data paths instead of relying on cwd `.env`.

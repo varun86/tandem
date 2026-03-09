@@ -8,6 +8,14 @@
 - Added a shared `service-runner` entrypoint so managed services start through the same env-loading contract.
 - Added focused regression coverage for bootstrap env generation, `systemd` units, `launchd` plists, and `doctor`.
 
+### Agent Personalities and Standups
+
+- Added reusable agent personalities in the control panel with persistent prompts, default models, and avatar upload.
+- Added server-side standup workflow composition on top of Automation V2 using saved agent personalities.
+- Added workspace-aware memory defaults so chats and automations can use `memory_search`, `memory_store`, and `memory_list` without manually supplying `session_id` or `project_id`.
+- Added deterministic `project_id` binding for workspace-backed sessions to improve recall across prior conversations in the same workspace.
+- Updated standup workflows to combine memory recall with workspace inspection through `glob`, `grep`, and `read`.
+
 ### Control Panel Runtime and Docs
 
 - Made `tandem-setup init` the documented headless bootstrap path while keeping legacy `tandem-control-panel --init` compatibility.

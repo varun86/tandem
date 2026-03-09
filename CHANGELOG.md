@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added cross-platform service generation for Linux `systemd` and macOS `launchd`
   - added a shared `service-runner` entrypoint so managed services use the same env loading and runtime startup contract on both platforms
   - added focused regression coverage for bootstrap env generation, `systemd` unit generation, `launchd` plist generation, and `doctor` output
+- **Agent standups, reusable agent personalities, and workspace memory defaults**:
+  - added reusable agent personalities in the control panel with persistent prompts, default models, and avatar upload
+  - added server-side standup workflow composition on top of Automation V2 using saved agent personalities
+  - added workspace-aware memory defaults so chats and automations can use `memory_search`, `memory_store`, and `memory_list` without manually supplying `session_id` or `project_id`
+  - added deterministic `project_id` binding for workspace-backed sessions to improve recall across prior conversations in the same workspace
+  - updated standup workflows to combine memory recall with workspace inspection through `glob`, `grep`, and `read`
 
 ### Changed
 
