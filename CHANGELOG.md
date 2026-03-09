@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - kept strict persistence verification on the active canonical automation file while downgrading mismatched legacy fallback files to warnings instead of rejecting the save
   - added a regression test covering successful automation save/apply with a stale legacy `automations_v2.json` migration artifact present
 
-## [0.4.3] - Unreleased
+## [0.4.3] - 2026-03-08
 
 ### Fixed
 
