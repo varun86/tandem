@@ -87,7 +87,8 @@ Update all version fields:
 git add .
 git commit -m "Release v0.2.0"
 git tag v0.2.0
-git push origin main --tags
+git push origin main
+git push origin v0.2.0
 ```
 
 Wait for GitHub Actions to complete.

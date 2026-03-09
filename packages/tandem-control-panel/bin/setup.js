@@ -11,7 +11,7 @@ import { pipeline } from "stream/promises";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { homedir } from "os";
-import { ensureEnv } from "./init-env.js";
+import { ensureBootstrapEnv, resolveEnvLoadOrder } from "../lib/setup/env.js";
 import { createSwarmApiHandler } from "../server/routes/swarm.js";
 
 function parseDotEnv(content) {
@@ -83,6 +83,7 @@ const cli = parseCliArgs(process.argv.slice(2));
 const rawArgs = process.argv.slice(2);
 const initRequested = cli.has("init");
 const resetTokenRequested = cli.has("reset-token");
+const explicitEnvFile = String(cli.value("env-file") || "").trim();
 const installServicesRequested = cli.has("install-services");
 const serviceOpRaw = String(cli.value("service-op") || "")
   .trim()
@@ -107,13 +108,22 @@ const serviceSetupOnly =
     return false;
   });
 const cwdEnvPath = resolve(process.cwd(), ".env");
+for (const envPath of resolveEnvLoadOrder({ explicitEnvFile, cwd: process.cwd() })) {
+  loadDotEnvFile(envPath);
+}
 
 if (initRequested) {
-  const result = ensureEnv({ overwrite: resetTokenRequested });
+  const result = await ensureBootstrapEnv({
+    cwd: process.cwd(),
+    envPath: explicitEnvFile || undefined,
+    overwrite: resetTokenRequested,
+  });
   console.log("[Tandem Control Panel] Environment initialized.");
   console.log(`[Tandem Control Panel] .env:      ${result.envPath}`);
   console.log(`[Tandem Control Panel] Engine URL: ${result.engineUrl}`);
-  console.log(`[Tandem Control Panel] Panel URL:  http://localhost:${result.panelPort}`);
+  console.log(
+    `[Tandem Control Panel] Panel URL:  http://${result.panelHost}:${result.panelPort}`
+  );
   console.log(`[Tandem Control Panel] Token:      ${result.token}`);
   if (
     process.argv.slice(2).length === 1 ||
@@ -122,8 +132,6 @@ if (initRequested) {
     process.exit(0);
   }
 }
-
-loadDotEnvFile(cwdEnvPath);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = join(__dirname, "..", "dist");
@@ -143,6 +151,8 @@ function resolveDefaultChannelUploadsRoot() {
 }
 
 const PORTAL_PORT = Number.parseInt(process.env.TANDEM_CONTROL_PANEL_PORT || "39732", 10);
+const PANEL_HOST = (process.env.TANDEM_CONTROL_PANEL_HOST || "127.0.0.1").trim() || "127.0.0.1";
+const PANEL_PUBLIC_URL = String(process.env.TANDEM_CONTROL_PANEL_PUBLIC_URL || "").trim();
 const ENGINE_HOST = (process.env.TANDEM_ENGINE_HOST || "127.0.0.1").trim();
 const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 10);
 const ENGINE_URL = (
@@ -4489,9 +4499,10 @@ async function main() {
     process.exit(1);
   });
 
-  server.listen(PORTAL_PORT, () => {
+  server.listen(PORTAL_PORT, PANEL_HOST, () => {
     log("=========================================");
-    log(`Control Panel: http://localhost:${PORTAL_PORT}`);
+    log(`Control Panel: http://${PANEL_HOST}:${PORTAL_PORT}`);
+    if (PANEL_PUBLIC_URL) log(`Public URL:    ${PANEL_PUBLIC_URL}`);
     log(`Engine URL:    ${ENGINE_URL}`);
     log(`Engine mode:   ${isLocalEngineUrl(ENGINE_URL) ? "local" : "remote"}`);
     log(`Files root:    ${FILES_ROOT}`);

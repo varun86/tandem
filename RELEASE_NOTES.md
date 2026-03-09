@@ -2,6 +2,22 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.4.4 (Unreleased)
+
+- Official control-panel bootstrap path for headless installs
+  - Added a real `tandem-setup` CLI with `init`, `doctor`, `service`, `pair mobile`, and `run`.
+  - Added shared bootstrap/setup modules for canonical env paths, env creation, engine-config bootstrap, and diagnostics.
+  - Added cross-platform service generation for Linux `systemd` and macOS `launchd`.
+  - Added a shared `service-runner` entrypoint so managed services start through the same env-loading contract.
+  - Added focused tests for bootstrap env generation, `systemd` units, `launchd` plists, and `doctor`.
+
+- Control-panel runtime/bootstrap refinements
+  - Made `tandem-setup init` the documented bootstrap path while keeping legacy `tandem-control-panel --init` compatibility.
+  - Switched official bootstrap to canonical OS config/data paths instead of relying on cwd `.env`.
+  - Added `TANDEM_CONTROL_PANEL_HOST`, `TANDEM_CONTROL_PANEL_PUBLIC_URL`, and canonical control-panel state-dir support for future gateway/mobile pairing.
+  - Updated the runtime to bind explicitly to the configured panel host and load managed env files before startup.
+  - Updated package/docs/example guidance so headless installs flow through the control-panel gateway layer instead of the old quickstart bootstrap path.
+
 ## v0.4.3 (Unreleased)
 
 - Automation V2 restart persistence is fixed.

@@ -1,5 +1,7 @@
 # Tandem Agent Quickstart
 
+> This example is no longer the official bootstrap path. For Linux/macOS headless installs, use `npm i -g @frumu/tandem-panel` and `tandem-setup init`.
+
 A minimal self-hosted AI agent portal. Run the setup script and you have a working agent accessible at `http://your-server-ip` in under 5 minutes.
 
 ## One-command setup (VPS / Linux server)

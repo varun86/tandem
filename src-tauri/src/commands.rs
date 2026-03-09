@@ -5944,6 +5944,183 @@ pub async fn tool_ids(state: State<'_, AppState>) -> Result<Vec<String>> {
 // ============================================================================
 
 #[tauri::command]
+pub async fn workflow_plans_preview(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_preview(request).await
+}
+
+#[tauri::command]
+pub async fn workflow_plans_apply(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_apply(request).await
+}
+
+#[tauri::command]
+pub async fn workflow_plans_chat_start(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_chat_start(request).await
+}
+
+#[tauri::command]
+pub async fn workflow_plans_chat_message(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_chat_message(request).await
+}
+
+#[tauri::command]
+pub async fn workflow_plans_chat_reset(
+    state: State<'_, AppState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_chat_reset(request).await
+}
+
+#[tauri::command]
+pub async fn workflow_plans_get(
+    state: State<'_, AppState>,
+    plan_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.workflow_plans_get(&plan_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_list(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_list().await
+}
+
+#[tauri::command]
+pub async fn automations_v2_get(
+    state: State<'_, AppState>,
+    automation_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_get(&automation_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_update(
+    state: State<'_, AppState>,
+    automation_id: String,
+    request: serde_json::Value,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_update(&automation_id, request)
+        .await
+}
+
+#[tauri::command]
+pub async fn automations_v2_delete(
+    state: State<'_, AppState>,
+    automation_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_delete(&automation_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_run_now(
+    state: State<'_, AppState>,
+    automation_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_run_now(&automation_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_pause(
+    state: State<'_, AppState>,
+    automation_id: String,
+    request: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_pause(
+            &automation_id,
+            request.unwrap_or_else(|| serde_json::json!({ "reason": "" })),
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn automations_v2_resume(
+    state: State<'_, AppState>,
+    automation_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_resume(&automation_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_runs(
+    state: State<'_, AppState>,
+    automation_id: String,
+    limit: Option<usize>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_runs(&automation_id, limit)
+        .await
+}
+
+#[tauri::command]
+pub async fn automations_v2_run_get(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<serde_json::Value> {
+    state.sidecar.automations_v2_run_get(&run_id).await
+}
+
+#[tauri::command]
+pub async fn automations_v2_run_pause(
+    state: State<'_, AppState>,
+    run_id: String,
+    request: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_run_pause(
+            &run_id,
+            request.unwrap_or_else(|| serde_json::json!({ "reason": "" })),
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn automations_v2_run_resume(
+    state: State<'_, AppState>,
+    run_id: String,
+    request: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_run_resume(
+            &run_id,
+            request.unwrap_or_else(|| serde_json::json!({ "reason": "" })),
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn automations_v2_run_cancel(
+    state: State<'_, AppState>,
+    run_id: String,
+    request: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .automations_v2_run_cancel(
+            &run_id,
+            request.unwrap_or_else(|| serde_json::json!({ "reason": "" })),
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn routines_list(state: State<'_, AppState>) -> Result<Vec<RoutineSpec>> {
     state.sidecar.routines_list().await
 }

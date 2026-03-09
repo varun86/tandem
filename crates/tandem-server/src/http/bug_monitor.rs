@@ -25,7 +25,7 @@ use super::context_types::{
 };
 
 const DEFAULT_BUG_MONITOR_TEMPLATE: &str =
-    include_str!("../../../../.github/ISSUE_TEMPLATE/bug_report.md");
+    include_str!("../../resources/issue_templates/bug_report.md");
 
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct BugMonitorConfigInput {

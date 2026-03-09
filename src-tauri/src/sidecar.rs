@@ -4840,6 +4840,316 @@ impl SidecarManager {
     }
 
     // ========================================================================
+    // Workflow Plans
+    // ========================================================================
+
+    pub async fn workflow_plans_preview(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/preview", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to preview workflow plan: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn workflow_plans_apply(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/apply", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to apply workflow plan: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn workflow_plans_chat_start(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/chat/start", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to start workflow planning chat: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn workflow_plans_chat_message(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/chat/message", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to send workflow planning message: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn workflow_plans_chat_reset(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/chat/reset", self.base_url().await?);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to reset workflow planning chat: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn workflow_plans_get(&self, plan_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/workflow-plans/{}", self.base_url().await?, plan_id);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to get workflow plan: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    // ========================================================================
+    // Automations V2
+    // ========================================================================
+
+    pub async fn automations_v2_list(&self) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/automations/v2", self.base_url().await?);
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to list workflow automations: {}", e))
+        })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_get(&self, automation_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to get workflow automation: {}", e))
+        })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_update(
+        &self,
+        automation_id: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self
+            .http_client
+            .patch(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to update workflow automation: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_delete(&self, automation_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self.http_client.delete(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to delete workflow automation: {}", e))
+        })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_run_now(&self, automation_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}/run_now",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to trigger workflow automation: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_pause(
+        &self,
+        automation_id: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}/pause",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to pause workflow automation: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_resume(&self, automation_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}/resume",
+            self.base_url().await?,
+            automation_id
+        );
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to resume workflow automation: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_runs(
+        &self,
+        automation_id: &str,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/{}/runs",
+            self.base_url().await?,
+            automation_id
+        );
+        let mut request = self.http_client.get(&url);
+        if let Some(limit) = limit {
+            request = request.query(&[("limit", limit)]);
+        }
+        let response = request.send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to list workflow automation runs: {}", e))
+        })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_run_get(&self, run_id: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/automations/v2/runs/{}", self.base_url().await?, run_id);
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to get workflow automation run: {}", e))
+        })?;
+        self.handle_response(response).await
+    }
+
+    async fn automations_v2_run_action(
+        &self,
+        run_id: &str,
+        action: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/automations/v2/runs/{}/{}",
+            self.base_url().await?,
+            run_id,
+            action
+        );
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!(
+                    "Failed workflow automation run {} action for {}: {}",
+                    action, run_id, e
+                ))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn automations_v2_run_pause(
+        &self,
+        run_id: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.automations_v2_run_action(run_id, "pause", request)
+            .await
+    }
+
+    pub async fn automations_v2_run_resume(
+        &self,
+        run_id: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.automations_v2_run_action(run_id, "resume", request)
+            .await
+    }
+
+    pub async fn automations_v2_run_cancel(
+        &self,
+        run_id: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.automations_v2_run_action(run_id, "cancel", request)
+            .await
+    }
+
+    // ========================================================================
     // Routines
     // ========================================================================
 

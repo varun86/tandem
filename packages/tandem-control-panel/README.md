@@ -8,49 +8,47 @@ Full web control center for Tandem Engine (non-desktop entry point).
 npm i -g @frumu/tandem-panel
 ```
 
-## Run
+## Official Bootstrap
+
+```bash
+tandem-setup init
+```
+
+This creates a canonical env file, bootstraps engine state, and installs services on Linux/macOS when run with the privileges needed for service registration.
+
+Useful follow-up commands:
+
+```bash
+tandem-setup doctor
+tandem-setup service status
+tandem-setup service restart
+tandem-setup pair mobile
+```
+
+## Run Foreground
 
 ```bash
 tandem-control-panel
 ```
 
-Alias also supported:
-
-```bash
-tandem-setup
-```
-
-Bootstrap env/token first (recommended):
-
-```bash
-tandem-control-panel --init
-```
-
 Or:
 
 ```bash
-tandem-control-panel-init
+tandem-setup run
 ```
 
-Install Linux systemd services (engine + panel):
+## Service Management
 
 ```bash
-sudo tandem-control-panel --install-services
+tandem-setup service install
+tandem-setup service status
+tandem-setup service restart
+tandem-setup service logs
 ```
 
-Options:
+Legacy flag mode is still supported for compatibility:
 
-- `--service-mode=both|engine|panel` (default `both`)
-- `--service-user=<linux-user>` (default: `SUDO_USER`/current user)
-- `--service-op=status|start|stop|restart|enable|disable|logs` (operate existing services)
-
-Example operations:
-
-```bash
-tandem-control-panel --service-op=status --service-mode=both
-sudo tandem-control-panel --service-op=restart --service-mode=panel
-sudo tandem-control-panel --service-op=logs --service-mode=both
-```
+`tandem-control-panel --init`, `--install-services`, and `--service-op=...`
 
 ## Features
 
@@ -77,8 +75,12 @@ cp .env.example .env
 Variables:
 
 - `TANDEM_CONTROL_PANEL_PORT` (default `39732`)
+- `TANDEM_CONTROL_PANEL_HOST` (default `127.0.0.1`)
+- `TANDEM_CONTROL_PANEL_PUBLIC_URL` (optional future pairing / gateway URL)
 - `TANDEM_ENGINE_URL` (default `http://127.0.0.1:39731`)
 - `TANDEM_ENGINE_HOST` + `TANDEM_ENGINE_PORT` fallback
+- `TANDEM_STATE_DIR` (canonical engine state dir for official installs)
+- `TANDEM_CONTROL_PANEL_STATE_DIR` (control-panel state dir for official installs)
 - `TANDEM_CONTROL_PANEL_AUTO_START_ENGINE` (`1`/`0`)
 - `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` (token injected when panel auto-starts engine)
 - `TANDEM_API_TOKEN` (backward-compatible alias for engine token)
@@ -126,9 +128,10 @@ Notes:
 
 ## Setup Flow
 
-1. Run `tandem-control-panel --init` to create/update `.env` and generate a token if missing.
-2. Run `tandem-control-panel`.
-3. Sign in with the printed `TANDEM_CONTROL_PANEL_ENGINE_TOKEN`.
+1. Run `tandem-setup init`.
+2. Verify with `tandem-setup doctor`.
+3. If running foreground, start `tandem-control-panel`.
+4. Sign in with the printed `TANDEM_CONTROL_PANEL_ENGINE_TOKEN`.
 
 ## Development
 
@@ -144,14 +147,14 @@ npm run build
 If you run from this repo directly, use:
 
 ```bash
-node packages/tandem-control-panel/bin/setup.js --init
-node packages/tandem-control-panel/bin/setup.js
+node packages/tandem-control-panel/bin/cli.js init --no-service
+node packages/tandem-control-panel/bin/cli.js run
 ```
 
 Service install/ops from source:
 
 ```bash
-sudo node packages/tandem-control-panel/bin/setup.js --install-services --service-mode=both
-node packages/tandem-control-panel/bin/setup.js --service-op=status --service-mode=both
-sudo node packages/tandem-control-panel/bin/setup.js --service-op=restart --service-mode=panel
+sudo node packages/tandem-control-panel/bin/cli.js service install
+node packages/tandem-control-panel/bin/cli.js service status
+sudo node packages/tandem-control-panel/bin/cli.js service restart
 ```

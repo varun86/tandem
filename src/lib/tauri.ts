@@ -54,6 +54,8 @@ export interface UserProject {
   last_accessed: string;
 }
 
+export type JsonObject = Record<string, unknown>;
+
 // API Key types
 export type ApiKeyType =
   | "openrouter"
@@ -1551,6 +1553,359 @@ export async function routinesRunAddArtifact(
   request: RoutineRunArtifactAddRequest
 ): Promise<RoutineRunRecord> {
   return invoke("routines_run_add_artifact", { runId, request });
+}
+
+export type AutomationV2Status = "active" | "paused" | "draft";
+export type AutomationV2ScheduleType = "cron" | "interval" | "manual";
+export type AutomationV2RunStatus =
+  | "queued"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface AutomationV2Schedule {
+  type: AutomationV2ScheduleType;
+  cron_expression?: string;
+  interval_seconds?: number;
+  timezone: string;
+  misfire_policy?: "skip" | "run_once" | "catch_up";
+}
+
+export interface AutomationV2AgentProfile {
+  agent_id: string;
+  template_id?: string;
+  display_name: string;
+  avatar_url?: string;
+  model_policy?: JsonObject;
+  skills?: string[];
+  tool_policy?: { allowlist?: string[]; denylist?: string[] };
+  mcp_policy?: { allowed_servers?: string[]; allowed_tools?: string[] | null };
+  approval_policy?: string;
+}
+
+export interface AutomationV2FlowNode {
+  node_id: string;
+  agent_id: string;
+  objective: string;
+  depends_on?: string[];
+  input_refs?: Array<{ from_step_id?: string; alias: string }>;
+  output_contract?: { kind: string };
+  retry_policy?: JsonObject;
+  timeout_ms?: number;
+}
+
+export interface AutomationV2Spec {
+  automation_id?: string;
+  name: string;
+  description?: string | null;
+  status?: AutomationV2Status;
+  schedule: AutomationV2Schedule;
+  agents: AutomationV2AgentProfile[];
+  flow: { nodes: AutomationV2FlowNode[] };
+  execution?: {
+    max_parallel_agents?: number;
+    max_total_runtime_ms?: number;
+    max_total_tool_calls?: number;
+  };
+  output_targets?: string[];
+  creator_id?: string;
+  workspace_root?: string;
+  metadata?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanStep {
+  step_id?: string;
+  kind: string;
+  objective: string;
+  depends_on?: string[];
+  agent_role?: string;
+  input_refs?: Array<{ from_step_id?: string; alias: string }>;
+  output_contract?: { kind: string };
+}
+
+export interface WorkflowPlan {
+  plan_id?: string;
+  planner_version?: string;
+  plan_source?: string;
+  original_prompt?: string;
+  normalized_prompt?: string;
+  confidence?: string;
+  title: string;
+  description?: string;
+  schedule: AutomationV2Schedule;
+  execution_target?: string;
+  workspace_root?: string;
+  steps: WorkflowPlanStep[];
+  allowed_mcp_servers?: string[];
+  operator_preferences?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanPackBuilderExportRequest {
+  enabled?: boolean;
+  session_id?: string;
+  thread_key?: string;
+  auto_apply?: boolean;
+}
+
+export interface WorkflowPlanPackBuilderExportResult {
+  status?: string;
+  error?: string;
+  http_status?: number;
+  plan_id?: string;
+  session_id?: string;
+  thread_key?: string;
+  auto_apply_requested?: boolean;
+  auto_apply_ready?: boolean;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanChatMessage {
+  role: string;
+  text: string;
+  created_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanConversation {
+  conversation_id?: string;
+  plan_id?: string;
+  created_at_ms?: number;
+  updated_at_ms?: number;
+  messages: WorkflowPlanChatMessage[];
+  [key: string]: unknown;
+}
+
+export interface AutomationV2RunRecord {
+  run_id: string;
+  automation_id: string;
+  status: AutomationV2RunStatus;
+  checkpoint?: JsonObject;
+  active_session_ids?: string[];
+  active_instance_ids?: string[];
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlansPreviewRequest {
+  prompt: string;
+  schedule?: AutomationV2Schedule | JsonObject;
+  planSource?: string;
+  plan_source?: string;
+  allowedMcpServers?: string[];
+  allowed_mcp_servers?: string[];
+  workspaceRoot?: string;
+  workspace_root?: string;
+  operatorPreferences?: JsonObject;
+  operator_preferences?: JsonObject;
+}
+
+export interface WorkflowPlansPreviewResponse {
+  plan: WorkflowPlan;
+  clarifier?: JsonObject | null;
+  assistant_message?: JsonObject;
+  planner_diagnostics?: JsonObject | null;
+}
+
+export interface WorkflowPlansApplyRequest {
+  planId?: string;
+  plan_id?: string;
+  plan?: WorkflowPlan;
+  creatorId?: string;
+  creator_id?: string;
+  packBuilderExport?: WorkflowPlanPackBuilderExportRequest;
+  pack_builder_export?: WorkflowPlanPackBuilderExportRequest;
+}
+
+export interface WorkflowPlansApplyResponse {
+  ok?: boolean;
+  plan?: WorkflowPlan;
+  automation?: JsonObject;
+  pack_builder_export?: WorkflowPlanPackBuilderExportResult;
+}
+
+export type WorkflowPlansChatStartRequest = WorkflowPlansPreviewRequest;
+
+export interface WorkflowPlansChatStartResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  planner_diagnostics?: JsonObject | null;
+}
+
+export interface WorkflowPlansChatMessageRequest {
+  planId?: string;
+  plan_id?: string;
+  message: string;
+}
+
+export interface WorkflowPlansChatMessageResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  assistant_message?: JsonObject;
+  change_summary?: string[];
+  clarifier?: JsonObject | null;
+  planner_diagnostics?: JsonObject | null;
+}
+
+export interface WorkflowPlansChatResetRequest {
+  planId?: string;
+  plan_id?: string;
+}
+
+export interface WorkflowPlansGetResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  planner_diagnostics?: JsonObject | null;
+}
+
+export interface AutomationV2ListResponse {
+  automations: AutomationV2Spec[];
+  count: number;
+}
+
+export interface AutomationV2GetResponse {
+  automation: AutomationV2Spec;
+}
+
+export interface AutomationV2MutationResponse {
+  ok?: boolean;
+  automation?: AutomationV2Spec;
+}
+
+export interface AutomationV2RunNowResponse {
+  ok?: boolean;
+  run?: AutomationV2RunRecord;
+}
+
+export interface AutomationV2RunsResponse {
+  runs: AutomationV2RunRecord[];
+  count: number;
+}
+
+export interface AutomationV2RunResponse {
+  ok?: boolean;
+  run?: AutomationV2RunRecord;
+}
+
+export async function workflowPlansPreview(
+  request: WorkflowPlansPreviewRequest
+): Promise<WorkflowPlansPreviewResponse> {
+  return invoke("workflow_plans_preview", { request });
+}
+
+export async function workflowPlansApply(
+  request: WorkflowPlansApplyRequest
+): Promise<WorkflowPlansApplyResponse> {
+  return invoke("workflow_plans_apply", { request });
+}
+
+export async function workflowPlansChatStart(
+  request: WorkflowPlansChatStartRequest
+): Promise<WorkflowPlansChatStartResponse> {
+  return invoke("workflow_plans_chat_start", { request });
+}
+
+export async function workflowPlansChatMessage(
+  request: WorkflowPlansChatMessageRequest
+): Promise<WorkflowPlansChatMessageResponse> {
+  return invoke("workflow_plans_chat_message", { request });
+}
+
+export async function workflowPlansChatReset(
+  request: WorkflowPlansChatResetRequest
+): Promise<WorkflowPlansGetResponse> {
+  return invoke("workflow_plans_chat_reset", { request });
+}
+
+export async function workflowPlansGet(planId: string): Promise<WorkflowPlansGetResponse> {
+  return invoke("workflow_plans_get", { planId });
+}
+
+export async function automationsV2List(): Promise<AutomationV2ListResponse> {
+  return invoke("automations_v2_list");
+}
+
+export async function automationsV2Get(automationId: string): Promise<AutomationV2GetResponse> {
+  return invoke("automations_v2_get", { automationId });
+}
+
+export async function automationsV2Update(
+  automationId: string,
+  request: Partial<AutomationV2Spec>
+): Promise<AutomationV2GetResponse> {
+  return invoke("automations_v2_update", { automationId, request });
+}
+
+export async function automationsV2Delete(
+  automationId: string
+): Promise<{ ok?: boolean; deleted?: boolean }> {
+  return invoke("automations_v2_delete", { automationId });
+}
+
+export async function automationsV2RunNow(
+  automationId: string
+): Promise<AutomationV2RunNowResponse> {
+  return invoke("automations_v2_run_now", { automationId });
+}
+
+export async function automationsV2Pause(
+  automationId: string,
+  reason?: string
+): Promise<AutomationV2MutationResponse> {
+  return invoke("automations_v2_pause", {
+    automationId,
+    request: { reason: reason ?? "" },
+  });
+}
+
+export async function automationsV2Resume(
+  automationId: string
+): Promise<AutomationV2MutationResponse> {
+  return invoke("automations_v2_resume", { automationId });
+}
+
+export async function automationsV2Runs(
+  automationId: string,
+  limit?: number
+): Promise<AutomationV2RunsResponse> {
+  return invoke("automations_v2_runs", { automationId, limit });
+}
+
+export async function automationsV2RunGet(runId: string): Promise<{ run: AutomationV2RunRecord }> {
+  return invoke("automations_v2_run_get", { runId });
+}
+
+export async function automationsV2RunPause(
+  runId: string,
+  reason?: string
+): Promise<AutomationV2RunResponse> {
+  return invoke("automations_v2_run_pause", {
+    runId,
+    request: { reason: reason ?? "" },
+  });
+}
+
+export async function automationsV2RunResume(
+  runId: string,
+  reason?: string
+): Promise<AutomationV2RunResponse> {
+  return invoke("automations_v2_run_resume", {
+    runId,
+    request: { reason: reason ?? "" },
+  });
+}
+
+export async function automationsV2RunCancel(
+  runId: string,
+  reason?: string
+): Promise<AutomationV2RunResponse> {
+  return invoke("automations_v2_run_cancel", {
+    runId,
+    request: { reason: reason ?? "" },
+  });
 }
 
 // ============================================================================

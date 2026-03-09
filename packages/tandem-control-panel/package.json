@@ -4,8 +4,8 @@
   "description": "Full web control center for Tandem Engine (chat, routines, swarm, memory, channels, and ops)",
   "type": "module",
   "bin": {
-    "tandem-control-panel": "bin/setup.js",
-    "tandem-setup": "bin/setup.js",
+    "tandem-control-panel": "bin/cli.js",
+    "tandem-setup": "bin/cli.js",
     "tandem-control-panel-init": "bin/init-env.js"
   },
   "scripts": {
@@ -14,8 +14,9 @@
     "preview": "vite preview",
     "test:smoke": "node --test tests/smoke.test.mjs",
     "init:env": "node bin/init-env.js",
+    "doctor": "node bin/cli.js doctor",
     "prepublishOnly": "npm run build",
-    "start": "node bin/setup.js",
+    "start": "node bin/cli.js run",
     "mcp:catalog:refresh": "node ../../scripts/generate-mcp-catalog.mjs"
   },
   "files": [

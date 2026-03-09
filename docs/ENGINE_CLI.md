@@ -10,6 +10,13 @@ tandem-engine serve --hostname 127.0.0.1 --port 39731
 tandem-engine run "Summarize this repository"
 ```
 
+For the official headless bootstrap path, use:
+
+```bash
+npm i -g @frumu/tandem-panel
+tandem-setup init
+```
+
 ## Command Overview
 
 ### `serve`

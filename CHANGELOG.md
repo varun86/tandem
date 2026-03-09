@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - Unreleased
+
+### Added
+
+- **Official headless bootstrap path through `@frumu/tandem-panel`**:
+  - added a real `tandem-setup` CLI with explicit `init`, `doctor`, `service`, `pair mobile`, and `run` commands
+  - added shared bootstrap modules for canonical env-path resolution, env generation, engine-config bootstrapping, and install-time diagnostics
+  - added cross-platform service generation for Linux `systemd` and macOS `launchd`
+  - added a shared `service-runner` entrypoint so managed services use the same env loading and runtime startup contract on both platforms
+  - added focused regression coverage for bootstrap env generation, `systemd` unit generation, `launchd` plist generation, and `doctor` output
+
+### Changed
+
+- **Control-panel bootstrap and runtime wiring**:
+  - made `tandem-setup init` the documented bootstrap path while keeping legacy `tandem-control-panel --init` compatibility
+  - updated control-panel bootstrap to prefer canonical OS config/data locations for official installs instead of cwd-only `.env` ownership
+  - added `TANDEM_CONTROL_PANEL_HOST`, `TANDEM_CONTROL_PANEL_PUBLIC_URL`, and canonical control-panel state-dir handling for future gateway/mobile pairing work
+  - updated the control-panel runtime to bind explicitly to the configured panel host and to load managed env files before startup
+  - updated package/docs/example guidance to point headless installs at the control-panel gateway layer instead of the old quickstart bootstrap path
+
 ## [0.4.3] - Unreleased
 
 ### Fixed

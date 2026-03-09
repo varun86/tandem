@@ -1,4 +1,22 @@
-# Tandem v0.4.3 Release Notes (Unreleased)
+# Tandem v0.4.4 Release Notes (Unreleased)
+
+### Control Panel Bootstrap
+
+- Added a real `tandem-setup` CLI with explicit `init`, `doctor`, `service`, `pair mobile`, and `run` commands.
+- Added shared bootstrap/setup modules for canonical env-path resolution, env generation, engine-config bootstrap, and diagnostics.
+- Added cross-platform service generation for Linux `systemd` and macOS `launchd`.
+- Added a shared `service-runner` entrypoint so managed services start through the same env-loading contract.
+- Added focused regression coverage for bootstrap env generation, `systemd` units, `launchd` plists, and `doctor`.
+
+### Control Panel Runtime and Docs
+
+- Made `tandem-setup init` the documented headless bootstrap path while keeping legacy `tandem-control-panel --init` compatibility.
+- Switched official bootstrap behavior to canonical OS config/data locations instead of cwd-only `.env` ownership.
+- Added `TANDEM_CONTROL_PANEL_HOST`, `TANDEM_CONTROL_PANEL_PUBLIC_URL`, and canonical control-panel state-dir support for future gateway/mobile pairing.
+- Updated the control-panel runtime to bind explicitly to the configured panel host and load managed env files before startup.
+- Updated package/docs/example guidance so headless installs flow through the control-panel gateway layer instead of the old quickstart bootstrap path.
+
+## Tandem v0.4.3 Release Notes (Unreleased)
 
 ### Automation Persistence Fixes
 

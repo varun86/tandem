@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Tandem Agent Quickstart — Auto-Setup
+#  Deprecated: prefer `npm i -g @frumu/tandem-panel && tandem-setup init`
 #  Usage: sudo bash setup-agent.sh
 #
 #  What it does:
