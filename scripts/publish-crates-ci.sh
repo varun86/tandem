@@ -44,6 +44,7 @@ CRATES=(
   "crates/tandem-browser"
   "crates/tandem-runtime"
   "crates/tandem-channels"
+  "crates/tandem-workflows"
   "crates/tandem-server"
   "crates/tandem-tui"
   "engine"
