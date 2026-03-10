@@ -1470,6 +1470,124 @@ async fn automations_v2_run_recover_from_pause_preserves_branched_state() {
 }
 
 #[tokio::test]
+async fn automations_v2_gate_rework_on_failed_branch_preserves_completed_sibling_branch() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-branch-gate-rework").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::AwaitingApproval;
+            row.checkpoint.completed_nodes = vec![
+                "research".to_string(),
+                "analysis".to_string(),
+                "draft".to_string(),
+            ];
+            row.checkpoint.pending_nodes = vec!["publish".to_string()];
+            row.checkpoint.awaiting_gate = Some(crate::AutomationPendingGate {
+                node_id: "publish".to_string(),
+                title: "Publish approval".to_string(),
+                instructions: Some("approve final publish step".to_string()),
+                decisions: vec![
+                    "approve".to_string(),
+                    "rework".to_string(),
+                    "cancel".to_string(),
+                ],
+                rework_targets: vec!["draft".to_string()],
+                requested_at_ms: crate::now_ms(),
+                upstream_node_ids: vec!["analysis".to_string(), "draft".to_string()],
+            });
+            row.checkpoint
+                .node_outputs
+                .insert("research".to_string(), json!({"summary":"research"}));
+            row.checkpoint
+                .node_outputs
+                .insert("analysis".to_string(), json!({"summary":"analysis"}));
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.blocked_nodes = vec!["publish".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/gate", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "decision": "rework", "reason": "redo only the draft branch" })
+                        .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let updated = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after gate rework");
+    assert_eq!(updated.status, crate::AutomationRunStatus::Queued);
+    assert!(updated
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "research"));
+    assert!(updated
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "analysis"));
+    assert!(!updated
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(!updated
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(updated.checkpoint.node_outputs.contains_key("research"));
+    assert!(updated.checkpoint.node_outputs.contains_key("analysis"));
+    assert!(!updated.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!updated.checkpoint.node_outputs.contains_key("publish"));
+    assert!(updated
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(updated
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(!updated
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "analysis"));
+    assert!(updated.checkpoint.awaiting_gate.is_none());
+    let gate_event = updated
+        .checkpoint
+        .gate_history
+        .iter()
+        .find(|entry| entry.decision == "rework")
+        .expect("gate rework event");
+    assert_eq!(
+        gate_event.reason.as_deref(),
+        Some("redo only the draft branch")
+    );
+}
+
+#[tokio::test]
 async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata() {
     let state = test_state().await;
     let app = app_router(state.clone());
