@@ -1234,6 +1234,12 @@ async fn automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_
         .create_automation_v2_run(&automation, "manual")
         .await
         .expect("run");
+    let _ = state
+        .add_automation_v2_session(&run.run_id, "session-a")
+        .await;
+    let _ = state
+        .add_automation_v2_session(&run.run_id, "session-b")
+        .await;
     state
         .update_automation_v2_run(&run.run_id, |row| {
             row.status = crate::AutomationRunStatus::Running;
@@ -1273,6 +1279,14 @@ async fn automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_
     );
     assert!(cancelled.active_session_ids.is_empty());
     assert!(cancelled.active_instance_ids.is_empty());
+    state
+        .apply_provider_usage_to_runs("session-a", 10, 20, 30)
+        .await;
+    let after_usage = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after late usage");
+    assert_eq!(after_usage.total_tokens, 0);
     let stop_event = cancelled
         .checkpoint
         .lifecycle_history
@@ -1298,6 +1312,12 @@ async fn automations_v2_run_pause_clears_active_sessions_and_instances() {
         .create_automation_v2_run(&automation, "manual")
         .await
         .expect("run");
+    let _ = state
+        .add_automation_v2_session(&run.run_id, "session-a")
+        .await;
+    let _ = state
+        .add_automation_v2_session(&run.run_id, "session-b")
+        .await;
     state
         .update_automation_v2_run(&run.run_id, |row| {
             row.status = crate::AutomationRunStatus::Running;
@@ -1339,6 +1359,14 @@ async fn automations_v2_run_pause_clears_active_sessions_and_instances() {
         pause_event.reason.as_deref(),
         Some("pause for operator checkpoint")
     );
+    state
+        .apply_provider_usage_to_runs("session-a", 10, 20, 30)
+        .await;
+    let after_usage = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after late usage");
+    assert_eq!(after_usage.total_tokens, 0);
 }
 
 #[tokio::test]

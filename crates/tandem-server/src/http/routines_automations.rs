@@ -1997,6 +1997,7 @@ pub(super) async fn automations_v2_pause(
     let runs = state.list_automation_v2_runs(Some(&id), 100).await;
     for run in runs {
         if run.status == AutomationRunStatus::Running {
+            let session_ids = run.active_session_ids.clone();
             let _ = state
                 .update_automation_v2_run(&run.run_id, |row| {
                     row.status = AutomationRunStatus::Pausing;
@@ -2012,6 +2013,7 @@ pub(super) async fn automations_v2_pause(
                     .cancel_instance(&state, &instance_id, "paused by operator")
                     .await;
             }
+            state.forget_automation_v2_sessions(&session_ids).await;
             let _ = state
                 .update_automation_v2_run(&run.run_id, |row| {
                     row.status = AutomationRunStatus::Paused;
@@ -2116,6 +2118,7 @@ pub(super) async fn automations_v2_run_pause(
         ));
     }
     let reason = reason_or_default(input.reason, "paused by operator");
+    let session_ids = current.active_session_ids.clone();
     let _ = state
         .update_automation_v2_run(&run_id, |run| {
             run.status = AutomationRunStatus::Pausing;
@@ -2140,6 +2143,7 @@ pub(super) async fn automations_v2_run_pause(
                 .await;
         }
     }
+    state.forget_automation_v2_sessions(&session_ids).await;
     let updated = state
         .update_automation_v2_run(&run_id, |run| {
             run.status = AutomationRunStatus::Paused;
@@ -2237,6 +2241,7 @@ pub(super) async fn automations_v2_run_cancel(
             ),
         ));
     }
+    let session_ids = current.active_session_ids.clone();
     for session_id in current.active_session_ids.clone() {
         let _ = state.cancellations.cancel(&session_id).await;
     }
@@ -2246,6 +2251,7 @@ pub(super) async fn automations_v2_run_cancel(
             .cancel_instance(&state, &instance_id, "cancelled by operator")
             .await;
     }
+    state.forget_automation_v2_sessions(&session_ids).await;
     let reason = reason_or_default(input.reason, "cancelled by operator");
     let updated = state
         .update_automation_v2_run(&run_id, |run| {

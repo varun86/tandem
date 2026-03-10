@@ -3765,6 +3765,13 @@ impl AppState {
         .await
     }
 
+    pub async fn forget_automation_v2_sessions(&self, session_ids: &[String]) {
+        let mut guard = self.automation_v2_session_runs.write().await;
+        for session_id in session_ids {
+            guard.remove(session_id);
+        }
+    }
+
     pub async fn add_automation_v2_instance(
         &self,
         run_id: &str,
@@ -6308,6 +6315,33 @@ fn automation_node_sort_key(
     )
 }
 
+fn automation_filter_runnable_by_open_phase(
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+    runnable: Vec<AutomationFlowNode>,
+) -> Vec<AutomationFlowNode> {
+    let Some((_, open_rank, _)) = automation_current_open_phase(automation, run) else {
+        return runnable;
+    };
+    let phase_rank = automation_phase_rank_map(automation);
+    let in_open_phase = runnable
+        .iter()
+        .filter(|node| {
+            automation_node_builder_metadata(node, "phase_id")
+                .as_ref()
+                .and_then(|phase_id| phase_rank.get(phase_id))
+                .copied()
+                == Some(open_rank)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if in_open_phase.is_empty() {
+        runnable
+    } else {
+        in_open_phase
+    }
+}
+
 pub(crate) fn automation_blocked_nodes(
     automation: &AutomationV2Spec,
     run: &AutomationV2RunRecord,
@@ -7023,9 +7057,10 @@ pub async fn run_automation_v2_executor(state: AppState) {
             }
             if let Some(detail) = automation_guardrail_failure(&automation, &latest) {
                 let session_ids = latest.active_session_ids.clone();
-                for session_id in session_ids {
+                for session_id in &session_ids {
                     let _ = state.cancellations.cancel(&session_id).await;
                 }
+                state.forget_automation_v2_sessions(&session_ids).await;
                 let instance_ids = latest.active_instance_ids.clone();
                 for instance_id in instance_ids {
                     let _ = state
@@ -7094,6 +7129,7 @@ pub async fn run_automation_v2_executor(state: AppState) {
                     }
                 })
                 .collect::<Vec<_>>();
+            runnable = automation_filter_runnable_by_open_phase(&automation, &latest, runnable);
             let phase_rank = automation_phase_rank_map(&automation);
             let current_open_phase_rank =
                 automation_current_open_phase(&automation, &latest).map(|(_, rank, _)| rank);
@@ -7229,6 +7265,19 @@ pub async fn run_automation_v2_executor(state: AppState) {
             for (node_id, result) in outcomes {
                 match result {
                     Ok(output) => {
+                        let can_accept = state
+                            .get_automation_v2_run(&run.run_id)
+                            .await
+                            .map(|row| {
+                                matches!(
+                                    row.status,
+                                    AutomationRunStatus::Running | AutomationRunStatus::Queued
+                                )
+                            })
+                            .unwrap_or(false);
+                        if !can_accept {
+                            continue;
+                        }
                         let session_id = automation_output_session_id(&output);
                         let summary = output
                             .get("summary")
@@ -7281,13 +7330,23 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .await;
                     }
                     Err(error) => {
-                        let is_paused = state
+                        let should_ignore = state
                             .get_automation_v2_run(&run.run_id)
                             .await
-                            .map(|row| row.status == AutomationRunStatus::Paused)
+                            .map(|row| {
+                                matches!(
+                                    row.status,
+                                    AutomationRunStatus::Paused
+                                        | AutomationRunStatus::Pausing
+                                        | AutomationRunStatus::AwaitingApproval
+                                        | AutomationRunStatus::Cancelled
+                                        | AutomationRunStatus::Failed
+                                        | AutomationRunStatus::Completed
+                                )
+                            })
                             .unwrap_or(false);
-                        if is_paused {
-                            break;
+                        if should_ignore {
+                            continue;
                         }
                         let detail = truncate_text(&error.to_string(), 500);
                         let attempts = latest_attempts.get(&node_id).copied().unwrap_or(1);
@@ -8503,5 +8562,29 @@ mod tests {
             automation_node_sort_key(draft, &phase_rank, current_open_phase_rank)
                 < automation_node_sort_key(publish, &phase_rank, current_open_phase_rank)
         );
+    }
+
+    #[test]
+    fn automation_soft_phase_limits_runnable_frontier_to_current_open_phase() {
+        let automation = test_phase_automation(
+            json!([
+                { "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "soft" },
+                { "phase_id": "phase_2", "title": "Phase 2", "execution_mode": "soft" }
+            ]),
+            vec![
+                test_automation_node("draft", Vec::new(), "phase_1", 1),
+                test_automation_node("publish", Vec::new(), "phase_2", 100),
+            ],
+        );
+        let run = test_phase_run(vec!["draft", "publish"], Vec::new());
+
+        let filtered = automation_filter_runnable_by_open_phase(
+            &automation,
+            &run,
+            automation.flow.nodes.clone(),
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].node_id, "draft");
     }
 }
