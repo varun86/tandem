@@ -128,7 +128,7 @@ Ship an advanced power-user mission compiler that lets operators define one coor
   - [x] keep richer repair history and prompt-diff visibility
 - [ ] P2: Add stronger visual dependency graph for workstreams, fan-out, and fan-in in the compile tab.
   - [x] add phase-grouped graph preview in the compile tab
-  - [~] continue toward richer visual fan-out/fan-in rendering beyond grouped dependency cards
+  - [x] add stronger topology rendering with lane grouping, fan-in/fan-out summaries, and explicit upstream/downstream handoff chips
 - [ ] Add richer validation warnings for:
   - [x] unreachable terminal stages not captured by milestone or approval promotion
   - [x] suspicious fan-in/fan-out

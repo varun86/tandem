@@ -737,13 +737,17 @@ export function AdvancedMissionBuilder({
   }, [blueprint, teamModel, workstreamModels]);
   const previewGraphColumns = useMemo(() => {
     if (!preview) return [];
+    const nodeLookup = new Map(preview.node_previews.map((node) => [node.node_id, node]));
     const downstreamCounts = new Map<string, number>();
+    const downstreamIds = new Map<string, string[]>();
     for (const node of preview.node_previews) {
       downstreamCounts.set(node.node_id, 0);
+      downstreamIds.set(node.node_id, []);
     }
     for (const node of preview.node_previews) {
       for (const upstreamId of node.depends_on) {
         downstreamCounts.set(upstreamId, (downstreamCounts.get(upstreamId) || 0) + 1);
+        downstreamIds.set(upstreamId, [...(downstreamIds.get(upstreamId) || []), node.node_id]);
       }
     }
     const phaseLookup = new Map(
@@ -765,7 +769,26 @@ export function AdvancedMissionBuilder({
         lanes: Array<{
           laneId: string;
           title: string;
-          nodes: Array<(typeof preview.node_previews)[number] & { downstreamCount: number }>;
+          inboundHandoffs: number;
+          outboundHandoffs: number;
+          nodes: Array<
+            (typeof preview.node_previews)[number] & {
+              downstreamCount: number;
+              downstreamNodeIds: string[];
+              dependencyEdges: Array<{
+                nodeId: string;
+                title: string;
+                crossLane: boolean;
+                crossPhase: boolean;
+              }>;
+              downstreamEdges: Array<{
+                nodeId: string;
+                title: string;
+                crossLane: boolean;
+                crossPhase: boolean;
+              }>;
+            }
+          >;
         }>;
       }
     >();
@@ -781,10 +804,44 @@ export function AdvancedMissionBuilder({
       const laneTitle = node.lane || "Unassigned Lane";
       let lane = existing.lanes.find((entry) => entry.laneId === laneId);
       if (!lane) {
-        lane = { laneId, title: laneTitle, nodes: [] };
+        lane = { laneId, title: laneTitle, inboundHandoffs: 0, outboundHandoffs: 0, nodes: [] };
         existing.lanes.push(lane);
       }
-      lane.nodes.push({ ...node, downstreamCount: downstreamCounts.get(node.node_id) || 0 });
+      const dependencyEdges = node.depends_on.map((dependencyId) => {
+        const dependencyNode = nodeLookup.get(dependencyId);
+        const dependencyLane = dependencyNode?.lane || "unassigned";
+        const dependencyPhase = dependencyNode?.phase_id || "unassigned";
+        const crossLane = dependencyLane !== laneId;
+        const crossPhase = dependencyPhase !== phaseId;
+        if (crossLane) lane!.inboundHandoffs += 1;
+        return {
+          nodeId: dependencyId,
+          title: dependencyNode?.title || dependencyId,
+          crossLane,
+          crossPhase,
+        };
+      });
+      const nodeDownstreamEdges = (downstreamIds.get(node.node_id) || []).map((downstreamId) => {
+        const downstreamNode = nodeLookup.get(downstreamId);
+        const downstreamLane = downstreamNode?.lane || "unassigned";
+        const downstreamPhase = downstreamNode?.phase_id || "unassigned";
+        const crossLane = downstreamLane !== laneId;
+        const crossPhase = downstreamPhase !== phaseId;
+        if (crossLane) lane!.outboundHandoffs += 1;
+        return {
+          nodeId: downstreamId,
+          title: downstreamNode?.title || downstreamId,
+          crossLane,
+          crossPhase,
+        };
+      });
+      lane.nodes.push({
+        ...node,
+        downstreamCount: downstreamCounts.get(node.node_id) || 0,
+        downstreamNodeIds: downstreamIds.get(node.node_id) || [],
+        dependencyEdges,
+        downstreamEdges: nodeDownstreamEdges,
+      });
       grouped.set(phaseId, existing);
     }
     return Array.from(grouped.values())
@@ -814,6 +871,33 @@ export function AdvancedMissionBuilder({
         return normalizedA - normalizedB || a.title.localeCompare(b.title);
       });
   }, [preview, effectiveBlueprint.phases]);
+  const previewGraphSummary = useMemo(() => {
+    if (!preview) return null;
+    const rootCount = preview.node_previews.filter((node) => node.depends_on.length === 0).length;
+    const terminalCount = preview.node_previews.filter(
+      (node) =>
+        !preview.node_previews.some((candidate) => candidate.depends_on.includes(node.node_id))
+    ).length;
+    let crossLaneEdges = 0;
+    let crossPhaseEdges = 0;
+    const nodeLookup = new Map(preview.node_previews.map((node) => [node.node_id, node]));
+    for (const node of preview.node_previews) {
+      for (const upstreamId of node.depends_on) {
+        const upstream = nodeLookup.get(upstreamId);
+        if ((upstream?.lane || "unassigned") !== (node.lane || "unassigned")) crossLaneEdges += 1;
+        if ((upstream?.phase_id || "unassigned") !== (node.phase_id || "unassigned")) {
+          crossPhaseEdges += 1;
+        }
+      }
+    }
+    const highFanIn = preview.node_previews.filter((node) => node.depends_on.length >= 3).length;
+    const highFanOut = preview.node_previews.filter(
+      (node) =>
+        preview.node_previews.filter((candidate) => candidate.depends_on.includes(node.node_id))
+          .length >= 3
+    ).length;
+    return { rootCount, terminalCount, crossLaneEdges, crossPhaseEdges, highFanIn, highFanOut };
+  }, [preview]);
 
   const compilePreview = async () => {
     setBusyKey("preview");
@@ -1984,6 +2068,28 @@ export function AdvancedMissionBuilder({
                   Grouped by phase so fan-out, fan-in, and promotion shape are visible before
                   launch.
                 </div>
+                {previewGraphSummary ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                    {[
+                      ["roots", previewGraphSummary.rootCount],
+                      ["terminals", previewGraphSummary.terminalCount],
+                      ["cross-lane", previewGraphSummary.crossLaneEdges],
+                      ["cross-phase", previewGraphSummary.crossPhaseEdges],
+                      ["high fan-in", previewGraphSummary.highFanIn],
+                      ["high fan-out", previewGraphSummary.highFanOut],
+                    ].map(([label, value]) => (
+                      <div
+                        key={String(label)}
+                        className="rounded-lg border border-border bg-surface px-3 py-2"
+                      >
+                        <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                          {label}
+                        </div>
+                        <div className="mt-1 text-sm font-medium text-text">{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-3 xl:grid-cols-3">
                   {previewGraphColumns.map((column) => (
                     <div
@@ -2003,11 +2109,17 @@ export function AdvancedMissionBuilder({
                             className="rounded-lg border border-border bg-surface-elevated/20 p-2"
                           >
                             <div className="mb-2 flex items-center justify-between gap-2">
-                              <div className="text-xs font-medium uppercase tracking-wide text-text-subtle">
-                                {lane.title}
-                              </div>
-                              <div className="text-[10px] uppercase tracking-wide text-text-subtle">
-                                {lane.nodes.length} node{lane.nodes.length === 1 ? "" : "s"}
+                              <div>
+                                <div className="text-xs font-medium uppercase tracking-wide text-text-subtle">
+                                  {lane.title}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-2 text-[10px] uppercase tracking-wide text-text-subtle">
+                                  <span>
+                                    {lane.nodes.length} node{lane.nodes.length === 1 ? "" : "s"}
+                                  </span>
+                                  <span>in {lane.inboundHandoffs}</span>
+                                  <span>out {lane.outboundHandoffs}</span>
+                                </div>
                               </div>
                             </div>
                             <div className="space-y-2">
@@ -2039,11 +2151,60 @@ export function AdvancedMissionBuilder({
                                       {node.depends_on.length ? "dependent" : "root"}
                                     </span>
                                   </div>
-                                  {node.depends_on.length ? (
-                                    <div className="mt-2 text-xs text-text-muted">
-                                      ← {node.depends_on.join(", ")}
+                                  <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                                    <div className="rounded border border-border bg-surface-elevated/30 px-2 py-2">
+                                      <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                        Upstream
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {node.dependencyEdges.length ? (
+                                          node.dependencyEdges.map((edge) => (
+                                            <span
+                                              key={`${node.node_id}-dep-${edge.nodeId}`}
+                                              className={`rounded border px-2 py-1 text-[11px] ${
+                                                edge.crossPhase
+                                                  ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                                  : edge.crossLane
+                                                    ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+                                                    : "border-border bg-surface text-text-muted"
+                                              }`}
+                                            >
+                                              {edge.title}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-[11px] text-emerald-300">root</span>
+                                        )}
+                                      </div>
                                     </div>
-                                  ) : null}
+                                    <div className="rounded border border-border bg-surface-elevated/30 px-2 py-2">
+                                      <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                        Downstream
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {node.downstreamEdges.length ? (
+                                          node.downstreamEdges.map((edge) => (
+                                            <span
+                                              key={`${node.node_id}-out-${edge.nodeId}`}
+                                              className={`rounded border px-2 py-1 text-[11px] ${
+                                                edge.crossPhase
+                                                  ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                                  : edge.crossLane
+                                                    ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+                                                    : "border-border bg-surface text-text-muted"
+                                              }`}
+                                            >
+                                              {edge.title}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-[11px] text-text-muted">
+                                            terminal
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
