@@ -2006,9 +2006,23 @@ pub(super) async fn automations_v2_pause(
             for session_id in run.active_session_ids {
                 let _ = state.cancellations.cancel(&session_id).await;
             }
+            for instance_id in run.active_instance_ids {
+                let _ = state
+                    .agent_teams
+                    .cancel_instance(&state, &instance_id, "paused by operator")
+                    .await;
+            }
             let _ = state
                 .update_automation_v2_run(&run.run_id, |row| {
                     row.status = AutomationRunStatus::Paused;
+                    row.active_session_ids.clear();
+                    row.active_instance_ids.clear();
+                    crate::record_automation_lifecycle_event(
+                        row,
+                        "run_paused",
+                        row.pause_reason.clone(),
+                        None,
+                    );
                 })
                 .await;
         }
@@ -2119,10 +2133,18 @@ pub(super) async fn automations_v2_run_pause(
         for session_id in run.active_session_ids {
             let _ = state.cancellations.cancel(&session_id).await;
         }
+        for instance_id in run.active_instance_ids {
+            let _ = state
+                .agent_teams
+                .cancel_instance(&state, &instance_id, "paused by operator")
+                .await;
+        }
     }
     let updated = state
         .update_automation_v2_run(&run_id, |run| {
             run.status = AutomationRunStatus::Paused;
+            run.active_session_ids.clear();
+            run.active_instance_ids.clear();
             crate::record_automation_lifecycle_event(
                 run,
                 "run_paused",
@@ -2591,6 +2613,14 @@ pub(super) async fn automations_v2_run_repair(
             ),
         ));
     };
+    let agent_id = node.agent_id.clone();
+    let previous_prompt = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(|builder| builder.get("prompt"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let prompt = input
         .prompt
         .as_deref()
@@ -2625,16 +2655,21 @@ pub(super) async fn automations_v2_run_repair(
             })?;
         builder.insert("prompt".to_string(), Value::String(prompt_value.clone()));
     }
+    let previous_agent = automation
+        .agents
+        .iter()
+        .find(|agent| agent.agent_id == agent_id)
+        .cloned();
     if template_id.is_some() || model_policy.is_some() {
         let Some(agent) = automation
             .agents
             .iter_mut()
-            .find(|agent| agent.agent_id == node.agent_id)
+            .find(|agent| agent.agent_id == agent_id)
         else {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(
-                    json!({"error":"Node agent not found", "code":"AUTOMATION_V2_REPAIR_AGENT_NOT_FOUND", "agentID": node.agent_id}),
+                    json!({"error":"Node agent not found", "code":"AUTOMATION_V2_REPAIR_AGENT_NOT_FOUND", "agentID": agent_id}),
                 ),
             ));
         };
@@ -2658,6 +2693,11 @@ pub(super) async fn automations_v2_run_repair(
         input.reason,
         &format!("repaired node `{}` and reset affected subtree", node_id),
     );
+    let updated_agent = stored_automation
+        .agents
+        .iter()
+        .find(|agent| agent.agent_id == agent_id)
+        .cloned();
     let updated = state
         .update_automation_v2_run(&run_id, |run| {
             run.status = AutomationRunStatus::Queued;
@@ -2698,6 +2738,12 @@ pub(super) async fn automations_v2_run_repair(
                     "prompt_updated": prompt.is_some(),
                     "template_updated": template_id.is_some(),
                     "model_policy_updated": model_policy.is_some(),
+                    "previous_prompt": previous_prompt,
+                    "new_prompt": prompt,
+                    "previous_template_id": previous_agent.as_ref().and_then(|agent| agent.template_id.clone()),
+                    "new_template_id": updated_agent.as_ref().and_then(|agent| agent.template_id.clone()),
+                    "previous_model_policy": previous_agent.as_ref().and_then(|agent| agent.model_policy.clone()),
+                    "new_model_policy": updated_agent.as_ref().and_then(|agent| agent.model_policy.clone()),
                 })),
             );
         })

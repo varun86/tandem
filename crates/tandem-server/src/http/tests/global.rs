@@ -1287,6 +1287,111 @@ async fn automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_
 }
 
 #[tokio::test]
+async fn automations_v2_run_pause_clears_active_sessions_and_instances() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-pause-active-cleanup").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Running;
+            row.active_session_ids = vec!["session-a".to_string(), "session-b".to_string()];
+            row.active_instance_ids = vec!["instance-a".to_string(), "instance-b".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/pause", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "pause for operator checkpoint" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let paused = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("paused run");
+    assert_eq!(paused.status, crate::AutomationRunStatus::Paused);
+    assert!(paused.active_session_ids.is_empty());
+    assert!(paused.active_instance_ids.is_empty());
+    let pause_event = paused
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_paused")
+        .expect("run paused event");
+    assert_eq!(
+        pause_event.reason.as_deref(),
+        Some("pause for operator checkpoint")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_pause_clears_active_state_for_running_runs() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-automation-pause").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Running;
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.active_instance_ids = vec!["instance-a".to_string()];
+            row.pause_reason = None;
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/automations/v2/auto-v2-automation-pause/pause")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "pause automation and all active runs" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let stored = state
+        .get_automation_v2("auto-v2-automation-pause")
+        .await
+        .expect("stored automation");
+    assert_eq!(stored.status, crate::AutomationV2Status::Paused);
+
+    let paused_run = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("paused run");
+    assert_eq!(paused_run.status, crate::AutomationRunStatus::Paused);
+    assert_eq!(
+        paused_run.pause_reason.as_deref(),
+        Some("pause automation and all active runs")
+    );
+    assert!(paused_run.active_session_ids.is_empty());
+    assert!(paused_run.active_instance_ids.is_empty());
+}
+
+#[tokio::test]
 async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling_branch() {
     let state = test_state().await;
     let app = app_router(state.clone());
