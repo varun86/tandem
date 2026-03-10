@@ -2375,6 +2375,8 @@ impl AppState {
         *self.automations_v2.write().await = merged;
         if loaded_from_alternate {
             let _ = self.persist_automations_v2().await;
+        } else if canonical_loaded {
+            let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
         }
         Ok(())
     }
@@ -2388,6 +2390,7 @@ impl AppState {
             fs::create_dir_all(parent).await?;
         }
         fs::write(&self.automations_v2_path, &payload).await?;
+        let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
         Ok(())
     }
 
@@ -4161,6 +4164,22 @@ fn candidate_automations_v2_paths(active_path: &PathBuf) -> Vec<PathBuf> {
         candidates.push(default_path);
     }
     candidates
+}
+
+async fn cleanup_stale_legacy_automations_v2_file(active_path: &PathBuf) -> anyhow::Result<()> {
+    let Some(legacy_path) = legacy_automations_v2_path() else {
+        return Ok(());
+    };
+    if legacy_path == *active_path || !legacy_path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(&legacy_path).await?;
+    tracing::info!(
+        active_path = active_path.display().to_string(),
+        removed_path = legacy_path.display().to_string(),
+        "removed stale legacy automation v2 file after canonical persistence"
+    );
+    Ok(())
 }
 
 fn resolve_automation_v2_runs_path() -> PathBuf {

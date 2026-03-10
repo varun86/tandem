@@ -822,10 +822,10 @@ async fn workflow_plan_apply_succeeds_when_legacy_automations_file_is_stale() {
     let canonical_json: Value = serde_json::from_str(&canonical_raw).expect("canonical json");
     assert!(canonical_json.get(automation_id).is_some());
 
-    let legacy_raw = std::fs::read_to_string(state_root.join("automations_v2.json"))
-        .expect("read legacy automations file");
-    let legacy_json: Value = serde_json::from_str(&legacy_raw).expect("legacy json");
-    assert!(legacy_json.get(automation_id).is_none());
+    assert!(
+        !state_root.join("automations_v2.json").exists(),
+        "stale legacy automations file should be removed once canonical persistence succeeds"
+    );
 }
 
 #[tokio::test]
@@ -892,6 +892,10 @@ async fn load_automations_v2_prefers_canonical_file_over_stale_legacy_entries() 
         .map(|row| row.automation_id.as_str())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["automation-v2-current"]);
+    assert!(
+        !state_root.join("automations_v2.json").exists(),
+        "stale legacy automations file should be removed when canonical definitions load"
+    );
 }
 
 #[tokio::test]
