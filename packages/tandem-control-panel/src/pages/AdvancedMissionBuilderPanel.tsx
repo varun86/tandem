@@ -1286,10 +1286,6 @@ export function AdvancedMissionBuilderPanel({
     );
   }, [workspaceBrowserSearch, workspaceDirectories]);
   const workspaceRootError = validateWorkspaceRootInput(blueprint.workspace_root || workspaceRoot);
-  const uiValidationMessages = useMemo(
-    () => validateMissionBlueprintForUi(effectiveBlueprint),
-    [effectiveBlueprint]
-  );
 
   useEffect(() => {
     try {
@@ -1318,6 +1314,10 @@ export function AdvancedMissionBuilderPanel({
       })),
     };
   }, [blueprint, workspaceRoot, teamModel, workstreamModels, reviewModels]);
+  const uiValidationMessages = useMemo(
+    () => validateMissionBlueprintForUi(effectiveBlueprint),
+    [effectiveBlueprint]
+  );
 
   const stageIds = useMemo(
     () => [

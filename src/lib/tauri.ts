@@ -824,6 +824,7 @@ export interface ChannelRuntimeStatus {
 
 export interface ChannelConnectionConfigView {
   has_token: boolean;
+  token_masked?: string | null;
   allowed_users: string[];
   mention_only?: boolean | null;
   guild_id?: string | null;
@@ -1143,12 +1144,7 @@ export interface CoderAutomationBranchContext {
 
 export interface CoderAutomationMetadata {
   surface: "coder";
-  workflow_kind:
-    | "coding_swarm"
-    | "issue_fix"
-    | "pr_review"
-    | "merge_recommendation"
-    | "repo_task";
+  workflow_kind: "coding_swarm" | "issue_fix" | "pr_review" | "merge_recommendation" | "repo_task";
   preset_id: string;
   repo_binding?: CoderRepoBinding | null;
   github_ref?: CoderGithubRef | null;

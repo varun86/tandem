@@ -17,6 +17,14 @@ fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
     users
 }
 
+fn mask_saved_token(has_token: bool) -> Option<&'static str> {
+    if has_token {
+        Some("********")
+    } else {
+        None
+    }
+}
+
 pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value> {
     let effective = state.config.get_effective_value().await;
     let channels = effective.get("channels").and_then(Value::as_object);
@@ -50,6 +58,7 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
     Json(json!({
         "telegram": {
             "has_token": telegram_has_token,
+            "token_masked": mask_saved_token(telegram_has_token),
             "allowed_users": parse_allowed_users(telegram.and_then(|cfg| cfg.get("allowed_users"))),
             "mention_only": telegram
                 .and_then(|cfg| cfg.get("mention_only"))
@@ -62,6 +71,7 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
         },
         "discord": {
             "has_token": discord_has_token,
+            "token_masked": mask_saved_token(discord_has_token),
             "allowed_users": parse_allowed_users(discord.and_then(|cfg| cfg.get("allowed_users"))),
             "mention_only": discord
                 .and_then(|cfg| cfg.get("mention_only"))
@@ -73,6 +83,7 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
         },
         "slack": {
             "has_token": slack_has_token,
+            "token_masked": mask_saved_token(slack_has_token),
             "allowed_users": parse_allowed_users(slack.and_then(|cfg| cfg.get("allowed_users"))),
             "mention_only": slack
                 .and_then(|cfg| cfg.get("mention_only"))

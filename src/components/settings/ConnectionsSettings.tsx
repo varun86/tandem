@@ -446,10 +446,20 @@ export function ConnectionsSettings() {
                   onChange={(event) => updateDraft(channel, { token: event.target.value })}
                   placeholder={t("connections.botTokenPlaceholder", {
                     ns: "settings",
-                    defaultValue: "Leave blank to keep saved token",
+                    defaultValue:
+                      channelData.config.token_masked || "Leave blank to keep saved token",
                   })}
                   autoComplete="off"
                 />
+                {channelData.config.has_token && !draft.token ? (
+                  <p className="text-xs text-text-subtle">
+                    {t("connections.tokenStoredHint", {
+                      ns: "settings",
+                      defaultValue:
+                        "A token is already stored. Enter a new one only if you want to replace it.",
+                    })}
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">

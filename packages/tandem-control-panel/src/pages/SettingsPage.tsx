@@ -171,6 +171,7 @@ type BugMonitorPostRow = {
 
 type ChannelConfigRow = {
   has_token?: boolean;
+  token_masked?: string;
   allowed_users?: string[];
   mention_only?: boolean;
   guild_id?: string;
@@ -1688,7 +1689,7 @@ export function SettingsPage({
                               type="password"
                               placeholder={
                                 config.has_token
-                                  ? `Token saved for ${channel}. Enter a new token to replace it.`
+                                  ? String(config.token_masked || "********")
                                   : `Paste ${channel} bot token`
                               }
                               value={draft.botToken}
@@ -1702,6 +1703,12 @@ export function SettingsPage({
                                 }))
                               }
                             />
+                            {config.has_token && !draft.botToken ? (
+                              <div className="tcp-subtle text-xs">
+                                Token is already stored. Enter a new token only if you want to
+                                replace it.
+                              </div>
+                            ) : null}
                             <input
                               className="tcp-input"
                               placeholder="Allowed users (comma separated)"

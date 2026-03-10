@@ -2010,6 +2010,7 @@ pub struct ChannelConnectionInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct ChannelConnectionConfigView {
     pub has_token: bool,
+    pub token_masked: Option<String>,
     pub allowed_users: Vec<String>,
     pub mention_only: Option<bool>,
     pub guild_id: Option<String>,
@@ -2059,12 +2060,20 @@ fn merge_channel_views(
             .copied()
             .unwrap_or(fallback)
     };
+    let masked_token_for = |channel: &'static str, fallback: bool| -> Option<String> {
+        if has_token_for(channel, fallback) {
+            Some("********".to_string())
+        } else {
+            None
+        }
+    };
 
     ChannelConnectionsView {
         telegram: ChannelConnectionView {
             status: statuses.telegram,
             config: ChannelConnectionConfigView {
                 has_token: has_token_for("telegram", configs.telegram.has_token),
+                token_masked: masked_token_for("telegram", configs.telegram.has_token),
                 allowed_users: normalize_allowed_users(Some(configs.telegram.allowed_users), &[]),
                 mention_only: Some(configs.telegram.mention_only),
                 guild_id: None,
@@ -2075,6 +2084,7 @@ fn merge_channel_views(
             status: statuses.discord,
             config: ChannelConnectionConfigView {
                 has_token: has_token_for("discord", configs.discord.has_token),
+                token_masked: masked_token_for("discord", configs.discord.has_token),
                 allowed_users: normalize_allowed_users(Some(configs.discord.allowed_users), &[]),
                 mention_only: Some(configs.discord.mention_only),
                 guild_id: trim_to_option(configs.discord.guild_id),
@@ -2085,6 +2095,7 @@ fn merge_channel_views(
             status: statuses.slack,
             config: ChannelConnectionConfigView {
                 has_token: has_token_for("slack", configs.slack.has_token),
+                token_masked: masked_token_for("slack", configs.slack.has_token),
                 allowed_users: normalize_allowed_users(Some(configs.slack.allowed_users), &[]),
                 mention_only: None,
                 guild_id: None,

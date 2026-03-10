@@ -49,6 +49,27 @@ async fn channels_config_returns_non_secret_shape() {
             .and_then(Value::as_bool),
         Some(true)
     );
+    assert_eq!(
+        payload
+            .get("telegram")
+            .and_then(|v| v.get("token_masked"))
+            .and_then(Value::as_str),
+        Some("********")
+    );
+    assert_eq!(
+        payload
+            .get("discord")
+            .and_then(|v| v.get("token_masked"))
+            .and_then(Value::as_str),
+        Some("********")
+    );
+    assert_eq!(
+        payload
+            .get("slack")
+            .and_then(|v| v.get("token_masked"))
+            .and_then(Value::as_str),
+        Some("********")
+    );
     assert!(payload
         .get("telegram")
         .and_then(Value::as_object)
