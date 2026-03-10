@@ -2349,7 +2349,6 @@ pub(super) async fn automations_v2_run_gate_decide(
                     decided_at_ms: crate::now_ms(),
                 });
             run.checkpoint.awaiting_gate = None;
-            run.checkpoint.blocked_nodes.clear();
             match decision.as_str() {
                 "approve" => {
                     run.status = AutomationRunStatus::Queued;
@@ -2432,6 +2431,7 @@ pub(super) async fn automations_v2_run_gate_decide(
             }
             if decision != "cancel" {
                 run.resume_reason = Some(format!("gate `{}` decision: {}", gate.node_id, decision));
+                crate::refresh_automation_runtime_state(&automation, run);
             }
         })
         .await
@@ -2510,7 +2510,6 @@ pub(super) async fn automations_v2_run_recover(
             run.stop_kind = None;
             run.stop_reason = None;
             run.checkpoint.awaiting_gate = None;
-            run.checkpoint.blocked_nodes.clear();
             if !reset_nodes.is_empty() {
                 for node_id in &reset_nodes {
                     run.checkpoint.node_outputs.remove(node_id);
@@ -2540,6 +2539,7 @@ pub(super) async fn automations_v2_run_recover(
                 Some(reason.clone()),
                 None,
             );
+            crate::refresh_automation_runtime_state(&automation, run);
         })
         .await
         .ok_or_else(|| {
@@ -2708,7 +2708,6 @@ pub(super) async fn automations_v2_run_repair(
             run.stop_reason = None;
             run.pause_reason = None;
             run.checkpoint.awaiting_gate = None;
-            run.checkpoint.blocked_nodes.clear();
             for reset_node_id in &reset_nodes {
                 run.checkpoint.node_outputs.remove(reset_node_id);
                 run.checkpoint.node_attempts.remove(reset_node_id);
@@ -2746,6 +2745,7 @@ pub(super) async fn automations_v2_run_repair(
                     "new_model_policy": updated_agent.as_ref().and_then(|agent| agent.model_policy.clone()),
                 })),
             );
+            crate::refresh_automation_runtime_state(&stored_automation, run);
         })
         .await
         .ok_or_else(|| {

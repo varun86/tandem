@@ -6195,6 +6195,74 @@ fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
         .unwrap_or(0)
 }
 
+fn automation_phase_execution_mode_map(
+    automation: &AutomationV2Spec,
+) -> std::collections::HashMap<String, String> {
+    automation
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("mission"))
+        .and_then(|mission| mission.get("phases"))
+        .and_then(Value::as_array)
+        .map(|phases| {
+            phases
+                .iter()
+                .filter_map(|phase| {
+                    let phase_id = phase.get("phase_id").and_then(Value::as_str)?.trim();
+                    if phase_id.is_empty() {
+                        return None;
+                    }
+                    let mode = phase
+                        .get("execution_mode")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("soft");
+                    Some((phase_id.to_string(), mode.to_string()))
+                })
+                .collect::<std::collections::HashMap<_, _>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_current_open_phase(
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+) -> Option<(String, usize, String)> {
+    let phase_rank = automation_phase_rank_map(automation);
+    if phase_rank.is_empty() {
+        return None;
+    }
+    let phase_modes = automation_phase_execution_mode_map(automation);
+    let completed = run
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    automation
+        .flow
+        .nodes
+        .iter()
+        .filter(|node| !completed.contains(&node.node_id))
+        .filter_map(|node| {
+            automation_node_builder_metadata(node, "phase_id").and_then(|phase_id| {
+                phase_rank
+                    .get(&phase_id)
+                    .copied()
+                    .map(|rank| (phase_id, rank))
+            })
+        })
+        .min_by_key(|(_, rank)| *rank)
+        .map(|(phase_id, rank)| {
+            let mode = phase_modes
+                .get(&phase_id)
+                .cloned()
+                .unwrap_or_else(|| "soft".to_string());
+            (phase_id, rank, mode)
+        })
+}
+
 fn automation_phase_rank_map(
     automation: &AutomationV2Spec,
 ) -> std::collections::HashMap<String, usize> {
@@ -6222,17 +6290,111 @@ fn automation_phase_rank_map(
 fn automation_node_sort_key(
     node: &AutomationFlowNode,
     phase_rank: &std::collections::HashMap<String, usize>,
-) -> (usize, i32, String) {
+    current_open_phase_rank: Option<usize>,
+) -> (usize, usize, i32, String) {
     let phase_order = automation_node_builder_metadata(node, "phase_id")
         .as_ref()
         .and_then(|phase_id| phase_rank.get(phase_id))
         .copied()
         .unwrap_or(usize::MAX / 2);
+    let open_phase_bias = current_open_phase_rank
+        .map(|open_rank| usize::from(phase_order != open_rank))
+        .unwrap_or(0);
     (
+        open_phase_bias,
         phase_order,
         -automation_node_builder_priority(node),
         node.node_id.clone(),
     )
+}
+
+pub(crate) fn automation_blocked_nodes(
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+) -> Vec<String> {
+    let completed = run
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    let pending = run
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    let phase_rank = automation_phase_rank_map(automation);
+    let current_open_phase = automation_current_open_phase(automation, run);
+    automation
+        .flow
+        .nodes
+        .iter()
+        .filter(|node| pending.contains(&node.node_id))
+        .filter_map(|node| {
+            let missing_deps = node.depends_on.iter().any(|dep| !completed.contains(dep));
+            if missing_deps {
+                return Some(node.node_id.clone());
+            }
+            let Some((_, open_rank, mode)) = current_open_phase.as_ref() else {
+                return None;
+            };
+            if mode != "barrier" {
+                return None;
+            }
+            let node_phase_rank = automation_node_builder_metadata(node, "phase_id")
+                .as_ref()
+                .and_then(|phase_id| phase_rank.get(phase_id))
+                .copied();
+            if node_phase_rank.is_some_and(|rank| rank > *open_rank) {
+                return Some(node.node_id.clone());
+            }
+            None
+        })
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn record_automation_open_phase_event(
+    automation: &AutomationV2Spec,
+    run: &mut AutomationV2RunRecord,
+) {
+    let Some((phase_id, phase_rank, execution_mode)) =
+        automation_current_open_phase(automation, run)
+    else {
+        return;
+    };
+    let last_recorded = run
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .rev()
+        .find(|entry| entry.event == "phase_opened")
+        .and_then(|entry| entry.metadata.as_ref())
+        .and_then(|metadata| metadata.get("phase_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if last_recorded.as_deref() == Some(phase_id.as_str()) {
+        return;
+    }
+    record_automation_lifecycle_event_with_metadata(
+        run,
+        "phase_opened",
+        Some(format!("phase `{}` is now open", phase_id)),
+        None,
+        Some(json!({
+            "phase_id": phase_id,
+            "phase_rank": phase_rank,
+            "execution_mode": execution_mode,
+        })),
+    );
+}
+
+pub(crate) fn refresh_automation_runtime_state(
+    automation: &AutomationV2Spec,
+    run: &mut AutomationV2RunRecord,
+) {
+    run.checkpoint.blocked_nodes = automation_blocked_nodes(automation, run);
+    record_automation_open_phase_event(automation, run);
 }
 
 fn automation_mission_milestones(automation: &AutomationV2Spec) -> Vec<Value> {
@@ -6850,6 +7012,15 @@ pub async fn run_automation_v2_executor(state: AppState) {
             let Some(latest) = state.get_automation_v2_run(&run.run_id).await else {
                 break;
             };
+            if latest.checkpoint.awaiting_gate.is_none() {
+                let blocked_nodes = automation_blocked_nodes(&automation, &latest);
+                let _ = state
+                    .update_automation_v2_run(&run.run_id, |row| {
+                        row.checkpoint.blocked_nodes = blocked_nodes.clone();
+                        record_automation_open_phase_event(&automation, row);
+                    })
+                    .await;
+            }
             if let Some(detail) = automation_guardrail_failure(&automation, &latest) {
                 let session_ids = latest.active_session_ids.clone();
                 for session_id in session_ids {
@@ -6924,9 +7095,12 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 })
                 .collect::<Vec<_>>();
             let phase_rank = automation_phase_rank_map(&automation);
+            let current_open_phase_rank =
+                automation_current_open_phase(&automation, &latest).map(|(_, rank, _)| rank);
             runnable.sort_by(|a, b| {
-                automation_node_sort_key(a, &phase_rank)
-                    .cmp(&automation_node_sort_key(b, &phase_rank))
+                automation_node_sort_key(a, &phase_rank, current_open_phase_rank).cmp(
+                    &automation_node_sort_key(b, &phase_rank, current_open_phase_rank),
+                )
             });
             let runnable = runnable.into_iter().take(max_parallel).collect::<Vec<_>>();
 
@@ -7439,6 +7613,124 @@ async fn resolve_routine_model_spec_for_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_automation_node(
+        node_id: &str,
+        depends_on: Vec<&str>,
+        phase_id: &str,
+        priority: i64,
+    ) -> AutomationFlowNode {
+        AutomationFlowNode {
+            node_id: node_id.to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: format!("Run {node_id}"),
+            depends_on: depends_on.into_iter().map(str::to_string).collect(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "phase_id": phase_id,
+                    "priority": priority
+                }
+            })),
+        }
+    }
+
+    fn test_phase_automation(phases: Value, nodes: Vec<AutomationFlowNode>) -> AutomationV2Spec {
+        AutomationV2Spec {
+            automation_id: "auto-phase-test".to_string(),
+            name: "Phase Test".to_string(),
+            description: None,
+            status: AutomationV2Status::Active,
+            schedule: AutomationV2Schedule {
+                schedule_type: AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+            },
+            agents: vec![AutomationAgentProfile {
+                agent_id: "agent-a".to_string(),
+                template_id: Some("template-a".to_string()),
+                display_name: "Agent A".to_string(),
+                avatar_url: None,
+                model_policy: None,
+                skills: Vec::new(),
+                tool_policy: AutomationAgentToolPolicy {
+                    allowlist: Vec::new(),
+                    denylist: Vec::new(),
+                },
+                mcp_policy: AutomationAgentMcpPolicy {
+                    allowed_servers: Vec::new(),
+                    allowed_tools: None,
+                },
+                approval_policy: None,
+            }],
+            flow: AutomationFlowSpec { nodes },
+            execution: AutomationExecutionPolicy {
+                max_parallel_agents: Some(2),
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            creator_id: "test".to_string(),
+            workspace_root: Some(".".to_string()),
+            metadata: Some(json!({
+                "mission": {
+                    "phases": phases
+                }
+            })),
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        }
+    }
+
+    fn test_phase_run(
+        pending_nodes: Vec<&str>,
+        completed_nodes: Vec<&str>,
+    ) -> AutomationV2RunRecord {
+        AutomationV2RunRecord {
+            run_id: "run-phase-test".to_string(),
+            automation_id: "auto-phase-test".to_string(),
+            trigger_type: "manual".to_string(),
+            status: AutomationRunStatus::Queued,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            started_at_ms: None,
+            finished_at_ms: None,
+            active_session_ids: Vec::new(),
+            active_instance_ids: Vec::new(),
+            checkpoint: AutomationRunCheckpoint {
+                completed_nodes: completed_nodes.into_iter().map(str::to_string).collect(),
+                pending_nodes: pending_nodes.into_iter().map(str::to_string).collect(),
+                node_outputs: std::collections::HashMap::new(),
+                node_attempts: std::collections::HashMap::new(),
+                blocked_nodes: Vec::new(),
+                awaiting_gate: None,
+                gate_history: Vec::new(),
+                lifecycle_history: Vec::new(),
+                last_failure: None,
+            },
+            automation_snapshot: None,
+            pause_reason: None,
+            resume_reason: None,
+            detail: None,
+            stop_kind: None,
+            stop_reason: None,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
+        }
+    }
 
     fn test_state_with_path(path: PathBuf) -> AppState {
         let mut state = AppState::new_starting("test-attempt".to_string(), true);
@@ -8155,5 +8447,61 @@ mod tests {
         assert!(is_valid_resource_key("project/demo"));
         assert!(!is_valid_resource_key("swarm//active_tasks"));
         assert!(!is_valid_resource_key("misc/demo"));
+    }
+
+    #[test]
+    fn automation_blocked_nodes_respects_barrier_open_phase() {
+        let automation = test_phase_automation(
+            json!([
+                { "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "barrier" },
+                { "phase_id": "phase_2", "title": "Phase 2", "execution_mode": "soft" }
+            ]),
+            vec![
+                test_automation_node("draft", Vec::new(), "phase_1", 1),
+                test_automation_node("publish", Vec::new(), "phase_2", 100),
+            ],
+        );
+        let run = test_phase_run(vec!["draft", "publish"], Vec::new());
+
+        assert_eq!(
+            automation_blocked_nodes(&automation, &run),
+            vec!["publish".to_string()]
+        );
+    }
+
+    #[test]
+    fn automation_soft_phase_prefers_current_open_phase_before_priority() {
+        let automation = test_phase_automation(
+            json!([
+                { "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "soft" },
+                { "phase_id": "phase_2", "title": "Phase 2", "execution_mode": "soft" }
+            ]),
+            vec![
+                test_automation_node("draft", Vec::new(), "phase_1", 1),
+                test_automation_node("publish", Vec::new(), "phase_2", 100),
+            ],
+        );
+        let run = test_phase_run(vec!["draft", "publish"], Vec::new());
+        let phase_rank = automation_phase_rank_map(&automation);
+        let current_open_phase_rank =
+            automation_current_open_phase(&automation, &run).map(|(_, rank, _)| rank);
+        let draft = automation
+            .flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "draft")
+            .expect("draft node");
+        let publish = automation
+            .flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "publish")
+            .expect("publish node");
+
+        assert!(automation_blocked_nodes(&automation, &run).is_empty());
+        assert!(
+            automation_node_sort_key(draft, &phase_rank, current_open_phase_rank)
+                < automation_node_sort_key(publish, &phase_rank, current_open_phase_rank)
+        );
     }
 }

@@ -1205,7 +1205,10 @@ async fn automations_v2_run_recover_from_pause_preserves_completed_state_and_rec
     );
     assert!(recovered.checkpoint.node_outputs.contains_key("draft"));
     assert!(recovered.checkpoint.awaiting_gate.is_none());
-    assert!(recovered.checkpoint.blocked_nodes.is_empty());
+    assert_eq!(
+        recovered.checkpoint.blocked_nodes,
+        vec!["approval".to_string()]
+    );
     assert_eq!(
         recovered.resume_reason.as_deref(),
         Some("continue after operator pause")
@@ -1557,7 +1560,10 @@ async fn automations_v2_run_recover_from_pause_preserves_branched_state() {
     assert!(recovered.checkpoint.node_outputs.contains_key("research"));
     assert!(recovered.checkpoint.node_outputs.contains_key("analysis"));
     assert!(!recovered.checkpoint.node_outputs.contains_key("draft"));
-    assert!(recovered.checkpoint.blocked_nodes.is_empty());
+    assert_eq!(
+        recovered.checkpoint.blocked_nodes,
+        vec!["publish".to_string()]
+    );
     assert_eq!(
         recovered.resume_reason.as_deref(),
         Some("continue branched mission after pause")
@@ -1674,6 +1680,10 @@ async fn automations_v2_gate_rework_on_failed_branch_preserves_completed_sibling
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "publish"));
+    assert_eq!(
+        updated.checkpoint.blocked_nodes,
+        vec!["publish".to_string()]
+    );
     assert!(!updated
         .checkpoint
         .pending_nodes
@@ -1787,6 +1797,10 @@ async fn automations_v2_run_repair_preserves_completed_sibling_branch() {
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "publish"));
+    assert_eq!(
+        repaired.checkpoint.blocked_nodes,
+        vec!["publish".to_string()]
+    );
     assert!(!repaired
         .checkpoint
         .pending_nodes
