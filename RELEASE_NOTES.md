@@ -2,7 +2,26 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.4.5 (Unreleased)
+## v0.4.6 (Unreleased)
+
+- Advanced Swarm Builder for coordinated multi-agent missions
+  - Added a new advanced mission builder on top of `AutomationV2Spec` for orchestrated swarm-style workloads instead of only the simple workflow wizard.
+  - Added mission blueprints with mission goal, shared context, workstreams, dependencies, output contracts, review stages, approval gates, and reusable per-role agent/model selection.
+  - Added project-management semantics for advanced missions, including phases, lanes, priorities, milestones, and gate metadata.
+  - Added compile preview, validation warnings, graph summaries, and stronger grouped dependency visualization for advanced missions.
+
+- Web control-panel parity for advanced mission creation
+  - Added a native control-panel advanced builder so the browser `/automations` surface can create and edit advanced mission automations alongside the desktop app.
+  - Added a how-it-works modal, inline field guidance, and AI/workflow/agentic starter mission presets in the web UI.
+  - Moved starter presets out of the TSX component into external preset files for easier review and reuse.
+
+- Automation V2 recovery, observability, and execution hardening
+  - Added clearer stop/pause/recover semantics, branch-local repair and rework handling, richer per-step diagnostics, and milestone promotion history for advanced automation runs.
+  - Fixed advanced-builder schedule payloads to use the tagged `misfire_policy` shape expected by the server.
+  - Fixed external mission preset loading in the control panel.
+  - Fixed an engine panic during malformed automation node execution and converted node panics into normal run failures so stuck runs surface truthfully.
+
+## v0.4.5 (Released 2026-03-10)
 
 - Workflow automation editor and run debugger improvements
   - Expanded the workflow edit modal into a large editor with dedicated prompt editing for workflow step objectives.

@@ -5,7 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.5] - Unreleased
+## [0.4.6] - Unreleased
+
+### Added
+
+- **Advanced Swarm Builder across desktop and control panel**:
+  - added a new mission-oriented advanced builder on top of `AutomationV2Spec` for coordinated multi-agent workloads
+  - added authored mission blueprints with mission goal, shared context, orchestrator selection, workstreams, dependencies, output contracts, review stages, and approval gates
+  - added first-class PM semantics for advanced missions, including phases, lanes, priorities, milestones, and gate metadata
+  - added advanced-builder compile preview, validation warnings, graph summaries, and grouped lane/phase visualization
+  - added native control-panel support for the advanced builder so web and desktop can both create and edit advanced mission automations
+  - added in-product operator guidance for the web advanced builder, including a how-it-works modal, inline help text, and starter mission presets
+  - added external starter-mission preset files so advanced builder examples live as content instead of hardcoded UI data
+
+### Changed
+
+- **Advanced mission execution, recovery, and observability**:
+  - compiled advanced missions into richer `AutomationV2Spec` metadata while keeping execution on the existing automation runtime
+  - added mission-wide inheritance so workstreams receive the global brief, success criteria, shared context, scoped assignment, dependency context, and output expectations
+  - improved automation runtime scheduling with phase-open semantics, runnable frontier shaping, and priority-aware ordering without violating dependency legality
+  - added advanced-automation reopen/edit continuity, including reconstruction of older sparse `mission_blueprint` records from compiled automation data
+  - expanded control-panel graph preview and scope editing so per-step tools and MCP overrides are easier to inspect and edit
+
+### Fixed
+
+- **Automation V2 control, failure handling, and run diagnostics**:
+  - added explicit operator-stop, guardrail-stop, pause, resume, and recovery semantics for advanced automation runs, including tighter active session and instance cleanup
+  - hardened branch-local repair, gate rework, and pause/recovery flows so completed sibling branches remain intact and blocked fan-in is recomputed coherently
+  - added structured node lifecycle events, repair history, milestone promotion history, and richer per-step diagnostics in automation run inspection
+  - fixed advanced-builder schedule payloads to use the server-required tagged `misfire_policy` shape
+  - fixed external mission preset loading in the control panel
+  - fixed an engine panic caused by malformed one-character quoted scalar values during automation execution and converted node panics into normal run failures instead of leaving runs deceptively pending
+
+## [0.4.5] - 2026-03-10
 
 ### Added
 

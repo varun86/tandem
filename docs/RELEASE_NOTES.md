@@ -1,4 +1,27 @@
-# Tandem v0.4.5 Release Notes (Unreleased)
+# Tandem v0.4.6 Release Notes (Unreleased)
+
+### Advanced Swarm Builder
+
+- Added a new advanced mission builder on top of `AutomationV2Spec` for coordinated multi-agent swarm workloads.
+- Added mission blueprints with mission goal, shared context, workstreams, dependencies, output contracts, review stages, approval gates, and reusable per-role agent/model selection.
+- Added PM-style mission semantics including phases, lanes, priorities, milestones, and gate metadata.
+- Added compile preview, validation warnings, and stronger graph visualization for advanced mission plans.
+
+### Control Panel Advanced Builder Parity
+
+- Added a native web control-panel advanced builder so `#/automations` can create and edit advanced mission automations alongside the desktop app.
+- Added a how-it-works modal, inline field guidance, and stronger AI/workflow/agentic starter mission presets.
+- Moved starter mission presets into external preset files instead of hardcoding them in the builder component.
+
+### Automation V2 Recovery and Execution Hardening
+
+- Added clearer operator-stop, guardrail-stop, pause, resume, recover, repair, and rework semantics for advanced automation runs.
+- Added richer run diagnostics including per-step events, repair history, and milestone promotion history.
+- Fixed advanced-builder schedule payloads to use the server-required tagged `misfire_policy` shape.
+- Fixed external mission preset loading in the control panel.
+- Fixed an engine panic during malformed automation node execution and converted node panics into normal run failures instead of leaving runs deceptively pending.
+
+## Tandem v0.4.5 Release Notes (Released 2026-03-10)
 
 ### Workflow Automation Editor and Debugger
 
