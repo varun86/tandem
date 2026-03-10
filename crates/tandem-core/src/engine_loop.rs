@@ -5288,6 +5288,9 @@ fn parse_scalar_like_value(raw: &str) -> Value {
     if (trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
     {
+        if trimmed.len() < 2 {
+            return Value::String(trimmed.to_string());
+        }
         return Value::String(trimmed[1..trimmed.len().saturating_sub(1)].to_string());
     }
 
@@ -6531,6 +6534,15 @@ Call: todowrite(task_id=3, status="in_progress")
             parsed.get("query").and_then(|v| v.as_str()),
             Some("meaning of life")
         );
+    }
+
+    #[test]
+    fn parse_scalar_like_value_handles_single_quote_character_without_panicking() {
+        assert_eq!(
+            parse_scalar_like_value("\""),
+            Value::String("\"".to_string())
+        );
+        assert_eq!(parse_scalar_like_value("'"), Value::String("'".to_string()));
     }
 
     #[test]

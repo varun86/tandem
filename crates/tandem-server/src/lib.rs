@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 
 use std::ops::Deref;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -3880,20 +3881,20 @@ async fn build_channels_config(
     Some(ChannelsConfig {
         telegram: channels.telegram.clone().map(|cfg| TelegramConfig {
             bot_token: cfg.bot_token,
-            allowed_users: cfg.allowed_users,
+            allowed_users: normalize_allowed_users_or_wildcard(cfg.allowed_users),
             mention_only: cfg.mention_only,
             style_profile: cfg.style_profile,
         }),
         discord: channels.discord.clone().map(|cfg| DiscordConfig {
             bot_token: cfg.bot_token,
             guild_id: cfg.guild_id,
-            allowed_users: cfg.allowed_users,
+            allowed_users: normalize_allowed_users_or_wildcard(cfg.allowed_users),
             mention_only: cfg.mention_only,
         }),
         slack: channels.slack.clone().map(|cfg| SlackConfig {
             bot_token: cfg.bot_token,
             channel_id: cfg.channel_id,
-            allowed_users: cfg.allowed_users,
+            allowed_users: normalize_allowed_users_or_wildcard(cfg.allowed_users),
             mention_only: cfg.mention_only,
         }),
         server_base_url: state.server_base_url(),
@@ -3921,6 +3922,14 @@ fn default_web_ui_prefix() -> String {
 
 fn default_allow_all() -> Vec<String> {
     vec!["*".to_string()]
+}
+
+fn normalize_allowed_users_or_wildcard(raw: Vec<String>) -> Vec<String> {
+    let normalized = normalize_non_empty_list(raw);
+    if normalized.is_empty() {
+        return default_allow_all();
+    }
+    normalized
 }
 
 fn default_discord_mention_only() -> bool {
@@ -7246,9 +7255,27 @@ pub async fn run_automation_v2_executor(state: AppState) {
                     let automation = automation.clone();
                     let node = node.clone();
                     async move {
-                        let result =
-                            execute_automation_v2_node(&state, &run_id, &automation, &node, &agent)
-                                .await;
+                        let result = AssertUnwindSafe(execute_automation_v2_node(
+                            &state,
+                            &run_id,
+                            &automation,
+                            &node,
+                            &agent,
+                        ))
+                        .catch_unwind()
+                        .await
+                        .map_err(|panic_payload| {
+                            let detail = if let Some(message) = panic_payload.downcast_ref::<&str>()
+                            {
+                                (*message).to_string()
+                            } else if let Some(message) = panic_payload.downcast_ref::<String>() {
+                                message.clone()
+                            } else {
+                                "unknown panic".to_string()
+                            };
+                            anyhow::anyhow!("node execution panicked: {}", detail)
+                        })
+                        .and_then(|result| result);
                         (node.node_id, result)
                     }
                     .boxed()
