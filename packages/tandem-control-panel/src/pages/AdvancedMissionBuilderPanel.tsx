@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TandemClient } from "@frumu/tandem-client";
+import agenticDesignPresetSource from "../presets/mission-builder/agentic-design.yaml?raw";
+import aiOpportunityPresetSource from "../presets/mission-builder/ai-opportunity.yaml?raw";
+import automationRolloutPresetSource from "../presets/mission-builder/automation-rollout.yaml?raw";
+import workflowAuditPresetSource from "../presets/mission-builder/workflow-audit.yaml?raw";
 
 type ApiFn = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -105,6 +109,13 @@ type MissionBlueprint = {
     } | null;
   }>;
   metadata?: unknown;
+};
+
+type MissionPreset = {
+  id: StarterPresetId;
+  label: string;
+  description: string;
+  blueprint: MissionBlueprint;
 };
 
 function normalizeMcpServers(raw: any): McpServerOption[] {
@@ -216,6 +227,17 @@ function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
     metadata: null,
   };
 }
+
+function parseMissionPreset(source: string): MissionPreset {
+  return JSON.parse(source) as MissionPreset;
+}
+
+const STARTER_PRESETS = [
+  parseMissionPreset(aiOpportunityPresetSource),
+  parseMissionPreset(workflowAuditPresetSource),
+  parseMissionPreset(agenticDesignPresetSource),
+  parseMissionPreset(automationRolloutPresetSource),
+];
 
 function starterBlueprint(preset: StarterPresetId, workspaceRoot: string): MissionBlueprint {
   const root = defaultBlueprint(workspaceRoot);
@@ -1088,7 +1110,14 @@ export function AdvancedMissionBuilderPanel({
   }
 
   function applyStarterPreset(preset: StarterPresetId) {
-    const next = starterBlueprint(preset, blueprint.workspace_root || workspaceRoot);
+    const presetRecord = STARTER_PRESETS.find((entry) => entry.id === preset);
+    if (!presetRecord) return;
+    const next = {
+      ...defaultBlueprint(blueprint.workspace_root || workspaceRoot),
+      ...presetRecord.blueprint,
+      mission_id: `mission_${crypto.randomUUID().slice(0, 8)}`,
+      workspace_root: blueprint.workspace_root || workspaceRoot,
+    };
     setBlueprint(next);
     setPreview(null);
     setError("");
@@ -1096,7 +1125,10 @@ export function AdvancedMissionBuilderPanel({
     setTeamModel({ provider: defaultProvider, model: defaultModel });
     setWorkstreamModels({});
     setReviewModels({});
-    toast("info", `Loaded ${next.title}. Review the prompts and adapt them to your mission.`);
+    toast(
+      "info",
+      `Loaded ${presetRecord.label}. Review the prompts and adapt them to your mission.`
+    );
   }
 
   async function compilePreview() {
