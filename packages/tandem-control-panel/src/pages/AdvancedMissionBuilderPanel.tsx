@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TandemClient } from "@frumu/tandem-client";
+import { renderIcons } from "../app/icons.js";
 import agenticDesignPresetSource from "../presets/mission-builder/agentic-design.yaml?raw";
 import aiOpportunityPresetSource from "../presets/mission-builder/ai-opportunity.yaml?raw";
 import automationRolloutPresetSource from "../presets/mission-builder/automation-rollout.yaml?raw";
@@ -711,6 +712,18 @@ function validateWorkspaceRootInput(raw: string) {
   return "";
 }
 
+function validateMissionBlueprintForUi(blueprint: MissionBlueprint) {
+  const messages: string[] = [];
+  if (!String(blueprint.title || "").trim()) messages.push("Mission title is required.");
+  if (!String(blueprint.goal || "").trim()) messages.push("Mission goal is required.");
+  const workspaceError = validateWorkspaceRootInput(blueprint.workspace_root);
+  if (workspaceError) messages.push(workspaceError);
+  if (!Array.isArray(blueprint.workstreams) || blueprint.workstreams.length === 0) {
+    messages.push("At least one workstream is required.");
+  }
+  return messages;
+}
+
 function extractMissionBlueprint(automation: any, workspaceRoot: string): MissionBlueprint | null {
   const metadata =
     automation?.metadata && typeof automation.metadata === "object" ? automation.metadata : {};
@@ -1068,6 +1081,7 @@ export function AdvancedMissionBuilderPanel({
   onClearEditing?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [activeTab, setActiveTab] = useState<CreateModeTab>("mission");
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>("manual");
   const [intervalSeconds, setIntervalSeconds] = useState("3600");
@@ -1272,6 +1286,17 @@ export function AdvancedMissionBuilderPanel({
     );
   }, [workspaceBrowserSearch, workspaceDirectories]);
   const workspaceRootError = validateWorkspaceRootInput(blueprint.workspace_root || workspaceRoot);
+  const uiValidationMessages = useMemo(
+    () => validateMissionBlueprintForUi(effectiveBlueprint),
+    [effectiveBlueprint]
+  );
+
+  useEffect(() => {
+    try {
+      if (rootRef.current) renderIcons(rootRef.current);
+      else renderIcons();
+    } catch {}
+  }, [activeTab, showGuide, preview, busy, blueprint, teamModel, workstreamModels, reviewModels]);
 
   const effectiveBlueprint = useMemo(() => {
     return {
@@ -1387,6 +1412,13 @@ export function AdvancedMissionBuilderPanel({
   }
 
   async function compilePreview() {
+    if (uiValidationMessages.length) {
+      const message = uiValidationMessages.join(" ");
+      setError(message);
+      toast("err", message);
+      setActiveTab("mission");
+      return;
+    }
     setBusy("preview");
     setError("");
     try {
@@ -1400,7 +1432,12 @@ export function AdvancedMissionBuilderPanel({
       setPreview(response);
       setActiveTab("compile");
     } catch (compileError) {
-      const message = compileError instanceof Error ? compileError.message : String(compileError);
+      const fallback =
+        compileError instanceof Error ? compileError.message : String(compileError || "");
+      const message =
+        fallback === "mission blueprint validation failed" && uiValidationMessages.length
+          ? uiValidationMessages.join(" ")
+          : fallback;
       setError(message);
       toast("err", message);
     } finally {
@@ -1409,6 +1446,13 @@ export function AdvancedMissionBuilderPanel({
   }
 
   async function saveMission() {
+    if (uiValidationMessages.length) {
+      const message = uiValidationMessages.join(" ");
+      setError(message);
+      toast("err", message);
+      setActiveTab("mission");
+      return;
+    }
     setBusy("apply");
     setError("");
     try {
@@ -1462,7 +1506,11 @@ export function AdvancedMissionBuilderPanel({
       setPreview(null);
       setRunAfterCreate(true);
     } catch (applyError) {
-      const message = applyError instanceof Error ? applyError.message : String(applyError);
+      const fallback = applyError instanceof Error ? applyError.message : String(applyError || "");
+      const message =
+        fallback === "mission blueprint validation failed" && uiValidationMessages.length
+          ? uiValidationMessages.join(" ")
+          : fallback;
       setError(message);
       toast("err", message);
     } finally {
@@ -1471,7 +1519,7 @@ export function AdvancedMissionBuilderPanel({
   }
 
   return (
-    <div className="grid gap-4">
+    <div ref={rootRef} className="grid gap-4">
       <div className="rounded-xl border border-slate-700/50 bg-slate-950/50 p-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
           Mission Builder
