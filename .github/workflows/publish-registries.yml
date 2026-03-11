@@ -70,7 +70,6 @@ jobs:
         run: |
           set -euo pipefail
           pnpm -C packages/tandem-client-ts install --frozen-lockfile
-          pnpm -C packages/tandem-control-panel install --frozen-lockfile
 
       - name: Verify embedded knowledge bundle is in sync
         shell: bash
@@ -327,7 +326,6 @@ jobs:
         run: |
           set -euo pipefail
           pnpm -C packages/tandem-client-ts install --frozen-lockfile
-          pnpm -C packages/tandem-control-panel install --frozen-lockfile
 
       - name: Configure npm for tokenless Trusted Publishing
         shell: bash
