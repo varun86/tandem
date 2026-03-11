@@ -64,6 +64,26 @@ const updateJson = (relativePath) => {
   const content = fs.readFileSync(filePath, "utf8");
   const data = JSON.parse(content);
   data.version = version;
+  const internalDeps = [
+    ["@frumu/tandem", `^${version}`],
+    ["@frumu/tandem-client", `^${version}`],
+    ["@frumu/tandem-tui", `^${version}`],
+    ["@frumu/tandem-panel", `^${version}`],
+  ];
+  for (const [name, nextVersion] of internalDeps) {
+    if (data.dependencies && typeof data.dependencies[name] === "string") {
+      data.dependencies[name] = nextVersion;
+    }
+    if (data.devDependencies && typeof data.devDependencies[name] === "string") {
+      data.devDependencies[name] = nextVersion;
+    }
+    if (data.optionalDependencies && typeof data.optionalDependencies[name] === "string") {
+      data.optionalDependencies[name] = nextVersion;
+    }
+    if (data.peerDependencies && typeof data.peerDependencies[name] === "string") {
+      data.peerDependencies[name] = nextVersion;
+    }
+  }
   fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
   updatedFiles.push(relativePath);
 };

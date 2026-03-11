@@ -8,11 +8,11 @@ importers:
   .:
     dependencies:
       "@frumu/tandem":
-        specifier: ^0.3.25
-        version: 0.3.25
+        specifier: ^0.4.6
+        version: 0.4.6
       "@frumu/tandem-client":
-        specifier: ^0.3.25
-        version: 0.3.25
+        specifier: ^0.4.6
+        version: 0.4.6
       "@tanstack/react-query":
         specifier: ^5.90.21
         version: 5.90.21(react@19.2.4)
@@ -481,17 +481,17 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  "@frumu/tandem-client@0.3.25":
+  "@frumu/tandem-client@0.4.6":
     resolution:
       {
-        integrity: sha512-uYkOwNSa/lokeW2miloMQ4w+SikgbS4FaNS7PHzsVEqI5xqQasRH9tSRge6R3IIJ9Iy8JA093QZ+UCEweJf4AQ==,
+        integrity: sha512-77AeVYbNgGCWRZ7mi6c5ClVR9h2T1YqxZr8Zq1Gkvp9eCF8WOvlbr7yeq3zyD0XXhCKRu4z2Ilg43MeAe0H5QQ==,
       }
     engines: { node: ">=18" }
 
-  "@frumu/tandem@0.3.25":
+  "@frumu/tandem@0.4.6":
     resolution:
       {
-        integrity: sha512-0Jf82bY6PLFKaUciagITIHEv15pNbkrcq85z/J8TlOcg7YtwCTWwVjauiSp26CFS3i+0h4qhyH9YLUVuU3TxrA==,
+        integrity: sha512-pBHtLVQ8XT7H2WR60oY8J6j9688x7ru52kpwqEY/crdDciNFP7WcPdf832lfCaNB5u4VKXISPouU9OtkS1+mkw==,
       }
     cpu: [x64, arm64]
     os: [darwin, linux, win32]
@@ -2117,11 +2117,11 @@ snapshots:
   "@esbuild/win32-x64@0.27.3":
     optional: true
 
-  "@frumu/tandem-client@0.3.25":
+  "@frumu/tandem-client@0.4.6":
     dependencies:
       zod: 4.3.6
 
-  "@frumu/tandem@0.3.25": {}
+  "@frumu/tandem@0.4.6": {}
 
   "@jridgewell/gen-mapping@0.3.13":
     dependencies:

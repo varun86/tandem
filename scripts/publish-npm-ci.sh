@@ -44,6 +44,25 @@ if [[ "$DRY_RUN" == "true" ]]; then
   echo "Mode: dry-run" | tee -a "$LOG_FILE"
 fi
 
+wait_for_npm_version() {
+  local name="$1"
+  local version="$2"
+  local attempts="${3:-20}"
+  local delay="${4:-15}"
+
+  for ((i = 1; i <= attempts; i += 1)); do
+    if npm view "${name}@${version}" version >/dev/null 2>&1; then
+      echo "Confirmed ${name}@${version} on npm" | tee -a "$LOG_FILE"
+      return 0
+    fi
+    echo "Waiting for ${name}@${version} to appear on npm (${i}/${attempts})..." | tee -a "$LOG_FILE"
+    sleep "$delay"
+  done
+
+  echo "Timed out waiting for ${name}@${version} to appear on npm" | tee -a "$LOG_FILE"
+  return 1
+}
+
 for dir in "${PACKAGES[@]}"; do
   if [[ ! -d "$dir" ]]; then
     echo "SKIP $dir (missing directory)" | tee -a "$LOG_FILE"
@@ -82,6 +101,8 @@ for dir in "${PACKAGES[@]}"; do
 
   # Control panel publish path: build static bundle explicitly, then publish without lifecycle scripts.
   if [[ "$dir" == "packages/tandem-control-panel" ]]; then
+    wait_for_npm_version "@frumu/tandem" "$version"
+    wait_for_npm_version "@frumu/tandem-client" "$version"
     if command -v pnpm >/dev/null 2>&1; then
       echo "Building static bundle for $name@$version with pnpm run build" | tee -a "$LOG_FILE"
       (

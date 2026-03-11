@@ -48,6 +48,24 @@ const { artifactName, binaryName, isWindows } = getArtifactInfo();
 const binDir = path.join(__dirname, '..', 'bin', 'native');
 const destPath = path.join(binDir, binaryName);
 
+function buildHeaders(userAgent) {
+    const headers = { 'User-Agent': userAgent };
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+}
+
+function warnAndExit(err) {
+    const detail = err && err.message ? err.message : String(err);
+    console.warn(`Warning: tandem-engine binary download skipped: ${detail}`);
+    console.warn(
+        "Install completed without a bundled binary. Runtime commands will require a later reinstall or a preinstalled tandem-engine binary."
+    );
+    process.exit(0);
+}
+
 if (!fs.existsSync(binDir)) {
     fs.mkdirSync(binDir, { recursive: true });
 }
@@ -60,7 +78,7 @@ if (fs.existsSync(destPath)) {
 // Helper to fetch JSON from GitHub API
 function fetchJson(url) {
     return new Promise((resolve, reject) => {
-        https.get(url, { headers: { 'User-Agent': 'tandem-engine-installer' } }, (res) => {
+        https.get(url, { headers: buildHeaders('tandem-engine-installer') }, (res) => {
             if (res.statusCode !== 200) {
                 if (res.statusCode === 302 || res.statusCode === 301) {
                     return fetchJson(res.headers.location).then(resolve).catch(reject);
@@ -114,7 +132,7 @@ async function download() {
         const downloadUrl = asset.browser_download_url;
 
         const request = (url) => {
-            https.get(url, { headers: { 'User-Agent': 'tandem-installer' } }, (res) => {
+            https.get(url, { headers: buildHeaders('tandem-installer') }, (res) => {
                 if (res.statusCode === 302 || res.statusCode === 301) {
                     return request(res.headers.location);
                 }
@@ -172,7 +190,4 @@ async function extract(archivePath) {
     }
 }
 
-download().then(extract).catch(err => {
-    console.error("Install failed:", err);
-    process.exit(1);
-});
+download().then(extract).catch(warnAndExit);

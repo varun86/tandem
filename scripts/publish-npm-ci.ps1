@@ -34,12 +34,34 @@ New-Item -ItemType File -Path $logFile -Force | Out-Null
 $packages = @(
     "packages/tandem-engine",
     "packages/tandem-tui",
-    "packages/tandem-client-ts"
+    "packages/tandem-client-ts",
+    "packages/tandem-control-panel"
 )
 
 Write-Host "Publishing npm wrappers..."
 if ($DryRun) {
     Write-Host "Mode: dry-run"
+}
+
+function Wait-NpmPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [int]$Attempts = 20,
+        [int]$DelaySeconds = 15
+    )
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        $view = Invoke-NpmText -Command "npm view $Name@$Version version"
+        if ($view.ExitCode -eq 0) {
+            "Confirmed $Name@$Version on npm" | Tee-Object -FilePath $logFile -Append
+            return
+        }
+        "Waiting for $Name@$Version to appear on npm ($i/$Attempts)..." | Tee-Object -FilePath $logFile -Append
+        Start-Sleep -Seconds $DelaySeconds
+    }
+
+    throw "Timed out waiting for $Name@$Version to appear on npm"
 }
 
 if (-not $DryRun -and $Otp) {
@@ -101,6 +123,24 @@ Then retry:
         $buildDts.Output | Tee-Object -FilePath $logFile -Append | Out-Null
         if ($buildDts.ExitCode -ne 0) {
             throw "Failed declaration build for $name@$version"
+        }
+        $publishCommand += " --ignore-scripts"
+    }
+
+    if ($dir -eq "packages/tandem-control-panel") {
+        Wait-NpmPackageVersion -Name "@frumu/tandem" -Version $version
+        Wait-NpmPackageVersion -Name "@frumu/tandem-client" -Version $version
+
+        $buildPanel = if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+            "Building static bundle for $name@$version with pnpm run build" | Tee-Object -FilePath $logFile -Append
+            Invoke-NpmText -WorkingDirectory $dir -Command "pnpm run build"
+        } else {
+            "Building static bundle for $name@$version with npx vite build (fallback)" | Tee-Object -FilePath $logFile -Append
+            Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p vite -p @frumu/tandem-client -p tailwindcss -p autoprefixer -p @tailwindcss/forms vite build"
+        }
+        $buildPanel.Output | Tee-Object -FilePath $logFile -Append | Out-Null
+        if ($buildPanel.ExitCode -ne 0) {
+            throw "Failed static bundle build for $name@$version"
         }
         $publishCommand += " --ignore-scripts"
     }
