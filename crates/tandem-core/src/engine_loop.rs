@@ -3393,6 +3393,10 @@ fn build_write_required_retry_context(
         prompt.push_str(&format!(
             "The required output target for this task is `{path}`. Write or update that file now."
         ));
+        prompt.push(' ');
+        prompt.push_str(
+            "Your next response must be a `write` tool call for that file, not a prose-only reply.",
+        );
     }
     prompt
 }
@@ -3441,6 +3445,12 @@ fn build_prewrite_repair_retry_context(
         prompt.push(' ');
         prompt.push_str("Repair this draft now before finalizing. ");
         prompt.push_str(&repair_notes.join(" "));
+    }
+    if let Some(path) = infer_required_output_target_path_from_text(latest_user_text) {
+        prompt.push(' ');
+        prompt.push_str(&format!(
+            "Even if the result is blocked, you must still write the blocked-but-substantive artifact into `{path}` before you finish."
+        ));
     }
     prompt
 }

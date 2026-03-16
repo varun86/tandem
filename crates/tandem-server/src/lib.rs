@@ -9035,23 +9035,10 @@ async fn clear_automation_declared_outputs(
     automation: &AutomationV2Spec,
 ) -> anyhow::Result<()> {
     let workspace_root = resolve_automation_v2_workspace_root(state, automation).await;
-    remove_suspicious_automation_marker_files(&workspace_root);
-    for output_path in automation_declared_output_paths(automation) {
-        let resolved = resolve_automation_output_path(&workspace_root, &output_path)?;
-        if !resolved.exists() {
-            continue;
-        }
-        if resolved.is_file() {
-            std::fs::remove_file(&resolved).map_err(|error| {
-                anyhow::anyhow!(
-                    "failed to remove stale output `{}` for automation `{}`: {}",
-                    output_path,
-                    automation.automation_id,
-                    error
-                )
-            })?;
-        }
-    }
+    // Preserve existing declared outputs across fresh runs so a failed retry does not
+    // wipe the user's last substantive artifacts. Descendant retry/requeue paths still
+    // clear subtree outputs explicitly when we know which node is being reset.
+    let _ = automation_declared_output_paths(automation);
     remove_suspicious_automation_marker_files(&workspace_root);
     Ok(())
 }

@@ -35,6 +35,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - placeholder/status-note overwrites no longer silently replace declared output artifacts
   - undeclared touch/status/marker files are rejected and cleaned up
   - substantive blocked artifacts remain on disk for inspection
+  - fresh workflow reruns now preserve prior declared outputs until a replacement artifact is actually produced, so a failed retry does not leave the workspace empty
   - when a later placeholder write overwrites a real earlier write in the same node, the engine now restores the best substantive write from session history
 
 - Saved Studio workflow deletion finally persists across restarts

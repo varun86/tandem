@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed agents overwriting declared artifacts with placeholder status notes such as “completed previously” / “preserving file creation requirement”
   - fixed declared workflow artifacts being replaced by stray touch/status/marker files created by the model
   - fixed substantive blocked briefs being deleted just because the node was semantically blocked; blocked research now preserves useful artifact content for inspection
+  - fixed fresh workflow runs wiping prior declared outputs before a replacement artifact existed; failed reruns now preserve the last substantive file instead of leaving the workspace empty
   - added recovery from in-session write history so earlier substantive file content can be restored when a later placeholder overwrite wins the final on-disk write
   - cleared stale descendant outputs on blocked-step continue/retry so subtree recovery no longer reuses bad artifacts
 - **Workflow blocking and runtime semantics**:

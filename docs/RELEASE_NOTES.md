@@ -37,6 +37,7 @@
 - Added artifact-validation checks for declared workflow outputs so placeholder/status-note overwrites no longer silently win.
 - Added rejection and cleanup of undeclared touch/status/marker files created by workflow agents.
 - Preserved substantive blocked artifacts on disk for inspection instead of deleting them just because the node was semantically blocked.
+- Fresh workflow reruns now preserve prior declared outputs until a replacement artifact is actually produced, so a failed retry does not leave the workspace empty.
 - Added recovery from session-local write history so if a node writes a real artifact and later overwrites it with a useless preservation note, the engine restores the best substantive write.
 - `Continue` on a blocked node now clears stale descendant outputs while preserving valid upstream artifacts.
 
