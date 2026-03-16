@@ -14,6 +14,7 @@ import {
   workflowCompletedNodeIds,
   workflowEventSummary,
   workflowFirstPendingTaskId,
+  workflowLatestLifecycleTaskId,
   workflowNodeOutputEntries,
   workflowNodeOutputText,
   workflowNodeToolTelemetry,
@@ -965,6 +966,8 @@ function detectWorkflowActiveTaskId(
     .trim()
     .toLowerCase();
   if (!["running", "pausing", "paused"].includes(status)) return "";
+  const lifecycleTaskId = workflowLatestLifecycleTaskId(run);
+  if (lifecycleTaskId) return lifecycleTaskId;
   for (let i = sessionEvents.length - 1; i >= 0; i -= 1) {
     const payload = sessionEvents[i]?.event?.properties || sessionEvents[i]?.event || {};
     const explicit = normalizeWorkflowTaskId(

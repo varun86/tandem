@@ -213,18 +213,31 @@ export function workflowLatestLifecycleEvent(run: any) {
   );
 }
 
+export function workflowEventNodeId(event: any) {
+  return String(event?.metadata?.node_id || event?.metadata?.nodeId || "").trim();
+}
+
+export function workflowEventTaskId(event: any) {
+  const nodeId = workflowEventNodeId(event);
+  if (!nodeId) return "";
+  return nodeId.startsWith("node-") ? nodeId : `node-${nodeId}`;
+}
+
 export function workflowRecentNodeEvents(run: any, nodeId: string, limit = 8) {
   const normalized = String(nodeId || "").trim();
   if (!normalized) return [];
   return workflowLifecycleHistory(run)
     .filter((event: any) => {
-      const metadataNodeId = String(
-        event?.metadata?.node_id || event?.metadata?.nodeId || ""
-      ).trim();
+      const metadataNodeId = workflowEventNodeId(event);
       return metadataNodeId === normalized;
     })
     .slice(-limit)
     .reverse();
+}
+
+export function workflowLatestLifecycleTaskId(run: any) {
+  const latestEvent = workflowLatestLifecycleEvent(run);
+  return workflowEventTaskId(latestEvent);
 }
 
 export function workflowLatestNodeOutput(run: any) {
@@ -291,6 +304,8 @@ export function workflowEventSummary(event: any) {
   return {
     event: String(event?.event || "event").trim() || "event",
     recordedAtMs: Number(event?.recorded_at_ms || event?.recordedAtMs || 0),
+    nodeId: workflowEventNodeId(event),
+    taskId: workflowEventTaskId(event),
     phase: String(event?.phase || metadata?.phase || "").trim(),
     failureKind: String(
       event?.failure_kind || event?.failureKind || metadata?.failure_kind || ""
