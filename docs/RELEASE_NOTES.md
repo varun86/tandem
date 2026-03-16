@@ -39,6 +39,17 @@
 
 - Fixed the control-panel README so repo-source service commands are shown correctly both from the repo root and from inside `packages/tandem-control-panel`.
 
+### Channel + Browser Tooling Reliability
+
+- Channel-created sessions now pre-approve browser tools and `mcp*` tool namespaces so channel operators are not blocked by approval requests they cannot answer from Telegram/Discord/Slack surfaces.
+- Fixed permission matching so wildcard permission names like `mcp*` apply to namespaced MCP tool ids instead of only exact string matches.
+- Browser sidecar startup now uses clap-friendly boolean env values, and browser-open requests normalize blank profile ids before launch.
+
+### Agent Context Manifests
+
+- Added conservative first-party component manifests for the Tandem engine, desktop app, TUI, control panel, and SDK clients.
+- Added matching copies under `src-tauri/resources/agent-context/` so packaged agent/runtime contexts can use the same component inventory.
+
 # Tandem v0.4.7 Release Notes (Released)
 
 ### Channel Memory Archival

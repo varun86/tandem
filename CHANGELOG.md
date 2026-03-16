@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow run recovery controls and richer node metadata**:
   - added `Continue` / `Continue From Here` for blocked `automation_v2` runs and `Retry` / `Retry Workflow` actions in the Run Debugger
   - added semantic node output metadata for `status`, `blocked_reason`, `approved`, tool telemetry, and artifact-validation results
+- **Agent context component manifests**:
+  - added first-party component manifests for Tandem engine, desktop, TUI, control panel, and SDK clients under `manifests/components/`
+  - bundled matching agent-context manifest copies into the desktop resources so runtime agents can use the same conservative component map
 
 ### Changed
 
@@ -44,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed saved Studio workflows reappearing after engine restart by cascading automation deletion into persisted `automation_v2` run history so old run snapshots cannot recreate deleted workflows
 - **Control-panel source-install docs**:
   - fixed the control-panel README examples so service commands work both from the repo root and from inside `packages/tandem-control-panel`
+- **Channel and browser runtime defaults**:
+  - channel-created sessions now pre-approve browser tools and `mcp*` tool namespaces so channel users do not get stuck on invisible approval prompts
+  - browser sidecar env flags now use clap-friendly boolean strings and browser-open requests normalize blank profile ids instead of passing malformed values downstream
+- **Permission matching for tool namespaces**:
+  - fixed permission evaluation so wildcard permission names like `mcp*` match namespaced tool ids instead of only exact permission strings
 
 ## [0.4.7] - Released
 

@@ -31,6 +31,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Control-panel repo-source docs were corrected
   - README service/init commands now show the right paths both from the repo root and from inside `packages/tandem-control-panel`
 
+- Channel/browser reliability and agent context packaging
+  - channel-created sessions now pre-approve browser tools and `mcp*` namespaces so channel operators do not get stuck on invisible approval prompts
+  - wildcard permission matching now works for namespaced permissions like `mcp*`
+  - browser sidecar env/profile handling was hardened for cleaner launches
+  - added bundled component-manifest agent context resources for Tandem engine, desktop, TUI, control panel, and SDK clients
+
 ## v0.4.7 (Released)
 
 - Channel memory now works end-to-end across fresh Telegram/Discord/Slack sessions
