@@ -1,6 +1,12 @@
 import { Button } from "@/components/ui";
 import type { AutomationV2RunRecord } from "@/lib/tauri";
-import { canCancelRun, canPauseRun, canRecoverRun, canResumeRun } from "./coderRunUtils";
+import {
+  canCancelRun,
+  canPauseRun,
+  canRecoverRun,
+  canResumeRun,
+  runAwaitingGate,
+} from "./coderRunUtils";
 
 type CoderRunActionToolbarProps = {
   run: AutomationV2RunRecord;
@@ -17,6 +23,7 @@ export function CoderRunActionToolbar({
   onRunAction,
   onGateDecision,
 }: CoderRunActionToolbarProps) {
+  const awaitingGate = runAwaitingGate(run);
   return (
     <div className="flex flex-wrap gap-2">
       <Button
@@ -67,7 +74,7 @@ export function CoderRunActionToolbar({
           Cancel
         </Button>
       ) : null}
-      {run.checkpoint?.awaiting_gate ? (
+      {awaitingGate ? (
         <>
           <Button
             size="sm"

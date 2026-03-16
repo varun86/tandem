@@ -12,6 +12,7 @@ import { readFileText } from "@/lib/tauri";
 import { CoderRunActionToolbar } from "./CoderRunActionToolbar";
 import {
   extractSessionIdsFromRun,
+  runAwaitingGate,
   runStatusLabel,
   runSummary,
   type DerivedCoderRun,
@@ -70,7 +71,7 @@ function artifactMatchesContext(
 ) {
   return Boolean(
     (target.stepId && artifact.step_id === target.stepId) ||
-      (target.sourceEventId && artifact.source_event_id === target.sourceEventId)
+    (target.sourceEventId && artifact.source_event_id === target.sourceEventId)
   );
 }
 
@@ -124,13 +125,15 @@ export function CoderRunDetailCard({
     [selectedContextBlackboard?.artifacts]
   );
   const effectiveSelectedArtifactPath =
-    selectedArtifactPath && blackboardArtifacts.some((artifact) => artifact.path === selectedArtifactPath)
+    selectedArtifactPath &&
+    blackboardArtifacts.some((artifact) => artifact.path === selectedArtifactPath)
       ? selectedArtifactPath
       : blackboardArtifacts[0]?.path || null;
   const selectedArtifact =
     blackboardArtifacts.find((artifact) => artifact.path === effectiveSelectedArtifactPath) ||
     blackboardArtifacts[0] ||
     null;
+  const awaitingGate = useMemo(() => runAwaitingGate(selectedRunDetail), [selectedRunDetail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,7 +198,9 @@ export function CoderRunDetailCard({
           if (artifact.artifact_type !== "coder_memory_hits") return [];
           const rows = Array.isArray(payload.hits) ? payload.hits : [];
           return rows
-            .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null)
+            .filter(
+              (row): row is Record<string, unknown> => typeof row === "object" && row !== null
+            )
             .map((row) => ({
               ...row,
               artifact_path: artifact.path,
@@ -235,7 +240,11 @@ export function CoderRunDetailCard({
     { key: "overview", label: "Overview" },
     { key: "transcripts", label: "Transcripts", count: transcriptSessions.length },
     { key: "context", label: "Context", count: selectedContextRun?.tasks.length ?? 0 },
-    { key: "artifacts", label: "Artifacts", count: selectedContextBlackboard?.artifacts.length ?? 0 },
+    {
+      key: "artifacts",
+      label: "Artifacts",
+      count: selectedContextBlackboard?.artifacts.length ?? 0,
+    },
     {
       key: "memory",
       label: "Memory",
@@ -266,7 +275,10 @@ export function CoderRunDetailCard({
                 label="Automation ID"
                 value={selectedCoderRun.automation.automation_id || "Unknown"}
               />
-              <DetailStat label="Linked Context Run" value={selectedContextRunId || "Not returned"} />
+              <DetailStat
+                label="Linked Context Run"
+                value={selectedContextRunId || "Not returned"}
+              />
               <DetailStat
                 label="Workspace Root"
                 value={selectedCoderRun.automation.workspace_root || "Not set"}
@@ -334,15 +346,14 @@ export function CoderRunDetailCard({
               <div className="grid gap-3 lg:grid-cols-2">
                 <div className="rounded-xl border border-border bg-surface-elevated/20 p-3">
                   <div className="text-sm font-semibold text-text">Gate State</div>
-                  {selectedRunDetail.checkpoint?.awaiting_gate ? (
+                  {awaitingGate ? (
                     <div className="mt-2 space-y-2 text-xs text-text-muted">
                       <div>
                         Awaiting decision on{" "}
-                        {selectedRunDetail.checkpoint.awaiting_gate.title ||
-                          selectedRunDetail.checkpoint.awaiting_gate.node_id}
+                        {String(awaitingGate.title || awaitingGate.node_id || "").trim()}
                       </div>
                       <div className="break-words">
-                        {selectedRunDetail.checkpoint.awaiting_gate.instructions ||
+                        {String(awaitingGate.instructions || "").trim() ||
                           "No gate instructions provided."}
                       </div>
                     </div>
@@ -437,7 +448,9 @@ export function CoderRunDetailCard({
                       <div>Revision: {selectedContextBlackboard?.revision ?? 0}</div>
                       <div>Facts: {selectedContextBlackboard?.facts.length ?? 0}</div>
                       <div>Decisions: {selectedContextBlackboard?.decisions.length ?? 0}</div>
-                      <div>Open Questions: {selectedContextBlackboard?.open_questions.length ?? 0}</div>
+                      <div>
+                        Open Questions: {selectedContextBlackboard?.open_questions.length ?? 0}
+                      </div>
                       <div>Patches: {selectedContextPatches.length}</div>
                     </div>
                   </div>
@@ -474,7 +487,9 @@ export function CoderRunDetailCard({
                               Open related artifact
                             </button>
                           ) : null}
-                          {task.runtime_detail ? <div className="mt-1">{task.runtime_detail}</div> : null}
+                          {task.runtime_detail ? (
+                            <div className="mt-1">{task.runtime_detail}</div>
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -554,13 +569,17 @@ export function CoderRunDetailCard({
                                 : "border-border bg-surface-elevated/20 hover:bg-surface-elevated/40"
                             }`}
                           >
-                            <div className="text-sm font-semibold text-text">{artifact.artifact_type}</div>
+                            <div className="text-sm font-semibold text-text">
+                              {artifact.artifact_type}
+                            </div>
                             <div className="mt-1 break-all text-xs text-text-muted">
                               {artifact.path}
                             </div>
                             <div className="mt-2 text-[11px] text-text-subtle">
                               {artifact.step_id ? `step ${artifact.step_id}` : "no step linkage"}
-                              {artifact.source_event_id ? ` • event ${artifact.source_event_id}` : ""}
+                              {artifact.source_event_id
+                                ? ` • event ${artifact.source_event_id}`
+                                : ""}
                             </div>
                           </button>
                         );
@@ -579,7 +598,9 @@ export function CoderRunDetailCard({
                         {selectedArtifact?.step_id || selectedArtifact?.source_event_id ? (
                           <div className="text-[11px] text-text-subtle">
                             {selectedArtifact?.step_id ? `step ${selectedArtifact.step_id}` : ""}
-                            {selectedArtifact?.step_id && selectedArtifact?.source_event_id ? " • " : ""}
+                            {selectedArtifact?.step_id && selectedArtifact?.source_event_id
+                              ? " • "
+                              : ""}
                             {selectedArtifact?.source_event_id
                               ? `event ${selectedArtifact.source_event_id}`
                               : ""}
@@ -587,7 +608,9 @@ export function CoderRunDetailCard({
                         ) : null}
                       </div>
                       {artifactPreview.loading ? (
-                        <div className="mt-3 text-sm text-text-muted">Loading artifact preview...</div>
+                        <div className="mt-3 text-sm text-text-muted">
+                          Loading artifact preview...
+                        </div>
                       ) : artifactPreview.error ? (
                         <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
                           {artifactPreview.error}
@@ -618,14 +641,18 @@ export function CoderRunDetailCard({
                   <div className="rounded-lg border border-border bg-surface px-4 py-8 text-center text-sm text-text-muted">
                     Loading linked memory artifacts...
                   </div>
-                ) : memoryProjection.hits.length === 0 && memoryProjection.candidates.length === 0 ? (
+                ) : memoryProjection.hits.length === 0 &&
+                  memoryProjection.candidates.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface-elevated/20 px-4 py-8 text-center text-sm text-text-muted">
                     No linked memory hits or candidates have been written for this run yet.
                   </div>
                 ) : (
                   <>
                     <div className="grid gap-3 md:grid-cols-3">
-                      <DetailStat label="Hit Records" value={String(memoryProjection.hits.length)} />
+                      <DetailStat
+                        label="Hit Records"
+                        value={String(memoryProjection.hits.length)}
+                      />
                       <DetailStat
                         label="Candidates"
                         value={String(memoryProjection.candidates.length)}
@@ -658,7 +685,9 @@ export function CoderRunDetailCard({
                                   "No summary available"}
                               </div>
                               <div className="mt-1 text-[11px] text-text-subtle">
-                                {valueText(hit.memory_id) ? `memory ${valueText(hit.memory_id)} • ` : ""}
+                                {valueText(hit.memory_id)
+                                  ? `memory ${valueText(hit.memory_id)} • `
+                                  : ""}
                                 {valueText(hit.run_id) ? `run ${valueText(hit.run_id)} • ` : ""}
                                 {typeof hit.score === "number" ? `score ${hit.score}` : ""}
                               </div>
@@ -704,8 +733,7 @@ export function CoderRunDetailCard({
           </>
         ) : (
           <div className="rounded-lg border border-dashed border-border bg-surface-elevated/20 px-4 py-8 text-center text-sm text-text-muted">
-            Select a coder-tagged automation run to inspect status, sessions, and operator
-            controls.
+            Select a coder-tagged automation run to inspect status, sessions, and operator controls.
           </div>
         )}
       </CardContent>

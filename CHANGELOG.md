@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - desktop agent-automation views now reuse the shared coder workflow-run parsers for session IDs and node outputs instead of duplicating local extraction logic
   - shared desktop coder workflow-run helpers now also normalize checkpoint and lifecycle-history access so agent-automation views stop hand-rolling those workflow records
   - shared desktop coder workflow-run helpers now also provide completed/pending/blocked node IDs plus gate and failure access so agent-automation diagnostics use one checkpoint contract
+  - shared desktop coder detail views now also read gate state through the same workflow-run helper contract instead of reaching into checkpoint payloads directly
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs
