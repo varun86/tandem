@@ -7835,9 +7835,223 @@ fn placeholder_like_artifact_text(text: &str) -> bool {
     status_markers.iter().any(|marker| lowered.contains(marker)) && trimmed.len() < 280
 }
 
-fn substantive_artifact_text(text: &str) -> bool {
+fn markdown_heading_count(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .count()
+}
+
+fn markdown_list_item_count(text: &str) -> usize {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with("- ")
+                || trimmed.starts_with("* ")
+                || trimmed
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_digit() && trimmed.contains('.'))
+        })
+        .count()
+}
+
+fn paragraph_block_count(text: &str) -> usize {
+    text.split("\n\n")
+        .filter(|block| {
+            let trimmed = block.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .count()
+}
+
+fn structural_substantive_artifact_text(text: &str) -> bool {
     let trimmed = text.trim();
-    trimmed.len() >= 220 && !placeholder_like_artifact_text(trimmed)
+    if trimmed.len() < 180 {
+        return false;
+    }
+    let heading_count = markdown_heading_count(trimmed);
+    let list_count = markdown_list_item_count(trimmed);
+    let paragraph_count = paragraph_block_count(trimmed);
+    heading_count >= 2
+        || (heading_count >= 1 && paragraph_count >= 3)
+        || (paragraph_count >= 4)
+        || (list_count >= 5)
+}
+
+fn substantive_artifact_text(text: &str) -> bool {
+    structural_substantive_artifact_text(text)
+}
+
+#[derive(Debug, Clone)]
+struct ArtifactCandidateAssessment {
+    source: String,
+    text: String,
+    length: usize,
+    score: i64,
+    substantive: bool,
+    placeholder_like: bool,
+    heading_count: usize,
+    list_count: usize,
+    paragraph_count: usize,
+    required_section_count: usize,
+    files_reviewed_present: bool,
+    reviewed_paths: Vec<String>,
+    reviewed_paths_backed_by_read: Vec<String>,
+    unreviewed_relevant_paths: Vec<String>,
+}
+
+fn artifact_required_section_count(node: &AutomationFlowNode, text: &str) -> usize {
+    let lowered = text.to_ascii_lowercase();
+    let headings = if node
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.kind == "brief")
+    {
+        vec![
+            "workspace source audit",
+            "campaign goal",
+            "target audience",
+            "core pain points",
+            "positioning angle",
+            "competitor context",
+            "proof points",
+            "likely objections",
+            "channel considerations",
+            "recommended message hierarchy",
+            "files reviewed",
+            "files not reviewed",
+            "web sources reviewed",
+        ]
+    } else {
+        vec![
+            "files reviewed",
+            "review notes",
+            "approved",
+            "draft",
+            "summary",
+        ]
+    };
+    headings
+        .iter()
+        .filter(|heading| lowered.contains(**heading))
+        .count()
+}
+
+fn artifact_candidate_source_priority(source: &str) -> i64 {
+    match source {
+        "verified_output" => 3,
+        "session_write" => 2,
+        "preexisting_output" => 1,
+        _ => 0,
+    }
+}
+
+fn assess_artifact_candidate(
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    source: &str,
+    text: &str,
+    read_paths: &[String],
+    discovered_relevant_paths: &[String],
+) -> ArtifactCandidateAssessment {
+    let trimmed = text.trim();
+    let length = trimmed.len();
+    let placeholder_like = placeholder_like_artifact_text(trimmed);
+    let substantive = substantive_artifact_text(trimmed);
+    let heading_count = markdown_heading_count(trimmed);
+    let list_count = markdown_list_item_count(trimmed);
+    let paragraph_count = paragraph_block_count(trimmed);
+    let required_section_count = artifact_required_section_count(node, trimmed);
+    let reviewed_paths = extract_markdown_section_paths(trimmed, "Files reviewed")
+        .into_iter()
+        .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
+        .collect::<Vec<_>>();
+    let files_not_reviewed = extract_markdown_section_paths(trimmed, "Files not reviewed")
+        .into_iter()
+        .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
+        .collect::<Vec<_>>();
+    let reviewed_paths_backed_by_read = reviewed_paths
+        .iter()
+        .filter(|path| read_paths.iter().any(|read| read == *path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let files_reviewed_present = files_reviewed_section_lists_paths(trimmed);
+    let effective_relevant_paths = if discovered_relevant_paths.is_empty() {
+        reviewed_paths.clone()
+    } else {
+        discovered_relevant_paths.to_vec()
+    };
+    let unreviewed_relevant_paths = effective_relevant_paths
+        .iter()
+        .filter(|path| {
+            !read_paths.iter().any(|read| read == *path)
+                && !files_not_reviewed.iter().any(|skipped| skipped == *path)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut score = 0i64;
+    score += artifact_candidate_source_priority(source) * 25;
+    score += (length.min(12_000) / 24) as i64;
+    score += (heading_count as i64) * 60;
+    score += (list_count as i64) * 18;
+    score += (paragraph_count as i64) * 24;
+    score += (required_section_count as i64) * 160;
+    if substantive {
+        score += 2_000;
+    }
+    if files_reviewed_present {
+        score += 180;
+    }
+    if !reviewed_paths.is_empty() && reviewed_paths.len() == reviewed_paths_backed_by_read.len() {
+        score += 260;
+    } else if !reviewed_paths_backed_by_read.is_empty() {
+        score += 90;
+    }
+    score -= (unreviewed_relevant_paths.len() as i64) * 220;
+    if placeholder_like {
+        score -= 450;
+    }
+    if trimmed.is_empty() {
+        score -= 2_000;
+    }
+
+    ArtifactCandidateAssessment {
+        source: source.to_string(),
+        text: text.to_string(),
+        length,
+        score,
+        substantive,
+        placeholder_like,
+        heading_count,
+        list_count,
+        paragraph_count,
+        required_section_count,
+        files_reviewed_present,
+        reviewed_paths,
+        reviewed_paths_backed_by_read,
+        unreviewed_relevant_paths,
+    }
+}
+
+fn best_artifact_candidate(
+    candidates: &[ArtifactCandidateAssessment],
+) -> Option<ArtifactCandidateAssessment> {
+    candidates.iter().cloned().max_by(|left, right| {
+        left.score
+            .cmp(&right.score)
+            .then(left.substantive.cmp(&right.substantive))
+            .then(
+                left.required_section_count
+                    .cmp(&right.required_section_count),
+            )
+            .then(left.heading_count.cmp(&right.heading_count))
+            .then(left.length.cmp(&right.length))
+            .then(
+                artifact_candidate_source_priority(&left.source)
+                    .cmp(&artifact_candidate_source_priority(&right.source)),
+            )
+    })
 }
 
 fn files_reviewed_section_lists_paths(text: &str) -> bool {
@@ -8052,31 +8266,20 @@ fn session_write_candidates_for_output(
     candidates
 }
 
-fn best_session_write_candidate(
-    session: &Session,
-    workspace_root: &str,
-    declared_output_path: &str,
-) -> Option<String> {
-    let mut candidates =
-        session_write_candidates_for_output(session, workspace_root, declared_output_path);
-    if candidates.is_empty() {
-        return None;
-    }
-    candidates.sort_by_key(|value| value.len());
-    candidates
-        .iter()
-        .rev()
-        .find(|value| substantive_artifact_text(value))
-        .cloned()
-        .or_else(|| candidates.pop())
-}
-
-fn artifact_candidate_summary(source: &str, text: &str, accepted: bool) -> Value {
+fn artifact_candidate_summary(candidate: &ArtifactCandidateAssessment, accepted: bool) -> Value {
     json!({
-        "source": source,
-        "length": text.trim().len(),
-        "substantive": substantive_artifact_text(text),
-        "placeholder_like": placeholder_like_artifact_text(text),
+        "source": candidate.source,
+        "length": candidate.length,
+        "score": candidate.score,
+        "substantive": candidate.substantive,
+        "placeholder_like": candidate.placeholder_like,
+        "heading_count": candidate.heading_count,
+        "list_count": candidate.list_count,
+        "paragraph_count": candidate.paragraph_count,
+        "required_section_count": candidate.required_section_count,
+        "files_reviewed_present": candidate.files_reviewed_present,
+        "reviewed_paths_backed_by_read": candidate.reviewed_paths_backed_by_read,
+        "unreviewed_relevant_paths": candidate.unreviewed_relevant_paths,
         "accepted": accepted,
     })
 }
@@ -8394,7 +8597,7 @@ fn validate_automation_artifact_output(
     node: &AutomationFlowNode,
     session: &Session,
     workspace_root: &str,
-    session_text: &str,
+    _session_text: &str,
     tool_telemetry: &Value,
     preexisting_output: Option<&str>,
     verified_output: Option<(String, String)>,
@@ -8482,25 +8685,8 @@ fn validate_automation_artifact_output(
     }
 
     if let Some((path, text)) = accepted_output.clone() {
-        let recovered_candidate = best_session_write_candidate(session, workspace_root, &path);
         let session_write_candidates =
             session_write_candidates_for_output(session, workspace_root, &path);
-        artifact_candidates.extend(
-            session_write_candidates
-                .iter()
-                .map(|candidate| artifact_candidate_summary("session_write", candidate, false)),
-        );
-        if substantive_artifact_text(&text) || placeholder_like_artifact_text(&text) {
-            artifact_candidates.push(artifact_candidate_summary("verified_output", &text, false));
-        }
-        if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty()) {
-            artifact_candidates.push(artifact_candidate_summary(
-                "preexisting_output",
-                previous,
-                false,
-            ));
-        }
-        let lowered = text.to_ascii_lowercase();
         let requested_has_read = tool_telemetry
             .get("requested_tools")
             .and_then(Value::as_array)
@@ -8514,30 +8700,67 @@ fn validate_automation_artifact_output(
             .get("web_research_succeeded")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let reviewed_paths = extract_markdown_section_paths(&text, "Files reviewed")
-            .into_iter()
-            .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
-            .collect::<Vec<_>>();
-        let files_not_reviewed = extract_markdown_section_paths(&text, "Files not reviewed")
-            .into_iter()
-            .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
-            .collect::<Vec<_>>();
-        reviewed_paths_backed_by_read = reviewed_paths
+        let mut candidate_assessments = session_write_candidates
             .iter()
-            .filter(|path| read_paths.iter().any(|read| read == *path))
-            .cloned()
-            .collect();
-        if discovered_relevant_paths.is_empty() {
-            discovered_relevant_paths = reviewed_paths.clone();
-        }
-        unreviewed_relevant_paths = discovered_relevant_paths
-            .iter()
-            .filter(|path| {
-                !read_paths.iter().any(|read| read == *path)
-                    && !files_not_reviewed.iter().any(|skipped| skipped == *path)
+            .map(|candidate| {
+                assess_artifact_candidate(
+                    node,
+                    workspace_root,
+                    "session_write",
+                    candidate,
+                    &read_paths,
+                    &discovered_relevant_paths,
+                )
             })
-            .cloned()
-            .collect();
+            .collect::<Vec<_>>();
+        if !text.trim().is_empty() {
+            candidate_assessments.push(assess_artifact_candidate(
+                node,
+                workspace_root,
+                "verified_output",
+                &text,
+                &read_paths,
+                &discovered_relevant_paths,
+            ));
+        }
+        if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty()) {
+            candidate_assessments.push(assess_artifact_candidate(
+                node,
+                workspace_root,
+                "preexisting_output",
+                previous,
+                &read_paths,
+                &discovered_relevant_paths,
+            ));
+        }
+        let best_candidate = best_artifact_candidate(&candidate_assessments);
+        artifact_candidates = candidate_assessments
+            .iter()
+            .map(|candidate| {
+                let accepted = best_candidate.as_ref().is_some_and(|best| {
+                    best.source == candidate.source && best.text == candidate.text
+                });
+                artifact_candidate_summary(candidate, accepted)
+            })
+            .collect::<Vec<_>>();
+        if let Some(best) = best_candidate.clone() {
+            accepted_candidate_source = Some(best.source.clone());
+            reviewed_paths_backed_by_read = best.reviewed_paths_backed_by_read.clone();
+            if discovered_relevant_paths.is_empty() {
+                discovered_relevant_paths = best.reviewed_paths.clone();
+            }
+            unreviewed_relevant_paths = best.unreviewed_relevant_paths.clone();
+            let best_is_verified_output = best.source == "verified_output" && best.text == text;
+            if !best_is_verified_output {
+                if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
+                    let _ = std::fs::write(&resolved, &best.text);
+                }
+                recovered_from_session_write = best.source == "session_write";
+                accepted_output = Some((path.clone(), best.text.clone()));
+            } else {
+                accepted_output = Some((path.clone(), best.text.clone()));
+            }
+        }
         repair_attempted = session_write_candidates.len() > 1
             && (requested_has_read || web_research_expected)
             && (!reviewed_paths_backed_by_read.is_empty()
@@ -8548,38 +8771,7 @@ fn validate_automation_artifact_output(
                     .and_then(Value::as_u64)
                     .unwrap_or(0)
                     > 1);
-        // TODO(coding-hardening): These lexical overwrite heuristics are a temporary
-        // stopgap. The proper architecture is "best substantive artifact candidate wins"
-        // based on structured scoring of all writes/patches to the declared output,
-        // with status kept in node metadata rather than inferred from artifact text.
-        if rejected_reason.is_none() && placeholder_like_artifact_text(&text) {
-            rejected_reason = Some("placeholder overwrite rejected".to_string());
-        }
-        if rejected_reason.is_none()
-            && preexisting_output.is_some_and(substantive_artifact_text)
-            && (text.trim().len() + 80) < preexisting_output.unwrap_or_default().trim().len()
-            && (placeholder_like_artifact_text(&text)
-                || lowered.contains("preserving")
-                || lowered.contains("completed previously"))
-        {
-            rejected_reason = Some("short placeholder overwrite rejected".to_string());
-        }
-        if rejected_reason.is_none()
-            && recovered_candidate
-                .as_ref()
-                .is_some_and(|candidate| substantive_artifact_text(candidate))
-            && (text.trim().len() + 120)
-                < recovered_candidate
-                    .as_ref()
-                    .map(|candidate| candidate.trim().len())
-                    .unwrap_or_default()
-            && (placeholder_like_artifact_text(&text)
-                || lowered.contains("artifact requirement")
-                || lowered.contains("already completed")
-                || lowered.contains("no content changes needed"))
-        {
-            rejected_reason = Some("session placeholder overwrite rejected".to_string());
-        }
+        let selected_assessment = best_candidate.as_ref();
         if node
             .output_contract
             .as_ref()
@@ -8587,9 +8779,13 @@ fn validate_automation_artifact_output(
             && requested_has_read
         {
             let missing_concrete_reads = !executed_has_read;
-            let files_reviewed_backed = !reviewed_paths.is_empty()
-                && reviewed_paths.len() == reviewed_paths_backed_by_read.len();
-            let missing_file_coverage = !files_reviewed_section_lists_paths(&text)
+            let files_reviewed_backed = selected_assessment.is_some_and(|assessment| {
+                !assessment.reviewed_paths.is_empty()
+                    && assessment.reviewed_paths.len()
+                        == assessment.reviewed_paths_backed_by_read.len()
+            });
+            let missing_file_coverage = !selected_assessment
+                .is_some_and(|assessment| assessment.files_reviewed_present)
                 || !files_reviewed_backed
                 || !unreviewed_relevant_paths.is_empty();
             let missing_web_research = web_research_expected && !web_research_succeeded;
@@ -8597,7 +8793,7 @@ fn validate_automation_artifact_output(
             if missing_concrete_reads {
                 unmet_requirements.push("no_concrete_reads".to_string());
             }
-            if !files_reviewed_section_lists_paths(&text) {
+            if !selected_assessment.is_some_and(|assessment| assessment.files_reviewed_present) {
                 unmet_requirements.push("files_reviewed_missing".to_string());
             }
             if !files_reviewed_backed {
@@ -8623,16 +8819,6 @@ fn validate_automation_artifact_output(
             }
         }
         if rejected_reason.is_none()
-            && recovered_candidate
-                .as_ref()
-                .is_some_and(|candidate| substantive_artifact_text(candidate))
-            && !substantive_artifact_text(&text)
-        {
-            rejected_reason = Some(
-                "non-substantive final overwrite rejected in favor of session artifact".to_string(),
-            );
-        }
-        if rejected_reason.is_none()
             && matches!(execution_mode, "git_patch" | "filesystem_patch")
             && preexisting_output.is_some()
             && path_looks_like_source_file(&path)
@@ -8650,69 +8836,33 @@ fn validate_automation_artifact_output(
             rejected_reason =
                 Some("code workflow used raw write without patch/edit safety".to_string());
         }
-        if let Some(reason) = rejected_reason.clone() {
-            if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
-                if reason.contains("placeholder")
-                    || reason.contains("non-substantive final overwrite")
-                {
-                    if let Some(candidate) = recovered_candidate
-                        .as_ref()
-                        .filter(|candidate| substantive_artifact_text(candidate))
-                    {
-                        let _ = std::fs::write(&resolved, candidate);
-                        accepted_output = Some((path.clone(), candidate.clone()));
-                        rejected_reason = None;
-                        recovered_from_session_write = true;
-                        repair_succeeded = true;
-                        accepted_candidate_source = Some("session_write_recovery".to_string());
-                    } else if let Some(previous) = preexisting_output {
-                        let _ = std::fs::write(&resolved, previous);
-                        accepted_output = None;
-                    } else {
-                        let _ = std::fs::remove_file(&resolved);
-                        accepted_output = None;
-                    }
-                }
-            }
-            let _ = session_text;
-            let _ = reason;
-        }
         if semantic_block_reason.is_some()
             && !recovered_from_session_write
-            && !substantive_artifact_text(&text)
+            && selected_assessment.is_some_and(|assessment| !assessment.substantive)
         {
             // TODO(coding-hardening): Fold this recovery path into a single
             // artifact-finalization step that deterministically picks the best
             // candidate before node output is wrapped, instead of patching up the
             // final file after semantic validation fires.
-            if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
-                if let Some(candidate) = recovered_candidate
-                    .as_ref()
-                    .filter(|candidate| substantive_artifact_text(candidate))
-                {
-                    let _ = std::fs::write(&resolved, candidate);
-                    accepted_output = Some((path.clone(), candidate.clone()));
-                    recovered_from_session_write = true;
-                    repair_succeeded = true;
-                    accepted_candidate_source = Some("session_write_recovery".to_string());
+            if let Some(best) = selected_assessment
+                .filter(|assessment| assessment.substantive)
+                .cloned()
+            {
+                if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
+                    let _ = std::fs::write(&resolved, &best.text);
                 }
+                accepted_output = Some((path.clone(), best.text.clone()));
+                recovered_from_session_write = best.source == "session_write";
+                repair_succeeded = true;
+                accepted_candidate_source = Some(best.source.clone());
             }
         }
         if repair_attempted && semantic_block_reason.is_none() {
             repair_succeeded = true;
         }
     }
-    if let Some((_, accepted_text)) = accepted_output.as_ref() {
-        if accepted_candidate_source.is_none() {
-            accepted_candidate_source = Some("verified_output".to_string());
-        }
-        artifact_candidates.push(artifact_candidate_summary(
-            accepted_candidate_source
-                .as_deref()
-                .unwrap_or("verified_output"),
-            accepted_text,
-            true,
-        ));
+    if accepted_output.is_some() && accepted_candidate_source.is_none() {
+        accepted_candidate_source = Some("verified_output".to_string());
     }
 
     let metadata = json!({
@@ -12348,6 +12498,118 @@ mod tests {
             )
         );
         assert_eq!(approved, Some(true));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn artifact_validation_prefers_structurally_stronger_candidate_without_phrase_match() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-stronger-candidate-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let substantive = format!(
+            "# Marketing Brief\n\n## Workspace source audit\n{}\n\n## Files reviewed\n- docs/source.md\n\n## Files not reviewed\n- docs/extra.md (out of scope)\n",
+            "Detailed sourced content. ".repeat(50)
+        );
+        let weak_final = "# Marketing Brief\n\nShort wrap-up.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &weak_final)
+            .expect("seed final weak artifact");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": false
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("stronger candidate".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"docs/source.md"}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "marketing-brief.md",
+                        "content": substantive
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "marketing-brief.md",
+                        "content": weak_final
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "Done",
+            &json!({
+                "requested_tools": ["glob", "read", "write"],
+                "executed_tools": ["read", "write"]
+            }),
+            None,
+            Some((
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief\n\nShort wrap-up.\n".to_string(),
+            )),
+            &snapshot,
+        );
+
+        assert!(rejected.is_none());
+        assert_eq!(
+            metadata
+                .get("accepted_candidate_source")
+                .and_then(Value::as_str),
+            Some("session_write")
+        );
+        assert!(accepted_output
+            .as_ref()
+            .is_some_and(|(_, text)| text.contains("## Workspace source audit")));
+        let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
+            .expect("read selected artifact");
+        assert!(disk_text.contains("## Workspace source audit"));
 
         let _ = std::fs::remove_dir_all(workspace_root);
     }

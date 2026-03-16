@@ -18,6 +18,7 @@
 - Workflow lifecycle history now includes typed node-scoped stability events for artifact acceptance/rejection, research coverage failures, and verification/repair transitions.
 - Desktop/TUI coder summaries now include typed workflow stability fields and recent workflow events per task so task inspectors can follow the same backend state contract.
 - Studio saved workflows now show the latest run’s typed stability snapshot for faster authoring/debugging loops.
+- Artifact finalization now deterministically selects the strongest candidate from verified output, session writes, and preexisting output instead of relying on placeholder-phrase rejection.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions
