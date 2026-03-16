@@ -147,6 +147,15 @@ export function nodeOutputText(value: Record<string, unknown>) {
     .trim();
 }
 
+export function nodeOutputSummary(value: Record<string, unknown>) {
+  return String(value?.summary || "").trim();
+}
+
+export function nodeOutputSessionId(value: Record<string, unknown>) {
+  const content = (value?.content as Record<string, unknown> | undefined) || {};
+  return String(content.session_id || content.sessionId || "").trim();
+}
+
 export function runNodeOutputMap(run: AutomationV2RunRecord | null) {
   const checkpoint = runCheckpoint(run);
   return (

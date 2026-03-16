@@ -28,6 +28,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - shared desktop coder workflow-run helpers now also provide usage metrics and summary text so agent-automation views can drop more local checkpoint/detail parsing
   - shared desktop coder workflow-run helpers now also own run display titles and failed-run recovery checks so agent-automation views stop duplicating that workflow logic
   - shared desktop coder workflow-run helpers now also provide status-label formatting so agent-automation views stop carrying their own run-status mapping
+  - shared desktop coder workflow-run helpers now also provide node-output summaries and session-id extraction so agent-automation diagnostics stop hand-parsing output payloads
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

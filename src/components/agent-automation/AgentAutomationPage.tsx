@@ -7,6 +7,8 @@ import {
   extractRunLifecycleHistory,
   extractRunNodeOutputs,
   extractSessionIdsFromRun,
+  nodeOutputSessionId,
+  nodeOutputSummary,
   nodeOutputText,
   pendingNodeIds,
   runDisplayTitle,
@@ -510,8 +512,7 @@ function buildStepStatusDiagnostics(
 
   return (automation.flow?.nodes || []).map((node) => {
     const output = outputs[node.node_id];
-    const content = (output?.content as Record<string, unknown> | undefined) || {};
-    const sessionId = String(content.session_id || content.sessionId || "").trim();
+    const sessionId = nodeOutputSessionId(output || {});
     const missingDeps = (node.depends_on || []).filter((dep) => !completedNodes.includes(dep));
     let status = "pending";
     if (completedNodes.includes(node.node_id)) status = "done";
@@ -527,7 +528,7 @@ function buildStepStatusDiagnostics(
       missingDeps,
       sessionId,
       messageCount: sessionId ? (sessionMessagesBySession[sessionId] || []).length : 0,
-      summary: String(output?.summary || "").trim(),
+      summary: nodeOutputSummary(output || {}),
     };
   });
 }
@@ -1578,8 +1579,7 @@ export function AgentAutomationPage({
   const selectedStepDiagnostics = useMemo(
     () =>
       selectedRunNodeOutputs.map((output) => {
-        const content = (output.value?.content as Record<string, unknown> | undefined) || {};
-        const sessionId = String(content.session_id || content.sessionId || "").trim();
+        const sessionId = nodeOutputSessionId(output.value || {});
         const node =
           selectedRunAutomation?.flow?.nodes?.find((entry) => entry.node_id === output.nodeId) ||
           null;
@@ -1588,7 +1588,7 @@ export function AgentAutomationPage({
           nodeId: output.nodeId,
           objective: String(node?.objective || "").trim(),
           contractKind: String(output.value?.contract_kind || "").trim(),
-          summary: String(output.value?.summary || "").trim(),
+          summary: nodeOutputSummary(output.value || {}),
           sessionId,
           messageCount: sessionMessages.length,
         };
