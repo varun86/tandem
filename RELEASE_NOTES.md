@@ -24,6 +24,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `/workspace/...` file tool paths now resolve against the real workspace root
   - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs
   - research briefs that cite local sources without any `read` calls now block instead of slipping through as “completed”
+  - timed-out `websearch` attempts no longer count as successful external research for workflows that require current market evidence
 
 - Artifact integrity protections for workflow outputs
   - placeholder/status-note overwrites no longer silently replace declared output artifacts

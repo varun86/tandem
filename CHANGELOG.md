@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed blocked node outcomes to stop downstream steps consistently instead of letting draft/review/publish continue with blocked handoff artifacts
   - fixed review nodes with `approved: false` to propagate a blocked status cleanly through the automation runtime and debugger
   - fixed file-backed research briefs being marked `completed` when they cited workspace sources without ever calling `read`; these now block even if the model writes a polished “source-backed” brief
+  - fixed timed-out `websearch` attempts still counting as successful current-market research; research now blocks when required web research only timed out or returned no usable result
   - fixed `/workspace/...` tool paths so file-backed workflow nodes resolve against the actual workspace root instead of failing on a fake alias
 - **Saved Studio workflow deletion and restart persistence**:
   - fixed saved Studio workflows reappearing after engine restart by cascading automation deletion into persisted `automation_v2` run history so old run snapshots cannot recreate deleted workflows

@@ -7741,8 +7741,8 @@ fn validate_automation_artifact_output(
             .and_then(Value::as_array)
             .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
         let web_research_expected = automation_node_web_research_expected(node);
-        let web_research_used = tool_telemetry
-            .get("web_research_used")
+        let web_research_succeeded = tool_telemetry
+            .get("web_research_succeeded")
             .and_then(Value::as_bool)
             .unwrap_or(false);
         // TODO(coding-hardening): These lexical overwrite heuristics are a temporary
@@ -7785,7 +7785,7 @@ fn validate_automation_artifact_output(
         {
             let missing_concrete_reads = !executed_has_read;
             let missing_file_coverage = !files_reviewed_section_lists_paths(&text);
-            let missing_web_research = web_research_expected && !web_research_used;
+            let missing_web_research = web_research_expected && !web_research_succeeded;
             if missing_concrete_reads || missing_file_coverage || missing_web_research {
                 semantic_block_reason = Some(if missing_concrete_reads {
                     "research completed without concrete file reads or required source coverage"
@@ -7886,9 +7886,14 @@ fn validate_automation_artifact_output(
     });
     let rejected = metadata
         .get("rejected_artifact_reason")
-        .or_else(|| metadata.get("semantic_block_reason"))
         .and_then(Value::as_str)
-        .map(str::to_string);
+        .map(str::to_string)
+        .or_else(|| {
+            metadata
+                .get("semantic_block_reason")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
     (accepted_output, metadata, rejected)
 }
 
@@ -7942,12 +7947,31 @@ fn summarize_automation_tool_activity(
     let mut counts = serde_json::Map::new();
     let mut workspace_inspection_used = false;
     let mut web_research_used = false;
+    let mut web_research_succeeded = false;
+    let mut latest_web_research_failure = None::<String>;
     for message in &session.messages {
         for part in &message.parts {
-            let MessagePart::ToolInvocation { tool, error, .. } = part else {
+            let MessagePart::ToolInvocation {
+                tool,
+                error,
+                result,
+                ..
+            } = part
+            else {
                 continue;
             };
             if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+                let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
+                if matches!(
+                    normalized.as_str(),
+                    "websearch" | "webfetch" | "webfetch_html"
+                ) {
+                    latest_web_research_failure = error
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string);
+                }
                 continue;
             }
             let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
@@ -7971,6 +7995,44 @@ fn summarize_automation_tool_activity(
                 "websearch" | "webfetch" | "webfetch_html"
             ) {
                 web_research_used = true;
+                let metadata = result
+                    .as_ref()
+                    .and_then(|value| value.get("metadata"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let output = result
+                    .as_ref()
+                    .and_then(|value| value.get("output"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase();
+                let result_error = metadata
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                let timed_out = metadata
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.eq_ignore_ascii_case("timeout"))
+                    || output.contains("search timed out")
+                    || output.contains("no results received");
+                if result_error.is_none() && !timed_out && !output.is_empty() {
+                    web_research_succeeded = true;
+                    latest_web_research_failure = None;
+                } else if latest_web_research_failure.is_none() {
+                    latest_web_research_failure = result_error.or_else(|| {
+                        if timed_out {
+                            Some("web research timed out".to_string())
+                        } else if output.is_empty() {
+                            Some("web research returned no usable output".to_string())
+                        } else {
+                            Some("web research returned an unusable result".to_string())
+                        }
+                    });
+                }
             }
         }
     }
@@ -7981,6 +8043,8 @@ fn summarize_automation_tool_activity(
         "tool_call_counts": counts,
         "workspace_inspection_used": workspace_inspection_used,
         "web_research_used": web_research_used,
+        "web_research_succeeded": web_research_succeeded,
+        "latest_web_research_failure": latest_web_research_failure,
         "verification_expected": verification.get("verification_expected").cloned().unwrap_or(json!(false)),
         "verification_command": verification.get("verification_command").cloned().unwrap_or(Value::Null),
         "verification_ran": verification.get("verification_ran").cloned().unwrap_or(json!(false)),
@@ -8037,17 +8101,23 @@ fn detect_automation_node_status(
             approved,
         );
     }
-    if let Some(reason) = artifact_validation
-        .and_then(|value| {
-            value
-                .get("rejected_artifact_reason")
-                .or_else(|| value.get("semantic_block_reason"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return ("blocked".to_string(), Some(reason.to_string()), approved);
+    if let Some(reason) = artifact_validation.and_then(|value| {
+        value
+            .get("rejected_artifact_reason")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                value
+                    .get("semantic_block_reason")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+    }) {
+        return ("blocked".to_string(), Some(reason), approved);
     }
     let output_text = verified_output
         .map(|(_, text)| text.as_str())
@@ -10769,5 +10839,141 @@ mod tests {
             )
         );
         assert_eq!(approved, Some(true));
+    }
+
+    #[test]
+    fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-websearch-timeout-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        let snapshot = std::collections::BTreeSet::new();
+
+        let brief_text = "# Marketing Brief\n\n## Workspace source audit\nPrepared from workspace sources.\n\n## Files reviewed\n- tandem-reference/readmes/repo-README.md\n\n## Web sources reviewed\n- websearch attempt timed out.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &brief_text)
+            .expect("seed artifact");
+
+        let mut session = Session::new(
+            Some("session-timeout".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"tandem-reference/readmes/repo-README.md"}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "websearch".to_string(),
+                    args: json!({"query":"ai coding agents market"}),
+                    result: Some(json!({
+                        "output": "Search timed out. No results received.",
+                        "metadata": { "error": "timeout" }
+                    })),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "marketing-brief.md",
+                        "content": brief_text
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+
+        let tool_telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        );
+        assert_eq!(
+            tool_telemetry
+                .get("web_research_used")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            tool_telemetry
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root
+                .to_str()
+                .expect("workspace root string"),
+            "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
+            &tool_telemetry,
+            None,
+            Some(("marketing-brief.md".to_string(), brief_text.clone())),
+            &snapshot,
+        );
+
+        assert!(accepted_output.is_some());
+        assert_eq!(
+            metadata
+                .get("semantic_block_reason")
+                .and_then(Value::as_str),
+            Some("research completed without required current web research")
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without required current web research")
+        );
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
+            accepted_output.as_ref(),
+            &tool_telemetry,
+            Some(&metadata),
+        );
+        assert_eq!(status, "blocked");
+        assert_eq!(
+            reason.as_deref(),
+            Some("research completed without required current web research")
+        );
+        assert_eq!(approved, Some(true));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
     }
 }
