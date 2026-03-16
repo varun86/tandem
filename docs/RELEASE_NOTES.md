@@ -22,11 +22,13 @@
 
 - `automation_v2` nodes now run with deterministic required tool sets instead of leaning only on the generic auto-router.
 - Added workflow prewrite requirements so workspace inspection and web research stay available until those requirements are actually satisfied.
+- Brief/research nodes now also require concrete `read` coverage, successful web research when expected, and one automatic repair pass before they finalize as blocked.
 - Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
 - Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.
 - Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
 - Fixed source-backed research briefs being accepted without any `read` calls; file-cited research now blocks if the node never actually read the files it claims to have reviewed.
 - Timed-out `websearch` attempts no longer satisfy required current-market research for workflow briefs; those runs now block at the research stage instead of drifting into later copy/review steps.
+- Blocked research nodes now record structured coverage/debug metadata including actual `read` paths, discovered relevant files, unread relevant files, and repair-pass state so the Run Debugger can show the real failure cause.
 - Code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion, failed verification emitting `verify_failed`, and fully verified code tasks finishing as `done`.
 - Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
 

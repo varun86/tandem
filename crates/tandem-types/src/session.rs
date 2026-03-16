@@ -114,6 +114,35 @@ pub struct PrewriteRequirements {
         alias = "web_research_required"
     )]
     pub web_research_required: bool,
+    #[serde(
+        default,
+        alias = "concreteReadRequired",
+        alias = "concrete_read_required"
+    )]
+    pub concrete_read_required: bool,
+    #[serde(
+        default,
+        alias = "successfulWebResearchRequired",
+        alias = "successful_web_research_required"
+    )]
+    pub successful_web_research_required: bool,
+    #[serde(
+        default,
+        alias = "repairOnUnmetRequirements",
+        alias = "repair_on_unmet_requirements"
+    )]
+    pub repair_on_unmet_requirements: bool,
+    #[serde(default, alias = "coverageMode", alias = "coverage_mode")]
+    pub coverage_mode: PrewriteCoverageMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrewriteCoverageMode {
+    #[default]
+    None,
+    FilesReviewedBacked,
+    ResearchCorpus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

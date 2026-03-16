@@ -27,6 +27,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs
   - research briefs that cite local sources without any `read` calls now block instead of slipping through as “completed”
   - timed-out `websearch` attempts no longer count as successful external research for workflows that require current market evidence
+  - brief/research nodes now require concrete `read` coverage, successful web research when expected, and get one automatic repair pass before they finalize as blocked
+  - blocked research nodes now expose structured coverage/debug metadata including actual `read` paths, discovered relevant files, missing file coverage, and repair-pass state
   - code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion and failed verification surfacing as `verify_failed`
 
 - Artifact integrity protections for workflow outputs

@@ -1232,8 +1232,15 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
           String(output?.value?.blocked_reason || output?.value?.blockedReason || "").trim(),
           requested ? `offered tools: ${requested}` : "",
           executed ? `executed tools: ${executed}` : "",
+          String(artifactValidation?.semantic_block_reason || "").trim()
+            ? `research validation: ${String(artifactValidation?.semantic_block_reason || "").trim()}`
+            : "",
           String(artifactValidation?.rejected_artifact_reason || "").trim()
             ? `artifact validation: ${String(artifactValidation?.rejected_artifact_reason || "").trim()}`
+            : "",
+          Array.isArray(artifactValidation?.unmet_requirements) &&
+          artifactValidation.unmet_requirements.length
+            ? `unmet requirements: ${artifactValidation.unmet_requirements.join(", ")}`
             : "",
           Array.isArray(artifactValidation?.undeclared_files_created) &&
           artifactValidation.undeclared_files_created.length
@@ -4127,6 +4134,51 @@ function MyAutomations({
         : [],
     [selectedBoardTaskArtifactValidation]
   );
+  const selectedBoardTaskResearchReadPaths = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.read_paths)
+        ? selectedBoardTaskArtifactValidation.read_paths
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
+  const selectedBoardTaskDiscoveredRelevantPaths = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.discovered_relevant_paths)
+        ? selectedBoardTaskArtifactValidation.discovered_relevant_paths
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
+  const selectedBoardTaskReviewedPathsBackedByRead = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.reviewed_paths_backed_by_read)
+        ? selectedBoardTaskArtifactValidation.reviewed_paths_backed_by_read
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
+  const selectedBoardTaskUnreviewedRelevantPaths = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.unreviewed_relevant_paths)
+        ? selectedBoardTaskArtifactValidation.unreviewed_relevant_paths
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
+  const selectedBoardTaskUnmetResearchRequirements = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.unmet_requirements)
+        ? selectedBoardTaskArtifactValidation.unmet_requirements
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
   const continueBlockedTask =
     String(selectedBoardTask?.state || "").toLowerCase() === "blocked"
       ? selectedBoardTask
@@ -4261,6 +4313,7 @@ function MyAutomations({
       String(
         selectedBoardTaskOutput?.blocked_reason ||
           selectedBoardTaskOutput?.blockedReason ||
+          selectedBoardTaskArtifactValidation?.semantic_block_reason ||
           selectedBoardTaskArtifactValidation?.rejected_artifact_reason ||
           (selectedBoardTask as any)?.error_message ||
           ""
@@ -5607,6 +5660,98 @@ function MyAutomations({
                                     ).trim() || "n/a"}
                                   </div>
                                 </div>
+                              </div>
+                            ) : null}
+                            {selectedBoardTaskResearchReadPaths.length ||
+                            selectedBoardTaskDiscoveredRelevantPaths.length ||
+                            selectedBoardTaskUnmetResearchRequirements.length ||
+                            selectedBoardTaskArtifactValidation?.repair_attempted ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                <div className="font-medium text-slate-200">
+                                  Research Requirement Status
+                                </div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">discovered relevant files</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskDiscoveredRelevantPaths.length}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">
+                                      actual read calls backed by path
+                                    </div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskResearchReadPaths.length}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">reviewed paths backed by read</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskReviewedPathsBackedByRead.length}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">web research</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskArtifactValidation?.web_research_attempted
+                                        ? selectedBoardTaskArtifactValidation?.web_research_succeeded
+                                          ? "attempted and succeeded"
+                                          : "attempted but not successful"
+                                        : "not attempted"}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">repair pass</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskArtifactValidation?.repair_attempted
+                                        ? selectedBoardTaskArtifactValidation?.repair_succeeded
+                                          ? "attempted and satisfied"
+                                          : "attempted and exhausted"
+                                        : "not needed or not attempted"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">
+                                      missing / unreviewed relevant files
+                                    </div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskUnreviewedRelevantPaths.length}
+                                    </div>
+                                  </div>
+                                </div>
+                                {selectedBoardTaskUnmetResearchRequirements.length ? (
+                                  <div className="mt-3">
+                                    <div className="tcp-subtle mb-1">unmet requirements</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {selectedBoardTaskUnmetResearchRequirements.map((item) => (
+                                        <span
+                                          key={item}
+                                          className="rounded-full border border-amber-500/30 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100/90"
+                                        >
+                                          {item}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {selectedBoardTaskUnreviewedRelevantPaths.length ? (
+                                  <div className="mt-3">
+                                    <div className="tcp-subtle mb-1">unreviewed relevant files</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {selectedBoardTaskUnreviewedRelevantPaths.map((path) => (
+                                        <span
+                                          key={path}
+                                          className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                                        >
+                                          {path}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                             {selectedBoardTaskOutput ||

@@ -11,8 +11,8 @@ use tandem_providers::{ChatAttachment, ChatMessage, ProviderRegistry, StreamChun
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
     ContextMode, EngineEvent, HostOs, HostRuntimeContext, Message, MessagePart, MessagePartInput,
-    MessageRole, ModelSpec, PathStyle, PrewriteRequirements, SendMessageRequest, ShellFamily,
-    ToolMode, ToolSchema,
+    MessageRole, ModelSpec, PathStyle, PrewriteCoverageMode, PrewriteRequirements,
+    SendMessageRequest, ShellFamily, ToolMode, ToolSchema,
 };
 use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
@@ -407,8 +407,11 @@ impl EngineLoop {
             let mut productive_write_tool_calls_total = 0usize;
             let mut productive_workspace_inspection_total = 0usize;
             let mut productive_web_research_total = 0usize;
+            let mut productive_concrete_read_total = 0usize;
+            let mut successful_web_research_total = 0usize;
             let mut required_tool_retry_count = 0usize;
             let mut required_write_retry_count = 0usize;
+            let mut unmet_prewrite_repair_retry_count = 0usize;
             let mut invalid_tool_args_retry_count = 0usize;
             let strict_write_retry_max_attempts = strict_write_retry_max_attempts();
             let mut required_tool_unsatisfied_emitted = false;
@@ -623,7 +626,9 @@ impl EngineLoop {
                     && prewrite_requirements_satisfied(
                         &requested_prewrite_requirements,
                         productive_workspace_inspection_total > 0,
+                        productive_concrete_read_total > 0,
                         productive_web_research_total > 0,
+                        successful_web_research_total > 0,
                     )
                 {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
@@ -1264,9 +1269,17 @@ impl EngineLoop {
                                     productive_workspace_inspection_total =
                                         productive_workspace_inspection_total.saturating_add(1);
                                 }
+                                if tool_key == "read" {
+                                    productive_concrete_read_total =
+                                        productive_concrete_read_total.saturating_add(1);
+                                }
                                 if is_web_research_tool(&tool_key) {
                                     productive_web_research_total =
                                         productive_web_research_total.saturating_add(1);
+                                    if is_successful_web_research_output(&tool_key, &output) {
+                                        successful_web_research_total =
+                                            successful_web_research_total.saturating_add(1);
+                                    }
                                 }
                                 executed_productive_tool = true;
                                 if tool_key == "pack_builder" {
@@ -1325,7 +1338,9 @@ impl EngineLoop {
                                         &text,
                                         &requested_prewrite_requirements,
                                         productive_workspace_inspection_total > 0,
+                                        productive_concrete_read_total > 0,
                                         productive_web_research_total > 0,
+                                        successful_web_research_total > 0,
                                     ));
                                     self.event_bus.publish(EngineEvent::new(
                                         "provider.call.iteration.finish",
@@ -1407,7 +1422,9 @@ impl EngineLoop {
                                     &text,
                                     &requested_prewrite_requirements,
                                     productive_workspace_inspection_total > 0,
+                                    productive_concrete_read_total > 0,
                                     productive_web_research_total > 0,
+                                    successful_web_research_total > 0,
                                 ));
                                 self.event_bus.publish(EngineEvent::new(
                                     "provider.call.iteration.finish",
@@ -1483,6 +1500,42 @@ impl EngineLoop {
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
                         if executed_productive_tool {
+                            if requested_write_required
+                                && productive_write_tool_calls_total > 0
+                                && requested_prewrite_requirements.repair_on_unmet_requirements
+                                && unmet_prewrite_repair_retry_count == 0
+                                && !prewrite_requirements_satisfied(
+                                    &requested_prewrite_requirements,
+                                    productive_workspace_inspection_total > 0,
+                                    productive_concrete_read_total > 0,
+                                    productive_web_research_total > 0,
+                                    successful_web_research_total > 0,
+                                )
+                            {
+                                unmet_prewrite_repair_retry_count += 1;
+                                followup_context = Some(build_prewrite_repair_retry_context(
+                                    &offered_tool_preview,
+                                    latest_required_tool_failure_kind,
+                                    &text,
+                                    &requested_prewrite_requirements,
+                                    productive_workspace_inspection_total > 0,
+                                    productive_concrete_read_total > 0,
+                                    productive_web_research_total > 0,
+                                    successful_web_research_total > 0,
+                                ));
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "prewrite_repair_retry",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                    }),
+                                ));
+                                continue;
+                            }
                             followup_context = Some(format!(
                                 "{}\nContinue with a concise final response and avoid repeating identical tool calls.",
                                 summarize_tool_outputs(&outputs)
@@ -1572,7 +1625,9 @@ impl EngineLoop {
                             &text,
                             &requested_prewrite_requirements,
                             productive_workspace_inspection_total > 0,
+                            productive_concrete_read_total > 0,
                             productive_web_research_total > 0,
+                            successful_web_research_total > 0,
                         ));
                         continue;
                     }
@@ -2955,6 +3010,24 @@ fn is_productive_tool_output(tool_name: &str, output: &str) -> bool {
     !is_non_productive_tool_result_body(result_body)
 }
 
+fn is_successful_web_research_output(tool_name: &str, output: &str) -> bool {
+    if !is_web_research_tool(tool_name) {
+        return false;
+    }
+    let Some(result_body) = extract_tool_result_body(output) else {
+        return false;
+    };
+    if is_non_productive_tool_result_body(result_body) {
+        return false;
+    }
+    let lower = result_body.to_ascii_lowercase();
+    !(lower.contains("search timed out")
+        || lower.contains("timed out")
+        || lower.contains("no results received")
+        || lower.contains("no search results")
+        || lower.contains("no relevant results"))
+}
+
 fn extract_tool_result_body(output: &str) -> Option<&str> {
     let trimmed = output.trim();
     let rest = trimmed.strip_prefix("Tool `")?;
@@ -3296,16 +3369,18 @@ fn build_write_required_retry_context(
     latest_user_text: &str,
     prewrite_requirements: &PrewriteRequirements,
     workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
     web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
 ) -> String {
     let mut prompt = build_required_tool_retry_context(offered_tool_preview, previous_reason);
-    let mut unmet = Vec::new();
-    if prewrite_requirements.workspace_inspection_required && !workspace_inspection_satisfied {
-        unmet.push("inspect the workspace with `glob`/`read` before writing");
-    }
-    if prewrite_requirements.web_research_required && !web_research_satisfied {
-        unmet.push("use `websearch` before finalizing the file");
-    }
+    let unmet = describe_unmet_prewrite_requirements(
+        prewrite_requirements,
+        workspace_inspection_satisfied,
+        concrete_read_satisfied,
+        web_research_satisfied,
+        successful_web_research_satisfied,
+    );
     if !unmet.is_empty() {
         prompt.push(' ');
         prompt.push_str(&format!(
@@ -3322,13 +3397,88 @@ fn build_write_required_retry_context(
     prompt
 }
 
+fn build_prewrite_repair_retry_context(
+    offered_tool_preview: &str,
+    previous_reason: RequiredToolFailureKind,
+    latest_user_text: &str,
+    prewrite_requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
+    web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
+) -> String {
+    let mut prompt = build_write_required_retry_context(
+        offered_tool_preview,
+        previous_reason,
+        latest_user_text,
+        prewrite_requirements,
+        workspace_inspection_satisfied,
+        concrete_read_satisfied,
+        web_research_satisfied,
+        successful_web_research_satisfied,
+    );
+    let mut repair_notes = Vec::new();
+    if prewrite_requirements.concrete_read_required && !concrete_read_satisfied {
+        repair_notes.push(
+            "You already wrote a draft, but this task still requires concrete `read` calls against relevant files before you finalize it",
+        );
+    }
+    if prewrite_requirements.successful_web_research_required && !successful_web_research_satisfied
+    {
+        repair_notes.push(
+            "Timed out or empty websearch attempts do not satisfy external-research requirements; use a successful web result before finalizing",
+        );
+    }
+    if !matches!(
+        prewrite_requirements.coverage_mode,
+        PrewriteCoverageMode::None
+    ) {
+        repair_notes.push(
+            "Every path listed under `Files reviewed` must have been actually read in this run, and any relevant discovered file you did not read must appear under `Files not reviewed` with a reason",
+        );
+    }
+    if !repair_notes.is_empty() {
+        prompt.push(' ');
+        prompt.push_str("Repair this draft now before finalizing. ");
+        prompt.push_str(&repair_notes.join(" "));
+    }
+    prompt
+}
+
 fn prewrite_requirements_satisfied(
     requirements: &PrewriteRequirements,
     workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
     web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
 ) -> bool {
     (!requirements.workspace_inspection_required || workspace_inspection_satisfied)
         && (!requirements.web_research_required || web_research_satisfied)
+        && (!requirements.concrete_read_required || concrete_read_satisfied)
+        && (!requirements.successful_web_research_required || successful_web_research_satisfied)
+}
+
+fn describe_unmet_prewrite_requirements(
+    requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
+    web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
+) -> Vec<&'static str> {
+    let mut unmet = Vec::new();
+    if requirements.workspace_inspection_required && !workspace_inspection_satisfied {
+        unmet.push("inspect the workspace with `glob`/`read` before writing");
+    }
+    if requirements.concrete_read_required && !concrete_read_satisfied {
+        unmet.push("use `read` on the concrete files you cite before finalizing");
+    }
+    if requirements.web_research_required && !web_research_satisfied {
+        unmet.push("use `websearch` before finalizing the file");
+    }
+    if requirements.successful_web_research_required && !successful_web_research_satisfied {
+        unmet.push("obtain at least one successful web research result instead of only timed-out or empty searches");
+    }
+    unmet
 }
 
 fn is_workspace_inspection_tool(tool_name: &str) -> bool {

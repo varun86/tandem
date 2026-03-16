@@ -21,7 +21,8 @@ use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind,
 use tandem_orchestrator::MissionState;
 use tandem_types::{
     EngineEvent, HostOs, HostRuntimeContext, MessagePart, MessagePartInput, MessageRole, ModelSpec,
-    PathStyle, PrewriteRequirements, SendMessageRequest, Session, ShellFamily, ToolMode,
+    PathStyle, PrewriteCoverageMode, PrewriteRequirements, SendMessageRequest, Session,
+    ShellFamily, ToolMode,
 };
 use tokio::fs;
 use tokio::sync::RwLock;
@@ -7319,9 +7320,26 @@ fn automation_node_prewrite_requirements(
         .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list" | "read"));
     let web_research_required = automation_node_web_research_expected(node)
         && requested_tools.iter().any(|tool| tool == "websearch");
+    let brief_research_node = node
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.kind == "brief");
+    let concrete_read_required =
+        brief_research_node && requested_tools.iter().any(|tool| tool == "read");
+    let successful_web_research_required = brief_research_node
+        && automation_node_web_research_expected(node)
+        && requested_tools.iter().any(|tool| tool == "websearch");
     Some(PrewriteRequirements {
         workspace_inspection_required,
         web_research_required,
+        concrete_read_required,
+        successful_web_research_required,
+        repair_on_unmet_requirements: brief_research_node,
+        coverage_mode: if brief_research_node {
+            PrewriteCoverageMode::ResearchCorpus
+        } else {
+            PrewriteCoverageMode::None
+        },
     })
 }
 
@@ -7574,6 +7592,157 @@ fn files_reviewed_section_lists_paths(text: &str) -> bool {
                 || trimmed.contains(".txt")
                 || trimmed.contains("readme"))
     })
+}
+
+fn extract_markdown_section_paths(text: &str, heading: &str) -> Vec<String> {
+    let mut collecting = false;
+    let mut paths = Vec::new();
+    let heading_normalized = heading.trim().to_ascii_lowercase();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let normalized = trimmed.trim_start_matches('#').trim().to_ascii_lowercase();
+        if trimmed.starts_with('#') {
+            collecting = normalized == heading_normalized;
+            continue;
+        }
+        if !collecting {
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        let candidate = trimmed
+            .trim_start_matches(|ch: char| {
+                ch == '-' || ch == '*' || ch.is_ascii_digit() || ch == '.' || ch == ')'
+            })
+            .trim();
+        let token = candidate.split(['`', '(', ')']).find_map(|part| {
+            let value = part.trim();
+            if value.contains('/')
+                || value.ends_with(".md")
+                || value.ends_with(".txt")
+                || value.to_ascii_lowercase().contains("readme")
+            {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        });
+        if let Some(path) = token.filter(|value| !value.is_empty()) {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn normalize_workspace_display_path(workspace_root: &str, raw_path: &str) -> Option<String> {
+    let trimmed = raw_path.trim().trim_matches('`');
+    if trimmed.is_empty() {
+        return None;
+    }
+    resolve_automation_output_path(workspace_root, trimmed)
+        .ok()
+        .and_then(|resolved| {
+            resolved
+                .strip_prefix(PathBuf::from(workspace_root))
+                .ok()
+                .and_then(|value| value.to_str().map(str::to_string))
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn session_read_paths(session: &Session, workspace_root: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool, args, error, ..
+            } = part
+            else {
+                continue;
+            };
+            if !tool.eq_ignore_ascii_case("read")
+                || error.as_ref().is_some_and(|value| !value.trim().is_empty())
+            {
+                continue;
+            }
+            let Some(path) = args.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(normalized) = normalize_workspace_display_path(workspace_root, path) {
+                paths.push(normalized);
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn session_discovered_relevant_paths(session: &Session, workspace_root: &str) -> Vec<String> {
+    let workspace = PathBuf::from(workspace_root);
+    let mut paths = Vec::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool,
+                result,
+                error,
+                ..
+            } = part
+            else {
+                continue;
+            };
+            if !tool.eq_ignore_ascii_case("glob")
+                || error.as_ref().is_some_and(|value| !value.trim().is_empty())
+            {
+                continue;
+            }
+            let output = result
+                .as_ref()
+                .and_then(|value| value.get("output"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            for line in output.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let path = PathBuf::from(trimmed);
+                let resolved = if path.is_absolute() {
+                    path
+                } else {
+                    let Ok(resolved) = resolve_automation_output_path(workspace_root, trimmed)
+                    else {
+                        continue;
+                    };
+                    resolved
+                };
+                if !resolved.starts_with(&workspace) {
+                    continue;
+                }
+                if !std::fs::metadata(&resolved)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let display = resolved
+                    .strip_prefix(&workspace)
+                    .ok()
+                    .and_then(|value| value.to_str().map(str::to_string))
+                    .filter(|value| !value.is_empty());
+                if let Some(display) = display {
+                    paths.push(display);
+                }
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn session_write_candidates_for_output(
@@ -7998,6 +8167,13 @@ fn validate_automation_artifact_output(
     let mut semantic_block_reason = None::<String>;
     let mut accepted_output = verified_output;
     let mut recovered_from_session_write = false;
+    let read_paths = session_read_paths(session, workspace_root);
+    let mut discovered_relevant_paths = session_discovered_relevant_paths(session, workspace_root);
+    let mut reviewed_paths_backed_by_read = Vec::<String>::new();
+    let mut unreviewed_relevant_paths = Vec::<String>::new();
+    let mut unmet_requirements = Vec::<String>::new();
+    let mut repair_attempted = false;
+    let mut repair_succeeded = false;
     let execution_mode = execution_policy
         .get("mode")
         .and_then(Value::as_str)
@@ -8031,6 +8207,8 @@ fn validate_automation_artifact_output(
 
     if let Some((path, text)) = accepted_output.clone() {
         let recovered_candidate = best_session_write_candidate(session, workspace_root, &path);
+        let session_write_candidates =
+            session_write_candidates_for_output(session, workspace_root, &path);
         let lowered = text.to_ascii_lowercase();
         let requested_has_read = tool_telemetry
             .get("requested_tools")
@@ -8045,6 +8223,40 @@ fn validate_automation_artifact_output(
             .get("web_research_succeeded")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let reviewed_paths = extract_markdown_section_paths(&text, "Files reviewed")
+            .into_iter()
+            .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
+            .collect::<Vec<_>>();
+        let files_not_reviewed = extract_markdown_section_paths(&text, "Files not reviewed")
+            .into_iter()
+            .filter_map(|value| normalize_workspace_display_path(workspace_root, &value))
+            .collect::<Vec<_>>();
+        reviewed_paths_backed_by_read = reviewed_paths
+            .iter()
+            .filter(|path| read_paths.iter().any(|read| read == *path))
+            .cloned()
+            .collect();
+        if discovered_relevant_paths.is_empty() {
+            discovered_relevant_paths = reviewed_paths.clone();
+        }
+        unreviewed_relevant_paths = discovered_relevant_paths
+            .iter()
+            .filter(|path| {
+                !read_paths.iter().any(|read| read == *path)
+                    && !files_not_reviewed.iter().any(|skipped| skipped == *path)
+            })
+            .cloned()
+            .collect();
+        repair_attempted = session_write_candidates.len() > 1
+            && (requested_has_read || web_research_expected)
+            && (!reviewed_paths_backed_by_read.is_empty()
+                || !read_paths.is_empty()
+                || tool_telemetry
+                    .get("tool_call_counts")
+                    .and_then(|value| value.get("write"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    > 1);
         // TODO(coding-hardening): These lexical overwrite heuristics are a temporary
         // stopgap. The proper architecture is "best substantive artifact candidate wins"
         // based on structured scoring of all writes/patches to the declared output,
@@ -8084,14 +8296,36 @@ fn validate_automation_artifact_output(
             && requested_has_read
         {
             let missing_concrete_reads = !executed_has_read;
-            let missing_file_coverage = !files_reviewed_section_lists_paths(&text);
+            let files_reviewed_backed = !reviewed_paths.is_empty()
+                && reviewed_paths.len() == reviewed_paths_backed_by_read.len();
+            let missing_file_coverage = !files_reviewed_section_lists_paths(&text)
+                || !files_reviewed_backed
+                || !unreviewed_relevant_paths.is_empty();
             let missing_web_research = web_research_expected && !web_research_succeeded;
+            unmet_requirements.clear();
+            if missing_concrete_reads {
+                unmet_requirements.push("no_concrete_reads".to_string());
+            }
+            if !files_reviewed_section_lists_paths(&text) {
+                unmet_requirements.push("files_reviewed_missing".to_string());
+            }
+            if !files_reviewed_backed {
+                unmet_requirements.push("files_reviewed_not_backed_by_read".to_string());
+            }
+            if !unreviewed_relevant_paths.is_empty() {
+                unmet_requirements.push("relevant_files_not_reviewed_or_skipped".to_string());
+            }
+            if missing_web_research {
+                unmet_requirements.push("missing_successful_web_research".to_string());
+            }
             if missing_concrete_reads || missing_file_coverage || missing_web_research {
                 semantic_block_reason = Some(if missing_concrete_reads {
                     "research completed without concrete file reads or required source coverage"
                         .to_string()
                 } else if missing_web_research {
                     "research completed without required current web research".to_string()
+                } else if !unreviewed_relevant_paths.is_empty() {
+                    "research completed without covering or explicitly skipping relevant discovered files".to_string()
                 } else {
                     "research completed without a source-backed files reviewed section".to_string()
                 });
@@ -8138,6 +8372,7 @@ fn validate_automation_artifact_output(
                         accepted_output = Some((path.clone(), candidate.clone()));
                         rejected_reason = None;
                         recovered_from_session_write = true;
+                        repair_succeeded = true;
                     } else if let Some(previous) = preexisting_output {
                         let _ = std::fs::write(&resolved, previous);
                         accepted_output = None;
@@ -8166,8 +8401,12 @@ fn validate_automation_artifact_output(
                     let _ = std::fs::write(&resolved, candidate);
                     accepted_output = Some((path.clone(), candidate.clone()));
                     recovered_from_session_write = true;
+                    repair_succeeded = true;
                 }
             }
+        }
+        if repair_attempted && semantic_block_reason.is_none() {
+            repair_succeeded = true;
         }
     }
 
@@ -8183,6 +8422,15 @@ fn validate_automation_artifact_output(
         "mutation_tool_by_file": Value::Object(mutation_tool_by_file),
         "verification": verification_summary,
         "git_diff_summary": git_diff_summary_for_paths(workspace_root, &touched_files),
+        "read_paths": read_paths,
+        "discovered_relevant_paths": discovered_relevant_paths,
+        "reviewed_paths_backed_by_read": reviewed_paths_backed_by_read,
+        "unreviewed_relevant_paths": unreviewed_relevant_paths,
+        "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
+        "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
+        "repair_attempted": repair_attempted,
+        "repair_succeeded": repair_succeeded,
+        "unmet_requirements": unmet_requirements,
     });
     let rejected = metadata
         .get("rejected_artifact_reason")
@@ -11607,6 +11855,165 @@ mod tests {
             Some("research completed without required current web research")
         );
         assert_eq!(approved, Some(true));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let requirements = automation_node_prewrite_requirements(
+            &node,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        )
+        .expect("prewrite requirements");
+        assert!(requirements.workspace_inspection_required);
+        assert!(requirements.web_research_required);
+        assert!(requirements.concrete_read_required);
+        assert!(requirements.successful_web_research_required);
+        assert!(requirements.repair_on_unmet_requirements);
+        assert_eq!(
+            requirements.coverage_mode,
+            PrewriteCoverageMode::ResearchCorpus
+        );
+    }
+
+    #[test]
+    fn brief_with_unreviewed_discovered_files_is_blocked_with_structured_metadata() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-brief-coverage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(workspace_root.join("docs")).expect("create workspace");
+        std::fs::write(
+            workspace_root.join("docs/one.md"),
+            "# One\nsource content\n",
+        )
+        .expect("write one");
+        std::fs::write(
+            workspace_root.join("docs/two.md"),
+            "# Two\nsource content\n",
+        )
+        .expect("write two");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": false
+                }
+            })),
+        };
+        let brief_text = "# Marketing Brief\n\n## Workspace source audit\nPrepared from workspace sources.\n\n## Files reviewed\n- docs/one.md\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &brief_text).expect("seed brief");
+        let mut session = Session::new(
+            Some("coverage mismatch".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "glob".to_string(),
+                    args: json!({"pattern":"docs/**/*.md"}),
+                    result: Some(json!({"output": format!(
+                        "{}\n{}",
+                        workspace_root.join("docs/one.md").display(),
+                        workspace_root.join("docs/two.md").display()
+                    )})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"docs/one.md"}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":"marketing-brief.md","content":brief_text}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+        let tool_telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &["glob".to_string(), "read".to_string(), "write".to_string()],
+        );
+        let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "Done\n\n{\"status\":\"completed\"}",
+            &tool_telemetry,
+            None,
+            Some(("marketing-brief.md".to_string(), brief_text)),
+            &snapshot,
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without covering or explicitly skipping relevant discovered files")
+        );
+        assert_eq!(
+            metadata
+                .get("unreviewed_relevant_paths")
+                .and_then(Value::as_array)
+                .map(|values| values.len()),
+            Some(1)
+        );
+        assert!(metadata
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .is_some_and(|values| values
+                .iter()
+                .any(|value| value.as_str() == Some("relevant_files_not_reviewed_or_skipped"))));
 
         let _ = std::fs::remove_dir_all(workspace_root);
     }

@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed review nodes with `approved: false` to propagate a blocked status cleanly through the automation runtime and debugger
   - fixed file-backed research briefs being marked `completed` when they cited workspace sources without ever calling `read`; these now block even if the model writes a polished “source-backed” brief
   - fixed timed-out `websearch` attempts still counting as successful current-market research; research now blocks when required web research only timed out or returned no usable result
+  - brief/research nodes now carry stricter prewrite requirements for concrete `read`, successful web research, one automatic repair retry, and coverage-aware validation metadata before they finalize as blocked
+  - research artifact validation now records actual `read` paths, discovered relevant files, `Files reviewed` coverage backed by reads, unreviewed relevant files, web-research success, and repair-pass state so blocked runs show the real failure cause
   - code workflows with multi-step verification plans now emit explicit verification outcomes; partial verification blocks completion, failed verification emits `verify_failed`, and fully verified code tasks finish as `done`
   - fixed `/workspace/...` tool paths so file-backed workflow nodes resolve against the actual workspace root instead of failing on a fake alias
 - **Saved Studio workflow deletion and restart persistence**:
