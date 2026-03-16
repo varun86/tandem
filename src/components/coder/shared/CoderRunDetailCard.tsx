@@ -11,6 +11,7 @@ import type {
 import { readFileText } from "@/lib/tauri";
 import { CoderRunActionToolbar } from "./CoderRunActionToolbar";
 import {
+  extractRunBlockers,
   extractSessionIdsFromRun,
   runAwaitingGate,
   runStatusLabel,
@@ -134,6 +135,7 @@ export function CoderRunDetailCard({
     blackboardArtifacts[0] ||
     null;
   const awaitingGate = useMemo(() => runAwaitingGate(selectedRunDetail), [selectedRunDetail]);
+  const runBlockers = useMemo(() => extractRunBlockers(selectedRunDetail), [selectedRunDetail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,6 +294,20 @@ export function CoderRunDetailCard({
             {runSummary(selectedRunDetail) ? (
               <div className="rounded-lg border border-border bg-surface-elevated/30 p-3 text-sm text-text-muted">
                 {runSummary(selectedRunDetail)}
+              </div>
+            ) : null}
+
+            {runBlockers.length ? (
+              <div className="space-y-2">
+                {runBlockers.slice(0, 4).map((blocker) => (
+                  <div
+                    key={blocker.key}
+                    className="rounded-lg border border-red-500/30 bg-red-500/10 p-3"
+                  >
+                    <div className="text-sm font-medium text-red-100">{blocker.title}</div>
+                    <div className="mt-1 text-sm text-red-200">{blocker.reason}</div>
+                  </div>
+                ))}
               </div>
             ) : null}
 

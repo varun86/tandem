@@ -17,6 +17,12 @@ export type SessionPreview = {
   latestText: string;
 };
 
+export type RunBlocker = {
+  key: string;
+  title: string;
+  reason: string;
+};
+
 export function coderMetadataFromAutomation(
   automation: AutomationV2Spec | null | undefined
 ): CoderAutomationMetadata | null {
@@ -243,6 +249,44 @@ export function runUsageMetrics(run: AutomationV2RunRecord | null) {
       finiteNumber(checkpoint.total_tool_calls) ??
       finiteNumber(checkpoint.totalToolCalls),
   };
+}
+
+export function extractRunBlockers(run: AutomationV2RunRecord | null): RunBlocker[] {
+  const blockers: RunBlocker[] = [];
+  const push = (key: string, title: string, reason: string) => {
+    const normalizedReason = String(reason || "").trim();
+    if (!normalizedReason) return;
+    if (blockers.some((item) => item.key === key)) return;
+    blockers.push({ key, title, reason: normalizedReason });
+  };
+  const detail = runSummary(run);
+  const status = String(run?.status || "").trim();
+  if (status === "failed") {
+    push("run-failed", "Run failed", detail || "Run finished with failed status.");
+  }
+  if (status === "paused") {
+    push("run-paused", "Run paused", detail || "Run was paused before completion.");
+  }
+  if (!extractSessionIdsFromRun(run).length) {
+    push(
+      "missing-session",
+      "No linked session transcript",
+      "This run does not currently expose a linked session transcript."
+    );
+  }
+  for (const output of extractRunNodeOutputs(run)) {
+    const body = nodeOutputText((output.value || {}) as Record<string, unknown>);
+    const lower = body.toLowerCase();
+    if (
+      lower.includes("failed") ||
+      lower.includes("error") ||
+      lower.includes("blocked") ||
+      lower.includes("timed out")
+    ) {
+      push(`node-${output.nodeId}`, `Node issue: ${output.nodeId}`, shortText(body, 320));
+    }
+  }
+  return blockers;
 }
 
 export function formatTimestamp(value: unknown) {

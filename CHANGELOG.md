@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - shared desktop coder workflow-run helpers now also provide status-label formatting so agent-automation views stop carrying their own run-status mapping
   - shared desktop coder workflow-run helpers now also provide node-output summaries and session-id extraction so agent-automation diagnostics stop hand-parsing output payloads
   - shared desktop coder workflow-run helpers now also provide stop-reason and node-attempt helpers so agent-automation views drop more direct run/checkpoint field access
+  - shared desktop coder workflow-run helpers now also provide blocker extraction so desktop automation and coder detail views surface the same run issues
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

@@ -4,6 +4,7 @@ import { ProjectSwitcher } from "@/components/sidebar";
 import {
   blockedNodeIds,
   completedNodeIds,
+  extractRunBlockers,
   extractRunLifecycleHistory,
   extractRunNodeOutputs,
   extractSessionIdsFromRun,
@@ -440,42 +441,6 @@ function sessionMessageVariant(message: SessionMessage) {
   const body = sessionMessageText(message).toLowerCase();
   if (body.includes("error")) return "error";
   return "system";
-}
-
-function buildRunBlockers(run: AutomationV2RunRecord | null) {
-  const blockers: Array<{ key: string; title: string; reason: string }> = [];
-  const push = (key: string, title: string, reason: string) => {
-    if (!reason.trim()) return;
-    if (blockers.some((item) => item.key === key)) return;
-    blockers.push({ key, title, reason });
-  };
-  const detail = runSummary(run);
-  if (String(run?.status || "").trim() === "failed") {
-    push("run-failed", "Run failed", detail || "Run finished with failed status.");
-  }
-  if (String(run?.status || "").trim() === "paused") {
-    push("run-paused", "Run paused", detail || "Run was paused before completion.");
-  }
-  if (!extractSessionIdsFromRun(run).length) {
-    push(
-      "missing-session",
-      "No linked session transcript",
-      "This run does not currently expose a linked session transcript."
-    );
-  }
-  for (const output of extractRunNodeOutputs(run)) {
-    const body = nodeOutputText(output.value);
-    const lower = body.toLowerCase();
-    if (
-      lower.includes("failed") ||
-      lower.includes("error") ||
-      lower.includes("blocked") ||
-      lower.includes("timed out")
-    ) {
-      push(`node-${output.nodeId}`, `Node issue: ${output.nodeId}`, shortText(body, 320));
-    }
-  }
-  return blockers;
 }
 
 function buildBlockedNodeDiagnostics(
@@ -1460,7 +1425,7 @@ export function AgentAutomationPage({
     (run) => String(run.status || "").trim() === "failed"
   ).length;
   const selectedRunBlockers = useMemo(
-    () => buildRunBlockers(selectedRunDetail),
+    () => extractRunBlockers(selectedRunDetail),
     [selectedRunDetail]
   );
   const selectedRunNodeOutputs = useMemo(
