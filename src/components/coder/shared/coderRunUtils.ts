@@ -302,7 +302,13 @@ export function failureChainLifecycleEntries(
       metadata: null,
     });
   }
-  return rows.slice(0, limit);
+  return rows.slice(0, limit).map((entry) => ({
+    event: String(entry.event || "").trim(),
+    recorded_at_ms: Number(entry.recorded_at_ms || 0),
+    reason: entry.reason ? String(entry.reason) : null,
+    stop_kind: entry.stop_kind ? String(entry.stop_kind) : null,
+    metadata: (entry.metadata || null) as Record<string, unknown> | null,
+  }));
 }
 
 export function completedNodeIds(run: AutomationV2RunRecord | null) {
