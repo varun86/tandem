@@ -23,6 +23,14 @@ export function workflowPendingNodeIds(run: any) {
   return checkpointStringArray(workflowCheckpoint(run), "pending_nodes", "pendingNodes");
 }
 
+export function workflowCompletedNodeCount(run: any) {
+  return workflowCompletedNodeIds(run).length;
+}
+
+export function workflowPendingNodeCount(run: any) {
+  return workflowPendingNodeIds(run).length;
+}
+
 export function workflowNodeOutputs(run: any): Record<string, any> {
   const checkpoint = workflowCheckpoint(run);
   return (checkpoint?.node_outputs || checkpoint?.nodeOutputs || {}) as Record<string, any>;
@@ -40,6 +48,40 @@ export function workflowNodeOutput(run: any, nodeId: string) {
   if (!normalized) return null;
   const outputs = workflowNodeOutputs(run);
   return outputs[normalized] || null;
+}
+
+export function workflowTaskState(
+  run: any,
+  nodeId: string,
+  dependencyTaskIds: string[]
+): "pending" | "runnable" | "done" | "failed" | "blocked" {
+  const completed = new Set(workflowCompletedNodeIds(run));
+  const blocked = new Set(workflowBlockedNodeIds(run));
+  const pending = new Set(workflowPendingNodeIds(run));
+  const taskId = String(nodeId || "").trim();
+  if (!taskId) return dependencyTaskIds.length ? "pending" : "runnable";
+  if (completed.has(taskId)) return "done";
+  const output = workflowNodeOutput(run, taskId);
+  const outputStatus = String(output?.status || output?.content?.status || "")
+    .trim()
+    .toLowerCase();
+  if (outputStatus === "done") return "done";
+  if (outputStatus === "verify_failed" || outputStatus === "failed") return "failed";
+  if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
+  const errorText = String(
+    output?.error ||
+      output?.content?.error ||
+      output?.content?.message ||
+      output?.content?.status_message ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  if (errorText && (errorText.includes("failed") || errorText.includes("error"))) return "failed";
+  if (!pending.has(taskId)) {
+    return dependencyTaskIds.length ? "pending" : "runnable";
+  }
+  return dependencyTaskIds.length ? "pending" : "runnable";
 }
 
 export function workflowLifecycleHistory(run: any): any[] {

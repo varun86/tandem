@@ -8,13 +8,16 @@ import {
   workflowArtifactCandidates,
   workflowArtifactValidation,
   workflowBlockedNodeIds,
+  workflowCompletedNodeCount,
   workflowCompletedNodeIds,
   workflowEventSummary,
   workflowNodeOutputEntries,
   workflowNodeOutputText,
   workflowNodeToolTelemetry,
   workflowNodeOutput,
+  workflowPendingNodeCount,
   workflowPendingNodeIds,
+  workflowTaskState,
   workflowNodeStability,
   workflowRecentNodeEvents,
   workflowSessionIds,
@@ -951,40 +954,6 @@ function workflowDescendantTaskIds(tasks: any[], rootTaskId: string) {
   return Array.from(descendants);
 }
 
-function workflowTaskStateFromCheckpoint(
-  nodeId: string,
-  checkpoint: any,
-  dependencyTaskIds: string[]
-): "pending" | "runnable" | "done" | "failed" | "blocked" {
-  const checkpointLike = { checkpoint };
-  const completed = new Set(workflowCompletedNodeIds(checkpointLike));
-  const blocked = new Set(workflowBlockedNodeIds(checkpointLike));
-  const pending = new Set(workflowPendingNodeIds(checkpointLike));
-  const taskId = String(nodeId || "").trim();
-  if (completed.has(taskId)) return "done";
-  const output = checkpoint?.node_outputs?.[taskId] || checkpoint?.nodeOutputs?.[taskId];
-  const outputStatus = String(output?.status || output?.content?.status || "")
-    .trim()
-    .toLowerCase();
-  if (outputStatus === "done") return "done";
-  if (outputStatus === "verify_failed" || outputStatus === "failed") return "failed";
-  if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
-  const errorText = String(
-    output?.error ||
-      output?.content?.error ||
-      output?.content?.message ||
-      output?.content?.status_message ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
-  if (errorText && (errorText.includes("failed") || errorText.includes("error"))) return "failed";
-  if (!pending.has(taskId)) {
-    return dependencyTaskIds.length ? "pending" : "runnable";
-  }
-  return dependencyTaskIds.length ? "pending" : "runnable";
-}
-
 function buildWorkflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
   const snapshotNodes = Array.isArray(run?.automation_snapshot?.flow?.nodes)
     ? run.automation_snapshot.flow.nodes
@@ -1001,7 +970,7 @@ function buildWorkflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
       ? node.depends_on.map((dep: unknown) => `node-${String(dep || "").trim()}`).filter(Boolean)
       : [];
     const ready = dependencies.every((depId) => completed.has(depId.replace(/^node-/, "")));
-    const state = workflowTaskStateFromCheckpoint(nodeId, checkpoint, ready ? [] : dependencies);
+    const state = workflowTaskState(run, nodeId, ready ? [] : dependencies);
     const output = checkpoint?.node_outputs?.[nodeId] || checkpoint?.nodeOutputs?.[nodeId] || {};
     const inferredState =
       activeTaskId === taskId &&
@@ -4466,18 +4435,14 @@ function MyAutomations({
         label: "blackboard patches",
         value: String(workflowContextPatches.length),
       });
-      if (Array.isArray(selectedRun?.checkpoint?.completed_nodes)) {
-        rows.push({
-          label: "completed nodes",
-          value: String(selectedRun.checkpoint.completed_nodes.length),
-        });
-      }
-      if (Array.isArray(selectedRun?.checkpoint?.pending_nodes)) {
-        rows.push({
-          label: "pending nodes",
-          value: String(selectedRun.checkpoint.pending_nodes.length),
-        });
-      }
+      rows.push({
+        label: "completed nodes",
+        value: String(workflowCompletedNodeCount(selectedRun)),
+      });
+      rows.push({
+        label: "pending nodes",
+        value: String(workflowPendingNodeCount(selectedRun)),
+      });
     }
     if (String(selectedRun?.detail || "").trim()) {
       rows.push({ label: "detail", value: String(selectedRun.detail).trim() });
@@ -5236,10 +5201,7 @@ function MyAutomations({
                   </div>
                   {isWorkflowRun ? (
                     <div className="tcp-subtle text-xs">
-                      completed nodes:{" "}
-                      {Array.isArray(selectedRun?.checkpoint?.completed_nodes)
-                        ? selectedRun.checkpoint.completed_nodes.length
-                        : 0}
+                      completed nodes: {workflowCompletedNodeCount(selectedRun)}
                       {" · "}active sessions:{" "}
                       {Array.isArray(selectedRun?.active_session_ids)
                         ? selectedRun.active_session_ids.length
