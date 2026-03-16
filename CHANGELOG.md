@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - shared control-panel workflow selectors now also own the first-pending-task fallback used by active workflow focus detection
   - shared control-panel workflow selectors now also own blocked-node counts so debugger headers and summary rows stop counting blocked arrays inline
   - control-panel workflow focus detection now prefers typed lifecycle node events from the shared workflow stability contract before falling back to transcript/session-text inference
+  - control-panel task inspection now consumes pre-normalized recent workflow event summaries from the shared workflow stability layer instead of re-summarizing raw lifecycle entries inline
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

@@ -22,7 +22,7 @@ import {
   workflowPendingNodeCount,
   workflowNodeStability,
   workflowProjectionFromRunSnapshot,
-  workflowRecentNodeEvents,
+  workflowRecentNodeEventSummaries,
   workflowSessionIds,
 } from "../features/orchestration/workflowStability";
 import { useEngineStream } from "../features/stream/useEngineStream";
@@ -4190,7 +4190,7 @@ function MyAutomations({
     [selectedBoardTaskOutput]
   );
   const selectedBoardTaskLifecycleEvents = useMemo(
-    () => workflowRecentNodeEvents(selectedRun, selectedBoardTaskNodeId, 8),
+    () => workflowRecentNodeEventSummaries(selectedRun, selectedBoardTaskNodeId, 8),
     [selectedBoardTaskNodeId, selectedRun]
   );
   const selectedBoardTaskResetTaskIds = useMemo(
@@ -5525,8 +5525,7 @@ function MyAutomations({
                                   <div className="mt-3 grid gap-2">
                                     <div className="tcp-subtle">recent workflow events</div>
                                     {selectedBoardTaskLifecycleEvents.map(
-                                      (event: any, index: number) => {
-                                        const summary = workflowEventSummary(event);
+                                      (summary: any, index: number) => {
                                         return (
                                           <div
                                             key={`${summary.event}-${String(summary.recordedAtMs || index)}`}

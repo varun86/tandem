@@ -235,6 +235,13 @@ export function workflowRecentNodeEvents(run: any, nodeId: string, limit = 8) {
     .reverse();
 }
 
+export function workflowRecentNodeEventSummaries(run: any, nodeId: string, limit = 8) {
+  return workflowRecentNodeEvents(run, nodeId, limit).map((event: any) => ({
+    ...workflowEventSummary(event),
+    raw: event,
+  }));
+}
+
 export function workflowLatestLifecycleTaskId(run: any) {
   const latestEvent = workflowLatestLifecycleEvent(run);
   return workflowEventTaskId(latestEvent);
