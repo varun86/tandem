@@ -2641,14 +2641,6 @@ pub(super) async fn automations_v2_run_repair(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     let model_policy = input.model_policy.clone();
-    if prompt.is_none() && template_id.is_none() && model_policy.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                json!({"error":"Repair requires at least one of prompt, template_id, or model_policy", "code":"AUTOMATION_V2_REPAIR_EMPTY"}),
-            ),
-        ));
-    }
     if let Some(prompt_value) = prompt.as_ref() {
         let metadata = node.metadata.get_or_insert_with(|| json!({}));
         let builder = metadata
@@ -2696,6 +2688,14 @@ pub(super) async fn automations_v2_run_repair(
     })?;
     let roots = std::iter::once(node_id.clone()).collect::<std::collections::HashSet<_>>();
     let reset_nodes = crate::collect_automation_descendants(&stored_automation, &roots);
+    let cleared_outputs = crate::clear_automation_subtree_outputs(&state, &stored_automation, &reset_nodes)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": error.to_string(), "code":"AUTOMATION_V2_REPAIR_OUTPUT_RESET_FAILED"})),
+            )
+        })?;
     let reason = reason_or_default(
         input.reason,
         &format!("repaired node `{}` and reset affected subtree", node_id),
@@ -2744,6 +2744,8 @@ pub(super) async fn automations_v2_run_repair(
                     "prompt_updated": prompt.is_some(),
                     "template_updated": template_id.is_some(),
                     "model_policy_updated": model_policy.is_some(),
+                    "reset_only": prompt.is_none() && template_id.is_none() && model_policy.is_none(),
+                    "cleared_outputs": cleared_outputs,
                     "previous_prompt": previous_prompt,
                     "new_prompt": prompt,
                     "previous_template_id": previous_agent.as_ref().and_then(|agent| agent.template_id.clone()),

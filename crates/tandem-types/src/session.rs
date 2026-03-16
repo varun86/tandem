@@ -92,6 +92,28 @@ pub struct SendMessageRequest {
     pub context_mode: Option<ContextMode>,
     #[serde(default, alias = "writeRequired", alias = "write_required")]
     pub write_required: Option<bool>,
+    #[serde(
+        default,
+        alias = "prewriteRequirements",
+        alias = "prewrite_requirements"
+    )]
+    pub prewrite_requirements: Option<PrewriteRequirements>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PrewriteRequirements {
+    #[serde(
+        default,
+        alias = "workspaceInspectionRequired",
+        alias = "workspace_inspection_required"
+    )]
+    pub workspace_inspection_required: bool,
+    #[serde(
+        default,
+        alias = "webResearchRequired",
+        alias = "web_research_required"
+    )]
+    pub web_research_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -209,7 +209,10 @@ function AppBody() {
     toast("info", "Logged out.");
   }, [queryClient, toast]);
 
-  const lockedRoutes = useMemo(() => new Set(["chat", "agents", "orchestrator", "teams"]), []);
+  const lockedRoutes = useMemo(
+    () => new Set(["chat", "studio", "agents", "orchestrator", "teams"]),
+    []
+  );
   const needsProviderOnboarding = !!providerQuery.data?.needsOnboarding;
   const providerLocked = authed && needsProviderOnboarding;
 

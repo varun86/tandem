@@ -2578,6 +2578,32 @@ class AutomationsV2 {
     );
   }
 
+  async recoverRun(
+    runId: string,
+    reason?: string
+  ): Promise<{ ok?: boolean; run?: AutomationV2RunRecord }> {
+    return this.req<{ ok?: boolean; run?: AutomationV2RunRecord }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/recover`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    );
+  }
+
+  async repairRun(
+    runId: string,
+    input: {
+      node_id: string;
+      prompt?: string;
+      template_id?: string;
+      model_policy?: JsonObject;
+      reason?: string;
+    }
+  ): Promise<{ ok?: boolean; run?: AutomationV2RunRecord; automation?: JsonObject }> {
+    return this.req<{ ok?: boolean; run?: AutomationV2RunRecord; automation?: JsonObject }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/repair`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+
   async cancelRun(
     runId: string,
     reason?: string

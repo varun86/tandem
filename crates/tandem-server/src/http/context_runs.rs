@@ -3249,6 +3249,7 @@ pub(super) fn automation_run_status_to_context(
         | crate::AutomationRunStatus::Paused
         | crate::AutomationRunStatus::AwaitingApproval => ContextRunStatus::Running,
         crate::AutomationRunStatus::Completed => ContextRunStatus::Completed,
+        crate::AutomationRunStatus::Blocked => ContextRunStatus::Blocked,
         crate::AutomationRunStatus::Failed => ContextRunStatus::Failed,
         crate::AutomationRunStatus::Cancelled => ContextRunStatus::Cancelled,
     }

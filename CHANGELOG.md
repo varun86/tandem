@@ -5,7 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - Unreleased
+## [0.4.8] - Unreleased
+
+### Added
+
+- **Studio workflow builder in the control panel**:
+  - added a new top-level `Studio` page for template-first multi-agent workflow design
+  - added starter workflow templates, editable per-agent role prompts, stage/dependency editing, and saved Studio workflow cards
+  - added a shared workspace browser in Studio so workflow roots use the same folder-picker flow as the rest of the app
+- **Workflow run recovery controls and richer node metadata**:
+  - added `Continue` / `Continue From Here` for blocked `automation_v2` runs and `Retry` / `Retry Workflow` actions in the Run Debugger
+  - added semantic node output metadata for `status`, `blocked_reason`, `approved`, tool telemetry, and artifact-validation results
+
+### Changed
+
+- **Workflow board and debugger usability**:
+  - moved the workflow board onto its own full-width row in the Run Debugger
+  - made desktop workflow lanes horizontally scrollable with jump-to-active controls instead of clipping off-screen columns
+  - surfaced offered/executed tools, workspace-inspection usage, web-research usage, and artifact-validation details directly in task inspection
+- **Automation execution now prefers deterministic file-backed workflow behavior**:
+  - `automation_v2` nodes now run with explicit required tool sets instead of relying on the generic auto-router alone
+  - normalized workflow tool exposure so `read` implies `glob` for workspace discovery
+  - added prewrite requirements for workspace inspection and web research before file-finalization retries narrow down to write-only
+
+### Fixed
+
+- **Artifact integrity for file-backed workflows**:
+  - fixed agents overwriting declared artifacts with placeholder status notes such as “completed previously” / “preserving file creation requirement”
+  - fixed declared workflow artifacts being replaced by stray touch/status/marker files created by the model
+  - fixed substantive blocked briefs being deleted just because the node was semantically blocked; blocked research now preserves useful artifact content for inspection
+  - added recovery from in-session write history so earlier substantive file content can be restored when a later placeholder overwrite wins the final on-disk write
+  - cleared stale descendant outputs on blocked-step continue/retry so subtree recovery no longer reuses bad artifacts
+- **Workflow blocking and runtime semantics**:
+  - fixed blocked node outcomes to stop downstream steps consistently instead of letting draft/review/publish continue with blocked handoff artifacts
+  - fixed review nodes with `approved: false` to propagate a blocked status cleanly through the automation runtime and debugger
+  - fixed `/workspace/...` tool paths so file-backed workflow nodes resolve against the actual workspace root instead of failing on a fake alias
+- **Saved Studio workflow deletion and restart persistence**:
+  - fixed saved Studio workflows reappearing after engine restart by cascading automation deletion into persisted `automation_v2` run history so old run snapshots cannot recreate deleted workflows
+- **Control-panel source-install docs**:
+  - fixed the control-panel README examples so service commands work both from the repo root and from inside `packages/tandem-control-panel`
+
+## [0.4.7] - Released
 
 ### Added
 

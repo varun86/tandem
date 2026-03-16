@@ -144,17 +144,32 @@ npm run build
 
 ### Repo Source Workflow (No Global npm Install)
 
-If you run from this repo directly, use:
+If you run from the repo root, use:
 
 ```bash
 node packages/tandem-control-panel/bin/cli.js init --no-service
 node packages/tandem-control-panel/bin/cli.js run
 ```
 
-Service install/ops from source:
+If you are already inside `packages/tandem-control-panel`, use:
+
+```bash
+node bin/cli.js init --no-service
+node bin/cli.js run
+```
+
+Service install/ops from source from the repo root:
 
 ```bash
 sudo node packages/tandem-control-panel/bin/cli.js service install
 node packages/tandem-control-panel/bin/cli.js service status
 sudo node packages/tandem-control-panel/bin/cli.js service restart
+```
+
+Service install/ops from inside `packages/tandem-control-panel`:
+
+```bash
+sudo node bin/cli.js service install
+node bin/cli.js service status
+sudo node bin/cli.js service restart
 ```

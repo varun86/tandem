@@ -848,9 +848,22 @@ function extractRunNodeOutputs(run: any) {
 
 function nodeOutputText(value: any) {
   const summary = String(value?.summary || "").trim();
+  const status = String(value?.status || value?.content?.status || "").trim();
+  const blockedReason = String(value?.blocked_reason || value?.blockedReason || "").trim();
   const content = value?.content || {};
   const text = String(content?.text || content?.raw_text || "").trim();
-  return [summary, text].filter(Boolean).join("\n").trim();
+  return [summary, status ? `status: ${status}` : "", blockedReason, text]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function nodeOutputToolTelemetry(value: any) {
+  return value?.tool_telemetry || value?.toolTelemetry || null;
+}
+
+function nodeOutputArtifactValidation(value: any) {
+  return value?.artifact_validation || value?.artifactValidation || null;
 }
 
 function sessionMessageText(message: any) {
@@ -927,9 +940,12 @@ function workflowTaskStateFromCheckpoint(
   nodeId: string,
   checkpoint: any,
   dependencyTaskIds: string[]
-): "pending" | "runnable" | "done" | "failed" {
+): "pending" | "runnable" | "done" | "failed" | "blocked" {
   const completed = new Set(
     Array.isArray(checkpoint?.completed_nodes) ? checkpoint.completed_nodes.map(String) : []
+  );
+  const blocked = new Set(
+    Array.isArray(checkpoint?.blocked_nodes) ? checkpoint.blocked_nodes.map(String) : []
   );
   const pending = new Set(
     Array.isArray(checkpoint?.pending_nodes) ? checkpoint.pending_nodes.map(String) : []
@@ -937,6 +953,10 @@ function workflowTaskStateFromCheckpoint(
   const taskId = String(nodeId || "").trim();
   if (completed.has(taskId)) return "done";
   const output = checkpoint?.node_outputs?.[taskId] || checkpoint?.nodeOutputs?.[taskId];
+  const outputStatus = String(output?.status || output?.content?.status || "")
+    .trim()
+    .toLowerCase();
+  if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
   const errorText = String(
     output?.error ||
       output?.content?.error ||
@@ -1118,6 +1138,44 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
   }
   for (const output of extractRunNodeOutputs(run)) {
     const body = nodeOutputText(output.value);
+    const telemetry = nodeOutputToolTelemetry(output.value);
+    const artifactValidation = nodeOutputArtifactValidation(output.value);
+    if (
+      String(output?.value?.status || "")
+        .trim()
+        .toLowerCase() === "blocked"
+    ) {
+      const executed = Array.isArray(telemetry?.executed_tools)
+        ? telemetry.executed_tools.join(", ")
+        : "";
+      const requested = Array.isArray(telemetry?.requested_tools)
+        ? telemetry.requested_tools.join(", ")
+        : "";
+      push(
+        `node-status-${output.nodeId}`,
+        `Node blocked: ${output.nodeId}`,
+        [
+          String(output?.value?.blocked_reason || output?.value?.blockedReason || "").trim(),
+          requested ? `offered tools: ${requested}` : "",
+          executed ? `executed tools: ${executed}` : "",
+          String(artifactValidation?.rejected_artifact_reason || "").trim()
+            ? `artifact validation: ${String(artifactValidation?.rejected_artifact_reason || "").trim()}`
+            : "",
+          Array.isArray(artifactValidation?.undeclared_files_created) &&
+          artifactValidation.undeclared_files_created.length
+            ? `undeclared files created: ${artifactValidation.undeclared_files_created.join(", ")}`
+            : "",
+          artifactValidation?.auto_cleaned ? "artifact cleanup was applied" : "",
+          telemetry && !telemetry?.web_research_used ? "web research was not used" : "",
+          telemetry && !telemetry?.workspace_inspection_used
+            ? "workspace inspection was not used"
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        output.nodeId
+      );
+    }
     if (!body) continue;
     const lower = body.toLowerCase();
     if (
@@ -3452,6 +3510,57 @@ function MyAutomations({
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
+  const workflowRepairMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      nodeId,
+      reason,
+    }: {
+      runId: string;
+      nodeId: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.repairRun) {
+        throw new Error("Workflow repair is not available in this client.");
+      }
+      return client.automationsV2.repairRun(runId, {
+        node_id: nodeId,
+        reason: reason ?? "",
+      });
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      toast("ok", "Workflow continued from blocked step.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const workflowRecoverMutation = useMutation({
+    mutationFn: async ({ runId, reason }: { runId: string; reason?: string }) => {
+      if (!client?.automationsV2?.recoverRun) {
+        throw new Error("Workflow retry is not available in this client.");
+      }
+      return client.automationsV2.recoverRun(runId, reason);
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      toast("ok", "Workflow run queued again.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
 
   const updateAutomationMutation = useMutation({
     mutationFn: async (draft: {
@@ -3742,6 +3851,35 @@ function MyAutomations({
     () => workflowProjection.tasks.find((task) => task.id === selectedBoardTaskId) || null,
     [selectedBoardTaskId, workflowProjection.tasks]
   );
+  const firstBlockedWorkflowTask = useMemo(
+    () =>
+      workflowProjection.tasks.find(
+        (task) => String(task.state || "").toLowerCase() === "blocked"
+      ) || null,
+    [workflowProjection.tasks]
+  );
+  const selectedBoardTaskOutput = useMemo(() => {
+    if (!selectedBoardTask) return null;
+    const nodeId = String(selectedBoardTask.id || "").replace(/^node-/, "");
+    return (
+      selectedRun?.checkpoint?.node_outputs?.[nodeId] ||
+      selectedRun?.checkpoint?.nodeOutputs?.[nodeId] ||
+      null
+    );
+  }, [selectedBoardTask, selectedRun]);
+  const continueBlockedTask =
+    String(selectedBoardTask?.state || "").toLowerCase() === "blocked"
+      ? selectedBoardTask
+      : firstBlockedWorkflowTask;
+  const continueBlockedNodeId = String(continueBlockedTask?.id || "")
+    .replace(/^node-/, "")
+    .trim();
+  const runStatus = String(selectedRun?.status || "")
+    .trim()
+    .toLowerCase();
+  const canRecoverWorkflowRun =
+    isWorkflowRun && ["failed", "paused"].includes(runStatus) && !!selectedRunId;
+  const canContinueBlockedWorkflow = isWorkflowRun && !!selectedRunId && !!continueBlockedNodeId;
   useEffect(() => {
     if (!selectedBoardTask || !boardDetailRef.current) return;
     boardDetailRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -4032,6 +4170,7 @@ function MyAutomations({
     const s = String(status || "").toLowerCase();
     if (s === "active" || s === "completed" || s === "done") return "tcp-badge-ok";
     if (s === "running" || s === "in_progress") return "tcp-badge-warn";
+    if (s === "blocked") return "tcp-badge-warn";
     if (s === "failed" || s === "error") return "tcp-badge-err";
     return "tcp-badge-info";
   };
@@ -4624,6 +4763,52 @@ function MyAutomations({
                   <span className={statusColor(selectedRun?.status)}>
                     {String(selectedRun?.status || "unknown")}
                   </span>
+                  {canContinueBlockedWorkflow ? (
+                    <button
+                      type="button"
+                      className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
+                      onClick={() =>
+                        workflowRepairMutation.mutate({
+                          runId: selectedRunId,
+                          nodeId: continueBlockedNodeId,
+                          reason: `continued from blocked node ${continueBlockedNodeId}`,
+                        })
+                      }
+                      disabled={
+                        !continueBlockedNodeId ||
+                        workflowRepairMutation.isPending ||
+                        runActionMutation.isPending
+                      }
+                      title={
+                        continueBlockedNodeId
+                          ? `Reset and continue from ${continueBlockedNodeId}`
+                          : "Select a blocked node to continue"
+                      }
+                    >
+                      <i data-lucide="skip-forward"></i>
+                      {workflowRepairMutation.isPending ? "Continuing..." : "Continue"}
+                    </button>
+                  ) : null}
+                  {canRecoverWorkflowRun ? (
+                    <button
+                      type="button"
+                      className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
+                      onClick={() =>
+                        workflowRecoverMutation.mutate({
+                          runId: selectedRunId,
+                          reason: "retried from run debugger",
+                        })
+                      }
+                      disabled={
+                        !selectedRunId ||
+                        workflowRecoverMutation.isPending ||
+                        runActionMutation.isPending
+                      }
+                    >
+                      <i data-lucide="rotate-ccw"></i>
+                      {workflowRecoverMutation.isPending ? "Retrying..." : "Retry"}
+                    </button>
+                  ) : null}
                   {selectedRunId ? (
                     <button
                       type="button"
@@ -4727,10 +4912,20 @@ function MyAutomations({
                   </button>
                 </div>
               </div>
-              <div className="grid flex-1 gap-3 overflow-y-auto pr-1 xl:grid-cols-[1.62fr_1fr]">
-                <div className="grid min-h-0 gap-3">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                <div className="grid min-h-full content-start gap-3">
+                  <div className="tcp-list-item overflow-visible">
+                    <div className="font-medium">Run Summary</div>
+                    <div className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 xl:grid-cols-4">
+                      {runSummaryRows.map((row) => (
+                        <div key={row.label} className="break-words">
+                          {row.label}: {row.value}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   {isWorkflowRun ? (
-                    <div className="tcp-list-item">
+                    <div className="tcp-list-item overflow-visible">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <div className="font-medium">Workflow Board</div>
@@ -4758,474 +4953,681 @@ function MyAutomations({
                       />
                     </div>
                   ) : null}
-                  {selectedBoardTask ? (
-                    <div
-                      ref={boardDetailRef}
-                      className="tcp-list-item relative max-h-[56vh] overflow-y-auto sm:max-h-[28rem]"
-                    >
-                      <div className="sticky -top-3 z-10 -mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-xl border-b border-slate-800/80 bg-[color:color-mix(in_srgb,var(--color-surface-elevated)_96%,#000_4%)] px-3 py-3 backdrop-blur-sm">
-                        <div className="font-medium">Task Details</div>
-                        <button
-                          type="button"
-                          className="chat-icon-btn h-7 w-7"
-                          aria-label="Close task details"
-                          onClick={() => setSelectedBoardTaskId("")}
+                  <div className="grid min-h-0 items-start gap-3 xl:grid-cols-[1.62fr_1fr]">
+                    <div className="grid min-h-0 gap-3">
+                      {selectedBoardTask ? (
+                        <div
+                          ref={boardDetailRef}
+                          className="tcp-list-item relative max-h-[56vh] overflow-y-auto sm:max-h-[28rem]"
                         >
-                          <i data-lucide="x-circle"></i>
-                        </button>
-                      </div>
-                      <div className="grid gap-2 pr-1 text-sm text-slate-200">
-                        <div className="whitespace-pre-wrap break-words font-medium leading-snug">
-                          {selectedBoardTask.title}
-                        </div>
-                        {selectedBoardTask.description ? (
-                          <div className="tcp-subtle whitespace-pre-wrap break-words">
-                            {selectedBoardTask.description}
-                          </div>
-                        ) : null}
-                        <div className="flex flex-wrap gap-2 text-xs">
-                          <span className="tcp-badge-info">{selectedBoardTask.state}</span>
-                          {selectedBoardTask.assigned_role ? (
-                            <span className="tcp-badge-info">
-                              agent: {selectedBoardTask.assigned_role}
-                            </span>
-                          ) : null}
-                          {selectedBoardTask.session_id ? (
-                            <span className="tcp-badge-info">
-                              {sessionLabel(selectedBoardTask.session_id)}
-                            </span>
-                          ) : null}
-                        </div>
-                        {selectedBoardTask.runtime_detail ? (
-                          <div className="whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
-                            {selectedBoardTask.runtime_detail}
-                          </div>
-                        ) : null}
-                        {selectedBoardTask.error_message ? (
-                          <div className="whitespace-pre-wrap break-words rounded-lg border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">
-                            {selectedBoardTask.error_message}
-                          </div>
-                        ) : null}
-                        {selectedBoardTask.dependencies.length ? (
-                          <div className="flex flex-wrap gap-1 text-xs">
-                            {selectedBoardTask.dependencies.map((dep) => (
-                              <span key={dep} className="tcp-badge-info">
-                                depends on {dep}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="tcp-list-item min-h-0 xl:order-2">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="font-medium">Live Session Log</div>
-                        <div className="tcp-subtle text-xs">
-                          {selectedSessionId
-                            ? selectedSessionFilterId === "all"
-                              ? `Merged timeline across ${availableSessionIds.length || 1} session${availableSessionIds.length === 1 ? "" : "s"}`
-                              : `Filtered to ${selectedSessionFilterId}`
-                            : "This run does not expose a session transcript."}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {availableSessionIds.length > 1 ? (
-                          <select
-                            className="tcp-select h-7 min-w-[12rem] max-w-full shrink-0 text-xs sm:min-w-[14rem]"
-                            value={selectedSessionFilterId}
-                            onInput={(e) =>
-                              setSelectedSessionFilterId((e.target as HTMLSelectElement).value)
-                            }
-                          >
-                            <option value="all">All sessions</option>
-                            {availableSessionIds.map((sessionId) => (
-                              <option key={sessionId} value={sessionId} title={sessionId}>
-                                {sessionLabel(sessionId)}
-                              </option>
-                            ))}
-                          </select>
-                        ) : selectedSessionId ? (
-                          <span className="tcp-badge-info" title={selectedSessionId}>
-                            {sessionLabel(selectedSessionId)}
-                          </span>
-                        ) : null}
-                        {selectedSessionId ? (
-                          <span className="tcp-badge-info" title={selectedSessionId}>
-                            live: {compactIdentifier(selectedSessionId, 24)}
-                          </span>
-                        ) : null}
-                        <button
-                          className="tcp-btn h-7 px-2 text-xs"
-                          disabled={!sessionLogEntries.length}
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(
-                                sessionLogEntries
-                                  .map((entry) => {
-                                    const ts = new Date(entry.at).toLocaleTimeString();
-                                    const sessionTag = entry.sessionId
-                                      ? ` · ${entry.sessionLabel}`
-                                      : "";
-                                    return `[${ts}] ${entry.label}${sessionTag}\n${entry.body || formatJson(entry.raw)}`;
-                                  })
-                                  .join("\n\n")
-                              );
-                              toast("ok", "Copied session log.");
-                            } catch (error) {
-                              toast("err", error instanceof Error ? error.message : "Copy failed.");
-                            }
-                          }}
-                        >
-                          <i data-lucide="copy"></i>
-                          Copy session log
-                        </button>
-                        <button
-                          className="tcp-btn h-7 px-2 text-xs"
-                          onClick={() => {
-                            setSessionLogPinnedToBottom(true);
-                            const el = sessionLogRef.current;
-                            if (el) el.scrollTop = el.scrollHeight;
-                          }}
-                        >
-                          <i data-lucide="arrow-down"></i>
-                          Jump to latest
-                        </button>
-                      </div>
-                    </div>
-                    <div
-                      ref={sessionLogRef}
-                      className="grid min-h-[12rem] gap-2 overflow-auto pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
-                      onScroll={(event) => {
-                        const el = event.currentTarget;
-                        const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
-                        setSessionLogPinnedToBottom(pinned);
-                      }}
-                    >
-                      {sessionLogEntries.length ? (
-                        sessionLogEntries.map((entry) => (
-                          <div
-                            key={entry.id}
-                            className={`rounded-lg border p-3 ${
-                              entry.variant === "assistant"
-                                ? "border-sky-500/30 bg-sky-950/10"
-                                : entry.variant === "user"
-                                  ? "border-slate-600/60 bg-slate-900/35"
-                                  : entry.variant === "error"
-                                    ? "border-rose-500/35 bg-rose-950/20"
-                                    : "border-slate-700/50 bg-slate-900/25"
-                            }`}
-                          >
-                            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs font-medium uppercase tracking-wide text-slate-200">
-                                  {entry.label}
-                                </span>
-                                {entry.sessionId ? (
-                                  <span className="tcp-badge-info text-[10px]">
-                                    {entry.sessionLabel}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <span className="tcp-subtle text-[11px]">
-                                {new Date(entry.at).toLocaleTimeString()}
-                              </span>
-                            </div>
-                            {entry.body ? (
-                              <div className="whitespace-pre-wrap break-words text-sm text-slate-100">
-                                {entry.body}
-                              </div>
-                            ) : (
-                              <div className="tcp-subtle text-xs">No textual body.</div>
-                            )}
-                            {entry.kind === "message" &&
-                            entry.parts.some((part: any) => String(part?.type || "") === "tool") ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-xs text-slate-400">
-                                  Tool payloads
-                                </summary>
-                                <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                                  {formatJson(entry.parts)}
-                                </pre>
-                              </details>
-                            ) : null}
-                            {entry.kind === "event" ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-xs text-slate-400">
-                                  Raw event
-                                </summary>
-                                <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                                  {formatJson(entry.raw)}
-                                </pre>
-                              </details>
-                            ) : null}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="tcp-subtle text-xs">
-                          {availableSessionIds.length
-                            ? "Waiting for session transcript or live session events."
-                            : "This run does not expose a session transcript."}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="tcp-list-item min-h-0 xl:order-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="font-medium">Run Telemetry</div>
-                      <div className="flex w-full flex-wrap gap-1 sm:w-auto">
-                        <button
-                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "all" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
-                          onClick={() => setSelectedLogSource("all")}
-                        >
-                          all ({telemetryEvents.length})
-                        </button>
-                        <button
-                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "automations" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
-                          onClick={() => setSelectedLogSource("automations")}
-                        >
-                          automations
-                        </button>
-                        {isWorkflowRun ? (
-                          <button
-                            className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "context" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
-                            onClick={() => setSelectedLogSource("context")}
-                          >
-                            context
-                          </button>
-                        ) : null}
-                        <button
-                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "global" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
-                          onClick={() => setSelectedLogSource("global")}
-                        >
-                          global
-                        </button>
-                      </div>
-                    </div>
-                    {filteredRunEvents.length ? (
-                      <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[12rem]">
-                        {filteredRunEvents
-                          .slice(-40)
-                          .reverse()
-                          .map((item) => (
-                            <details
-                              key={item.id}
-                              className="rounded-lg border border-slate-700/40 bg-slate-900/30 p-2"
+                          <div className="sticky -top-3 z-10 -mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-xl border-b border-slate-800/80 bg-[color:color-mix(in_srgb,var(--color-surface-elevated)_96%,#000_4%)] px-3 py-3 backdrop-blur-sm">
+                            <div className="font-medium">Task Details</div>
+                            <button
+                              type="button"
+                              className="chat-icon-btn h-7 w-7"
+                              aria-label="Close task details"
+                              onClick={() => setSelectedBoardTaskId("")}
                             >
-                              <summary className="cursor-pointer list-none">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-medium text-slate-200">
-                                    {eventType(item.event) || "event"}
-                                  </span>
-                                  <span className="tcp-subtle text-[11px]">
-                                    {formatTimestampLabel(item.at)} · {item.source}
-                                  </span>
-                                </div>
-                                <div className="tcp-subtle mt-1 text-xs">
-                                  {eventReason(item.event) || "No summary available."}
-                                </div>
-                              </summary>
-                              <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                                {formatJson(item.event?.properties || item.event)}
-                              </pre>
-                            </details>
-                          ))}
-                      </div>
-                    ) : (
-                      <div className="tcp-subtle text-xs">
-                        {isWorkflowRun
-                          ? "No workflow, context, or global telemetry has been captured for this run yet."
-                          : "No automation/global telemetry captured for this run yet."}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="grid min-h-0 content-start gap-3 overflow-visible">
-                  {blockers.length ? (
-                    <div className="tcp-list-item overflow-visible">
-                      <div className="mb-2 font-medium">Blockers</div>
-                      <div className="grid gap-2">
-                        {blockers.map((blocker) => (
-                          <div
-                            key={blocker.key}
-                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
-                          >
-                            <div className="mb-1 flex flex-wrap items-center gap-2">
-                              <strong>{blocker.title}</strong>
-                              <span className="tcp-badge-warn">{blocker.source}</span>
-                              {blocker.at ? (
-                                <span className="tcp-subtle text-[11px]">
-                                  {new Date(blocker.at).toLocaleTimeString()}
+                              <i data-lucide="x-circle"></i>
+                            </button>
+                          </div>
+                          <div className="grid gap-2 pr-1 text-sm text-slate-200">
+                            <div className="whitespace-pre-wrap break-words font-medium leading-snug">
+                              {selectedBoardTask.title}
+                            </div>
+                            {selectedBoardTask.description ? (
+                              <div className="tcp-subtle whitespace-pre-wrap break-words">
+                                {selectedBoardTask.description}
+                              </div>
+                            ) : null}
+                            <div className="flex flex-wrap gap-2 text-xs">
+                              <span className="tcp-badge-info">{selectedBoardTask.state}</span>
+                              {selectedBoardTask.assigned_role ? (
+                                <span className="tcp-badge-info">
+                                  agent: {selectedBoardTask.assigned_role}
+                                </span>
+                              ) : null}
+                              {selectedBoardTask.session_id ? (
+                                <span className="tcp-badge-info">
+                                  {sessionLabel(selectedBoardTask.session_id)}
                                 </span>
                               ) : null}
                             </div>
-                            <div className="whitespace-pre-wrap break-words text-sm text-amber-100/90">
-                              {blocker.reason}
+                            {selectedBoardTaskOutput ? (
+                              <div className="flex flex-wrap gap-2 text-xs">
+                                {String(selectedBoardTaskOutput?.status || "").trim() ? (
+                                  <span
+                                    className={
+                                      String(selectedBoardTaskOutput?.status || "")
+                                        .trim()
+                                        .toLowerCase() === "blocked"
+                                        ? "tcp-badge-warn"
+                                        : "tcp-badge-ok"
+                                    }
+                                  >
+                                    status: {String(selectedBoardTaskOutput?.status || "").trim()}
+                                  </span>
+                                ) : null}
+                                {typeof selectedBoardTaskOutput?.approved === "boolean" ? (
+                                  <span
+                                    className={
+                                      selectedBoardTaskOutput.approved
+                                        ? "tcp-badge-ok"
+                                        : "tcp-badge-warn"
+                                    }
+                                  >
+                                    approved: {String(selectedBoardTaskOutput.approved)}
+                                  </span>
+                                ) : null}
+                                {nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                  ?.workspace_inspection_used ? (
+                                  <span className="tcp-badge-info">workspace inspected</span>
+                                ) : null}
+                                {nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                  ?.web_research_used ? (
+                                  <span className="tcp-badge-info">web research used</span>
+                                ) : null}
+                                {String(
+                                  nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                    ?.rejected_artifact_reason || ""
+                                ).trim() ? (
+                                  <span className="tcp-badge-warn">artifact rejected</span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {selectedBoardTask.runtime_detail ? (
+                              <div className="whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
+                                {selectedBoardTask.runtime_detail}
+                              </div>
+                            ) : null}
+                            {String(
+                              selectedBoardTaskOutput?.blocked_reason ||
+                                selectedBoardTaskOutput?.blockedReason ||
+                                ""
+                            ).trim() ? (
+                              <div className="whitespace-pre-wrap break-words rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 text-xs text-amber-100/90">
+                                {String(
+                                  selectedBoardTaskOutput?.blocked_reason ||
+                                    selectedBoardTaskOutput?.blockedReason ||
+                                    ""
+                                ).trim()}
+                              </div>
+                            ) : null}
+                            {String(selectedBoardTask?.state || "").toLowerCase() === "blocked" &&
+                            selectedRunId &&
+                            continueBlockedNodeId ===
+                              String(selectedBoardTask.id || "")
+                                .replace(/^node-/, "")
+                                .trim() ? (
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="tcp-btn h-8 px-3 text-xs"
+                                  onClick={() =>
+                                    workflowRepairMutation.mutate({
+                                      runId: selectedRunId,
+                                      nodeId: continueBlockedNodeId,
+                                      reason: `continued from blocked node ${continueBlockedNodeId}`,
+                                    })
+                                  }
+                                  disabled={workflowRepairMutation.isPending}
+                                >
+                                  <i data-lucide="skip-forward"></i>
+                                  {workflowRepairMutation.isPending
+                                    ? "Continuing..."
+                                    : "Continue From Here"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="tcp-btn h-8 px-3 text-xs"
+                                  onClick={() => {
+                                    const automationId = String(
+                                      selectedRun?.automation_id || ""
+                                    ).trim();
+                                    if (!automationId) return;
+                                    runNowV2Mutation.mutate(automationId);
+                                  }}
+                                  disabled={
+                                    workflowRepairMutation.isPending ||
+                                    runNowV2Mutation.isPending ||
+                                    !String(selectedRun?.automation_id || "").trim()
+                                  }
+                                >
+                                  <i data-lucide="rotate-ccw"></i>
+                                  {runNowV2Mutation.isPending ? "Retrying..." : "Retry Workflow"}
+                                </button>
+                              </div>
+                            ) : null}
+                            {String(selectedBoardTask?.state || "").toLowerCase() === "blocked" ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
+                                Continue resets this blocked step and its descendants, preserves
+                                valid upstream outputs, and clears stale descendant artifacts before
+                                requeue.
+                              </div>
+                            ) : null}
+                            {nodeOutputToolTelemetry(selectedBoardTaskOutput) ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
+                                <div className="mb-2 font-medium text-slate-100">Node Tooling</div>
+                                <div className="grid gap-1">
+                                  <div>
+                                    offered:{" "}
+                                    {Array.isArray(
+                                      nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                        ?.requested_tools
+                                    )
+                                      ? nodeOutputToolTelemetry(
+                                          selectedBoardTaskOutput
+                                        ).requested_tools.join(", ") || "n/a"
+                                      : "n/a"}
+                                  </div>
+                                  <div>
+                                    executed:{" "}
+                                    {Array.isArray(
+                                      nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                        ?.executed_tools
+                                    )
+                                      ? nodeOutputToolTelemetry(
+                                          selectedBoardTaskOutput
+                                        ).executed_tools.join(", ") || "none"
+                                      : "none"}
+                                  </div>
+                                  <div>
+                                    workspace inspection:{" "}
+                                    {nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                      ?.workspace_inspection_used
+                                      ? "yes"
+                                      : "no"}
+                                  </div>
+                                  <div>
+                                    web research:{" "}
+                                    {nodeOutputToolTelemetry(selectedBoardTaskOutput)
+                                      ?.web_research_used
+                                      ? "yes"
+                                      : "no"}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                            {nodeOutputArtifactValidation(selectedBoardTaskOutput) ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
+                                <div className="mb-2 font-medium text-slate-100">
+                                  Artifact Validation
+                                </div>
+                                <div className="grid gap-1">
+                                  <div>
+                                    accepted path:{" "}
+                                    {String(
+                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                        ?.accepted_artifact_path || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    rejected reason:{" "}
+                                    {String(
+                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                        ?.rejected_artifact_reason || ""
+                                    ).trim() || "none"}
+                                  </div>
+                                  <div>
+                                    auto-cleaned:{" "}
+                                    {String(
+                                      Boolean(
+                                        nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                          ?.auto_cleaned
+                                      )
+                                    )}
+                                  </div>
+                                  <div>
+                                    undeclared files:{" "}
+                                    {Array.isArray(
+                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                        ?.undeclared_files_created
+                                    ) &&
+                                    nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                      .undeclared_files_created.length
+                                      ? nodeOutputArtifactValidation(
+                                          selectedBoardTaskOutput
+                                        ).undeclared_files_created.join(", ")
+                                      : "none"}
+                                  </div>
+                                  <div>
+                                    execution policy:{" "}
+                                    {String(
+                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
+                                        ?.execution_policy?.mode || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                            {selectedBoardTask.error_message ? (
+                              <div className="whitespace-pre-wrap break-words rounded-lg border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">
+                                {selectedBoardTask.error_message}
+                              </div>
+                            ) : null}
+                            {selectedBoardTask.dependencies.length ? (
+                              <div className="flex flex-wrap gap-1 text-xs">
+                                {selectedBoardTask.dependencies.map((dep) => (
+                                  <span key={dep} className="tcp-badge-info">
+                                    depends on {dep}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="tcp-list-item min-h-0 xl:order-2">
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="font-medium">Live Session Log</div>
+                            <div className="tcp-subtle text-xs">
+                              {selectedSessionId
+                                ? selectedSessionFilterId === "all"
+                                  ? `Merged timeline across ${availableSessionIds.length || 1} session${availableSessionIds.length === 1 ? "" : "s"}`
+                                  : `Filtered to ${selectedSessionFilterId}`
+                                : "This run does not expose a session transcript."}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {runHints.length ? (
-                    <div className="tcp-list-item overflow-visible">
-                      <div className="mb-1 font-medium">Debug hints</div>
-                      <div className="grid gap-1 text-xs text-slate-300">
-                        {runHints.map((hint) => (
-                          <div key={hint}>{hint}</div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="tcp-list-item overflow-visible">
-                    <div className="font-medium">Run Summary</div>
-                    <div className="mt-2 grid gap-2 text-xs text-slate-300">
-                      {runSummaryRows.map((row) => (
-                        <div key={row.label} className="break-words">
-                          {row.label}: {row.value}
+                          <div className="flex flex-wrap gap-2">
+                            {availableSessionIds.length > 1 ? (
+                              <select
+                                className="tcp-select h-7 min-w-[12rem] max-w-full shrink-0 text-xs sm:min-w-[14rem]"
+                                value={selectedSessionFilterId}
+                                onInput={(e) =>
+                                  setSelectedSessionFilterId((e.target as HTMLSelectElement).value)
+                                }
+                              >
+                                <option value="all">All sessions</option>
+                                {availableSessionIds.map((sessionId) => (
+                                  <option key={sessionId} value={sessionId} title={sessionId}>
+                                    {sessionLabel(sessionId)}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : selectedSessionId ? (
+                              <span className="tcp-badge-info" title={selectedSessionId}>
+                                {sessionLabel(selectedSessionId)}
+                              </span>
+                            ) : null}
+                            {selectedSessionId ? (
+                              <span className="tcp-badge-info" title={selectedSessionId}>
+                                live: {compactIdentifier(selectedSessionId, 24)}
+                              </span>
+                            ) : null}
+                            <button
+                              className="tcp-btn h-7 px-2 text-xs"
+                              disabled={!sessionLogEntries.length}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(
+                                    sessionLogEntries
+                                      .map((entry) => {
+                                        const ts = new Date(entry.at).toLocaleTimeString();
+                                        const sessionTag = entry.sessionId
+                                          ? ` · ${entry.sessionLabel}`
+                                          : "";
+                                        return `[${ts}] ${entry.label}${sessionTag}\n${entry.body || formatJson(entry.raw)}`;
+                                      })
+                                      .join("\n\n")
+                                  );
+                                  toast("ok", "Copied session log.");
+                                } catch (error) {
+                                  toast(
+                                    "err",
+                                    error instanceof Error ? error.message : "Copy failed."
+                                  );
+                                }
+                              }}
+                            >
+                              <i data-lucide="copy"></i>
+                              Copy session log
+                            </button>
+                            <button
+                              className="tcp-btn h-7 px-2 text-xs"
+                              onClick={() => {
+                                setSessionLogPinnedToBottom(true);
+                                const el = sessionLogRef.current;
+                                if (el) el.scrollTop = el.scrollHeight;
+                              }}
+                            >
+                              <i data-lucide="arrow-down"></i>
+                              Jump to latest
+                            </button>
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="tcp-list-item overflow-visible">
-                    <div className="font-medium">Mission Objective</div>
-                    <pre className="tcp-code mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">
-                      {String(selectedRun?.mission_snapshot?.objective || "n/a")}
-                    </pre>
-                  </div>
-                  <div className="tcp-list-item overflow-visible">
-                    <div className="font-medium">Artifacts ({runArtifacts.length})</div>
-                    {runArtifacts.length ? (
-                      <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-40">
-                        {runArtifacts.map((artifact: any, index: number) => (
-                          <details
-                            key={`${String(artifact?.id || artifact?.artifact_id || index)}`}
-                            className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
-                          >
-                            <summary className="cursor-pointer list-none">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-medium text-slate-200">
-                                  {String(
-                                    artifact?.name ||
-                                      artifact?.label ||
-                                      artifact?.kind ||
-                                      artifact?.type ||
-                                      artifact?.id ||
-                                      `artifact-${index + 1}`
-                                  )}
-                                </span>
-                                <span className="tcp-subtle text-[11px]">
-                                  {String(
-                                    artifact?.kind || artifact?.type || artifact?.path || ""
-                                  ).trim() || "artifact"}
-                                </span>
-                              </div>
-                            </summary>
-                            <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
-                              {formatJson(artifact)}
-                            </pre>
-                          </details>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="tcp-subtle mt-2 text-xs">
-                        {isWorkflowRun
-                          ? "No blackboard artifacts have been recorded for this workflow run yet."
-                          : "No run artifacts were persisted for this automation."}
-                      </div>
-                    )}
-                  </div>
-                  <div className="tcp-list-item min-h-0">
-                    <div className="font-medium">
-                      {isWorkflowRun ? "Run History" : "Persisted History"}
-                    </div>
-                    {runHistoryEvents.length ? (
-                      <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-[14rem]">
-                        {runHistoryEvents.map((event: any, index: number) => (
-                          <details
-                            key={`${String(event?.id || event?.event || event?.type || "history")}-${index}`}
-                            className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
-                          >
-                            <summary className="cursor-pointer list-none">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-medium text-slate-200">
-                                  {String(
-                                    event?.type || event?.event || event?.status || "history"
-                                  )}
-                                </span>
-                                <span className="tcp-subtle text-[11px]">
-                                  {formatTimestampLabel(
-                                    event?.ts_ms || event?.tsMs || event?.at || event?.timestamp_ms
-                                  )}
-                                </span>
-                              </div>
-                              <div className="tcp-subtle mt-1 text-xs">
-                                {String(
-                                  event?.detail ||
-                                    event?.reason ||
-                                    event?.family ||
-                                    event?.status ||
-                                    "No summary available."
+                        <div
+                          ref={sessionLogRef}
+                          className="grid min-h-[12rem] gap-2 overflow-auto pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
+                          onScroll={(event) => {
+                            const el = event.currentTarget;
+                            const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
+                            setSessionLogPinnedToBottom(pinned);
+                          }}
+                        >
+                          {sessionLogEntries.length ? (
+                            sessionLogEntries.map((entry) => (
+                              <div
+                                key={entry.id}
+                                className={`rounded-lg border p-3 ${
+                                  entry.variant === "assistant"
+                                    ? "border-sky-500/30 bg-sky-950/10"
+                                    : entry.variant === "user"
+                                      ? "border-slate-600/60 bg-slate-900/35"
+                                      : entry.variant === "error"
+                                        ? "border-rose-500/35 bg-rose-950/20"
+                                        : "border-slate-700/50 bg-slate-900/25"
+                                }`}
+                              >
+                                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-medium uppercase tracking-wide text-slate-200">
+                                      {entry.label}
+                                    </span>
+                                    {entry.sessionId ? (
+                                      <span className="tcp-badge-info text-[10px]">
+                                        {entry.sessionLabel}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <span className="tcp-subtle text-[11px]">
+                                    {new Date(entry.at).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                                {entry.body ? (
+                                  <div className="whitespace-pre-wrap break-words text-sm text-slate-100">
+                                    {entry.body}
+                                  </div>
+                                ) : (
+                                  <div className="tcp-subtle text-xs">No textual body.</div>
                                 )}
+                                {entry.kind === "message" &&
+                                entry.parts.some(
+                                  (part: any) => String(part?.type || "") === "tool"
+                                ) ? (
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer text-xs text-slate-400">
+                                      Tool payloads
+                                    </summary>
+                                    <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                      {formatJson(entry.parts)}
+                                    </pre>
+                                  </details>
+                                ) : null}
+                                {entry.kind === "event" ? (
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer text-xs text-slate-400">
+                                      Raw event
+                                    </summary>
+                                    <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                      {formatJson(entry.raw)}
+                                    </pre>
+                                  </details>
+                                ) : null}
                               </div>
-                            </summary>
-                            <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
-                              {formatJson(event)}
-                            </pre>
-                          </details>
-                        ))}
+                            ))
+                          ) : (
+                            <div className="tcp-subtle text-xs">
+                              {availableSessionIds.length
+                                ? "Waiting for session transcript or live session events."
+                                : "This run does not expose a session transcript."}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    ) : (
-                      <div className="tcp-subtle mt-2 text-xs">
-                        {isWorkflowRun
-                          ? "No context-run history has been persisted for this workflow run yet."
-                          : "No persisted history rows returned for this automation."}
+                      <div className="tcp-list-item min-h-0 xl:order-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="font-medium">Run Telemetry</div>
+                          <div className="flex w-full flex-wrap gap-1 sm:w-auto">
+                            <button
+                              className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "all" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                              onClick={() => setSelectedLogSource("all")}
+                            >
+                              all ({telemetryEvents.length})
+                            </button>
+                            <button
+                              className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "automations" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                              onClick={() => setSelectedLogSource("automations")}
+                            >
+                              automations
+                            </button>
+                            {isWorkflowRun ? (
+                              <button
+                                className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "context" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                                onClick={() => setSelectedLogSource("context")}
+                              >
+                                context
+                              </button>
+                            ) : null}
+                            <button
+                              className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "global" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                              onClick={() => setSelectedLogSource("global")}
+                            >
+                              global
+                            </button>
+                          </div>
+                        </div>
+                        {filteredRunEvents.length ? (
+                          <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[12rem]">
+                            {filteredRunEvents
+                              .slice(-40)
+                              .reverse()
+                              .map((item) => (
+                                <details
+                                  key={item.id}
+                                  className="rounded-lg border border-slate-700/40 bg-slate-900/30 p-2"
+                                >
+                                  <summary className="cursor-pointer list-none">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-medium text-slate-200">
+                                        {eventType(item.event) || "event"}
+                                      </span>
+                                      <span className="tcp-subtle text-[11px]">
+                                        {formatTimestampLabel(item.at)} · {item.source}
+                                      </span>
+                                    </div>
+                                    <div className="tcp-subtle mt-1 text-xs">
+                                      {eventReason(item.event) || "No summary available."}
+                                    </div>
+                                  </summary>
+                                  <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                    {formatJson(item.event?.properties || item.event)}
+                                  </pre>
+                                </details>
+                              ))}
+                          </div>
+                        ) : (
+                          <div className="tcp-subtle text-xs">
+                            {isWorkflowRun
+                              ? "No workflow, context, or global telemetry has been captured for this run yet."
+                              : "No automation/global telemetry captured for this run yet."}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <div className="tcp-list-item min-h-0">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="font-medium">Raw Run Payload</div>
-                      <button
-                        className="tcp-btn h-7 px-2 text-xs"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(
-                              [
-                                "=== RUN ===",
-                                formatJson(selectedRun),
-                                "=== ARTIFACTS ===",
-                                formatJson(runArtifacts),
-                                "=== TELEMETRY ===",
-                                formatJson(filteredRunEvents.map((row) => row.event)),
-                                "=== CONTEXT RUN ===",
-                                formatJson((workflowContextRunQuery.data as any)?.run || null),
-                                "=== BLACKBOARD ===",
-                                formatJson(workflowBlackboard),
-                                "=== HISTORY ===",
-                                formatJson(runHistoryEvents),
-                                "=== SESSION MESSAGES ===",
-                                formatJson(sessionMessages),
-                              ].join("\n\n")
-                            );
-                            toast("ok", "Copied full debug context.");
-                          } catch (error) {
-                            toast("err", error instanceof Error ? error.message : "Copy failed.");
-                          }
-                        }}
-                      >
-                        <i data-lucide="copy-plus"></i>
-                        Copy all debug context
-                      </button>
                     </div>
-                    <pre className="tcp-code overflow-auto sm:max-h-[18rem]">
-                      {formatJson({
-                        run: selectedRun,
-                        contextRun: (workflowContextRunQuery.data as any)?.run || null,
-                        blackboard: workflowBlackboard,
-                      })}
-                    </pre>
+                    <div className="grid min-h-0 content-start gap-3 overflow-visible">
+                      {blockers.length ? (
+                        <div className="tcp-list-item overflow-visible">
+                          <div className="mb-2 font-medium">Blockers</div>
+                          <div className="grid gap-2">
+                            {blockers.map((blocker) => (
+                              <div
+                                key={blocker.key}
+                                className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
+                              >
+                                <div className="mb-1 flex flex-wrap items-center gap-2">
+                                  <strong>{blocker.title}</strong>
+                                  <span className="tcp-badge-warn">{blocker.source}</span>
+                                  {blocker.at ? (
+                                    <span className="tcp-subtle text-[11px]">
+                                      {new Date(blocker.at).toLocaleTimeString()}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="whitespace-pre-wrap break-words text-sm text-amber-100/90">
+                                  {blocker.reason}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {runHints.length ? (
+                        <div className="tcp-list-item overflow-visible">
+                          <div className="mb-1 font-medium">Debug hints</div>
+                          <div className="grid gap-1 text-xs text-slate-300">
+                            {runHints.map((hint) => (
+                              <div key={hint}>{hint}</div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="tcp-list-item overflow-visible">
+                        <div className="font-medium">Mission Objective</div>
+                        <pre className="tcp-code mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">
+                          {String(selectedRun?.mission_snapshot?.objective || "n/a")}
+                        </pre>
+                      </div>
+                      <div className="tcp-list-item overflow-visible">
+                        <div className="font-medium">Artifacts ({runArtifacts.length})</div>
+                        {runArtifacts.length ? (
+                          <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-40">
+                            {runArtifacts.map((artifact: any, index: number) => (
+                              <details
+                                key={`${String(artifact?.id || artifact?.artifact_id || index)}`}
+                                className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                              >
+                                <summary className="cursor-pointer list-none">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-medium text-slate-200">
+                                      {String(
+                                        artifact?.name ||
+                                          artifact?.label ||
+                                          artifact?.kind ||
+                                          artifact?.type ||
+                                          artifact?.id ||
+                                          `artifact-${index + 1}`
+                                      )}
+                                    </span>
+                                    <span className="tcp-subtle text-[11px]">
+                                      {String(
+                                        artifact?.kind || artifact?.type || artifact?.path || ""
+                                      ).trim() || "artifact"}
+                                    </span>
+                                  </div>
+                                </summary>
+                                <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
+                                  {formatJson(artifact)}
+                                </pre>
+                              </details>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="tcp-subtle mt-2 text-xs">
+                            {isWorkflowRun
+                              ? "No blackboard artifacts have been recorded for this workflow run yet."
+                              : "No run artifacts were persisted for this automation."}
+                          </div>
+                        )}
+                      </div>
+                      <div className="tcp-list-item min-h-0">
+                        <div className="font-medium">
+                          {isWorkflowRun ? "Run History" : "Persisted History"}
+                        </div>
+                        {runHistoryEvents.length ? (
+                          <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-[14rem]">
+                            {runHistoryEvents.map((event: any, index: number) => (
+                              <details
+                                key={`${String(event?.id || event?.event || event?.type || "history")}-${index}`}
+                                className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                              >
+                                <summary className="cursor-pointer list-none">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-medium text-slate-200">
+                                      {String(
+                                        event?.type || event?.event || event?.status || "history"
+                                      )}
+                                    </span>
+                                    <span className="tcp-subtle text-[11px]">
+                                      {formatTimestampLabel(
+                                        event?.ts_ms ||
+                                          event?.tsMs ||
+                                          event?.at ||
+                                          event?.timestamp_ms
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="tcp-subtle mt-1 text-xs">
+                                    {String(
+                                      event?.detail ||
+                                        event?.reason ||
+                                        event?.family ||
+                                        event?.status ||
+                                        "No summary available."
+                                    )}
+                                  </div>
+                                </summary>
+                                <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
+                                  {formatJson(event)}
+                                </pre>
+                              </details>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="tcp-subtle mt-2 text-xs">
+                            {isWorkflowRun
+                              ? "No context-run history has been persisted for this workflow run yet."
+                              : "No persisted history rows returned for this automation."}
+                          </div>
+                        )}
+                      </div>
+                      <div className="tcp-list-item min-h-0">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="font-medium">Raw Run Payload</div>
+                          <button
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(
+                                  [
+                                    "=== RUN ===",
+                                    formatJson(selectedRun),
+                                    "=== ARTIFACTS ===",
+                                    formatJson(runArtifacts),
+                                    "=== TELEMETRY ===",
+                                    formatJson(filteredRunEvents.map((row) => row.event)),
+                                    "=== CONTEXT RUN ===",
+                                    formatJson((workflowContextRunQuery.data as any)?.run || null),
+                                    "=== BLACKBOARD ===",
+                                    formatJson(workflowBlackboard),
+                                    "=== HISTORY ===",
+                                    formatJson(runHistoryEvents),
+                                    "=== SESSION MESSAGES ===",
+                                    formatJson(sessionMessages),
+                                  ].join("\n\n")
+                                );
+                                toast("ok", "Copied full debug context.");
+                              } catch (error) {
+                                toast(
+                                  "err",
+                                  error instanceof Error ? error.message : "Copy failed."
+                                );
+                              }
+                            }}
+                          >
+                            <i data-lucide="copy-plus"></i>
+                            Copy all debug context
+                          </button>
+                        </div>
+                        <pre className="tcp-code overflow-auto sm:max-h-[18rem]">
+                          {formatJson({
+                            run: selectedRun,
+                            contextRun: (workflowContextRunQuery.data as any)?.run || null,
+                            blackboard: workflowBlackboard,
+                          })}
+                        </pre>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

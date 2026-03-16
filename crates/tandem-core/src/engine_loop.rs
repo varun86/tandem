@@ -11,7 +11,8 @@ use tandem_providers::{ChatAttachment, ChatMessage, ProviderRegistry, StreamChun
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
     ContextMode, EngineEvent, HostOs, HostRuntimeContext, Message, MessagePart, MessagePartInput,
-    MessageRole, ModelSpec, PathStyle, SendMessageRequest, ShellFamily, ToolMode, ToolSchema,
+    MessageRole, ModelSpec, PathStyle, PrewriteRequirements, SendMessageRequest, ShellFamily,
+    ToolMode, ToolSchema,
 };
 use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
@@ -296,6 +297,7 @@ impl EngineLoop {
         let requested_tool_mode = req.tool_mode.clone().unwrap_or(ToolMode::Auto);
         let requested_context_mode = req.context_mode.clone().unwrap_or(ContextMode::Auto);
         let requested_write_required = req.write_required.unwrap_or(false);
+        let requested_prewrite_requirements = req.prewrite_requirements.clone().unwrap_or_default();
         let request_tool_allowlist = req
             .tool_allowlist
             .clone()
@@ -403,6 +405,8 @@ impl EngineLoop {
             let mut auto_workspace_probe_attempted = false;
             let mut productive_tool_calls_total = 0usize;
             let mut productive_write_tool_calls_total = 0usize;
+            let mut productive_workspace_inspection_total = 0usize;
+            let mut productive_web_research_total = 0usize;
             let mut required_tool_retry_count = 0usize;
             let mut required_write_retry_count = 0usize;
             let mut invalid_tool_args_retry_count = 0usize;
@@ -614,7 +618,14 @@ impl EngineLoop {
                             .any(|pattern| tool_name_matches_policy(pattern, &tool))
                     });
                 }
-                if requested_write_required && required_write_retry_count > 0 {
+                if requested_write_required
+                    && required_write_retry_count > 0
+                    && prewrite_requirements_satisfied(
+                        &requested_prewrite_requirements,
+                        productive_workspace_inspection_total > 0,
+                        productive_web_research_total > 0,
+                    )
+                {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
                 if active_agent.tools.is_some() {
@@ -1249,6 +1260,14 @@ impl EngineLoop {
                                     productive_write_tool_calls_total =
                                         productive_write_tool_calls_total.saturating_add(1);
                                 }
+                                if is_workspace_inspection_tool(&tool_key) {
+                                    productive_workspace_inspection_total =
+                                        productive_workspace_inspection_total.saturating_add(1);
+                                }
+                                if is_web_research_tool(&tool_key) {
+                                    productive_web_research_total =
+                                        productive_web_research_total.saturating_add(1);
+                                }
                                 executed_productive_tool = true;
                                 if tool_key == "pack_builder" {
                                     pack_builder_executed = true;
@@ -1304,6 +1323,9 @@ impl EngineLoop {
                                         &offered_tool_preview,
                                         latest_required_tool_failure_kind,
                                         &text,
+                                        &requested_prewrite_requirements,
+                                        productive_workspace_inspection_total > 0,
+                                        productive_web_research_total > 0,
                                     ));
                                     self.event_bus.publish(EngineEvent::new(
                                         "provider.call.iteration.finish",
@@ -1383,6 +1405,9 @@ impl EngineLoop {
                                     &offered_tool_preview,
                                     latest_required_tool_failure_kind,
                                     &text,
+                                    &requested_prewrite_requirements,
+                                    productive_workspace_inspection_total > 0,
+                                    productive_web_research_total > 0,
                                 ));
                                 self.event_bus.publish(EngineEvent::new(
                                     "provider.call.iteration.finish",
@@ -1545,6 +1570,9 @@ impl EngineLoop {
                             &offered_tool_preview,
                             latest_required_tool_failure_kind,
                             &text,
+                            &requested_prewrite_requirements,
+                            productive_workspace_inspection_total > 0,
+                            productive_web_research_total > 0,
                         ));
                         continue;
                     }
@@ -2064,6 +2092,7 @@ impl EngineLoop {
         let mut args = self.plugins.inject_tool_args(&tool, effective_args).await;
         let tool_context = self.resolve_tool_execution_context(session_id).await;
         if let Some((workspace_root, effective_cwd, project_id)) = tool_context.as_ref() {
+            args = rewrite_workspace_alias_tool_args(&tool, args, workspace_root);
             if let Some(obj) = args.as_object_mut() {
                 obj.insert(
                     "__workspace_root".to_string(),
@@ -3265,8 +3294,25 @@ fn build_write_required_retry_context(
     offered_tool_preview: &str,
     previous_reason: RequiredToolFailureKind,
     latest_user_text: &str,
+    prewrite_requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    web_research_satisfied: bool,
 ) -> String {
     let mut prompt = build_required_tool_retry_context(offered_tool_preview, previous_reason);
+    let mut unmet = Vec::new();
+    if prewrite_requirements.workspace_inspection_required && !workspace_inspection_satisfied {
+        unmet.push("inspect the workspace with `glob`/`read` before writing");
+    }
+    if prewrite_requirements.web_research_required && !web_research_satisfied {
+        unmet.push("use `websearch` before finalizing the file");
+    }
+    if !unmet.is_empty() {
+        prompt.push(' ');
+        prompt.push_str(&format!(
+            "Before the final write, you still need to {}.",
+            unmet.join(" and ")
+        ));
+    }
     if let Some(path) = infer_required_output_target_path_from_text(latest_user_text) {
         prompt.push(' ');
         prompt.push_str(&format!(
@@ -3274,6 +3320,29 @@ fn build_write_required_retry_context(
         ));
     }
     prompt
+}
+
+fn prewrite_requirements_satisfied(
+    requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    web_research_satisfied: bool,
+) -> bool {
+    (!requirements.workspace_inspection_required || workspace_inspection_satisfied)
+        && (!requirements.web_research_required || web_research_satisfied)
+}
+
+fn is_workspace_inspection_tool(tool_name: &str) -> bool {
+    matches!(
+        normalize_tool_name(tool_name).as_str(),
+        "glob" | "read" | "grep" | "search" | "codesearch" | "ls" | "list"
+    )
+}
+
+fn is_web_research_tool(tool_name: &str) -> bool {
+    matches!(
+        normalize_tool_name(tool_name).as_str(),
+        "websearch" | "webfetch" | "webfetch_html"
+    )
 }
 
 fn invalid_tool_args_retry_max_attempts() -> usize {
@@ -3857,6 +3926,38 @@ fn set_file_path_arg(args: Value, path: String) -> Value {
     let mut obj = args.as_object().cloned().unwrap_or_default();
     obj.insert("path".to_string(), Value::String(path));
     Value::Object(obj)
+}
+
+fn normalize_workspace_alias_path(path: &str, workspace_root: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if normalized == "/workspace" {
+        return Some(workspace_root.to_string());
+    }
+    if let Some(rest) = normalized.strip_prefix("/workspace/") {
+        if rest.trim().is_empty() {
+            return Some(workspace_root.to_string());
+        }
+        return Some(rest.trim().to_string());
+    }
+    None
+}
+
+fn rewrite_workspace_alias_tool_args(tool: &str, args: Value, workspace_root: &str) -> Value {
+    let normalized_tool = normalize_tool_name(tool);
+    if !matches!(normalized_tool.as_str(), "read" | "write" | "edit") {
+        return args;
+    }
+    let Some(path) = extract_file_path_arg(&args) else {
+        return args;
+    };
+    let Some(rewritten) = normalize_workspace_alias_path(&path, workspace_root) else {
+        return args;
+    };
+    set_file_path_arg(args, rewritten)
 }
 
 fn set_write_content_arg(args: Value, content: String) -> Value {

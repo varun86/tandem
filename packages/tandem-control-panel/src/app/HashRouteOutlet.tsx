@@ -1,5 +1,6 @@
 import { DashboardPage } from "../pages/DashboardPage";
 import { ChatPage } from "../pages/ChatPage";
+import { WorkflowStudioPage } from "../pages/WorkflowStudioPage";
 import { AutomationsPage } from "../pages/AutomationsPage";
 import { ChannelsPage } from "../pages/ChannelsPage";
 import { PacksPage } from "../pages/PacksPage";
@@ -17,6 +18,8 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
   switch (safeRoute) {
     case "chat":
       return <ChatPage {...pageProps} />;
+    case "studio":
+      return <WorkflowStudioPage {...pageProps} />;
     case "automations":
     case "packs":
     case "teams":

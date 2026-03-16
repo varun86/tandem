@@ -1,4 +1,45 @@
-# Tandem v0.4.7 Release Notes (Unreleased)
+# Tandem v0.4.8 Release Notes (Unreleased)
+
+### Studio Workflow Builder
+
+- Added a new top-level `Studio` page in the control panel for template-first multi-agent workflow creation.
+- Added starter workflow templates, editable role prompts, stage/dependency editing, saved Studio workflow cards, and a shared workspace folder picker.
+- Added direct save/run flows from Studio into `automation_v2`, plus reusable-template support when teams want to persist agent prompts separately.
+
+### Run Debugger and Workflow Board
+
+- Reworked the Run Debugger so the workflow board gets its own full-width row instead of competing with the right rail.
+- Made the desktop workflow board horizontally scrollable with jump-to-active controls so off-screen task lanes are reachable in long workflows.
+- Added richer task details including semantic node status, blocked reason, approval state, tool telemetry, and artifact-validation details.
+- Added `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow` actions for blocked/failed workflow runs.
+
+### Workflow Runtime Hardening
+
+- `automation_v2` nodes now run with deterministic required tool sets instead of leaning only on the generic auto-router.
+- Added workflow prewrite requirements so workspace inspection and web research stay available until those requirements are actually satisfied.
+- Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
+- Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.
+- Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
+
+### Artifact Integrity and File Safety
+
+- Added artifact-validation checks for declared workflow outputs so placeholder/status-note overwrites no longer silently win.
+- Added rejection and cleanup of undeclared touch/status/marker files created by workflow agents.
+- Preserved substantive blocked artifacts on disk for inspection instead of deleting them just because the node was semantically blocked.
+- Added recovery from session-local write history so if a node writes a real artifact and later overwrites it with a useless preservation note, the engine restores the best substantive write.
+- `Continue` on a blocked node now clears stale descendant outputs while preserving valid upstream artifacts.
+
+### Saved Studio Workflow Deletion
+
+- Fixed saved Studio workflows reappearing after engine restart.
+- Root cause: deleted automations were being reconstructed from persisted `automation_snapshot` data in old `automation_v2` run history.
+- Deleting an `automation_v2` workflow now also deletes its persisted runs so deleted Studio workflows stay deleted across restarts.
+
+### Control Panel Source-Run Docs
+
+- Fixed the control-panel README so repo-source service commands are shown correctly both from the repo root and from inside `packages/tandem-control-panel`.
+
+# Tandem v0.4.7 Release Notes (Released)
 
 ### Channel Memory Archival
 

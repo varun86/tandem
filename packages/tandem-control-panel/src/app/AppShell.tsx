@@ -13,6 +13,10 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     title: "Chat",
     subtitle: "Session-driven conversation, tools, uploads, and live responses.",
   },
+  studio: {
+    title: "Studio",
+    subtitle: "Template-first workflow builder with reusable role prompts and visual stages.",
+  },
   automations: {
     title: "Automations",
     subtitle: "Templates, routines, approvals, and execution history.",

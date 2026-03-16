@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { OrchestrationTask, TaskState } from "./types";
 
 const LABELS: Record<TaskState, string> = {
@@ -161,6 +161,8 @@ export function TaskBoard({
   onRetryTask?: (task: OrchestrationTask) => void;
 }) {
   const [mobileColumnKey, setMobileColumnKey] = useState("runnable");
+  const desktopBoardRef = useRef<HTMLDivElement | null>(null);
+  const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const grouped = useMemo(() => {
     const rows: Record<TaskState, OrchestrationTask[]> = {
       created: [],
@@ -210,6 +212,7 @@ export function TaskBoard({
     if (currentTask) return currentTask.key;
     return columns.find((column) => column.tasks.length > 0)?.key || "runnable";
   }, [columns, currentTaskId]);
+  const activeColumnKey = recommendedMobileColumnKey;
 
   useEffect(() => {
     setMobileColumnKey((current) => {
@@ -217,6 +220,17 @@ export function TaskBoard({
       return recommendedMobileColumnKey;
     });
   }, [columns, recommendedMobileColumnKey]);
+
+  const scrollToColumn = (columnKey: string) => {
+    const node = columnRefs.current[columnKey];
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+  };
+
+  const scrollToCurrentTask = () => {
+    if (!activeColumnKey) return;
+    scrollToColumn(activeColumnKey);
+  };
 
   if (!tasks.length) {
     return (
@@ -229,6 +243,17 @@ export function TaskBoard({
   return (
     <>
       <div className="grid gap-3 xl:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          {currentTaskId ? (
+            <button
+              type="button"
+              className="rounded-full border border-amber-400/60 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200"
+              onClick={() => setMobileColumnKey(activeColumnKey)}
+            >
+              Jump to active task
+            </button>
+          ) : null}
+        </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {columns.map((column) => {
             const active = column.key === mobileColumnKey;
@@ -276,32 +301,73 @@ export function TaskBoard({
             </div>
           ))}
       </div>
-      <div className="hidden gap-3 xl:grid xl:grid-cols-3">
-        {columns.map((column) => (
-          <div
-            key={column.key}
-            className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-2"
-          >
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-xs font-semibold">{column.label}</div>
-              <div className="tcp-subtle text-xs">{column.tasks.length}</div>
-            </div>
-            <div className="grid gap-2">
-              {column.tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  isCurrent={task.id === currentTaskId}
-                  isSelected={task.id === selectedTaskId}
-                  workflowSummary={workflowSummaryByTaskId?.[task.id]}
-                  onTaskSelect={onTaskSelect}
-                  onRetryTask={onRetryTask}
-                />
-              ))}
-              {!column.tasks.length ? <div className="tcp-subtle text-xs">No tasks</div> : null}
-            </div>
+      <div className="hidden gap-3 xl:grid">
+        <div className="flex flex-wrap items-center gap-2">
+          {currentTaskId ? (
+            <button
+              type="button"
+              className="rounded-full border border-amber-400/60 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200"
+              onClick={scrollToCurrentTask}
+            >
+              Jump to active task
+            </button>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {columns.map((column) => {
+              const active = column.key === activeColumnKey;
+              return (
+                <button
+                  key={`desktop-tab-${column.key}`}
+                  type="button"
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-medium ${
+                    active
+                      ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                      : "border-slate-700/60 bg-slate-900/20 text-slate-300"
+                  }`}
+                  onClick={() => scrollToColumn(column.key)}
+                >
+                  {column.label} ({column.tasks.length})
+                </button>
+              );
+            })}
           </div>
-        ))}
+        </div>
+        <div ref={desktopBoardRef} className="overflow-x-auto pb-2">
+          <div className="flex min-w-max gap-3">
+            {columns.map((column) => (
+              <div
+                key={column.key}
+                ref={(node) => {
+                  columnRefs.current[column.key] = node;
+                }}
+                className={`min-h-[16rem] w-[320px] shrink-0 rounded-xl border p-2 ${
+                  column.key === activeColumnKey
+                    ? "border-amber-400/60 bg-amber-400/5"
+                    : "border-slate-700/60 bg-slate-900/20"
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold">{column.label}</div>
+                  <div className="tcp-subtle text-xs">{column.tasks.length}</div>
+                </div>
+                <div className="grid gap-2">
+                  {column.tasks.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      isCurrent={task.id === currentTaskId}
+                      isSelected={task.id === selectedTaskId}
+                      workflowSummary={workflowSummaryByTaskId?.[task.id]}
+                      onTaskSelect={onTaskSelect}
+                      onRetryTask={onRetryTask}
+                    />
+                  ))}
+                  {!column.tasks.length ? <div className="tcp-subtle text-xs">No tasks</div> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </>
   );

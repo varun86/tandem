@@ -21,7 +21,7 @@ use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind,
 use tandem_orchestrator::MissionState;
 use tandem_types::{
     EngineEvent, HostOs, HostRuntimeContext, MessagePart, MessagePartInput, MessageRole, ModelSpec,
-    PathStyle, SendMessageRequest, Session, ShellFamily,
+    PathStyle, PrewriteRequirements, SendMessageRequest, Session, ShellFamily, ToolMode,
 };
 use tokio::fs;
 use tokio::sync::RwLock;
@@ -785,6 +785,16 @@ pub struct AutomationNodeOutput {
     pub content: Value,
     pub created_at_ms: u64,
     pub node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_telemetry: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_validation: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -796,6 +806,7 @@ pub enum AutomationRunStatus {
     Paused,
     AwaitingApproval,
     Completed,
+    Blocked,
     Failed,
     Cancelled,
 }
@@ -3607,7 +3618,16 @@ impl AppState {
         automation_id: &str,
     ) -> anyhow::Result<Option<AutomationV2Spec>> {
         let removed = self.automations_v2.write().await.remove(automation_id);
+        let removed_run_count = {
+            let mut runs = self.automation_v2_runs.write().await;
+            let before = runs.len();
+            runs.retain(|_, run| run.automation_id != automation_id);
+            before.saturating_sub(runs.len())
+        };
         self.persist_automations_v2().await?;
+        if removed_run_count > 0 {
+            self.persist_automation_v2_runs().await?;
+        }
         self.verify_automation_v2_persisted(automation_id, false)
             .await?;
         Ok(removed)
@@ -3724,6 +3744,7 @@ impl AppState {
         if matches!(
             run.status,
             AutomationRunStatus::Completed
+                | AutomationRunStatus::Blocked
                 | AutomationRunStatus::Failed
                 | AutomationRunStatus::Cancelled
         ) {
@@ -5973,6 +5994,7 @@ pub async fn run_routine_executor(state: AppState) {
             tool_allowlist: None,
             context_mode: None,
             write_required: None,
+            prewrite_requirements: None,
         };
 
         let run_result = state
@@ -6691,6 +6713,18 @@ fn render_automation_v2_prompt(
             "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
         ));
     }
+    if let Some(output_path) = automation_node_required_output_path(node) {
+        sections.push(format!(
+            "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Use the `write` tool to create the full file contents.\n- Only write declared workflow artifact files; do not create auxiliary touch files, status files, marker files, or placeholder preservation notes.\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- Do not report success unless this file exists in the workspace when the stage ends.",
+            output_path
+        ));
+    }
+    if automation_node_web_research_expected(node) {
+        sections.push(
+            "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Include only evidence you can support from local files or current web findings."
+                .to_string(),
+        );
+    }
     let mut prompt = sections.join("\n\n");
     if !upstream_inputs.is_empty() {
         prompt.push_str("\n\nUpstream Inputs:");
@@ -6742,7 +6776,7 @@ fn render_automation_v2_prompt(
         ));
     }
     prompt.push_str(
-        "\n\nReturn a concise completion. If you produce structured content, keep it valid JSON inside the response body.",
+        "\n\nFinal response requirements:\n- Return a concise completion.\n- Include a final compact JSON object in the response body with at least `status` (`completed` or `blocked`).\n- For review-style nodes, also include `approved` (`true` or `false`).\n- If blocked, include a short `reason`.\n- Do not claim semantic success if the output is blocked or not approved.",
     );
     prompt
 }
@@ -6804,6 +6838,39 @@ fn merge_automation_agent_allowlist(
     allowlist
 }
 
+fn normalize_automation_requested_tools(raw: Vec<String>) -> Vec<String> {
+    let mut normalized = normalize_allowed_tools(raw);
+    let has_read = normalized.iter().any(|tool| tool == "read");
+    let has_workspace_probe = normalized
+        .iter()
+        .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list"));
+    if has_read && !has_workspace_probe {
+        normalized.push("glob".to_string());
+    }
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn automation_node_prewrite_requirements(
+    node: &AutomationFlowNode,
+    requested_tools: &[String],
+) -> Option<PrewriteRequirements> {
+    let write_required = automation_node_required_output_path(node).is_some();
+    if !write_required {
+        return None;
+    }
+    let workspace_inspection_required = requested_tools
+        .iter()
+        .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list" | "read"));
+    let web_research_required = automation_node_web_research_expected(node)
+        && requested_tools.iter().any(|tool| tool == "websearch");
+    Some(PrewriteRequirements {
+        workspace_inspection_required,
+        web_research_required,
+    })
+}
+
 fn resolve_automation_agent_model(
     agent: &AutomationAgentProfile,
     template: Option<&tandem_orchestrator::AgentTemplate>,
@@ -6819,6 +6886,380 @@ fn resolve_automation_agent_model(
     template
         .and_then(|value| value.default_model.as_ref())
         .and_then(parse_model_spec)
+}
+
+fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("output_path"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("web_research_expected"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn automation_node_execution_policy(node: &AutomationFlowNode, workspace_root: &str) -> Value {
+    let output_path = automation_node_required_output_path(node);
+    let extension = output_path
+        .as_deref()
+        .and_then(|value| std::path::Path::new(value).extension())
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    let code_extensions = [
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "kts", "c", "cc", "cpp", "h",
+        "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh",
+    ];
+    let code_workflow = extension
+        .as_deref()
+        .is_some_and(|value| code_extensions.contains(&value));
+    let git_backed = PathBuf::from(workspace_root).join(".git").exists();
+    let mode = if code_workflow {
+        if git_backed {
+            "git_backed"
+        } else {
+            "filesystem_strict"
+        }
+    } else {
+        "filesystem_standard"
+    };
+    json!({
+        "mode": mode,
+        "code_workflow": code_workflow,
+        "git_backed": git_backed,
+        "declared_output_path": output_path,
+    })
+}
+
+fn resolve_automation_output_path(
+    workspace_root: &str,
+    output_path: &str,
+) -> anyhow::Result<PathBuf> {
+    let trimmed = output_path.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("required output path is empty");
+    }
+    let workspace = PathBuf::from(workspace_root);
+    let candidate = PathBuf::from(trimmed);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        workspace.join(candidate)
+    };
+    if !resolved.starts_with(&workspace) {
+        anyhow::bail!(
+            "required output path `{}` must stay inside workspace `{}`",
+            trimmed,
+            workspace_root
+        );
+    }
+    Ok(resolved)
+}
+
+fn is_suspicious_automation_marker_file(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let lowered = name.to_ascii_lowercase();
+    lowered.starts_with(".tandem")
+        || lowered == "_automation_touch.txt"
+        || lowered.contains("stage-touch")
+        || lowered.ends_with("-status.txt")
+        || lowered.contains("touch.txt")
+}
+
+fn list_suspicious_automation_marker_files(workspace_root: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(workspace_root) else {
+        return Vec::new();
+    };
+    let mut paths = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_suspicious_automation_marker_file(path))
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn remove_suspicious_automation_marker_files(workspace_root: &str) {
+    let Ok(entries) = std::fs::read_dir(workspace_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || !is_suspicious_automation_marker_file(&path) {
+            continue;
+        }
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn automation_workspace_root_file_snapshot(
+    workspace_root: &str,
+) -> std::collections::BTreeSet<String> {
+    let Ok(entries) = std::fs::read_dir(workspace_root) else {
+        return std::collections::BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .collect()
+}
+
+fn placeholder_like_artifact_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lowered = trimmed
+        .chars()
+        .take(800)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let strong_markers = [
+        "completed previously in this run",
+        "preserving file creation requirement",
+        "preserving current workspace output state",
+        "placeholder preservation note",
+        "touch file",
+        "status note",
+        "marker file",
+    ];
+    if strong_markers.iter().any(|marker| lowered.contains(marker)) {
+        return true;
+    }
+    let status_markers = [
+        "# status",
+        "## status",
+        "status: blocked",
+        "status: completed",
+        "status: pending",
+        "blocked handoff",
+        "blocked note",
+        "not approved yet",
+        "pending approval",
+    ];
+    status_markers.iter().any(|marker| lowered.contains(marker)) && trimmed.len() < 280
+}
+
+fn substantive_artifact_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.len() >= 220 && !placeholder_like_artifact_text(trimmed)
+}
+
+fn files_reviewed_section_lists_paths(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    let Some(start) = lowered.find("files reviewed") else {
+        return false;
+    };
+    let tail = &text[start..];
+    tail.lines().skip(1).take(24).any(|line| {
+        let trimmed = line.trim();
+        (trimmed.starts_with('-')
+            || trimmed.starts_with('*')
+            || trimmed.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+            && (trimmed.contains('/')
+                || trimmed.contains(".md")
+                || trimmed.contains(".txt")
+                || trimmed.contains("readme"))
+    })
+}
+
+fn session_write_candidates_for_output(
+    session: &Session,
+    workspace_root: &str,
+    declared_output_path: &str,
+) -> Vec<String> {
+    let Ok(target_path) = resolve_automation_output_path(workspace_root, declared_output_path)
+    else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool, args, error, ..
+            } = part
+            else {
+                continue;
+            };
+            if !tool.eq_ignore_ascii_case("write")
+                || error.as_ref().is_some_and(|value| !value.trim().is_empty())
+            {
+                continue;
+            }
+            let Some(path) = args.get("path").and_then(Value::as_str).map(str::trim) else {
+                continue;
+            };
+            let Ok(candidate_path) = resolve_automation_output_path(workspace_root, path) else {
+                continue;
+            };
+            if candidate_path != target_path {
+                continue;
+            }
+            let Some(content) = args.get("content").and_then(Value::as_str) else {
+                continue;
+            };
+            if !content.trim().is_empty() {
+                candidates.push(content.to_string());
+            }
+        }
+    }
+    candidates
+}
+
+fn best_session_write_candidate(
+    session: &Session,
+    workspace_root: &str,
+    declared_output_path: &str,
+) -> Option<String> {
+    let mut candidates =
+        session_write_candidates_for_output(session, workspace_root, declared_output_path);
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by_key(|value| value.len());
+    candidates
+        .iter()
+        .rev()
+        .find(|value| substantive_artifact_text(value))
+        .cloned()
+        .or_else(|| candidates.pop())
+}
+
+fn validate_automation_artifact_output(
+    node: &AutomationFlowNode,
+    session: &Session,
+    workspace_root: &str,
+    session_text: &str,
+    tool_telemetry: &Value,
+    preexisting_output: Option<&str>,
+    verified_output: Option<(String, String)>,
+    workspace_snapshot_before: &std::collections::BTreeSet<String>,
+) -> (Option<(String, String)>, Value, Option<String>) {
+    let suspicious_after = list_suspicious_automation_marker_files(workspace_root);
+    let undeclared_files_created = suspicious_after
+        .iter()
+        .filter(|name| !workspace_snapshot_before.contains((*name).as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut auto_cleaned = false;
+    if !suspicious_after.is_empty() {
+        remove_suspicious_automation_marker_files(workspace_root);
+        auto_cleaned = true;
+    }
+
+    let execution_policy = automation_node_execution_policy(node, workspace_root);
+    let mut rejected_reason = if undeclared_files_created.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "undeclared marker files created: {}",
+            undeclared_files_created.join(", ")
+        ))
+    };
+    let mut semantic_block_reason = None::<String>;
+    let mut accepted_output = verified_output;
+    let mut recovered_from_session_write = false;
+
+    if let Some((path, text)) = accepted_output.as_ref() {
+        let recovered_candidate = best_session_write_candidate(session, workspace_root, path);
+        let lowered = text.to_ascii_lowercase();
+        let requested_has_read = tool_telemetry
+            .get("requested_tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
+        let executed_has_read = tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
+        let web_research_expected = automation_node_web_research_expected(node);
+        let web_research_used = tool_telemetry
+            .get("web_research_used")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if rejected_reason.is_none() && placeholder_like_artifact_text(text) {
+            rejected_reason = Some("placeholder overwrite rejected".to_string());
+        }
+        if rejected_reason.is_none()
+            && preexisting_output.is_some_and(substantive_artifact_text)
+            && (text.trim().len() + 80) < preexisting_output.unwrap_or_default().trim().len()
+            && (placeholder_like_artifact_text(text)
+                || lowered.contains("preserving")
+                || lowered.contains("completed previously"))
+        {
+            rejected_reason = Some("short placeholder overwrite rejected".to_string());
+        }
+        if rejected_reason.is_none()
+            && node
+                .output_contract
+                .as_ref()
+                .is_some_and(|contract| contract.kind == "brief")
+            && requested_has_read
+            && (!executed_has_read
+                || !files_reviewed_section_lists_paths(text)
+                || (web_research_expected && !web_research_used))
+        {
+            semantic_block_reason = Some(
+                "research completed without concrete file reads or required source coverage"
+                    .to_string(),
+            );
+        }
+        if let Some(reason) = rejected_reason.clone() {
+            if let Ok(resolved) = resolve_automation_output_path(workspace_root, path) {
+                if let Some(candidate) = recovered_candidate
+                    .as_ref()
+                    .filter(|candidate| substantive_artifact_text(candidate))
+                {
+                    let _ = std::fs::write(&resolved, candidate);
+                    accepted_output = Some((path.clone(), candidate.clone()));
+                    rejected_reason = None;
+                    recovered_from_session_write = true;
+                } else if let Some(previous) = preexisting_output {
+                    let _ = std::fs::write(&resolved, previous);
+                    accepted_output = None;
+                } else {
+                    let _ = std::fs::remove_file(&resolved);
+                    accepted_output = None;
+                }
+            }
+            let _ = session_text;
+            let _ = reason;
+        }
+    }
+
+    let metadata = json!({
+        "accepted_artifact_path": accepted_output.as_ref().map(|(path, _)| path.clone()),
+        "rejected_artifact_reason": rejected_reason,
+        "semantic_block_reason": semantic_block_reason,
+        "recovered_from_session_write": recovered_from_session_write,
+        "undeclared_files_created": undeclared_files_created,
+        "auto_cleaned": auto_cleaned,
+        "execution_policy": execution_policy,
+    });
+    let rejected = metadata
+        .get("rejected_artifact_reason")
+        .or_else(|| metadata.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    (accepted_output, metadata, rejected)
 }
 
 fn extract_session_text_output(session: &Session) -> String {
@@ -6843,30 +7284,283 @@ fn extract_session_text_output(session: &Session) -> String {
         .unwrap_or_default()
 }
 
+fn parse_status_json(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return Some(value);
+        }
+    }
+    for (idx, ch) in trimmed.char_indices().rev() {
+        if ch != '{' {
+            continue;
+        }
+        let candidate = trimmed[idx..].trim();
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn summarize_automation_tool_activity(session: &Session, requested_tools: &[String]) -> Value {
+    let mut executed_tools = Vec::new();
+    let mut counts = serde_json::Map::new();
+    let mut workspace_inspection_used = false;
+    let mut web_research_used = false;
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation { tool, error, .. } = part else {
+                continue;
+            };
+            if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+                continue;
+            }
+            let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
+            if !executed_tools.iter().any(|entry| entry == &normalized) {
+                executed_tools.push(normalized.clone());
+            }
+            let next_count = counts
+                .get(&normalized)
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .saturating_add(1);
+            counts.insert(normalized.clone(), json!(next_count));
+            if matches!(
+                normalized.as_str(),
+                "glob" | "read" | "grep" | "search" | "codesearch" | "ls" | "list"
+            ) {
+                workspace_inspection_used = true;
+            }
+            if matches!(
+                normalized.as_str(),
+                "websearch" | "webfetch" | "webfetch_html"
+            ) {
+                web_research_used = true;
+            }
+        }
+    }
+    json!({
+        "requested_tools": requested_tools,
+        "executed_tools": executed_tools,
+        "tool_call_counts": counts,
+        "workspace_inspection_used": workspace_inspection_used,
+        "web_research_used": web_research_used
+    })
+}
+
+fn detect_automation_node_status(
+    node: &AutomationFlowNode,
+    session_text: &str,
+    verified_output: Option<&(String, String)>,
+    tool_telemetry: &Value,
+    artifact_validation: Option<&Value>,
+) -> (String, Option<String>, Option<bool>) {
+    let parsed = parse_status_json(session_text);
+    let approved = parsed
+        .as_ref()
+        .and_then(|value| value.get("approved"))
+        .and_then(Value::as_bool);
+    let explicit_reason = parsed
+        .as_ref()
+        .and_then(|value| value.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if parsed
+        .as_ref()
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("blocked"))
+    {
+        return ("blocked".to_string(), explicit_reason, approved);
+    }
+    if approved == Some(false) {
+        return (
+            "blocked".to_string(),
+            explicit_reason
+                .or_else(|| Some("upstream review did not approve the output".to_string())),
+            approved,
+        );
+    }
+    if let Some(reason) = artifact_validation
+        .and_then(|value| {
+            value
+                .get("rejected_artifact_reason")
+                .or_else(|| value.get("semantic_block_reason"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return ("blocked".to_string(), Some(reason.to_string()), approved);
+    }
+    let output_text = verified_output
+        .map(|(_, text)| text.as_str())
+        .unwrap_or_else(|| session_text.trim());
+    let lowered = output_text
+        .chars()
+        .take(1600)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let blocked_markers = [
+        "status: blocked",
+        "status blocked",
+        "## status blocked",
+        "blocked pending",
+        "this brief is blocked",
+        "brief is blocked",
+        "partially blocked",
+        "provisional",
+        "path-level evidence",
+        "based on filenames not content",
+        "could not be confirmed from file contents",
+        "could not safely cite exact file-derived claims",
+        "not approved",
+        "approval has not happened",
+        "publication is blocked",
+        "i’m blocked",
+        "i'm blocked",
+    ];
+    if blocked_markers
+        .iter()
+        .any(|marker| lowered.contains(marker))
+    {
+        let reason = explicit_reason.or_else(|| {
+            if node
+                .output_contract
+                .as_ref()
+                .is_some_and(|contract| contract.kind == "review")
+            {
+                Some("review output was not approved".to_string())
+            } else {
+                Some("node produced a blocked handoff artifact".to_string())
+            }
+        });
+        return ("blocked".to_string(), reason, approved);
+    }
+    let requested_tools = tool_telemetry
+        .get("requested_tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let executed_tools = tool_telemetry
+        .get("executed_tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let requested_has_read = requested_tools
+        .iter()
+        .any(|value| value.as_str() == Some("read"));
+    let executed_has_read = executed_tools
+        .iter()
+        .any(|value| value.as_str() == Some("read"));
+    let is_brief_contract = node
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.kind == "brief");
+    let mentions_missing_file_evidence = lowered.contains("file contents were not")
+        || lowered.contains("could not safely cite exact file-derived claims")
+        || lowered.contains("could not be confirmed from file contents")
+        || lowered.contains("path-level evidence")
+        || lowered.contains("based on filenames not content")
+        || lowered.contains("partially blocked")
+        || lowered.contains("provisional")
+        || lowered.contains("this brief is blocked")
+        || lowered.contains("brief is blocked");
+    if is_brief_contract
+        && requested_has_read
+        && !executed_has_read
+        && mentions_missing_file_evidence
+    {
+        return (
+            "blocked".to_string(),
+            Some("research brief did not read concrete workspace files, so source-backed validation is incomplete".to_string()),
+            approved,
+        );
+    }
+    ("completed".to_string(), explicit_reason, approved)
+}
+
 fn wrap_automation_node_output(
     node: &AutomationFlowNode,
+    session: &Session,
+    requested_tools: &[String],
     session_id: &str,
     session_text: &str,
+    verified_output: Option<(String, String)>,
+    artifact_validation: Option<Value>,
 ) -> Value {
     let contract_kind = node
         .output_contract
         .as_ref()
         .map(|contract| contract.kind.clone())
         .unwrap_or_else(|| "structured_json".to_string());
-    let summary = if session_text.trim().is_empty() {
+    let summary = if let Some((path, _)) = verified_output.as_ref() {
+        format!(
+            "Verified workspace output `{}` for node `{}`.",
+            path, node.node_id
+        )
+    } else if let Some(reason) = artifact_validation
+        .as_ref()
+        .and_then(|value| value.get("rejected_artifact_reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        format!(
+            "Artifact validation rejected node `{}` output: {}.",
+            node.node_id, reason
+        )
+    } else if session_text.trim().is_empty() {
         format!("Node `{}` completed successfully.", node.node_id)
     } else {
         truncate_text(session_text.trim(), 240)
     };
+    let primary_text = verified_output
+        .as_ref()
+        .map(|(_, text)| text.as_str())
+        .unwrap_or_else(|| session_text.trim());
+    let tool_telemetry = summarize_automation_tool_activity(session, requested_tools);
+    let (status, blocked_reason, approved) = detect_automation_node_status(
+        node,
+        session_text,
+        verified_output.as_ref(),
+        &tool_telemetry,
+        artifact_validation.as_ref(),
+    );
     let content = match contract_kind.as_str() {
         "report_markdown" | "text_summary" => {
-            json!({ "text": session_text.trim(), "session_id": session_id })
+            json!({
+                "text": primary_text,
+                "path": verified_output.as_ref().map(|(path, _)| path.clone()),
+                "raw_assistant_text": session_text.trim(),
+                "session_id": session_id
+            })
         }
-        "urls" => json!({ "items": [], "raw_text": session_text.trim(), "session_id": session_id }),
+        "urls" => json!({
+            "items": [],
+            "raw_text": primary_text,
+            "path": verified_output.as_ref().map(|(path, _)| path.clone()),
+            "raw_assistant_text": session_text.trim(),
+            "session_id": session_id
+        }),
         "citations" => {
-            json!({ "items": [], "raw_text": session_text.trim(), "session_id": session_id })
+            json!({
+                "items": [],
+                "raw_text": primary_text,
+                "path": verified_output.as_ref().map(|(path, _)| path.clone()),
+                "raw_assistant_text": session_text.trim(),
+                "session_id": session_id
+            })
         }
-        _ => json!({ "text": session_text.trim(), "session_id": session_id }),
+        _ => json!({
+            "text": primary_text,
+            "path": verified_output.as_ref().map(|(path, _)| path.clone()),
+            "raw_assistant_text": session_text.trim(),
+            "session_id": session_id
+        }),
     };
     json!(AutomationNodeOutput {
         contract_kind,
@@ -6874,6 +7568,11 @@ fn wrap_automation_node_output(
         content,
         created_at_ms: now_ms(),
         node_id: node.node_id.clone(),
+        status: Some(status),
+        blocked_reason,
+        approved,
+        tool_telemetry: Some(tool_telemetry),
+        artifact_validation,
     })
 }
 
@@ -6884,6 +7583,22 @@ fn automation_node_max_attempts(node: &AutomationFlowNode) -> u32 {
         .and_then(Value::as_u64)
         .map(|value| value.clamp(1, 10) as u32)
         .unwrap_or(3)
+}
+
+fn automation_output_is_blocked(output: &Value) -> bool {
+    output
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("blocked"))
+}
+
+fn automation_output_blocked_reason(output: &Value) -> Option<String> {
+    output
+        .get("blocked_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 async fn resolve_automation_v2_workspace_root(
@@ -6911,6 +7626,87 @@ async fn resolve_automation_v2_workspace_root(
         return workspace_root;
     }
     state.workspace_index.snapshot().await.root
+}
+
+fn automation_declared_output_paths(automation: &AutomationV2Spec) -> Vec<String> {
+    let mut paths = Vec::new();
+    for target in &automation.output_targets {
+        let trimmed = target.trim();
+        if !trimmed.is_empty() && !paths.iter().any(|existing| existing == trimmed) {
+            paths.push(trimmed.to_string());
+        }
+    }
+    for node in &automation.flow.nodes {
+        if let Some(path) = automation_node_required_output_path(node) {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() && !paths.iter().any(|existing| existing == trimmed) {
+                paths.push(trimmed.to_string());
+            }
+        }
+    }
+    paths
+}
+
+async fn clear_automation_declared_outputs(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+) -> anyhow::Result<()> {
+    let workspace_root = resolve_automation_v2_workspace_root(state, automation).await;
+    remove_suspicious_automation_marker_files(&workspace_root);
+    for output_path in automation_declared_output_paths(automation) {
+        let resolved = resolve_automation_output_path(&workspace_root, &output_path)?;
+        if !resolved.exists() {
+            continue;
+        }
+        if resolved.is_file() {
+            std::fs::remove_file(&resolved).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to remove stale output `{}` for automation `{}`: {}",
+                    output_path,
+                    automation.automation_id,
+                    error
+                )
+            })?;
+        }
+    }
+    remove_suspicious_automation_marker_files(&workspace_root);
+    Ok(())
+}
+
+pub(crate) async fn clear_automation_subtree_outputs(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+    node_ids: &std::collections::HashSet<String>,
+) -> anyhow::Result<Vec<String>> {
+    let workspace_root = resolve_automation_v2_workspace_root(state, automation).await;
+    let mut cleared = Vec::new();
+    for node in &automation.flow.nodes {
+        if !node_ids.contains(&node.node_id) {
+            continue;
+        }
+        let Some(output_path) = automation_node_required_output_path(node) else {
+            continue;
+        };
+        let resolved = resolve_automation_output_path(&workspace_root, &output_path)?;
+        if resolved.exists() && resolved.is_file() {
+            std::fs::remove_file(&resolved).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to clear subtree output `{}` for automation `{}`: {}",
+                    output_path,
+                    automation.automation_id,
+                    error
+                )
+            })?;
+            cleared.push(output_path);
+        }
+    }
+    let had_markers = !list_suspicious_automation_marker_files(&workspace_root).is_empty();
+    if had_markers {
+        remove_suspicious_automation_marker_files(&workspace_root);
+    }
+    cleared.sort();
+    cleared.dedup();
+    Ok(cleared)
 }
 
 async fn execute_automation_v2_node(
@@ -6965,7 +7761,7 @@ async fn execute_automation_v2_node(
     let session_id = session.id.clone();
     let project_id = automation_workspace_project_id(&workspace_root);
     session.project_id = Some(project_id.clone());
-    session.workspace_root = Some(workspace_root);
+    session.workspace_root = Some(workspace_root.clone());
     state.storage.save_session(session).await?;
 
     state.add_automation_v2_session(run_id, &session_id).await;
@@ -6974,9 +7770,10 @@ async fn execute_automation_v2_node(
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
         allowlist.extend(mcp_tools.clone());
     }
+    let requested_tools = normalize_automation_requested_tools(allowlist.clone());
     state
         .engine_loop
-        .set_session_allowed_tools(&session_id, normalize_allowed_tools(allowlist))
+        .set_session_allowed_tools(&session_id, requested_tools.clone())
         .await;
     state
         .engine_loop
@@ -6984,6 +7781,12 @@ async fn execute_automation_v2_node(
         .await;
 
     let model = resolve_automation_agent_model(agent, template.as_ref());
+    let required_output_path = automation_node_required_output_path(node);
+    let preexisting_output = required_output_path
+        .as_deref()
+        .and_then(|output_path| resolve_automation_output_path(&workspace_root, output_path).ok())
+        .and_then(|resolved| std::fs::read_to_string(resolved).ok());
+    let workspace_snapshot_before = automation_workspace_root_file_snapshot(&workspace_root);
     let standup_report_path = if is_agent_standup_automation(automation)
         && node.node_id == "standup_synthesis"
     {
@@ -7011,10 +7814,11 @@ async fn execute_automation_v2_node(
         parts: vec![MessagePartInput::Text { text: prompt }],
         model,
         agent: None,
-        tool_mode: None,
-        tool_allowlist: None,
+        tool_mode: Some(ToolMode::Required),
+        tool_allowlist: Some(requested_tools.clone()),
         context_mode: None,
-        write_required: None,
+        write_required: required_output_path.as_ref().map(|_| true),
+        prewrite_requirements: automation_node_prewrite_requirements(node, &requested_tools),
     };
     let result = state
         .engine_loop
@@ -7042,10 +7846,55 @@ async fn execute_automation_v2_node(
         .await
         .ok_or_else(|| anyhow::anyhow!("automation session `{}` missing after run", session_id))?;
     let session_text = extract_session_text_output(&session);
+    let verified_output = if let Some(output_path) = required_output_path.as_deref() {
+        let resolved = resolve_automation_output_path(&workspace_root, output_path)?;
+        if !resolved.exists() {
+            anyhow::bail!(
+                "required output `{}` was not created for node `{}`",
+                output_path,
+                node.node_id
+            );
+        }
+        if !resolved.is_file() {
+            anyhow::bail!(
+                "required output `{}` for node `{}` is not a file",
+                output_path,
+                node.node_id
+            );
+        }
+        let file_text = std::fs::read_to_string(&resolved).map_err(|error| {
+            anyhow::anyhow!(
+                "required output `{}` for node `{}` could not be read: {}",
+                output_path,
+                node.node_id,
+                error
+            )
+        })?;
+        Some((output_path.to_string(), file_text))
+    } else {
+        None
+    };
+    let tool_telemetry = summarize_automation_tool_activity(&session, &requested_tools);
+    let (verified_output, artifact_validation, artifact_rejected_reason) =
+        validate_automation_artifact_output(
+            node,
+            &session,
+            &workspace_root,
+            &session_text,
+            &tool_telemetry,
+            preexisting_output.as_deref(),
+            verified_output,
+            &workspace_snapshot_before,
+        );
+    let _ = artifact_rejected_reason;
     Ok(wrap_automation_node_output(
         node,
+        &session,
+        &requested_tools,
         &session_id,
         &session_text,
+        verified_output,
+        Some(artifact_validation),
     ))
 }
 
@@ -7064,6 +7913,15 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 .await;
             continue;
         };
+        if let Err(error) = clear_automation_declared_outputs(&state, &automation).await {
+            let _ = state
+                .update_automation_v2_run(&run.run_id, |row| {
+                    row.status = AutomationRunStatus::Failed;
+                    row.detail = Some(error.to_string());
+                })
+                .await;
+            continue;
+        }
         let max_parallel = automation
             .execution
             .max_parallel_agents
@@ -7120,6 +7978,7 @@ pub async fn run_automation_v2_executor(state: AppState) {
                     | AutomationRunStatus::Pausing
                     | AutomationRunStatus::AwaitingApproval
                     | AutomationRunStatus::Cancelled
+                    | AutomationRunStatus::Blocked
                     | AutomationRunStatus::Failed
                     | AutomationRunStatus::Completed
             ) {
@@ -7128,8 +7987,14 @@ pub async fn run_automation_v2_executor(state: AppState) {
             if latest.checkpoint.pending_nodes.is_empty() {
                 let _ = state
                     .update_automation_v2_run(&run.run_id, |row| {
-                        row.status = AutomationRunStatus::Completed;
-                        row.detail = Some("automation run completed".to_string());
+                        if row.checkpoint.blocked_nodes.is_empty() {
+                            row.status = AutomationRunStatus::Completed;
+                            row.detail = Some("automation run completed".to_string());
+                        } else {
+                            row.status = AutomationRunStatus::Blocked;
+                            row.detail =
+                                Some("automation run blocked by upstream node outcome".to_string());
+                        }
                     })
                     .await;
                 break;
@@ -7171,8 +8036,15 @@ pub async fn run_automation_v2_executor(state: AppState) {
             if runnable.is_empty() {
                 let _ = state
                     .update_automation_v2_run(&run.run_id, |row| {
-                        row.status = AutomationRunStatus::Failed;
-                        row.detail = Some("flow deadlock: no runnable nodes".to_string());
+                        if row.checkpoint.blocked_nodes.is_empty() {
+                            row.status = AutomationRunStatus::Failed;
+                            row.detail = Some("flow deadlock: no runnable nodes".to_string());
+                        } else {
+                            row.status = AutomationRunStatus::Blocked;
+                            row.detail = Some(
+                                "automation run blocked: no runnable nodes remain".to_string(),
+                            );
+                        }
                     })
                     .await;
                 break;
@@ -7337,17 +8209,46 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .map(str::trim)
                             .unwrap_or_default()
                             .to_string();
+                        let blocked = automation_output_is_blocked(&output);
+                        let blocked_reason = automation_output_blocked_reason(&output);
                         let attempt = latest_attempts.get(&node_id).copied().unwrap_or(1);
                         let _ = state
                             .update_automation_v2_run(&run.run_id, |row| {
-                                row.checkpoint.pending_nodes.retain(|id| id != &node_id);
-                                if !row
-                                    .checkpoint
-                                    .completed_nodes
-                                    .iter()
-                                    .any(|id| id == &node_id)
+                                let blocked_descendants = if blocked {
+                                    collect_automation_descendants(
+                                        &automation,
+                                        &std::iter::once(node_id.clone()).collect(),
+                                    )
+                                } else {
+                                    std::collections::HashSet::new()
+                                };
+                                row.checkpoint.pending_nodes.retain(|id| {
+                                    id != &node_id && !blocked_descendants.contains(id)
+                                });
+                                if !blocked
+                                    && !row
+                                        .checkpoint
+                                        .completed_nodes
+                                        .iter()
+                                        .any(|id| id == &node_id)
                                 {
                                     row.checkpoint.completed_nodes.push(node_id.clone());
+                                }
+                                if blocked {
+                                    if !row.checkpoint.blocked_nodes.iter().any(|id| id == &node_id)
+                                    {
+                                        row.checkpoint.blocked_nodes.push(node_id.clone());
+                                    }
+                                    for blocked_node in &blocked_descendants {
+                                        if !row
+                                            .checkpoint
+                                            .blocked_nodes
+                                            .iter()
+                                            .any(|id| id == blocked_node)
+                                        {
+                                            row.checkpoint.blocked_nodes.push(blocked_node.clone());
+                                        }
+                                    }
                                 }
                                 row.checkpoint.node_outputs.insert(node_id.clone(), output);
                                 if row
@@ -7360,8 +8261,16 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                 }
                                 record_automation_lifecycle_event_with_metadata(
                                     row,
-                                    "node_completed",
-                                    Some(format!("node `{}` completed", node_id)),
+                                    if blocked {
+                                        "node_blocked"
+                                    } else {
+                                        "node_completed"
+                                    },
+                                    Some(if blocked {
+                                        format!("node `{}` blocked downstream execution", node_id)
+                                    } else {
+                                        format!("node `{}` completed", node_id)
+                                    }),
                                     None,
                                     Some(json!({
                                         "node_id": node_id,
@@ -7369,9 +8278,15 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                         "session_id": session_id,
                                         "summary": summary,
                                         "contract_kind": contract_kind,
+                                        "status": if blocked { "blocked" } else { "completed" },
+                                        "blocked_reason": blocked_reason,
+                                        "blocked_descendants": blocked_descendants,
                                     })),
                                 );
-                                record_milestone_promotions(&automation, row, &node_id);
+                                if !blocked {
+                                    record_milestone_promotions(&automation, row, &node_id);
+                                }
+                                refresh_automation_runtime_state(&automation, row);
                             })
                             .await;
                     }
@@ -7386,6 +8301,7 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                         | AutomationRunStatus::Pausing
                                         | AutomationRunStatus::AwaitingApproval
                                         | AutomationRunStatus::Cancelled
+                                        | AutomationRunStatus::Blocked
                                         | AutomationRunStatus::Failed
                                         | AutomationRunStatus::Completed
                                 )
@@ -8632,5 +9548,71 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].node_id, "draft");
+    }
+
+    #[test]
+    fn placeholder_artifact_text_is_rejected() {
+        assert!(placeholder_like_artifact_text(
+            "Completed previously in this run; preserving file creation requirement."
+        ));
+        assert!(placeholder_like_artifact_text(
+            "# Status\n\nBlocked handoff"
+        ));
+        assert!(!placeholder_like_artifact_text(
+            "# Marketing Brief\n\n## Audience\nReal sourced content with specific product details."
+        ));
+    }
+
+    #[test]
+    fn artifact_validation_rejection_blocks_node_status() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let tool_telemetry = json!({
+            "requested_tools": ["glob", "read", "write", "websearch"],
+            "executed_tools": ["glob", "write"],
+            "workspace_inspection_used": true,
+            "web_research_used": false
+        });
+        let artifact_validation = json!({
+            "accepted_artifact_path": Value::Null,
+            "rejected_artifact_reason": "placeholder overwrite rejected",
+            "undeclared_files_created": ["_automation_touch.txt"],
+            "auto_cleaned": true,
+            "execution_policy": {
+                "mode": "filesystem_standard"
+            }
+        });
+
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done",
+            None,
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
+
+        assert_eq!(status, "blocked");
+        assert_eq!(reason.as_deref(), Some("placeholder overwrite rejected"));
+        assert_eq!(approved, None);
     }
 }

@@ -2,7 +2,36 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.4.7 (Unreleased)
+## v0.4.8 (Unreleased)
+
+- Added a new top-level `Studio` workflow builder in the control panel
+  - template-first multi-agent workflow creation with editable role prompts, stage/dependency editing, saved Studio workflows, and a shared workspace picker
+  - direct save/run flows into `automation_v2`
+
+- Workflow run debugging and recovery are much stronger
+  - workflow board now gets its own row and desktop lanes can be horizontally scrolled with jump-to-active controls
+  - blocked/failed runs now expose `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow`
+  - task details now show semantic node status, blocked reason, approval, tool telemetry, and artifact-validation results
+
+- File-backed workflow runtime hardening
+  - `automation_v2` nodes now use deterministic required tool sets
+  - workflow tool normalization now gives `read` workflows `glob` for discovery
+  - `/workspace/...` file tool paths now resolve against the real workspace root
+  - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs
+
+- Artifact integrity protections for workflow outputs
+  - placeholder/status-note overwrites no longer silently replace declared output artifacts
+  - undeclared touch/status/marker files are rejected and cleaned up
+  - substantive blocked artifacts remain on disk for inspection
+  - when a later placeholder write overwrites a real earlier write in the same node, the engine now restores the best substantive write from session history
+
+- Saved Studio workflow deletion finally persists across restarts
+  - deleting an `automation_v2` workflow now also deletes its stored run history so old run snapshots cannot recreate deleted workflows on engine boot
+
+- Control-panel repo-source docs were corrected
+  - README service/init commands now show the right paths both from the repo root and from inside `packages/tandem-control-panel`
+
+## v0.4.7 (Released)
 
 - Channel memory now works end-to-end across fresh Telegram/Discord/Slack sessions
   - fresh channel sessions now get `memory_search`, `memory_store`, and `memory_list` by default instead of stalling on permission requests

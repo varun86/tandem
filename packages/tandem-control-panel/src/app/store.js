@@ -2,6 +2,7 @@
 export const ROUTES = [
   ["dashboard", "Dashboard", "home"],
   ["chat", "Chat", "message-square"],
+  ["studio", "Studio", "network"],
   ["automations", "Automations", "bot"],
   ["agents", "Agents", "users"],
   ["orchestrator", "Orchestrator", "sparkles"],
@@ -25,6 +26,7 @@ export const NAV_ROUTES = ROUTES.filter(([id]) =>
   [
     "dashboard",
     "chat",
+    "studio",
     "automations",
     "agents",
     "orchestrator",
