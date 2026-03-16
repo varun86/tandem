@@ -41,6 +41,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - shared control-panel workflow selectors now also own checkpoint-based current-task selection so workflow focus stops being decided inside `AutomationsPage`
   - shared control-panel workflow selectors now also own the checkpoint-based workflow board projection so `AutomationsPage` no longer rebuilds task rows inline
   - shared control-panel workflow selectors now also own the first-pending-task fallback used by active workflow focus detection
+  - shared control-panel workflow selectors now also own blocked-node counts so debugger headers and summary rows stop counting blocked arrays inline
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

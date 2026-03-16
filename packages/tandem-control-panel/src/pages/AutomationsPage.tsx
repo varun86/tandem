@@ -8,6 +8,7 @@ import {
   workflowActiveSessionCount,
   workflowArtifactCandidates,
   workflowArtifactValidation,
+  workflowBlockedNodeCount,
   workflowBlockedNodeIds,
   workflowCompletedNodeCount,
   workflowCompletedNodeIds,
@@ -4379,6 +4380,10 @@ function MyAutomations({
         label: "pending nodes",
         value: String(workflowPendingNodeCount(selectedRun)),
       });
+      rows.push({
+        label: "blocked nodes",
+        value: String(workflowBlockedNodeCount(selectedRun)),
+      });
     }
     if (String(selectedRun?.detail || "").trim()) {
       rows.push({ label: "detail", value: String(selectedRun.detail).trim() });
@@ -5138,6 +5143,7 @@ function MyAutomations({
                   {isWorkflowRun ? (
                     <div className="tcp-subtle text-xs">
                       completed nodes: {workflowCompletedNodeCount(selectedRun)}
+                      {" · "}blocked nodes: {workflowBlockedNodeCount(selectedRun)}
                       {" · "}active sessions: {workflowActiveSessionCount(selectedRun)}
                     </div>
                   ) : null}

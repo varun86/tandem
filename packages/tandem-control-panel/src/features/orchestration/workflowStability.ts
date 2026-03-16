@@ -31,6 +31,10 @@ export function workflowPendingNodeCount(run: any) {
   return workflowPendingNodeIds(run).length;
 }
 
+export function workflowBlockedNodeCount(run: any) {
+  return workflowBlockedNodeIds(run).length;
+}
+
 export function workflowActiveSessionCount(run: any) {
   const direct = Array.isArray(run?.active_session_ids)
     ? run.active_session_ids
