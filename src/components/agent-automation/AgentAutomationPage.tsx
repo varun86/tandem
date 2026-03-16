@@ -9,6 +9,7 @@ import {
   extractSessionIdsFromRun,
   nodeOutputText,
   pendingNodeIds,
+  runDisplayTitle,
   runCheckpoint,
   runGateHistory,
   runLastFailure,
@@ -418,23 +419,6 @@ function shortText(raw: unknown, max = 160) {
     .trim();
   if (!text) return "";
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}...` : text;
-}
-
-function runDisplayTitle(run: AutomationV2RunRecord | null) {
-  const explicitName = String((run as Record<string, unknown> | null)?.name || "").trim();
-  if (explicitName) return explicitName;
-  const checkpoint = (run?.checkpoint as Record<string, unknown> | undefined) || {};
-  const objective = String(
-    checkpoint.objective ||
-      checkpoint.title ||
-      checkpoint.summary ||
-      checkpoint.status_detail ||
-      checkpoint.statusDetail ||
-      ""
-  ).trim();
-  if (objective) return shortText(objective, 96);
-  const automationId = String(run?.automation_id || "").trim();
-  return automationId || "Run";
 }
 
 function sessionMessageText(message: SessionMessage) {
@@ -855,8 +839,7 @@ function canRecoverRun(run: AutomationV2RunRecord) {
   const status = String(run.status || "")
     .trim()
     .toLowerCase();
-  const checkpoint = (run?.checkpoint as Record<string, unknown> | undefined) || {};
-  return (status === "failed" && !!checkpoint.last_failure) || status === "paused";
+  return (status === "failed" && !!runLastFailure(run)) || status === "paused";
 }
 
 function SectionCard({

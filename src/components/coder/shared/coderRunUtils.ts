@@ -59,6 +59,23 @@ export function runSummary(run: AutomationV2RunRecord | null) {
   ).trim();
 }
 
+export function runDisplayTitle(run: AutomationV2RunRecord | null) {
+  const explicitName = String((run as Record<string, unknown> | null)?.name || "").trim();
+  if (explicitName) return explicitName;
+  const checkpoint = runCheckpoint(run);
+  const objective = String(
+    checkpoint.objective ||
+      checkpoint.title ||
+      checkpoint.summary ||
+      checkpoint.status_detail ||
+      checkpoint.statusDetail ||
+      ""
+  ).trim();
+  if (objective) return shortText(objective, 96);
+  const automationId = String(run?.automation_id || "").trim();
+  return automationId || "Run";
+}
+
 function finiteNumber(raw: unknown) {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
@@ -242,7 +259,9 @@ export function canRecoverRun(run: AutomationV2RunRecord) {
   const status = String(run.status || "")
     .trim()
     .toLowerCase();
-  return ["failed", "cancelled", "paused"].includes(status);
+  if (status === "paused") return true;
+  if (status === "failed") return Boolean(runLastFailure(run));
+  return status === "cancelled";
 }
 
 export function matchesActiveProject(
