@@ -7777,20 +7777,25 @@ fn validate_automation_artifact_output(
         {
             rejected_reason = Some("session placeholder overwrite rejected".to_string());
         }
-        if rejected_reason.is_none()
-            && node
-                .output_contract
-                .as_ref()
-                .is_some_and(|contract| contract.kind == "brief")
+        if node
+            .output_contract
+            .as_ref()
+            .is_some_and(|contract| contract.kind == "brief")
             && requested_has_read
-            && (!executed_has_read
-                || !files_reviewed_section_lists_paths(&text)
-                || (web_research_expected && !web_research_used))
         {
-            semantic_block_reason = Some(
-                "research completed without concrete file reads or required source coverage"
-                    .to_string(),
-            );
+            let missing_concrete_reads = !executed_has_read;
+            let missing_file_coverage = !files_reviewed_section_lists_paths(&text);
+            let missing_web_research = web_research_expected && !web_research_used;
+            if missing_concrete_reads || missing_file_coverage || missing_web_research {
+                semantic_block_reason = Some(if missing_concrete_reads {
+                    "research completed without concrete file reads or required source coverage"
+                        .to_string()
+                } else if missing_web_research {
+                    "research completed without required current web research".to_string()
+                } else {
+                    "research completed without a source-backed files reviewed section".to_string()
+                });
+            }
         }
         if rejected_reason.is_none()
             && recovered_candidate
@@ -8176,14 +8181,14 @@ fn detect_automation_node_status(
         || lowered.contains("provisional")
         || lowered.contains("this brief is blocked")
         || lowered.contains("brief is blocked");
-    if is_brief_contract
-        && requested_has_read
-        && !executed_has_read
-        && mentions_missing_file_evidence
-    {
+    if is_brief_contract && requested_has_read && !executed_has_read {
         return (
             "blocked".to_string(),
-            Some("research brief did not read concrete workspace files, so source-backed validation is incomplete".to_string()),
+            Some(if mentions_missing_file_evidence {
+                "research brief did not read concrete workspace files, so source-backed validation is incomplete".to_string()
+            } else {
+                "research brief cited workspace sources without using read, so source-backed validation is incomplete".to_string()
+            }),
             approved,
         );
     }
@@ -10677,7 +10682,7 @@ mod tests {
             &snapshot,
         );
 
-        assert_eq!(rejected, None);
+        assert!(rejected.is_none());
         assert_eq!(
             metadata
                 .get("recovered_from_session_write")
@@ -10690,7 +10695,79 @@ mod tests {
         let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
             .expect("read restored file");
         assert!(disk_text.contains("## Workspace source audit"));
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
+            accepted_output.as_ref(),
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": ["glob", "websearch", "write"],
+                "workspace_inspection_used": true,
+                "web_research_used": true
+            }),
+            Some(&metadata),
+        );
+        assert_eq!(status, "blocked");
+        assert_eq!(
+            reason.as_deref(),
+            Some(
+                "research brief cited workspace sources without using read, so source-backed validation is incomplete"
+            )
+        );
+        assert_eq!(approved, Some(true));
 
         let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn completed_brief_without_read_is_blocked_even_if_it_looks_confident() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let tool_telemetry = json!({
+            "requested_tools": ["glob", "read", "websearch", "write"],
+            "executed_tools": ["glob", "websearch", "write"],
+            "workspace_inspection_used": true,
+            "web_research_used": true
+        });
+
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief\n\n## Workspace source audit\nPrepared from workspace sources.\n\n## Files reviewed\n- tandem-reference/readmes/repo-README.md\n- tandem-reference/readmes/engine-README.md\n".to_string(),
+            )),
+            &tool_telemetry,
+            None,
+        );
+
+        assert_eq!(status, "blocked");
+        assert_eq!(
+            reason.as_deref(),
+            Some(
+                "research brief cited workspace sources without using read, so source-backed validation is incomplete"
+            )
+        );
+        assert_eq!(approved, Some(true));
     }
 }
