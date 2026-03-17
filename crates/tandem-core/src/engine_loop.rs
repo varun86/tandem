@@ -1531,20 +1531,32 @@ impl EngineLoop {
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
                         if executed_productive_tool {
+                            let prewrite_satisfied = prewrite_requirements_satisfied(
+                                &requested_prewrite_requirements,
+                                productive_workspace_inspection_total > 0,
+                                productive_concrete_read_total > 0,
+                                productive_web_research_total > 0,
+                                successful_web_research_total > 0,
+                            );
+                            let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
+                                &requested_prewrite_requirements,
+                                productive_workspace_inspection_total > 0,
+                                productive_concrete_read_total > 0,
+                                productive_web_research_total > 0,
+                                successful_web_research_total > 0,
+                            );
                             if requested_write_required
                                 && productive_write_tool_calls_total > 0
                                 && requested_prewrite_requirements.repair_on_unmet_requirements
                                 && unmet_prewrite_repair_retry_count
                                     < prewrite_repair_retry_max_attempts()
-                                && !prewrite_requirements_satisfied(
-                                    &requested_prewrite_requirements,
-                                    productive_workspace_inspection_total > 0,
-                                    productive_concrete_read_total > 0,
-                                    productive_web_research_total > 0,
-                                    successful_web_research_total > 0,
-                                )
+                                && !prewrite_satisfied
                             {
                                 unmet_prewrite_repair_retry_count += 1;
+                                let repair_attempt = unmet_prewrite_repair_retry_count;
+                                let repair_attempts_remaining =
+                                    prewrite_repair_retry_max_attempts()
+                                        .saturating_sub(repair_attempt);
                                 followup_context = Some(build_prewrite_repair_retry_context(
                                     &offered_tool_preview,
                                     latest_required_tool_failure_kind,
@@ -1564,9 +1576,72 @@ impl EngineLoop {
                                         "finishReason": "prewrite_repair_retry",
                                         "acceptedToolCalls": accepted_tool_calls_in_cycle,
                                         "rejectedToolCalls": 0,
+                                        "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                        "repair": prewrite_repair_event_payload(
+                                            repair_attempt,
+                                            repair_attempts_remaining,
+                                            &unmet_prewrite_codes,
+                                            false,
+                                        ),
                                     }),
                                 ));
                                 continue;
+                            }
+                            if requested_write_required
+                                && productive_write_tool_calls_total > 0
+                                && requested_prewrite_requirements.repair_on_unmet_requirements
+                                && !prewrite_satisfied
+                            {
+                                latest_required_tool_failure_kind =
+                                    RequiredToolFailureKind::PrewriteRequirementsExhausted;
+                                let repair_attempt = unmet_prewrite_repair_retry_count;
+                                let repair_attempts_remaining =
+                                    prewrite_repair_retry_max_attempts()
+                                        .saturating_sub(repair_attempt);
+                                completion = prewrite_requirements_exhausted_completion(
+                                    &unmet_prewrite_codes,
+                                    repair_attempt,
+                                    repair_attempts_remaining,
+                                );
+                                if !required_tool_unsatisfied_emitted {
+                                    required_tool_unsatisfied_emitted = true;
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "tool.mode.required.unsatisfied",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "iteration": iteration,
+                                            "selectedToolCount": allowed_tool_names.len(),
+                                            "offeredToolsPreview": offered_tool_preview,
+                                            "reason": latest_required_tool_failure_kind.code(),
+                                            "repair": prewrite_repair_event_payload(
+                                                repair_attempt,
+                                                repair_attempts_remaining,
+                                                &unmet_prewrite_codes,
+                                                true,
+                                            ),
+                                        }),
+                                    ));
+                                }
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "prewrite_requirements_exhausted",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                        "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                        "repair": prewrite_repair_event_payload(
+                                            repair_attempt,
+                                            repair_attempts_remaining,
+                                            &unmet_prewrite_codes,
+                                            true,
+                                        ),
+                                    }),
+                                ));
+                                break;
                             }
                             followup_context = Some(format!(
                                 "{}\nContinue with a concise final response and avoid repeating identical tool calls.",
@@ -3342,6 +3417,7 @@ enum RequiredToolFailureKind {
     ToolCallRejectedByPolicy,
     ToolCallExecutedNonProductive,
     WriteRequiredNotSatisfied,
+    PrewriteRequirementsExhausted,
 }
 
 impl RequiredToolFailureKind {
@@ -3355,6 +3431,7 @@ impl RequiredToolFailureKind {
             Self::ToolCallRejectedByPolicy => "TOOL_CALL_REJECTED_BY_POLICY",
             Self::ToolCallExecutedNonProductive => "TOOL_CALL_EXECUTED_NON_PRODUCTIVE",
             Self::WriteRequiredNotSatisfied => "WRITE_REQUIRED_NOT_SATISFIED",
+            Self::PrewriteRequirementsExhausted => "PREWRITE_REQUIREMENTS_EXHAUSTED",
         }
     }
 }
@@ -3364,6 +3441,39 @@ fn required_tool_mode_unsatisfied_completion(reason: RequiredToolFailureKind) ->
         "{REQUIRED_TOOL_MODE_UNSATISFIED_REASON}: {}: tool_mode=required but the model ended without executing a productive tool call.",
         reason.code()
     )
+}
+
+fn prewrite_requirements_exhausted_completion(
+    unmet_codes: &[&'static str],
+    repair_attempt: usize,
+    repair_attempts_remaining: usize,
+) -> String {
+    let unmet = if unmet_codes.is_empty() {
+        "none".to_string()
+    } else {
+        unmet_codes.join(", ")
+    };
+    format!(
+        "TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED: unmet prewrite requirements: {unmet}\n\n{{\"status\":\"blocked\",\"reason\":\"prewrite requirements exhausted before final artifact validation\",\"failureCode\":\"PREWRITE_REQUIREMENTS_EXHAUSTED\",\"repairAttempt\":{},\"repairAttemptsRemaining\":{},\"repairExhausted\":true,\"unmetRequirements\":{:?}}}",
+        repair_attempt,
+        repair_attempts_remaining,
+        unmet_codes,
+    )
+}
+
+fn prewrite_repair_event_payload(
+    repair_attempt: usize,
+    repair_attempts_remaining: usize,
+    unmet_codes: &[&'static str],
+    repair_exhausted: bool,
+) -> Value {
+    json!({
+        "repairAttempt": repair_attempt,
+        "repairAttemptsRemaining": repair_attempts_remaining,
+        "unmetRequirements": unmet_codes,
+        "repairActive": repair_attempt > 0 && !repair_exhausted,
+        "repairExhausted": repair_exhausted,
+    })
 }
 
 fn build_required_tool_retry_context(
@@ -3560,8 +3670,36 @@ fn invalid_tool_args_retry_max_attempts() -> usize {
     2
 }
 
-fn prewrite_repair_retry_max_attempts() -> usize {
+pub fn prewrite_repair_retry_max_attempts() -> usize {
     2
+}
+
+fn collect_unmet_prewrite_requirement_codes(
+    requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
+    web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
+) -> Vec<&'static str> {
+    let mut unmet = Vec::new();
+    if requirements.workspace_inspection_required && !workspace_inspection_satisfied {
+        unmet.push("workspace_inspection_required");
+    }
+    if requirements.concrete_read_required && !concrete_read_satisfied {
+        unmet.push("concrete_read_required");
+    }
+    if requirements.web_research_required && !web_research_satisfied {
+        unmet.push("web_research_required");
+    }
+    if requirements.successful_web_research_required && !successful_web_research_satisfied {
+        unmet.push("successful_web_research_required");
+    }
+    if !matches!(requirements.coverage_mode, PrewriteCoverageMode::None)
+        && (!workspace_inspection_satisfied || !concrete_read_satisfied)
+    {
+        unmet.push("coverage_mode");
+    }
+    unmet
 }
 
 fn build_invalid_tool_args_retry_context_from_outputs(
@@ -8110,6 +8248,21 @@ Required output target:
     #[test]
     fn prewrite_repair_retry_budget_allows_two_repair_attempts() {
         assert_eq!(prewrite_repair_retry_max_attempts(), 2);
+    }
+
+    #[test]
+    fn prewrite_requirements_exhausted_completion_reports_structured_repair_state() {
+        let message = prewrite_requirements_exhausted_completion(
+            &["concrete_read_required", "successful_web_research_required"],
+            2,
+            0,
+        );
+        assert!(message.contains("PREWRITE_REQUIREMENTS_EXHAUSTED"));
+        assert!(message.contains("\"status\":\"blocked\""));
+        assert!(message.contains("\"repairAttempt\":2"));
+        assert!(message.contains("\"repairAttemptsRemaining\":0"));
+        assert!(message.contains("\"repairExhausted\":true"));
+        assert!(message.contains("\"unmetRequirements\":[\"concrete_read_required\", \"successful_web_research_required\"]"));
     }
 
     #[test]

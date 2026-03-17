@@ -69,12 +69,16 @@
 - Added workflow prewrite requirements so workspace inspection and web research stay available until those requirements are actually satisfied.
 - Write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists.
 - Brief/research nodes now also require concrete `read` coverage, successful web research when expected, and one automatic repair pass before they finalize as blocked.
+- Evidence-gated artifact nodes now emit structured repair-attempt metadata, get bounded repair retries after premature writes, and terminate with explicit `PREWRITE_REQUIREMENTS_EXHAUSTED` blocked state when those retries are exhausted.
 - Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
 - Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.
 - Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
 - Fixed source-backed research briefs being accepted without any `read` calls; file-cited research now blocks if the node never actually read the files it claims to have reviewed.
 - Timed-out `websearch` attempts no longer satisfy required current-market research for workflow briefs; those runs now block at the research stage instead of drifting into later copy/review steps.
 - Blocked research nodes now record structured coverage/debug metadata including actual `read` paths, discovered relevant files, unread relevant files, and repair-pass state so the Run Debugger can show the real failure cause.
+- Research/editorial artifact validation now propagates repair-attempt counts, attempts remaining, and exhaustion state into `artifact_validation`, validator summaries, and workflow lifecycle events.
+- `automation_v2` terminal run status now derives from blocked/failed node outputs instead of trusting checkpoint `blocked_nodes` alone, so blocked research nodes no longer show up as completed runs.
+- The control-panel Run Debugger now derives blocked/failed run status from workflow node outputs as a guardrail and shows repair-attempt progress when the backend status and task board disagree.
 - Code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion, failed verification emitting `verify_failed`, and fully verified code tasks finishing as `done`.
 - Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
 

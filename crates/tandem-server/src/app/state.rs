@@ -4336,13 +4336,33 @@ pub fn record_automation_workflow_state_events(
         .and_then(|value| value.get("repair_attempted"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let repair_attempt = artifact_validation
+        .and_then(|value| value.get("repair_attempt"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
+    let repair_attempts_remaining = artifact_validation
+        .and_then(|value| value.get("repair_attempts_remaining"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_else(|| tandem_core::prewrite_repair_retry_max_attempts() as u32);
     let repair_succeeded = artifact_validation
         .and_then(|value| value.get("repair_succeeded"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let repair_exhausted = artifact_validation
+        .and_then(|value| value.get("repair_exhausted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if repair_attempted {
         let mut metadata = base_metadata.clone();
+        metadata.insert("repair_attempt".to_string(), json!(repair_attempt));
+        metadata.insert(
+            "repair_attempts_remaining".to_string(),
+            json!(repair_attempts_remaining),
+        );
         metadata.insert("repair_succeeded".to_string(), json!(repair_succeeded));
+        metadata.insert("repair_exhausted".to_string(), json!(repair_exhausted));
         record_automation_lifecycle_event_with_metadata(
             run,
             "repair_started",
@@ -6655,7 +6675,7 @@ fn validate_automation_artifact_output(
     node: &AutomationFlowNode,
     session: &Session,
     workspace_root: &str,
-    _session_text: &str,
+    session_text: &str,
     tool_telemetry: &Value,
     preexisting_output: Option<&str>,
     verified_output: Option<(String, String)>,
@@ -6719,6 +6739,7 @@ fn validate_automation_artifact_output(
         .get("mode")
         .and_then(Value::as_str)
         .unwrap_or("artifact_write");
+    let parsed_status = parse_status_json(session_text);
     if rejected_reason.is_none() && matches!(execution_mode, "git_patch" | "filesystem_patch") {
         let unsafe_raw_write_paths = touched_files
             .iter()
@@ -6984,6 +7005,13 @@ fn validate_automation_artifact_output(
     if accepted_output.is_some() && accepted_candidate_source.is_none() {
         accepted_candidate_source = Some("verified_output".to_string());
     }
+    let (repair_attempt, repair_attempts_remaining, repair_exhausted) = infer_artifact_repair_state(
+        parsed_status.as_ref(),
+        repair_attempted,
+        repair_succeeded,
+        semantic_block_reason.as_deref(),
+        tool_telemetry,
+    );
 
     let metadata = json!({
         "accepted_artifact_path": accepted_output.as_ref().map(|(path, _)| path.clone()),
@@ -7009,7 +7037,10 @@ fn validate_automation_artifact_output(
         "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
         "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
         "repair_attempted": repair_attempted,
+        "repair_attempt": repair_attempt,
+        "repair_attempts_remaining": repair_attempts_remaining,
         "repair_succeeded": repair_succeeded,
+        "repair_exhausted": repair_exhausted,
         "unmet_requirements": unmet_requirements,
         "artifact_candidates": artifact_candidates,
     });
@@ -7065,6 +7096,49 @@ fn parse_status_json(raw: &str) -> Option<Value> {
         }
     }
     None
+}
+
+fn parsed_status_u32(status: Option<&Value>, key: &str) -> Option<u32> {
+    status
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn infer_artifact_repair_state(
+    parsed_status: Option<&Value>,
+    repair_attempted: bool,
+    repair_succeeded: bool,
+    semantic_block_reason: Option<&str>,
+    tool_telemetry: &Value,
+) -> (u32, u32, bool) {
+    let default_budget = tandem_core::prewrite_repair_retry_max_attempts() as u32;
+    let inferred_attempt = tool_telemetry
+        .get("tool_call_counts")
+        .and_then(|value| value.get("write"))
+        .and_then(Value::as_u64)
+        .and_then(|count| count.checked_sub(1))
+        .map(|count| count.min(default_budget as u64) as u32)
+        .unwrap_or(0);
+    let repair_attempt = parsed_status_u32(parsed_status, "repairAttempt").unwrap_or_else(|| {
+        if repair_attempted {
+            inferred_attempt.max(1)
+        } else {
+            0
+        }
+    });
+    let repair_attempts_remaining = parsed_status_u32(parsed_status, "repairAttemptsRemaining")
+        .unwrap_or_else(|| default_budget.saturating_sub(repair_attempt.min(default_budget)));
+    let repair_exhausted = parsed_status
+        .and_then(|value| value.get("repairExhausted"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            repair_attempted
+                && !repair_succeeded
+                && semantic_block_reason.is_some()
+                && repair_attempt >= default_budget
+        });
+    (repair_attempt, repair_attempts_remaining, repair_exhausted)
 }
 
 fn summarize_automation_tool_activity(
@@ -7600,8 +7674,22 @@ fn build_automation_validator_summary(
         .and_then(|value| value.get("repair_attempted"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let repair_attempt = artifact_validation
+        .and_then(|value| value.get("repair_attempt"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
+    let repair_attempts_remaining = artifact_validation
+        .and_then(|value| value.get("repair_attempts_remaining"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_else(|| tandem_core::prewrite_repair_retry_max_attempts() as u32);
     let repair_succeeded = artifact_validation
         .and_then(|value| value.get("repair_succeeded"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let repair_exhausted = artifact_validation
+        .and_then(|value| value.get("repair_exhausted"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let reason = blocked_reason
@@ -7640,7 +7728,10 @@ fn build_automation_validator_summary(
         accepted_candidate_source,
         verification_outcome,
         repair_attempted,
+        repair_attempt,
+        repair_attempts_remaining,
         repair_succeeded,
+        repair_exhausted,
     }
 }
 
@@ -10107,6 +10198,118 @@ mod tests {
             detect_automation_node_phase(&node, "blocked", Some(&artifact_validation)),
             "research_validation"
         );
+    }
+
+    #[test]
+    fn validator_summary_reports_repair_attempt_state() {
+        let artifact_validation = json!({
+            "semantic_block_reason": "research completed without citation-backed claims",
+            "unmet_requirements": ["citations_missing"],
+            "repair_attempted": true,
+            "repair_attempt": 2,
+            "repair_attempts_remaining": 0,
+            "repair_succeeded": false,
+            "repair_exhausted": true,
+        });
+        let summary = build_automation_validator_summary(
+            crate::AutomationOutputValidatorKind::ResearchBrief,
+            "blocked",
+            Some("research completed without citation-backed claims"),
+            Some(&artifact_validation),
+        );
+        assert!(summary.repair_attempted);
+        assert_eq!(summary.repair_attempt, 2);
+        assert_eq!(summary.repair_attempts_remaining, 0);
+        assert!(!summary.repair_succeeded);
+        assert!(summary.repair_exhausted);
+    }
+
+    #[test]
+    fn artifact_validation_uses_structured_repair_exhaustion_state_from_session_text() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-repair-state-test-{}", now_ms()));
+        std::fs::create_dir_all(workspace_root.join("inputs")).expect("create workspace");
+        std::fs::write(workspace_root.join("inputs/questions.md"), "Question")
+            .expect("seed input file");
+
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let mut session = Session::new(Some("research repair exhausted".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({
+                    "path":"marketing-brief.md",
+                    "content":"# Marketing Brief\n\n## Findings\nBlocked draft without citations.\n"
+                }),
+                result: Some(json!({"output":"written"})),
+                error: None,
+            }],
+        ));
+        let tool_telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        );
+        let session_text = r#"TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED
+
+{"status":"blocked","reason":"prewrite requirements exhausted before final artifact validation","failureCode":"PREWRITE_REQUIREMENTS_EXHAUSTED","repairAttempt":2,"repairAttemptsRemaining":0,"repairExhausted":true,"unmetRequirements":["concrete_read_required","successful_web_research_required"]}"#;
+        let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            session_text,
+            &tool_telemetry,
+            None,
+            Some((
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief\n\n## Findings\nBlocked draft without citations.\n".to_string(),
+            )),
+            &std::collections::BTreeSet::new(),
+        );
+        assert!(rejected.is_some());
+        assert_eq!(
+            metadata.get("repair_attempt").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            metadata
+                .get("repair_attempts_remaining")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            metadata.get("repair_exhausted").and_then(Value::as_bool),
+            Some(true)
+        );
+        let _ = std::fs::remove_dir_all(workspace_root);
     }
 
     #[test]

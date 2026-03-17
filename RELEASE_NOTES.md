@@ -74,6 +74,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - timed-out `websearch` attempts no longer count as successful external research for workflows that require current market evidence
   - brief/research nodes now require concrete `read` coverage, successful web research when expected, and get one automatic repair pass before they finalize as blocked
   - blocked research nodes now expose structured coverage/debug metadata including actual `read` paths, discovered relevant files, missing file coverage, and repair-pass state
+  - evidence-gated artifact nodes now emit structured repair attempt metadata, get bounded repair retries after premature writes, and terminate with explicit `PREWRITE_REQUIREMENTS_EXHAUSTED` blocked state when those retries are exhausted
+  - research/editorial artifact validation now propagates repair-attempt counts, attempts remaining, and exhaustion state into `artifact_validation`, validator summaries, and workflow lifecycle events
+  - `automation_v2` terminal run status now derives from blocked/failed node outputs instead of trusting checkpoint `blocked_nodes` alone, so blocked research nodes no longer show up as completed runs
+  - the control-panel Run Debugger now derives blocked/failed run status from node outputs as a guardrail and shows repair-attempt progress when the backend status and task board disagree
   - code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion and failed verification surfacing as `verify_failed`
 
 - Managed worktree isolation is now runtime-owned

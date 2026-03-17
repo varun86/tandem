@@ -10,6 +10,111 @@ use crate::automation_v2::types::{
 };
 use crate::util::time::now_ms;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DerivedTerminalRunState {
+    Completed,
+    Blocked {
+        blocked_nodes: Vec<String>,
+        detail: String,
+    },
+    Failed {
+        blocked_nodes: Vec<String>,
+        detail: String,
+    },
+}
+
+fn node_output_status(value: &Value) -> String {
+    value
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn node_output_failure_kind(value: &Value) -> String {
+    value
+        .get("failure_kind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn blocked_failure_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "research_missing_reads"
+            | "research_missing_web_research"
+            | "research_citations_missing"
+            | "research_coverage_failed"
+            | "editorial_quality_failed"
+            | "semantic_blocked"
+            | "review_not_approved"
+            | "upstream_not_approved"
+            | "artifact_rejected"
+            | "unsafe_raw_write_rejected"
+            | "placeholder_overwrite_rejected"
+    )
+}
+
+fn derive_terminal_run_state(
+    automation: &crate::automation_v2::types::AutomationV2Spec,
+    run: &crate::automation_v2::types::AutomationV2RunRecord,
+    deadlock: bool,
+) -> DerivedTerminalRunState {
+    let mut blocked_nodes = run.checkpoint.blocked_nodes.clone();
+    blocked_nodes.extend(crate::app::state::automation_blocked_nodes(automation, run));
+    let mut failed_nodes = Vec::new();
+    for (node_id, output) in &run.checkpoint.node_outputs {
+        let status = node_output_status(output);
+        let failure_kind = node_output_failure_kind(output);
+        if matches!(status.as_str(), "failed" | "verify_failed")
+            || failure_kind == "verification_failed"
+            || failure_kind == "run_failed"
+        {
+            failed_nodes.push(node_id.clone());
+            continue;
+        }
+        if status == "blocked" || blocked_failure_kind(&failure_kind) {
+            blocked_nodes.push(node_id.clone());
+        }
+    }
+    blocked_nodes.sort();
+    blocked_nodes.dedup();
+    failed_nodes.sort();
+    failed_nodes.dedup();
+    if !failed_nodes.is_empty() {
+        return DerivedTerminalRunState::Failed {
+            blocked_nodes,
+            detail: format!(
+                "automation run failed from node outcomes: {}",
+                failed_nodes.join(", ")
+            ),
+        };
+    }
+    if !blocked_nodes.is_empty() {
+        return DerivedTerminalRunState::Blocked {
+            blocked_nodes,
+            detail: if deadlock {
+                "automation run blocked: no runnable nodes remain".to_string()
+            } else {
+                "automation run blocked by upstream node outcome".to_string()
+            },
+        };
+    }
+    if deadlock {
+        DerivedTerminalRunState::Failed {
+            blocked_nodes: Vec::new(),
+            detail: "flow deadlock: no runnable nodes".to_string(),
+        }
+    } else {
+        DerivedTerminalRunState::Completed
+    }
+}
+
 pub async fn run_automation_v2_executor(state: AppState) {
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -102,15 +207,28 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 break;
             }
             if latest.checkpoint.pending_nodes.is_empty() {
+                let terminal_state = derive_terminal_run_state(&automation, &latest, false);
                 let _ = state
-                    .update_automation_v2_run(&run.run_id, |row| {
-                        if row.checkpoint.blocked_nodes.is_empty() {
+                    .update_automation_v2_run(&run.run_id, |row| match &terminal_state {
+                        DerivedTerminalRunState::Completed => {
                             row.status = AutomationRunStatus::Completed;
                             row.detail = Some("automation run completed".to_string());
-                        } else {
+                        }
+                        DerivedTerminalRunState::Blocked {
+                            blocked_nodes,
+                            detail,
+                        } => {
+                            row.checkpoint.blocked_nodes = blocked_nodes.clone();
                             row.status = AutomationRunStatus::Blocked;
-                            row.detail =
-                                Some("automation run blocked by upstream node outcome".to_string());
+                            row.detail = Some(detail.clone());
+                        }
+                        DerivedTerminalRunState::Failed {
+                            blocked_nodes,
+                            detail,
+                        } => {
+                            row.checkpoint.blocked_nodes = blocked_nodes.clone();
+                            row.status = AutomationRunStatus::Failed;
+                            row.detail = Some(detail.clone());
                         }
                     })
                     .await;
@@ -162,16 +280,28 @@ pub async fn run_automation_v2_executor(state: AppState) {
             );
 
             if runnable.is_empty() {
+                let terminal_state = derive_terminal_run_state(&automation, &latest, true);
                 let _ = state
-                    .update_automation_v2_run(&run.run_id, |row| {
-                        if row.checkpoint.blocked_nodes.is_empty() {
-                            row.status = AutomationRunStatus::Failed;
-                            row.detail = Some("flow deadlock: no runnable nodes".to_string());
-                        } else {
+                    .update_automation_v2_run(&run.run_id, |row| match &terminal_state {
+                        DerivedTerminalRunState::Completed => {
+                            row.status = AutomationRunStatus::Completed;
+                            row.detail = Some("automation run completed".to_string());
+                        }
+                        DerivedTerminalRunState::Blocked {
+                            blocked_nodes,
+                            detail,
+                        } => {
+                            row.checkpoint.blocked_nodes = blocked_nodes.clone();
                             row.status = AutomationRunStatus::Blocked;
-                            row.detail = Some(
-                                "automation run blocked: no runnable nodes remain".to_string(),
-                            );
+                            row.detail = Some(detail.clone());
+                        }
+                        DerivedTerminalRunState::Failed {
+                            blocked_nodes,
+                            detail,
+                        } => {
+                            row.checkpoint.blocked_nodes = blocked_nodes.clone();
+                            row.status = AutomationRunStatus::Failed;
+                            row.detail = Some(detail.clone());
                         }
                     })
                     .await;
@@ -566,5 +696,129 @@ pub async fn run_automation_v2_executor(state: AppState) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_automation() -> crate::automation_v2::types::AutomationV2Spec {
+        crate::automation_v2::types::AutomationV2Spec {
+            automation_id: "automation-test".to_string(),
+            name: "test".to_string(),
+            description: None,
+            status: crate::automation_v2::types::AutomationV2Status::Active,
+            schedule: crate::automation_v2::types::AutomationV2Schedule {
+                schedule_type: crate::automation_v2::types::AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: crate::RoutineMisfirePolicy::Skip,
+            },
+            agents: Vec::new(),
+            flow: crate::automation_v2::types::AutomationFlowSpec {
+                nodes: vec![crate::automation_v2::types::AutomationFlowNode {
+                    node_id: "research-brief".to_string(),
+                    agent_id: "research".to_string(),
+                    objective: "Research".to_string(),
+                    depends_on: Vec::new(),
+                    input_refs: Vec::new(),
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: None,
+                    gate: None,
+                    metadata: None,
+                }],
+            },
+            execution: crate::automation_v2::types::AutomationExecutionPolicy {
+                max_parallel_agents: None,
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            creator_id: "tests".to_string(),
+            workspace_root: None,
+            metadata: None,
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        }
+    }
+
+    fn test_run_with_output(output: Value) -> crate::automation_v2::types::AutomationV2RunRecord {
+        crate::automation_v2::types::AutomationV2RunRecord {
+            run_id: "run-test".to_string(),
+            automation_id: "automation-test".to_string(),
+            trigger_type: "manual".to_string(),
+            status: crate::automation_v2::types::AutomationRunStatus::Running,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            started_at_ms: Some(0),
+            finished_at_ms: None,
+            active_session_ids: Vec::new(),
+            latest_session_id: None,
+            active_instance_ids: Vec::new(),
+            checkpoint: crate::automation_v2::types::AutomationRunCheckpoint {
+                completed_nodes: Vec::new(),
+                pending_nodes: Vec::new(),
+                node_outputs: std::collections::HashMap::from([(
+                    "research-brief".to_string(),
+                    output,
+                )]),
+                node_attempts: std::collections::HashMap::new(),
+                blocked_nodes: Vec::new(),
+                awaiting_gate: None,
+                gate_history: Vec::new(),
+                lifecycle_history: Vec::new(),
+                last_failure: None,
+            },
+            automation_snapshot: None,
+            pause_reason: None,
+            resume_reason: None,
+            detail: None,
+            stop_kind: None,
+            stop_reason: None,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
+        }
+    }
+
+    #[test]
+    fn derive_terminal_run_state_marks_blocked_outputs_as_blocked() {
+        let automation = test_automation();
+        let run = test_run_with_output(json!({
+            "status": "blocked",
+            "failure_kind": "research_citations_missing",
+        }));
+        assert_eq!(
+            derive_terminal_run_state(&automation, &run, false),
+            DerivedTerminalRunState::Blocked {
+                blocked_nodes: vec!["research-brief".to_string()],
+                detail: "automation run blocked by upstream node outcome".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derive_terminal_run_state_marks_verify_failed_outputs_as_failed() {
+        let automation = test_automation();
+        let run = test_run_with_output(json!({
+            "status": "verify_failed",
+            "failure_kind": "verification_failed",
+        }));
+        assert_eq!(
+            derive_terminal_run_state(&automation, &run, false),
+            DerivedTerminalRunState::Failed {
+                blocked_nodes: Vec::new(),
+                detail: "automation run failed from node outcomes: research-brief".to_string(),
+            }
+        );
     }
 }

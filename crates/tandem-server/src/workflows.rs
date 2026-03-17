@@ -275,7 +275,11 @@ async fn sync_workflow_automation_action_completed(
                         accepted_candidate_source: Some("workflow_runtime".to_string()),
                         verification_outcome: Some("not_applicable".to_string()),
                         repair_attempted: false,
+                        repair_attempt: 0,
+                        repair_attempts_remaining: tandem_core::prewrite_repair_retry_max_attempts()
+                            as u32,
                         repair_succeeded: false,
+                        repair_exhausted: false,
                     }),
                     summary: format!("Workflow action `{action_id}` completed"),
                     content: json!({
@@ -347,7 +351,11 @@ async fn sync_workflow_automation_action_failed(
                         accepted_candidate_source: None,
                         verification_outcome: Some("failed".to_string()),
                         repair_attempted: false,
+                        repair_attempt: 0,
+                        repair_attempts_remaining: tandem_core::prewrite_repair_retry_max_attempts()
+                            as u32,
                         repair_succeeded: false,
+                        repair_exhausted: false,
                     }),
                     summary: format!("Workflow action `{action_id}` failed"),
                     content: json!({

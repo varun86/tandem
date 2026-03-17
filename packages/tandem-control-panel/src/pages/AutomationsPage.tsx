@@ -13,6 +13,7 @@ import {
   workflowCompletedNodeCount,
   workflowCompletedNodeIds,
   workflowContextHistoryEntries,
+  workflowDerivedRunStatus,
   workflowEventAt,
   workflowEventBlockers,
   workflowEventReason,
@@ -694,9 +695,7 @@ function runTimeLabel(run: any) {
 
 function deriveRunDebugHints(run: any, artifacts: any[]) {
   const hints: string[] = [];
-  const status = String(run?.status || "")
-    .trim()
-    .toLowerCase();
+  const status = workflowDerivedRunStatus(run);
   if (status === "pending_approval" || status === "awaiting_approval") {
     hints.push("Run is waiting for approval before external actions.");
   }
@@ -3897,9 +3896,14 @@ function MyAutomations({
   const continueBlockedNodeId = String(continueBlockedTask?.id || "")
     .replace(/^node-/, "")
     .trim();
-  const runStatus = String(selectedRun?.status || "")
+  const rawRunStatus = String(selectedRun?.status || "")
     .trim()
     .toLowerCase();
+  const runStatus = workflowDerivedRunStatus(selectedRun);
+  const runStatusDerivedFromBlockedNodes =
+    rawRunStatus !== runStatus &&
+    (rawRunStatus === "completed" || rawRunStatus === "done") &&
+    workflowBlockedNodeCount(selectedRun) > 0;
   const canRecoverWorkflowRun =
     isWorkflowRun && ["failed", "paused"].includes(runStatus) && !!selectedRunId;
   const canContinueBlockedWorkflow = isWorkflowRun && !!selectedRunId && !!continueBlockedNodeId;
@@ -4151,7 +4155,10 @@ function MyAutomations({
   );
   const runSummaryRows = useMemo(() => {
     const rows: Array<{ label: string; value: string }> = [];
-    rows.push({ label: "status", value: String(selectedRun?.status || "unknown") });
+    rows.push({ label: "status", value: runStatus || "unknown" });
+    if (runStatusDerivedFromBlockedNodes) {
+      rows.push({ label: "status note", value: "derived from blocked nodes" });
+    }
     rows.push({ label: "artifacts", value: String(runArtifacts.length) });
     if (isWorkflowRun) {
       rows.push({ label: "tasks", value: String(workflowProjection.tasks.length) });
@@ -4198,6 +4205,8 @@ function MyAutomations({
   }, [
     isWorkflowRun,
     runArtifacts.length,
+    runStatus,
+    runStatusDerivedFromBlockedNodes,
     selectedRun,
     workflowContextEvents.length,
     workflowContextPatches.length,
@@ -4923,9 +4932,10 @@ function MyAutomations({
                   ) : null}
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
-                  <span className={statusColor(selectedRun?.status)}>
-                    {String(selectedRun?.status || "unknown")}
-                  </span>
+                  <span className={statusColor(runStatus)}>{runStatus || "unknown"}</span>
+                  {runStatusDerivedFromBlockedNodes ? (
+                    <span className="tcp-subtle">derived from blocked nodes</span>
+                  ) : null}
                   {canContinueBlockedWorkflow ? (
                     <button
                       type="button"
@@ -4978,10 +4988,7 @@ function MyAutomations({
                       className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
                       onClick={() =>
                         runActionMutation.mutate({
-                          action:
-                            String(selectedRun?.status || "").toLowerCase() === "paused"
-                              ? "resume"
-                              : "pause",
+                          action: runStatus === "paused" ? "resume" : "pause",
                           runId: selectedRunId,
                           family: isWorkflowRun ? "v2" : "legacy",
                         })
@@ -4989,22 +4996,11 @@ function MyAutomations({
                       disabled={
                         !selectedRunId ||
                         runActionMutation.isPending ||
-                        !(
-                          String(selectedRun?.status || "").toLowerCase() === "paused" ||
-                          isActiveRunStatus(selectedRun?.status)
-                        )
+                        !(runStatus === "paused" || isActiveRunStatus(runStatus))
                       }
                     >
-                      <i
-                        data-lucide={
-                          String(selectedRun?.status || "").toLowerCase() === "paused"
-                            ? "play"
-                            : "pause"
-                        }
-                      ></i>
-                      {String(selectedRun?.status || "").toLowerCase() === "paused"
-                        ? "Resume"
-                        : "Pause"}
+                      <i data-lucide={runStatus === "paused" ? "play" : "pause"}></i>
+                      {runStatus === "paused" ? "Resume" : "Pause"}
                     </button>
                   ) : null}
                   <button
@@ -5452,9 +5448,27 @@ function MyAutomations({
                                       {selectedBoardTaskArtifactValidation?.repair_attempted
                                         ? selectedBoardTaskArtifactValidation?.repair_succeeded
                                           ? "attempted and satisfied"
-                                          : "attempted and exhausted"
+                                          : selectedBoardTaskArtifactValidation?.repair_exhausted
+                                            ? "attempted and exhausted"
+                                            : "attempted and still active"
                                         : "not needed or not attempted"}
                                     </div>
+                                    {selectedBoardTaskArtifactValidation?.repair_attempted ? (
+                                      <div className="mt-1 tcp-subtle">
+                                        attempt{" "}
+                                        {Number(
+                                          selectedBoardTaskArtifactValidation?.repair_attempt || 0
+                                        )}{" "}
+                                        of{" "}
+                                        {Number(
+                                          selectedBoardTaskArtifactValidation?.repair_attempt || 0
+                                        ) +
+                                          Number(
+                                            selectedBoardTaskArtifactValidation?.repair_attempts_remaining ||
+                                              0
+                                          )}
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
                                     <div className="tcp-subtle">

@@ -294,7 +294,13 @@ pub struct AutomationValidatorSummary {
     #[serde(default)]
     pub repair_attempted: bool,
     #[serde(default)]
+    pub repair_attempt: u32,
+    #[serde(default)]
+    pub repair_attempts_remaining: u32,
+    #[serde(default)]
     pub repair_succeeded: bool,
+    #[serde(default)]
+    pub repair_exhausted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

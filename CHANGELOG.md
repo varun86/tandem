@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - workflow planner and mission builder now preserve explicit `metadata.builder.web_research_expected` intent into compiled `AutomationV2Spec` research nodes, and both authoring paths backfill that metadata for research brief steps so web-source coverage expectations are declared in authoring metadata instead of only inferred at validation time
   - `GenericArtifact` validation now blocks weak `report_markdown` and `text_summary` outputs with explicit editorial unmet requirements, typed `editorial_quality_failed` failures, `editorial_validation` phase classification, and structural summary fields like heading/paragraph counts in `artifact_validation`
   - publish/outbound nodes now inherit upstream editorial failure as a runtime-owned `editorial_clearance_required` block, and external-action receipts are skipped while that publish QA block is active
+- **Evidence-gated workflow nodes now use a stricter repair spine**:
+  - artifact-producing nodes with unmet prewrite requirements now emit structured repair attempt metadata and terminate with explicit `PREWRITE_REQUIREMENTS_EXHAUSTED` blocked state when bounded repair retries are exhausted
+  - research/editorial artifact validation now propagates repair attempt counts, attempts remaining, and exhaustion state into `artifact_validation`, validator summaries, and workflow lifecycle metadata
+  - `automation_v2` terminal run status now derives from blocked/failed node outputs instead of trusting checkpoint `blocked_nodes` alone, so blocked research nodes no longer surface as completed runs
+  - the control-panel Run Debugger now derives blocked/failed status from workflow node outputs as a guardrail and shows repair-attempt progress when backend status and node reality disagree
 - **More authoring surfaces now compile into `AutomationV2Spec`**:
   - `skills_compile` now emits an additive `automation_preview` for installed skill workflows by compiling `workflow.yaml` recipes through the shared `WorkflowPlan -> AutomationV2Spec` path
   - installed `pack_builder_recipe` skills no longer stop at an abstract execution summary; they now expose the same runtime-spec preview shape as the other automation authoring surfaces

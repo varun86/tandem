@@ -75,8 +75,29 @@ export function workflowCompletedNodeIds(run: any) {
   return checkpointStringArray(workflowCheckpoint(run), "completed_nodes", "completedNodes");
 }
 
+function workflowNodeRuntimeStatus(output: any) {
+  return String(output?.status || output?.content?.status || "")
+    .trim()
+    .toLowerCase();
+}
+
 export function workflowBlockedNodeIds(run: any) {
-  return checkpointStringArray(workflowCheckpoint(run), "blocked_nodes", "blockedNodes");
+  const ids = new Set(
+    checkpointStringArray(workflowCheckpoint(run), "blocked_nodes", "blockedNodes")
+  );
+  for (const { nodeId, value } of workflowNodeOutputEntries(run)) {
+    if (workflowNodeRuntimeStatus(value) === "blocked") ids.add(nodeId);
+  }
+  return Array.from(ids);
+}
+
+export function workflowFailedNodeIds(run: any) {
+  const ids = new Set<string>();
+  for (const { nodeId, value } of workflowNodeOutputEntries(run)) {
+    const status = workflowNodeRuntimeStatus(value);
+    if (status === "verify_failed" || status === "failed") ids.add(nodeId);
+  }
+  return Array.from(ids);
 }
 
 export function workflowPendingNodeIds(run: any) {
@@ -93,6 +114,19 @@ export function workflowPendingNodeCount(run: any) {
 
 export function workflowBlockedNodeCount(run: any) {
   return workflowBlockedNodeIds(run).length;
+}
+
+export function workflowDerivedRunStatus(run: any) {
+  const raw = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if ((raw === "completed" || raw === "done") && workflowBlockedNodeCount(run) > 0) {
+    return "blocked";
+  }
+  if ((raw === "completed" || raw === "done") && workflowFailedNodeIds(run).length > 0) {
+    return "failed";
+  }
+  return raw || "unknown";
 }
 
 export function workflowActiveSessionCount(run: any) {
