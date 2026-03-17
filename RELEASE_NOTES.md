@@ -44,6 +44,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - shared control-panel workflow selectors now also own blocked-node counts so debugger headers and summary rows stop counting blocked arrays inline
   - control-panel workflow focus detection now prefers typed lifecycle node events from the shared workflow stability contract before falling back to transcript/session-text inference
   - control-panel task inspection now consumes pre-normalized recent workflow event summaries from the shared workflow stability layer instead of re-summarizing raw lifecycle entries inline
+  - workflow run-history normalization for context events, blackboard patches, and persisted run events now lives in the shared workflow stability layer instead of `AutomationsPage`
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

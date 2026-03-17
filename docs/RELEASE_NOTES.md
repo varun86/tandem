@@ -44,6 +44,7 @@
 - Shared control-panel workflow selectors now also own blocked-node counts so debugger headers and summary rows stop counting blocked arrays inline.
 - Control-panel workflow focus detection now prefers typed lifecycle node events from the shared workflow stability contract before falling back to transcript/session-text inference.
 - Control-panel task inspection now consumes pre-normalized recent workflow event summaries from the shared workflow stability layer instead of re-summarizing raw lifecycle entries inline.
+- Workflow run-history normalization for context events, blackboard patches, and persisted run events now lives in the shared workflow stability layer instead of `AutomationsPage`.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions

@@ -12,6 +12,7 @@ import {
   workflowBlockedNodeIds,
   workflowCompletedNodeCount,
   workflowCompletedNodeIds,
+  workflowContextHistoryEntries,
   workflowEventSummary,
   workflowFirstPendingTaskId,
   workflowLatestLifecycleTaskId,
@@ -20,6 +21,7 @@ import {
   workflowNodeToolTelemetry,
   workflowNodeOutput,
   workflowPendingNodeCount,
+  workflowPersistedHistoryEntries,
   workflowNodeStability,
   workflowProjectionFromRunSnapshot,
   workflowRecentNodeEventSummaries,
@@ -758,41 +760,6 @@ function compactIdentifier(raw: any, max = 28) {
   const head = Math.max(8, Math.floor((max - 1) / 2));
   const tail = Math.max(6, max - head - 1);
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
-}
-
-function workflowHistoryEntries(events: any[], patches: any[]) {
-  const eventRows = (Array.isArray(events) ? events : []).map((event: any) => ({
-    id: `event:${String(event?.seq || "")}:${String(event?.event_type || event?.eventType || "")}`,
-    family: "event",
-    type: String(event?.event_type || event?.eventType || "context_event"),
-    detail: String(
-      event?.payload?.reason ||
-        event?.payload?.detail ||
-        event?.payload?.error ||
-        event?.payload?.status ||
-        event?.status ||
-        ""
-    ).trim(),
-    at:
-      timestampOrNull(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
-      Number(event?.seq || 0),
-    raw: event,
-  }));
-  const patchRows = (Array.isArray(patches) ? patches : []).map((patch: any) => ({
-    id: `patch:${String(patch?.seq || "")}:${String(patch?.op || "")}`,
-    family: "patch",
-    type: String(patch?.op || "blackboard_patch"),
-    detail: String(
-      patch?.payload?.status ||
-        patch?.payload?.task_id ||
-        patch?.payload?.artifact_id ||
-        patch?.payload?.title ||
-        ""
-    ).trim(),
-    at: timestampOrNull(patch?.created_at_ms || patch?.timestamp_ms) || Number(patch?.seq || 0),
-    raw: patch,
-  }));
-  return [...eventRows, ...patchRows].sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
 }
 
 function shortText(raw: any, max = 88) {
@@ -4289,24 +4256,18 @@ function MyAutomations({
   const runHints = deriveRunDebugHints(selectedRun, runArtifacts);
   const runHistoryEvents = isWorkflowRun
     ? (() => {
-        const contextHistory = workflowHistoryEntries(
+        const contextHistory = workflowContextHistoryEntries(
           workflowContextEvents,
           workflowContextPatches
         );
         if (contextHistory.length) return contextHistory;
-        const persisted = Array.isArray(persistedRunEventsQuery.data)
-          ? persistedRunEventsQuery.data
-          : [];
-        return persisted
-          .map((event: any, index: number) => ({
-            id: `persisted:${selectedRunId}:${index}`,
-            family: "run_event",
-            type: String(eventType(event) || "run.event"),
-            detail: String(eventReason(event) || "").trim(),
-            at: eventAt(event),
-            raw: event,
-          }))
-          .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+        return workflowPersistedHistoryEntries(
+          Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
+          eventType,
+          eventReason,
+          eventAt,
+          selectedRunId
+        );
       })()
     : Array.isArray((runHistoryQuery.data as any)?.events)
       ? (runHistoryQuery.data as any).events

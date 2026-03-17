@@ -2,6 +2,12 @@ export function workflowCheckpoint(run: any) {
   return run?.checkpoint || {};
 }
 
+function workflowTimestamp(raw: any) {
+  const value = Number(raw || 0);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
 function checkpointStringArray(checkpoint: any, snakeKey: string, camelKey: string) {
   const raw = Array.isArray(checkpoint?.[snakeKey])
     ? checkpoint[snakeKey]
@@ -323,6 +329,60 @@ export function workflowEventSummary(event: any) {
     reason: String(event?.reason || metadata?.reason || "").trim() || "No reason recorded",
     status: String(event?.status || metadata?.status || "").trim(),
   };
+}
+
+export function workflowContextHistoryEntries(events: any[], patches: any[]) {
+  const eventRows = (Array.isArray(events) ? events : []).map((event: any) => ({
+    id: `event:${String(event?.seq || "")}:${String(event?.event_type || event?.eventType || "")}`,
+    family: "event",
+    type: String(event?.event_type || event?.eventType || "context_event"),
+    detail: String(
+      event?.payload?.reason ||
+        event?.payload?.detail ||
+        event?.payload?.error ||
+        event?.payload?.status ||
+        event?.status ||
+        ""
+    ).trim(),
+    at:
+      workflowTimestamp(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
+      Number(event?.seq || 0),
+    raw: event,
+  }));
+  const patchRows = (Array.isArray(patches) ? patches : []).map((patch: any) => ({
+    id: `patch:${String(patch?.seq || "")}:${String(patch?.op || "")}`,
+    family: "patch",
+    type: String(patch?.op || "blackboard_patch"),
+    detail: String(
+      patch?.payload?.status ||
+        patch?.payload?.task_id ||
+        patch?.payload?.artifact_id ||
+        patch?.payload?.title ||
+        ""
+    ).trim(),
+    at: workflowTimestamp(patch?.created_at_ms || patch?.timestamp_ms) || Number(patch?.seq || 0),
+    raw: patch,
+  }));
+  return [...eventRows, ...patchRows].sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+}
+
+export function workflowPersistedHistoryEntries(
+  events: any[],
+  eventType: (event: any) => string,
+  eventReason: (event: any) => string,
+  eventAt: (event: any) => number,
+  runId = ""
+) {
+  return (Array.isArray(events) ? events : [])
+    .map((event: any, index: number) => ({
+      id: `persisted:${String(runId || "")}:${index}`,
+      family: "run_event",
+      type: String(eventType(event) || "run.event"),
+      detail: String(eventReason(event) || "").trim(),
+      at: eventAt(event),
+      raw: event,
+    }))
+    .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
 }
 
 export function workflowSessionIds(run: any) {
