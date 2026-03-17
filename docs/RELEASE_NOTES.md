@@ -98,7 +98,7 @@
 - Mission builder, workflow planner, and standup composer now emit explicit research/review/structured/generic validator intent instead of leaning on fallback inference everywhere.
 - `automation_v2` read APIs normalize older node outputs to the current validator contract so operator views converge on one interpretation.
 - Research brief validation now treats citation presence and `Web sources reviewed` structure as first-class source-coverage requirements, emits typed `citations_missing` / `web_sources_reviewed_missing` unmet requirements, and surfaces citation/source summary fields directly in `artifact_validation` and `automation_v2` run payloads.
-- Workflow planner research steps now preserve explicit `metadata.builder.web_research_expected` intent into compiled `AutomationV2Spec` nodes, and planner normalization backfills that metadata for research brief steps so web-source coverage expectations are declared in authoring metadata instead of only inferred at validation time.
+- Workflow planner and mission builder now preserve explicit `metadata.builder.web_research_expected` intent into compiled `AutomationV2Spec` research nodes, and both authoring paths backfill that metadata for research brief steps so web-source coverage expectations are declared in authoring metadata instead of only inferred at validation time.
 
 ### External Action Receipts
 
