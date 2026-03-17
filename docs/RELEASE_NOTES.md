@@ -100,6 +100,7 @@
 - Research brief validation now treats citation presence and `Web sources reviewed` structure as first-class source-coverage requirements, emits typed `citations_missing` / `web_sources_reviewed_missing` unmet requirements, and surfaces citation/source summary fields directly in `artifact_validation` and `automation_v2` run payloads.
 - Workflow planner and mission builder now preserve explicit `metadata.builder.web_research_expected` intent into compiled `AutomationV2Spec` research nodes, and both authoring paths backfill that metadata for research brief steps so web-source coverage expectations are declared in authoring metadata instead of only inferred at validation time.
 - `GenericArtifact` validation now blocks weak `report_markdown` and `text_summary` outputs with explicit editorial unmet requirements, typed `editorial_quality_failed` failures, `editorial_validation` phase classification, and structural summary fields like heading/paragraph counts in `artifact_validation`.
+- Publish/outbound nodes now inherit upstream editorial failure as a runtime-owned `editorial_clearance_required` block, and external-action receipts are skipped while that publish QA block is active.
 
 ### External Action Receipts
 
