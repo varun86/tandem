@@ -476,6 +476,63 @@ export function workflowSessionLogEventEntries(
   });
 }
 
+export function workflowEventBlockers(
+  rows: Array<{ at?: number; event?: any } | null | undefined>
+): Array<{
+  key: string;
+  title: string;
+  reason: string;
+  source: string;
+  at?: number;
+}> {
+  const blockers: Array<{
+    key: string;
+    title: string;
+    reason: string;
+    source: string;
+    at?: number;
+  }> = [];
+  const push = (key: string, title: string, reason: string, source: string, at?: number) => {
+    if (!String(reason || "").trim()) return;
+    if (blockers.some((row) => row.key === key)) return;
+    blockers.push({ key, title, reason: String(reason).trim(), source, at });
+  };
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const payload = row?.event || row || {};
+    const type = String(workflowEventType(payload) || "").trim();
+    const reason = workflowEventReason(payload);
+    const at = Number(row?.at || workflowEventAt(payload) || 0);
+    if (
+      type === "permission.asked" ||
+      type === "approval.required" ||
+      type === "routine.approval_required"
+    ) {
+      push(`event-${type}`, "Permission or approval required", reason || type, "permission", at);
+    }
+    if (type === "mcp.auth.required") {
+      push(
+        `event-${type}`,
+        "MCP auth required",
+        reason || "An MCP connector requires authorization.",
+        "mcp",
+        at
+      );
+    }
+    if (type === "session.error" || type === "run.failed" || type === "routine.run.failed") {
+      push(`event-${type}`, "Execution failure", reason || type, "session", at);
+    }
+    if (reason.toLowerCase().includes("no further tool calls")) {
+      push("tool-mode", "Tool policy blocked progress", reason, "policy", at);
+    }
+    if (reason.toLowerCase().includes("timed out")) {
+      push(`timeout-${type || at}`, "Timeout", reason, "session", at);
+    }
+  }
+
+  return blockers.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
 export function workflowSessionIds(run: any) {
   const direct = Array.isArray(run?.active_session_ids)
     ? run.active_session_ids

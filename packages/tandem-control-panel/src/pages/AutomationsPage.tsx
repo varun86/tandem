@@ -14,6 +14,7 @@ import {
   workflowCompletedNodeIds,
   workflowContextHistoryEntries,
   workflowEventAt,
+  workflowEventBlockers,
   workflowEventReason,
   workflowEventRunId,
   workflowEventSessionId,
@@ -1064,35 +1065,8 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
     }
   }
 
-  [...sessionEvents, ...runEvents].forEach((row: any) => {
-    const type = String(workflowEventType(row?.event || row) || "").trim();
-    const reason = workflowEventReason(row?.event || row);
-    const at = Number(row?.at || workflowEventAt(row?.event || row) || 0);
-    if (
-      type === "permission.asked" ||
-      type === "approval.required" ||
-      type === "routine.approval_required"
-    ) {
-      push(`event-${type}`, "Permission or approval required", reason || type, "permission", at);
-    }
-    if (type === "mcp.auth.required") {
-      push(
-        `event-${type}`,
-        "MCP auth required",
-        reason || "An MCP connector requires authorization.",
-        "mcp",
-        at
-      );
-    }
-    if (type === "session.error" || type === "run.failed" || type === "routine.run.failed") {
-      push(`event-${type}`, "Execution failure", reason || type, "session", at);
-    }
-    if (reason.toLowerCase().includes("no further tool calls")) {
-      push("tool-mode", "Tool policy blocked progress", reason, "policy", at);
-    }
-    if (reason.toLowerCase().includes("timed out")) {
-      push(`timeout-${type || at}`, "Timeout", reason, "session", at);
-    }
+  workflowEventBlockers([...sessionEvents, ...runEvents]).forEach((blocker) => {
+    push(blocker.key, blocker.title, blocker.reason, blocker.source, blocker.at);
   });
 
   return blockers.sort((a, b) => (b.at || 0) - (a.at || 0));
