@@ -113,6 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the Automations Tasks tab now reads workflow runs from a canonical `/automations/v2/runs` all-runs API instead of first depending on saved workflow-definition IDs, so mirrored workflow runs still appear even when they are not discovered through the saved-definition list
   - blocked workflow runs are now surfaced as task issues in the Tasks tab instead of being silently excluded from the failed-run bucket
   - fixed an `AutomationsPage` render regression where stale `eventType`/`eventReason`/`eventAt` references crashed the Tasks tab at runtime and left the page appearing empty and non-interactive
+  - fixed a second `AutomationsPage` render regression where a stale `buildWorkflowProjectionFromRunSnapshot` reference crashed opening historical workflow tasks/runs
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

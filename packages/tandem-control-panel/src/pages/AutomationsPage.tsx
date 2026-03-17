@@ -3816,7 +3816,7 @@ function MyAutomations({
         currentTaskId: contextProjection.currentTaskId || activeTaskId,
       };
     }
-    return buildWorkflowProjectionFromRunSnapshot(selectedRun, activeTaskId);
+    return workflowProjectionFromRunSnapshot(selectedRun, activeTaskId);
   }, [
     isWorkflowRun,
     selectedRun,

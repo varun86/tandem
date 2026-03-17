@@ -84,6 +84,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - the Automations Tasks tab now reads workflow runs from a canonical `/automations/v2/runs` all-runs API, so mirrored workflow runs no longer disappear just because they were not discovered through the saved workflow-definition list
   - blocked workflow runs now surface as task issues in the Tasks tab instead of being silently excluded from the failed-run bucket
   - fixed an `AutomationsPage` runtime render regression where stale `eventType`/`eventReason`/`eventAt` references crashed the Tasks tab and left the page appearing empty and non-interactive
+  - fixed a second `AutomationsPage` runtime render regression where a stale `buildWorkflowProjectionFromRunSnapshot` reference crashed opening historical workflow tasks and runs
 
 - Managed worktree isolation is now runtime-owned
   - `.tandem/worktrees` now acts as a manager-owned allocation area with deterministic paths, lease validation, cleanup on release/expiry, and managed-path boundary enforcement
