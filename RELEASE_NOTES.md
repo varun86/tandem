@@ -92,6 +92,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run
   - workflow hook and manual workflow actions now emit the same shared receipts when their `tool:` or `capability:` action resolves to a bound outbound capability, and those receipts are linked back to the canonical workflow context run
   - publish-style `automation_v2` nodes now emit the same shared receipts for successful bound outbound tool calls, and those receipts are linked back to the canonical automation context run and included in node outputs
+  - scheduled `automation_v2` runs now sync their canonical context runs before any outbound receipt is persisted, so receipt links are immediately dereferenceable even when the scheduler created the run
+  - retried `automation_v2` publish nodes now include attempt-aware receipt identity, so external-action history preserves each retry instead of collapsing multiple attempts into one record
 
 - Artifact integrity protections for workflow outputs
   - placeholder/status-note overwrites no longer silently replace declared output artifacts

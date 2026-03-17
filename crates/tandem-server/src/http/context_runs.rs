@@ -3405,7 +3405,7 @@ pub(super) async fn context_run_replay(
     })))
 }
 
-pub(super) async fn sync_automation_v2_run_blackboard(
+pub(crate) async fn sync_automation_v2_run_blackboard(
     state: &AppState,
     automation: &crate::AutomationV2Spec,
     run: &crate::AutomationV2RunRecord,

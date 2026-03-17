@@ -106,6 +106,8 @@
 - Coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run.
 - Workflow hook and manual workflow actions now emit the same shared external-action receipts when their `tool:` or `capability:` action resolves to a bound outbound capability, and those receipts are linked back to the canonical workflow context run.
 - Publish-style `automation_v2` nodes now emit the same shared external-action receipts for successful bound outbound tool calls, and those receipts are linked back to the canonical automation context run and included in node outputs.
+- Scheduled `automation_v2` runs now sync their canonical context runs before any outbound receipt is persisted, so `/external-actions` links resolve immediately even when the scheduler created the run.
+- Retried `automation_v2` publish nodes now include attempt-aware receipt identity, so external-action history keeps each retry instead of overwriting an earlier publish attempt.
 
 ### Workflow Studio Models
 

@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run
   - workflow hook and manual workflow actions that map to a bound outbound capability now emit the same shared external-action receipts, linked to the canonical workflow context run and visible in workflow action outputs
   - publish-style `automation_v2` nodes now emit shared external-action receipts for successful bound outbound tool calls, linked to the canonical automation context run and surfaced in node outputs
+  - scheduled `automation_v2` runs now create their canonical context runs before outbound receipts are recorded, so `/external-actions` links are immediately dereferenceable even for scheduler-owned runs
+  - `automation_v2` outbound receipt identity is now attempt-aware, so retried publish nodes preserve distinct receipt history instead of overwriting an earlier attempt
 
 ### Changed
 

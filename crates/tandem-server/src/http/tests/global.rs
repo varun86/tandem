@@ -1425,6 +1425,31 @@ async fn automation_v2_runs_list_exposes_context_run_links() {
 }
 
 #[tokio::test]
+async fn create_automation_v2_run_immediately_creates_context_run() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = create_test_automation_v2(&state, "auto-v2-immediate-context").await;
+    let run = state
+        .create_automation_v2_run(&automation, "scheduled")
+        .await
+        .expect("create run");
+
+    let context_run_id = crate::http::context_runs::automation_v2_context_run_id(&run.run_id);
+    let context_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/context/runs/{context_run_id}"))
+                .body(Body::empty())
+                .expect("context request"),
+        )
+        .await
+        .expect("context response");
+    assert_eq!(context_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
     let state = test_state().await;
     let app = app_router(state.clone());
