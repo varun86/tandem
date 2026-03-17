@@ -50,6 +50,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - control-panel live session/event log rows now use shared workflow session-event normalization instead of being shaped inline in `AutomationsPage`
   - event-derived workflow blocker classification now lives in the shared workflow stability layer instead of `AutomationsPage`
   - control-panel workflow telemetry rows now use shared workflow event display normalization instead of formatting raw event payloads inline
+  - control-panel workflow task inspection now consumes a shared normalized artifact/research/verification detail object instead of deriving those fields through long page-local `useMemo` chains
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

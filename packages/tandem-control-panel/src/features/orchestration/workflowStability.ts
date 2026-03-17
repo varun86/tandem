@@ -65,6 +65,12 @@ function checkpointStringArray(checkpoint: any, snakeKey: string, camelKey: stri
   return raw.map((value: any) => String(value || "").trim()).filter(Boolean);
 }
 
+function workflowStringArray(value: any) {
+  return Array.isArray(value)
+    ? value.map((entry: any) => String(entry || "").trim()).filter(Boolean)
+    : [];
+}
+
 export function workflowCompletedNodeIds(run: any) {
   return checkpointStringArray(workflowCheckpoint(run), "completed_nodes", "completedNodes");
 }
@@ -545,6 +551,70 @@ export function workflowTelemetryDisplayEntries(
     raw: row?.event?.properties || row?.event || null,
     event: row?.event || null,
   }));
+}
+
+export function workflowTaskInspectionDetails(task: any, output: any) {
+  const telemetry = workflowNodeToolTelemetry(output);
+  const artifactValidation = workflowArtifactValidation(output);
+  const stability = workflowNodeStability(output);
+  const verificationOutcome = (() => {
+    const approved = output?.approved;
+    if (typeof approved === "boolean") return approved ? "approved" : "not approved";
+    const telemetryOutcome = String(telemetry?.verification_outcome || "")
+      .trim()
+      .toLowerCase();
+    if (telemetryOutcome) return telemetryOutcome;
+    const status = String(output?.status || "")
+      .trim()
+      .toLowerCase();
+    if (status) return status;
+    const state = String(task?.state || "")
+      .trim()
+      .toLowerCase();
+    if (state === "done") return "completed";
+    if (state === "blocked") return "blocked";
+    if (state === "failed") return "failed";
+    if (state) return state;
+    return "unknown";
+  })();
+
+  return {
+    telemetry,
+    artifactValidation,
+    touchedFiles: workflowStringArray(artifactValidation?.touched_files),
+    undeclaredFiles: workflowStringArray(artifactValidation?.undeclared_files_created),
+    researchReadPaths: workflowStringArray(artifactValidation?.read_paths),
+    discoveredRelevantPaths: workflowStringArray(artifactValidation?.discovered_relevant_paths),
+    reviewedPathsBackedByRead: workflowStringArray(
+      artifactValidation?.reviewed_paths_backed_by_read
+    ),
+    unreviewedRelevantPaths: workflowStringArray(artifactValidation?.unreviewed_relevant_paths),
+    unmetResearchRequirements: workflowStringArray(artifactValidation?.unmet_requirements),
+    verificationOutcome,
+    verificationPassed:
+      typeof output?.approved === "boolean"
+        ? output.approved
+        : ["approved", "completed", "done"].includes(verificationOutcome)
+          ? true
+          : ["blocked", "failed", "not approved"].includes(verificationOutcome)
+            ? false
+            : null,
+    verificationResults: Array.isArray(telemetry?.verification_results)
+      ? telemetry.verification_results
+      : [],
+    failureDetail: String(
+      output?.blocked_reason ||
+        output?.blockedReason ||
+        artifactValidation?.semantic_block_reason ||
+        artifactValidation?.rejected_artifact_reason ||
+        task?.error_message ||
+        ""
+    ).trim(),
+    workflowClass: stability.workflowClass,
+    phase: stability.phase,
+    failureKind: stability.failureKind,
+    artifactCandidates: workflowArtifactCandidates(output),
+  };
 }
 
 export function workflowSessionIds(run: any) {

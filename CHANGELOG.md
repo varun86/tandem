@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - control-panel live session/event log rows now use shared workflow session-event normalization instead of being shaped inline in `AutomationsPage`
   - event-derived workflow blocker classification now lives in the shared workflow stability layer instead of `AutomationsPage`
   - control-panel workflow telemetry rows now use shared workflow event display normalization instead of formatting raw event payloads inline
+  - control-panel workflow task inspection now consumes a shared normalized artifact/research/verification detail object instead of deriving those fields through long page-local `useMemo` chains
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

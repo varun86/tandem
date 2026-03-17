@@ -29,6 +29,7 @@ import {
   workflowPendingNodeCount,
   workflowPersistedHistoryEntries,
   workflowSessionLogEventEntries,
+  workflowTaskInspectionDetails,
   workflowTelemetryDisplayEntries,
   workflowTelemetrySeedEvents,
   workflowNodeStability,
@@ -3874,69 +3875,21 @@ function MyAutomations({
     () => workflowArtifactValidation(selectedBoardTaskOutput),
     [selectedBoardTaskOutput]
   );
-  const selectedBoardTaskTouchedFiles = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.touched_files)
-        ? selectedBoardTaskArtifactValidation.touched_files
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
+  const selectedBoardTaskInspection = useMemo(
+    () => workflowTaskInspectionDetails(selectedBoardTask, selectedBoardTaskOutput),
+    [selectedBoardTask, selectedBoardTaskOutput]
   );
-  const selectedBoardTaskUndeclaredFiles = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.undeclared_files_created)
-        ? selectedBoardTaskArtifactValidation.undeclared_files_created
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
-  const selectedBoardTaskResearchReadPaths = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.read_paths)
-        ? selectedBoardTaskArtifactValidation.read_paths
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
-  const selectedBoardTaskDiscoveredRelevantPaths = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.discovered_relevant_paths)
-        ? selectedBoardTaskArtifactValidation.discovered_relevant_paths
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
-  const selectedBoardTaskReviewedPathsBackedByRead = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.reviewed_paths_backed_by_read)
-        ? selectedBoardTaskArtifactValidation.reviewed_paths_backed_by_read
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
-  const selectedBoardTaskUnreviewedRelevantPaths = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.unreviewed_relevant_paths)
-        ? selectedBoardTaskArtifactValidation.unreviewed_relevant_paths
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
-  const selectedBoardTaskUnmetResearchRequirements = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskArtifactValidation?.unmet_requirements)
-        ? selectedBoardTaskArtifactValidation.unmet_requirements
-            .map((value: any) => String(value || "").trim())
-            .filter(Boolean)
-        : [],
-    [selectedBoardTaskArtifactValidation]
-  );
+  const selectedBoardTaskTouchedFiles = selectedBoardTaskInspection.touchedFiles;
+  const selectedBoardTaskUndeclaredFiles = selectedBoardTaskInspection.undeclaredFiles;
+  const selectedBoardTaskResearchReadPaths = selectedBoardTaskInspection.researchReadPaths;
+  const selectedBoardTaskDiscoveredRelevantPaths =
+    selectedBoardTaskInspection.discoveredRelevantPaths;
+  const selectedBoardTaskReviewedPathsBackedByRead =
+    selectedBoardTaskInspection.reviewedPathsBackedByRead;
+  const selectedBoardTaskUnreviewedRelevantPaths =
+    selectedBoardTaskInspection.unreviewedRelevantPaths;
+  const selectedBoardTaskUnmetResearchRequirements =
+    selectedBoardTaskInspection.unmetResearchRequirements;
   const continueBlockedTask =
     String(selectedBoardTask?.state || "").toLowerCase() === "blocked"
       ? selectedBoardTask
@@ -3994,42 +3947,9 @@ function MyAutomations({
       entry.paths.some((path) => selectedBoardTaskRelatedPaths.includes(path))
     );
   }, [runArtifactEntries, selectedBoardTaskRelatedPaths]);
-  const selectedBoardTaskVerificationOutcome = useMemo(() => {
-    const approved = selectedBoardTaskOutput?.approved;
-    if (typeof approved === "boolean") return approved ? "approved" : "not approved";
-    const telemetryOutcome = String(selectedBoardTaskTelemetry?.verification_outcome || "")
-      .trim()
-      .toLowerCase();
-    if (telemetryOutcome) return telemetryOutcome;
-    const status = String(selectedBoardTaskOutput?.status || "")
-      .trim()
-      .toLowerCase();
-    if (status) return status;
-    const state = String(selectedBoardTask?.state || "")
-      .trim()
-      .toLowerCase();
-    if (state === "done") return "completed";
-    if (state === "blocked") return "blocked";
-    if (state === "failed") return "failed";
-    if (state) return state;
-    return "unknown";
-  }, [selectedBoardTask, selectedBoardTaskOutput, selectedBoardTaskTelemetry]);
-  const selectedBoardTaskVerificationPassed = useMemo(() => {
-    if (typeof selectedBoardTaskOutput?.approved === "boolean")
-      return selectedBoardTaskOutput.approved;
-    if (["approved", "completed", "done"].includes(selectedBoardTaskVerificationOutcome))
-      return true;
-    if (["blocked", "failed", "not approved"].includes(selectedBoardTaskVerificationOutcome))
-      return false;
-    return null;
-  }, [selectedBoardTaskOutput, selectedBoardTaskVerificationOutcome]);
-  const selectedBoardTaskVerificationResults = useMemo(
-    () =>
-      Array.isArray(selectedBoardTaskTelemetry?.verification_results)
-        ? selectedBoardTaskTelemetry.verification_results
-        : [],
-    [selectedBoardTaskTelemetry]
-  );
+  const selectedBoardTaskVerificationOutcome = selectedBoardTaskInspection.verificationOutcome;
+  const selectedBoardTaskVerificationPassed = selectedBoardTaskInspection.verificationPassed;
+  const selectedBoardTaskVerificationResults = selectedBoardTaskInspection.verificationResults;
   const selectedBoardTaskNodeId = useMemo(
     () =>
       String(selectedBoardTask?.id || "").startsWith("node-")
@@ -4066,34 +3986,11 @@ function MyAutomations({
         selectedBoardTaskLeaseExpiresAtMs <= Date.now()),
     [selectedBoardTask, selectedBoardTaskLeaseExpiresAtMs, selectedBoardTaskStateNormalized]
   );
-  const selectedBoardTaskFailureDetail = useMemo(
-    () =>
-      String(
-        selectedBoardTaskOutput?.blocked_reason ||
-          selectedBoardTaskOutput?.blockedReason ||
-          selectedBoardTaskArtifactValidation?.semantic_block_reason ||
-          selectedBoardTaskArtifactValidation?.rejected_artifact_reason ||
-          (selectedBoardTask as any)?.error_message ||
-          ""
-      ).trim(),
-    [selectedBoardTask, selectedBoardTaskArtifactValidation, selectedBoardTaskOutput]
-  );
-  const selectedBoardTaskWorkflowClass = useMemo(
-    () => workflowNodeStability(selectedBoardTaskOutput).workflowClass,
-    [selectedBoardTaskOutput]
-  );
-  const selectedBoardTaskPhase = useMemo(
-    () => workflowNodeStability(selectedBoardTaskOutput).phase,
-    [selectedBoardTaskOutput]
-  );
-  const selectedBoardTaskFailureKind = useMemo(
-    () => workflowNodeStability(selectedBoardTaskOutput).failureKind,
-    [selectedBoardTaskOutput]
-  );
-  const selectedBoardTaskArtifactCandidates = useMemo(
-    () => workflowArtifactCandidates(selectedBoardTaskOutput),
-    [selectedBoardTaskOutput]
-  );
+  const selectedBoardTaskFailureDetail = selectedBoardTaskInspection.failureDetail;
+  const selectedBoardTaskWorkflowClass = selectedBoardTaskInspection.workflowClass;
+  const selectedBoardTaskPhase = selectedBoardTaskInspection.phase;
+  const selectedBoardTaskFailureKind = selectedBoardTaskInspection.failureKind;
+  const selectedBoardTaskArtifactCandidates = selectedBoardTaskInspection.artifactCandidates;
   const selectedBoardTaskLifecycleEvents = useMemo(
     () => workflowRecentNodeEventSummaries(selectedRun, selectedBoardTaskNodeId, 8),
     [selectedBoardTaskNodeId, selectedRun]

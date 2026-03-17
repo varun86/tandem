@@ -50,6 +50,7 @@
 - Control-panel live session/event log rows now use shared workflow session-event normalization instead of being shaped inline in `AutomationsPage`.
 - Event-derived workflow blocker classification now lives in the shared workflow stability layer instead of `AutomationsPage`.
 - Control-panel workflow telemetry rows now use shared workflow event display normalization instead of formatting raw event payloads inline.
+- Control-panel workflow task inspection now consumes a shared normalized artifact/research/verification detail object instead of deriving those fields through long page-local `useMemo` chains.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions
