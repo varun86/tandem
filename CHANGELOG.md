@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bug Monitor GitHub publishes now mirror into the shared external-action path while keeping the existing Bug Monitor post APIs intact
   - coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run
   - workflow hook and manual workflow actions that map to a bound outbound capability now emit the same shared external-action receipts, linked to the canonical workflow context run and visible in workflow action outputs
+  - publish-style `automation_v2` nodes now emit shared external-action receipts for successful bound outbound tool calls, linked to the canonical automation context run and surfaced in node outputs
 
 ### Changed
 

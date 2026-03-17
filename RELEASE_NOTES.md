@@ -91,6 +91,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Bug Monitor GitHub publish/failure receipts now mirror into that shared path, publish falls back to directly discovered MCP GitHub tools when bindings lag, duplicate publish reuses the prior receipt, and read-only recheck is no longer blocked by the fail-closed posting gate
   - coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run
   - workflow hook and manual workflow actions now emit the same shared receipts when their `tool:` or `capability:` action resolves to a bound outbound capability, and those receipts are linked back to the canonical workflow context run
+  - publish-style `automation_v2` nodes now emit the same shared receipts for successful bound outbound tool calls, and those receipts are linked back to the canonical automation context run and included in node outputs
 
 - Artifact integrity protections for workflow outputs
   - placeholder/status-note overwrites no longer silently replace declared output artifacts

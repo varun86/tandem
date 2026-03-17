@@ -7766,6 +7766,167 @@ fn wrap_automation_node_output(
     })
 }
 
+async fn record_automation_external_actions_for_session(
+    state: &AppState,
+    run_id: &str,
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    session_id: &str,
+    session: &Session,
+) -> anyhow::Result<Vec<ExternalActionRecord>> {
+    let actions = collect_automation_external_action_receipts(
+        &state.capability_resolver.list_bindings().await?,
+        run_id,
+        automation,
+        node,
+        session_id,
+        session,
+    );
+    let mut recorded = Vec::with_capacity(actions.len());
+    for action in actions {
+        recorded.push(state.record_external_action(action).await?);
+    }
+    Ok(recorded)
+}
+
+fn collect_automation_external_action_receipts(
+    bindings: &capability_resolver::CapabilityBindingsFile,
+    run_id: &str,
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    session_id: &str,
+    session: &Session,
+) -> Vec<ExternalActionRecord> {
+    if !automation_node_is_outbound_action(node) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (call_index, part) in session
+        .messages
+        .iter()
+        .flat_map(|message| message.parts.iter())
+        .enumerate()
+    {
+        let MessagePart::ToolInvocation {
+            tool,
+            args,
+            result,
+            error,
+        } = part
+        else {
+            continue;
+        };
+        if error.as_ref().is_some_and(|value| !value.trim().is_empty()) || result.is_none() {
+            continue;
+        }
+        let Some(binding) = bindings
+            .bindings
+            .iter()
+            .find(|binding| automation_binding_matches_tool_name(binding, tool))
+        else {
+            continue;
+        };
+        let idempotency_key = crate::sha256_hex(&[
+            "automation_v2",
+            &automation.automation_id,
+            run_id,
+            &node.node_id,
+            tool,
+            &args.to_string(),
+            &call_index.to_string(),
+        ]);
+        if !seen.insert(idempotency_key.clone()) {
+            continue;
+        }
+        let source_id = format!("{run_id}:{}:{call_index}", node.node_id);
+        out.push(ExternalActionRecord {
+            action_id: format!("automation-external-{}", &idempotency_key[..16]),
+            operation: binding.capability_id.clone(),
+            status: "posted".to_string(),
+            source_kind: Some("automation_v2".to_string()),
+            source_id: Some(source_id),
+            routine_run_id: None,
+            context_run_id: Some(format!("automation-v2-{run_id}")),
+            capability_id: Some(binding.capability_id.clone()),
+            provider: Some(binding.provider.clone()),
+            target: automation_external_action_target(args, result.as_ref()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: Some(idempotency_key),
+            receipt: Some(json!({
+                "tool": tool,
+                "args": args,
+                "result": result,
+            })),
+            error: None,
+            metadata: Some(json!({
+                "automationID": automation.automation_id,
+                "automationRunID": run_id,
+                "nodeID": node.node_id,
+                "nodeObjective": node.objective,
+                "sessionID": session_id,
+                "tool": tool,
+                "provider": binding.provider,
+            })),
+            created_at_ms: now_ms(),
+            updated_at_ms: now_ms(),
+        });
+    }
+    out
+}
+
+fn automation_node_is_outbound_action(node: &AutomationFlowNode) -> bool {
+    if node
+        .metadata
+        .as_ref()
+        .and_then(|value| value.pointer("/builder/role"))
+        .and_then(Value::as_str)
+        .is_some_and(|role| role.eq_ignore_ascii_case("publisher"))
+    {
+        return true;
+    }
+    let objective = node.objective.to_ascii_lowercase();
+    [
+        "publish", "post ", "send ", "notify", "deliver", "submit", "share",
+    ]
+    .iter()
+    .any(|needle| objective.contains(needle))
+}
+
+fn automation_binding_matches_tool_name(
+    binding: &capability_resolver::CapabilityBinding,
+    tool_name: &str,
+) -> bool {
+    binding.tool_name.eq_ignore_ascii_case(tool_name)
+        || binding
+            .tool_name_aliases
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(tool_name))
+}
+
+fn automation_external_action_target(args: &Value, result: Option<&Value>) -> Option<String> {
+    for candidate in [
+        args.pointer("/owner_repo").and_then(Value::as_str),
+        args.pointer("/repo").and_then(Value::as_str),
+        args.pointer("/repository").and_then(Value::as_str),
+        args.pointer("/channel").and_then(Value::as_str),
+        args.pointer("/channel_id").and_then(Value::as_str),
+        args.pointer("/thread_ts").and_then(Value::as_str),
+        result
+            .and_then(|value| value.pointer("/metadata/channel"))
+            .and_then(Value::as_str),
+        result
+            .and_then(|value| value.pointer("/metadata/repo"))
+            .and_then(Value::as_str),
+    ] {
+        let trimmed = candidate.map(str::trim).unwrap_or_default();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
 pub(crate) fn automation_node_max_attempts(node: &AutomationFlowNode) -> u32 {
     node.retry_policy
         .as_ref()
@@ -8082,7 +8243,16 @@ pub(crate) async fn execute_automation_v2_node(
             &workspace_snapshot_before,
         );
     let _ = artifact_rejected_reason;
-    Ok(wrap_automation_node_output(
+    let external_actions = record_automation_external_actions_for_session(
+        state,
+        run_id,
+        automation,
+        node,
+        &session_id,
+        &session,
+    )
+    .await?;
+    let mut output = wrap_automation_node_output(
         node,
         &session,
         &requested_tools,
@@ -8090,7 +8260,16 @@ pub(crate) async fn execute_automation_v2_node(
         &session_text,
         verified_output,
         Some(artifact_validation),
-    ))
+    );
+    if !external_actions.is_empty() {
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "external_actions".to_string(),
+                serde_json::to_value(&external_actions)?,
+            );
+        }
+    }
+    Ok(output)
 }
 
 pub async fn run_automation_v2_executor(state: AppState) {
@@ -9936,6 +10115,205 @@ mod tests {
             Some("coding task completed without running the declared verification command")
         );
         assert_eq!(approved, None);
+    }
+
+    #[test]
+    fn collect_automation_external_action_receipts_records_bound_publisher_tools() {
+        let automation = AutomationV2Spec {
+            automation_id: "auto-publish-test".to_string(),
+            name: "Publish Test".to_string(),
+            description: None,
+            status: AutomationV2Status::Active,
+            schedule: AutomationV2Schedule {
+                schedule_type: AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+            },
+            agents: Vec::new(),
+            flow: AutomationFlowSpec { nodes: Vec::new() },
+            execution: AutomationExecutionPolicy {
+                max_parallel_agents: Some(1),
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            creator_id: "test".to_string(),
+            workspace_root: Some(".".to_string()),
+            metadata: None,
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        };
+        let node = AutomationFlowNode {
+            node_id: "publish".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Publish final update".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "role": "publisher"
+                }
+            })),
+        };
+        let mut session = Session::new(Some("publisher".to_string()), Some(".".to_string()));
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "workflow_test.slack".to_string(),
+                    args: json!({
+                        "channel": "engineering",
+                        "text": "Ship it"
+                    }),
+                    result: Some(json!({
+                        "output": "posted",
+                        "metadata": {
+                            "channel": "engineering"
+                        }
+                    })),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "workflow_test.internal".to_string(),
+                    args: json!({
+                        "value": 1
+                    }),
+                    result: Some(json!({"output": "ignored"})),
+                    error: None,
+                },
+            ],
+        ));
+        let mut bindings = capability_resolver::CapabilityBindingsFile::default();
+        bindings
+            .bindings
+            .push(capability_resolver::CapabilityBinding {
+                capability_id: "slack.post_message".to_string(),
+                provider: "custom".to_string(),
+                tool_name: "workflow_test.slack".to_string(),
+                tool_name_aliases: Vec::new(),
+                request_transform: None,
+                response_transform: None,
+                metadata: json!({}),
+            });
+
+        let receipts = collect_automation_external_action_receipts(
+            &bindings,
+            "run-1",
+            &automation,
+            &node,
+            "session-1",
+            &session,
+        );
+
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].source_kind.as_deref(), Some("automation_v2"));
+        assert_eq!(
+            receipts[0].capability_id.as_deref(),
+            Some("slack.post_message")
+        );
+        assert_eq!(
+            receipts[0].context_run_id.as_deref(),
+            Some("automation-v2-run-1")
+        );
+        assert_eq!(receipts[0].target.as_deref(), Some("engineering"));
+    }
+
+    #[test]
+    fn collect_automation_external_action_receipts_ignores_non_outbound_nodes() {
+        let automation = AutomationV2Spec {
+            automation_id: "auto-draft-test".to_string(),
+            name: "Draft Test".to_string(),
+            description: None,
+            status: AutomationV2Status::Active,
+            schedule: AutomationV2Schedule {
+                schedule_type: AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+            },
+            agents: Vec::new(),
+            flow: AutomationFlowSpec { nodes: Vec::new() },
+            execution: AutomationExecutionPolicy {
+                max_parallel_agents: Some(1),
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            creator_id: "test".to_string(),
+            workspace_root: Some(".".to_string()),
+            metadata: None,
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        };
+        let node = AutomationFlowNode {
+            node_id: "draft".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Draft final update".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "role": "writer"
+                }
+            })),
+        };
+        let mut session = Session::new(Some("writer".to_string()), Some(".".to_string()));
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "workflow_test.slack".to_string(),
+                args: json!({
+                    "channel": "engineering",
+                    "text": "Ship it"
+                }),
+                result: Some(json!({"output": "posted"})),
+                error: None,
+            }],
+        ));
+        let mut bindings = capability_resolver::CapabilityBindingsFile::default();
+        bindings
+            .bindings
+            .push(capability_resolver::CapabilityBinding {
+                capability_id: "slack.post_message".to_string(),
+                provider: "custom".to_string(),
+                tool_name: "workflow_test.slack".to_string(),
+                tool_name_aliases: Vec::new(),
+                request_transform: None,
+                response_transform: None,
+                metadata: json!({}),
+            });
+
+        let receipts = collect_automation_external_action_receipts(
+            &bindings,
+            "run-1",
+            &automation,
+            &node,
+            "session-1",
+            &session,
+        );
+
+        assert!(receipts.is_empty());
     }
 
     #[test]

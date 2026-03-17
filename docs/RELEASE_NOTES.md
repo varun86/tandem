@@ -105,6 +105,7 @@
 - Bug Monitor publish now falls back to directly discovered MCP GitHub tools when capability bindings lag, repeated publish calls reuse the existing receipt instead of triggering another side effect, and read-only recheck is no longer blocked by the fail-closed posting gate.
 - Coder real PR submit and merge submit now also emit shared external-action receipts linked back to the canonical coder context run.
 - Workflow hook and manual workflow actions now emit the same shared external-action receipts when their `tool:` or `capability:` action resolves to a bound outbound capability, and those receipts are linked back to the canonical workflow context run.
+- Publish-style `automation_v2` nodes now emit the same shared external-action receipts for successful bound outbound tool calls, and those receipts are linked back to the canonical automation context run and included in node outputs.
 
 ### Workflow Studio Models
 
