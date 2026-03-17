@@ -636,6 +636,28 @@ impl EngineLoop {
                     && unmet_prewrite_repair_retry_count > 0
                     && productive_write_tool_calls_total > 0
                     && !prewrite_satisfied;
+                if allow_repair_tools {
+                    let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
+                        &requested_prewrite_requirements,
+                        productive_workspace_inspection_total > 0,
+                        productive_concrete_read_total > 0,
+                        productive_web_research_total > 0,
+                        successful_web_research_total > 0,
+                    );
+                    let repair_tools = tool_schemas
+                        .iter()
+                        .filter(|schema| {
+                            tool_matches_unmet_prewrite_repair_requirement(
+                                &schema.name,
+                                &unmet_prewrite_codes,
+                            )
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !repair_tools.is_empty() {
+                        tool_schemas = repair_tools;
+                    }
+                }
                 if force_write_only_retry && !allow_repair_tools {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
@@ -1439,10 +1461,117 @@ impl EngineLoop {
                             ));
                             break;
                         }
+                        let prewrite_satisfied = prewrite_requirements_satisfied(
+                            &requested_prewrite_requirements,
+                            productive_workspace_inspection_total > 0,
+                            productive_concrete_read_total > 0,
+                            productive_web_research_total > 0,
+                            successful_web_research_total > 0,
+                        );
+                        let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
+                            &requested_prewrite_requirements,
+                            productive_workspace_inspection_total > 0,
+                            productive_concrete_read_total > 0,
+                            productive_web_research_total > 0,
+                            successful_web_research_total > 0,
+                        );
                         if requested_write_required
                             && productive_tool_calls_total > 0
                             && productive_write_tool_calls_total == 0
                         {
+                            if requested_prewrite_requirements.repair_on_unmet_requirements
+                                && unmet_prewrite_repair_retry_count > 0
+                                && !prewrite_satisfied
+                            {
+                                if unmet_prewrite_repair_retry_count
+                                    < prewrite_repair_retry_max_attempts()
+                                {
+                                    unmet_prewrite_repair_retry_count += 1;
+                                    let repair_attempt = unmet_prewrite_repair_retry_count;
+                                    let repair_attempts_remaining =
+                                        prewrite_repair_retry_max_attempts()
+                                            .saturating_sub(repair_attempt);
+                                    followup_context = Some(build_prewrite_repair_retry_context(
+                                        &offered_tool_preview,
+                                        latest_required_tool_failure_kind,
+                                        &text,
+                                        &requested_prewrite_requirements,
+                                        productive_workspace_inspection_total > 0,
+                                        productive_concrete_read_total > 0,
+                                        productive_web_research_total > 0,
+                                        successful_web_research_total > 0,
+                                    ));
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "provider.call.iteration.finish",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "iteration": iteration,
+                                            "finishReason": "prewrite_repair_retry",
+                                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                            "rejectedToolCalls": 0,
+                                            "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                            "repair": prewrite_repair_event_payload(
+                                                repair_attempt,
+                                                repair_attempts_remaining,
+                                                &unmet_prewrite_codes,
+                                                false,
+                                            ),
+                                        }),
+                                    ));
+                                    continue;
+                                }
+                                latest_required_tool_failure_kind =
+                                    RequiredToolFailureKind::PrewriteRequirementsExhausted;
+                                let repair_attempt = unmet_prewrite_repair_retry_count;
+                                let repair_attempts_remaining =
+                                    prewrite_repair_retry_max_attempts()
+                                        .saturating_sub(repair_attempt);
+                                completion = prewrite_requirements_exhausted_completion(
+                                    &unmet_prewrite_codes,
+                                    repair_attempt,
+                                    repair_attempts_remaining,
+                                );
+                                if !required_tool_unsatisfied_emitted {
+                                    required_tool_unsatisfied_emitted = true;
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "tool.mode.required.unsatisfied",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "iteration": iteration,
+                                            "selectedToolCount": allowed_tool_names.len(),
+                                            "offeredToolsPreview": offered_tool_preview,
+                                            "reason": latest_required_tool_failure_kind.code(),
+                                            "repair": prewrite_repair_event_payload(
+                                                repair_attempt,
+                                                repair_attempts_remaining,
+                                                &unmet_prewrite_codes,
+                                                true,
+                                            ),
+                                        }),
+                                    ));
+                                }
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "prewrite_requirements_exhausted",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                        "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                        "repair": prewrite_repair_event_payload(
+                                            repair_attempt,
+                                            repair_attempts_remaining,
+                                            &unmet_prewrite_codes,
+                                            true,
+                                        ),
+                                    }),
+                                ));
+                                break;
+                            }
                             latest_required_tool_failure_kind =
                                 RequiredToolFailureKind::WriteRequiredNotSatisfied;
                             if required_write_retry_count + 1 < strict_write_retry_max_attempts {
@@ -3664,6 +3793,26 @@ fn is_web_research_tool(tool_name: &str) -> bool {
         normalize_tool_name(tool_name).as_str(),
         "websearch" | "webfetch" | "webfetch_html"
     )
+}
+
+fn tool_matches_unmet_prewrite_repair_requirement(tool_name: &str, unmet_codes: &[&str]) -> bool {
+    if is_workspace_write_tool(tool_name) {
+        return false;
+    }
+    let normalized = normalize_tool_name(tool_name);
+    let needs_workspace_inspection = unmet_codes
+        .iter()
+        .any(|code| matches!(*code, "workspace_inspection_required" | "coverage_mode"));
+    let needs_concrete_read = unmet_codes.contains(&"concrete_read_required");
+    let needs_web_research = unmet_codes.iter().any(|code| {
+        matches!(
+            *code,
+            "web_research_required" | "successful_web_research_required"
+        )
+    });
+    (needs_concrete_read && normalized == "read")
+        || (needs_workspace_inspection && is_workspace_inspection_tool(&normalized))
+        || (needs_web_research && is_web_research_tool(&normalized))
 }
 
 fn invalid_tool_args_retry_max_attempts() -> usize {
@@ -8248,6 +8397,39 @@ Required output target:
     #[test]
     fn prewrite_repair_retry_budget_allows_two_repair_attempts() {
         assert_eq!(prewrite_repair_retry_max_attempts(), 2);
+    }
+
+    #[test]
+    fn prewrite_repair_tool_filter_removes_write_until_evidence_is_satisfied() {
+        let offered = ["glob", "read", "websearch", "write", "edit"];
+        let filtered = offered
+            .iter()
+            .copied()
+            .filter(|tool| {
+                tool_matches_unmet_prewrite_repair_requirement(
+                    tool,
+                    &[
+                        "workspace_inspection_required",
+                        "concrete_read_required",
+                        "successful_web_research_required",
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(filtered, vec!["glob", "read", "websearch"]);
+    }
+
+    #[test]
+    fn prewrite_repair_tool_filter_prefers_read_for_concrete_reads() {
+        let offered = ["glob", "read", "search", "write"];
+        let filtered = offered
+            .iter()
+            .copied()
+            .filter(|tool| {
+                tool_matches_unmet_prewrite_repair_requirement(tool, &["concrete_read_required"])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(filtered, vec!["read"]);
     }
 
     #[test]

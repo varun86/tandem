@@ -1514,6 +1514,60 @@ async fn automation_v2_runs_list_exposes_context_run_links() {
 }
 
 #[tokio::test]
+async fn automation_v2_runs_all_exposes_context_run_links() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = create_test_automation_v2(&state, "auto-v2-all-runs-links").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/automations/v2/runs?limit=10")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let runs = payload.get("runs").and_then(Value::as_array).expect("runs");
+    let row = runs
+        .iter()
+        .find(|candidate| {
+            candidate.get("run_id").and_then(Value::as_str) == Some(run.run_id.as_str())
+        })
+        .expect("matching run");
+    let context_run_id = row
+        .get("contextRunID")
+        .and_then(Value::as_str)
+        .expect("context run id");
+    assert_eq!(
+        row.get("linked_context_run_id").and_then(Value::as_str),
+        Some(context_run_id)
+    );
+
+    let context_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/context/runs/{context_run_id}"))
+                .body(Body::empty())
+                .expect("context request"),
+        )
+        .await
+        .expect("context response");
+    assert_eq!(context_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn create_automation_v2_run_immediately_creates_context_run() {
     let state = test_state().await;
     let app = app_router(state.clone());

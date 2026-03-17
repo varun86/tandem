@@ -2280,6 +2280,26 @@ pub(super) async fn automations_v2_runs(
     Json(json!({ "automationID": id, "runs": runs, "count": rows.len() }))
 }
 
+pub(super) async fn automations_v2_runs_all(
+    State(state): State<AppState>,
+    Query(query): Query<RoutineRunsQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let rows = state.list_automation_v2_runs(None, limit).await;
+    for run in &rows {
+        if let Some(automation) = state.get_automation_v2(&run.automation_id).await {
+            let _ =
+                super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, run)
+                    .await;
+        }
+    }
+    let runs = rows
+        .iter()
+        .map(automation_v2_run_with_context_links)
+        .collect::<Vec<_>>();
+    Json(json!({ "runs": runs, "count": rows.len() }))
+}
+
 pub(super) async fn automations_v2_run_get(
     State(state): State<AppState>,
     Path(run_id): Path<String>,

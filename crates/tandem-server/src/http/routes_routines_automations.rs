@@ -76,6 +76,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/automations/v2/{id}/run_now", post(automations_v2_run_now))
         .route("/automations/v2/{id}/pause", post(automations_v2_pause))
         .route("/automations/v2/{id}/resume", post(automations_v2_resume))
+        .route("/automations/v2/runs", get(automations_v2_runs_all))
         .route("/automations/v2/{id}/runs", get(automations_v2_runs))
         .route("/automations/v2/runs/{run_id}", get(automations_v2_run_get))
         .route(

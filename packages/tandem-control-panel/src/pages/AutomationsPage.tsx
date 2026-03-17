@@ -39,6 +39,7 @@ import {
   workflowSessionIds,
 } from "../features/orchestration/workflowStability";
 import { useEngineStream } from "../features/stream/useEngineStream";
+import { api } from "../lib/api";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { AdvancedMissionBuilderPanel } from "./AdvancedMissionBuilderPanel";
 import { PageCard, EmptyState, formatJson } from "./ui";
@@ -3147,17 +3148,6 @@ function MyAutomations({
     }
     return Array.from(byId.values());
   }, [automationsV2Query.data]);
-  const workflowAutomationIds = useMemo(
-    () =>
-      automationsV2
-        .map((automation: any) =>
-          String(
-            automation?.automation_id || automation?.automationId || automation?.id || ""
-          ).trim()
-        )
-        .filter(Boolean),
-    [automationsV2]
-  );
   const providerCatalogQuery = useQuery({
     queryKey: ["providers", "catalog", "workflow-edit"],
     queryFn: () =>
@@ -3179,22 +3169,9 @@ function MyAutomations({
     refetchInterval: 9000,
   });
   const workflowRunsQuery = useQuery({
-    queryKey: ["automations", "v2", "runs", workflowAutomationIds],
-    enabled: !!client?.automationsV2?.listRuns,
-    queryFn: async () => {
-      if (!workflowAutomationIds.length) return { runs: [] as any[] };
-      const results = await Promise.all(
-        workflowAutomationIds.map(async (automationId: string) => {
-          const response = await client?.automationsV2
-            ?.listRuns?.(automationId, 12)
-            .catch(() => ({ runs: [] }));
-          return Array.isArray(response?.runs) ? response.runs : [];
-        })
-      );
-      return {
-        runs: results.flat(),
-      };
-    },
+    queryKey: ["automations", "v2", "runs", "all"],
+    queryFn: () =>
+      api("/api/engine/automations/v2/runs?limit=40").catch(() => ({ runs: [] as any[] })),
     refetchInterval: 9000,
   });
   const runDetailQuery = useQuery({
@@ -3801,12 +3778,10 @@ function MyAutomations({
     });
   }, [legacyRuns, workflowRuns]);
   const packs = toArray(packsQuery.data, "packs");
-  const activeRuns = runs.filter((run: any) => isActiveRunStatus(run?.status));
+  const activeRuns = runs.filter((run: any) => isActiveRunStatus(workflowDerivedRunStatus(run)));
   const failedRuns = runs.filter((run: any) => {
-    const status = String(run?.status || "")
-      .trim()
-      .toLowerCase();
-    return status === "failed" || status === "error";
+    const status = workflowDerivedRunStatus(run);
+    return status === "failed" || status === "error" || status === "blocked";
   });
   const selectedRun = (runDetailQuery.data as any)?.run || null;
   const workflowBlackboard = (workflowContextBlackboardQuery.data as any)?.blackboard || null;
@@ -4704,6 +4679,7 @@ function MyAutomations({
             </div>
             {activeRuns.slice(0, 14).map((run: any, index: number) => {
               const runId = String(run?.run_id || run?.id || index).trim();
+              const runStatus = workflowDerivedRunStatus(run);
               const startedAt =
                 run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs;
               return (
@@ -4725,9 +4701,7 @@ function MyAutomations({
                         </span>
                       ) : null}
                     </div>
-                    <span className={statusColor(run?.status)}>
-                      {String(run?.status || "unknown")}
-                    </span>
+                    <span className={statusColor(runStatus)}>{runStatus || "unknown"}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
@@ -4784,12 +4758,13 @@ function MyAutomations({
         <div className="grid gap-2">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Recently Failed Runs
+              Recently Blocked Or Failed Runs
             </p>
-            <span className="tcp-badge-err">{failedRuns.length} failed</span>
+            <span className="tcp-badge-err">{failedRuns.length} issues</span>
           </div>
           {failedRuns.slice(0, 10).map((run: any, index: number) => {
             const runId = String(run?.run_id || run?.id || index).trim();
+            const runStatus = workflowDerivedRunStatus(run);
             return (
               <div key={`failed-${runId || index}`} className="tcp-list-item">
                 <div className="flex items-center justify-between gap-2">
@@ -4819,9 +4794,7 @@ function MyAutomations({
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={statusColor(run?.status)}>
-                      {String(run?.status || "failed")}
-                    </span>
+                    <span className={statusColor(runStatus)}>{runStatus || "failed"}</span>
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
                       onClick={() => onSelectRunId(runId)}
@@ -4847,7 +4820,9 @@ function MyAutomations({
             <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                <span className={statusColor(run?.status)}>{String(run?.status || "unknown")}</span>
+                <span className={statusColor(workflowDerivedRunStatus(run))}>
+                  {workflowDerivedRunStatus(run) || "unknown"}
+                </span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2">
                 <div className="grid gap-0.5">

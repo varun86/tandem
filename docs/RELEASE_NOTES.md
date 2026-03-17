@@ -70,6 +70,8 @@
 - Write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists.
 - Brief/research nodes now also require concrete `read` coverage, successful web research when expected, and one automatic repair pass before they finalize as blocked.
 - Evidence-gated artifact nodes now emit structured repair-attempt metadata, get bounded repair retries after premature writes, and terminate with explicit `PREWRITE_REQUIREMENTS_EXHAUSTED` blocked state when those retries are exhausted.
+- Evidence-repair passes now temporarily remove `write` tools and expose only the still-missing inspection/research tools, so nodes that wrote too early must gather the missing evidence before the next write pass.
+- Repair followups that still skip required reads or web research now stay inside the repair loop instead of bouncing straight back into another write-required retry.
 - Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
 - Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.
 - Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
@@ -79,6 +81,8 @@
 - Research/editorial artifact validation now propagates repair-attempt counts, attempts remaining, and exhaustion state into `artifact_validation`, validator summaries, and workflow lifecycle events.
 - `automation_v2` terminal run status now derives from blocked/failed node outputs instead of trusting checkpoint `blocked_nodes` alone, so blocked research nodes no longer show up as completed runs.
 - The control-panel Run Debugger now derives blocked/failed run status from workflow node outputs as a guardrail and shows repair-attempt progress when the backend status and task board disagree.
+- The Automations Tasks tab now reads workflow runs from a canonical `/automations/v2/runs` all-runs API, so mirrored workflow runs no longer disappear just because they were not discovered through the saved workflow-definition list.
+- Blocked workflow runs now surface as task issues in the Tasks tab instead of being silently excluded from the failed-run bucket.
 - Code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion, failed verification emitting `verify_failed`, and fully verified code tasks finishing as `done`.
 - Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
 

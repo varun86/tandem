@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - research/editorial artifact validation now propagates repair attempt counts, attempts remaining, and exhaustion state into `artifact_validation`, validator summaries, and workflow lifecycle metadata
   - `automation_v2` terminal run status now derives from blocked/failed node outputs instead of trusting checkpoint `blocked_nodes` alone, so blocked research nodes no longer surface as completed runs
   - the control-panel Run Debugger now derives blocked/failed status from workflow node outputs as a guardrail and shows repair-attempt progress when backend status and node reality disagree
+  - evidence-repair passes now temporarily remove `write` tools and expose only the still-missing inspection/research tools, so a node that wrote too early must gather the missing evidence before it can reach the next write pass
+  - evidence-repair followups that still skip the required reads or web research now stay inside the repair loop instead of immediately bouncing back into another write-required retry, making repeated premature-write failures exhaust cleanly instead of looping vaguely
 - **More authoring surfaces now compile into `AutomationV2Spec`**:
   - `skills_compile` now emits an additive `automation_preview` for installed skill workflows by compiling `workflow.yaml` recipes through the shared `WorkflowPlan -> AutomationV2Spec` path
   - installed `pack_builder_recipe` skills no longer stop at an abstract execution summary; they now expose the same runtime-spec preview shape as the other automation authoring surfaces
@@ -108,6 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - event-derived workflow blocker classification now lives in the shared workflow stability layer instead of `AutomationsPage`
   - control-panel workflow telemetry rows now use shared workflow event display normalization instead of formatting raw event payloads inline
   - control-panel workflow task inspection now consumes a shared normalized artifact/research/verification detail object instead of deriving those fields through long page-local `useMemo` chains
+  - the Automations Tasks tab now reads workflow runs from a canonical `/automations/v2/runs` all-runs API instead of first depending on saved workflow-definition IDs, so mirrored workflow runs still appear even when they are not discovered through the saved-definition list
+  - blocked workflow runs are now surfaced as task issues in the Tasks tab instead of being silently excluded from the failed-run bucket
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs
