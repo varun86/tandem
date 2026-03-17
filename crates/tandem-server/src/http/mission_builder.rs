@@ -8,6 +8,7 @@ use tandem_orchestrator::{MissionSpec, WorkItem, WorkItemStatus};
 use tandem_workflows::{
     validate_mission_blueprint, ApprovalDecision, MissionBlueprint, MissionPhaseExecutionMode,
     OutputContractBlueprint, ReviewStageKind, ValidationMessage, ValidationSeverity,
+    WorkstreamBlueprint,
 };
 use uuid::Uuid;
 
@@ -314,17 +315,7 @@ fn compile_to_automation(
             timeout_ms: workstream.timeout_ms,
             stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
             gate: None,
-            metadata: Some(json!({
-                "builder": {
-                    "title": workstream.title,
-                    "role": workstream.role,
-                    "prompt": workstream.prompt,
-                    "priority": workstream.priority,
-                    "phase_id": workstream.phase_id,
-                    "lane": workstream.lane,
-                    "milestone": workstream.milestone,
-                }
-            })),
+            metadata: mission_workstream_node_metadata(workstream),
         });
     }
 
@@ -611,6 +602,69 @@ fn output_contract(contract: &OutputContractBlueprint) -> crate::AutomationFlowO
         schema: contract.schema.clone(),
         summary_guidance: contract.summary_guidance.clone(),
     }
+}
+
+fn mission_workstream_builder_defaults(
+    workstream: &WorkstreamBlueprint,
+) -> serde_json::Map<String, Value> {
+    let mut builder = serde_json::Map::new();
+    builder.insert("title".to_string(), json!(workstream.title));
+    builder.insert("role".to_string(), json!(workstream.role));
+    builder.insert("prompt".to_string(), json!(workstream.prompt));
+    builder.insert("priority".to_string(), json!(workstream.priority));
+    builder.insert("phase_id".to_string(), json!(workstream.phase_id));
+    builder.insert("lane".to_string(), json!(workstream.lane));
+    builder.insert("milestone".to_string(), json!(workstream.milestone));
+    let expects_web_research = workstream
+        .workstream_id
+        .to_ascii_lowercase()
+        .contains("research")
+        || workstream.role.to_ascii_lowercase().contains("research")
+        || workstream.objective.to_ascii_lowercase().contains("web")
+        || workstream.objective.to_ascii_lowercase().contains("online")
+        || workstream
+            .objective
+            .to_ascii_lowercase()
+            .contains("current")
+        || workstream.objective.to_ascii_lowercase().contains("latest")
+        || workstream.prompt.to_ascii_lowercase().contains("web")
+        || workstream.prompt.to_ascii_lowercase().contains("online")
+        || workstream.prompt.to_ascii_lowercase().contains("current")
+        || workstream.prompt.to_ascii_lowercase().contains("latest");
+    if output_contract(&workstream.output_contract).validator
+        == Some(crate::AutomationOutputValidatorKind::ResearchBrief)
+    {
+        builder.insert(
+            "web_research_expected".to_string(),
+            Value::Bool(expects_web_research),
+        );
+    }
+    builder
+}
+
+fn mission_workstream_node_metadata(workstream: &WorkstreamBlueprint) -> Option<Value> {
+    let mut root = match workstream.metadata.clone() {
+        Some(Value::Object(map)) => map,
+        Some(other) => {
+            let mut map = serde_json::Map::new();
+            map.insert("blueprint_metadata".to_string(), other);
+            map
+        }
+        None => serde_json::Map::new(),
+    };
+    let builder = root
+        .entry("builder".to_string())
+        .or_insert_with(|| json!({}));
+    if !builder.is_object() {
+        *builder = json!({});
+    }
+    let Some(builder_map) = builder.as_object_mut() else {
+        return Some(Value::Object(root));
+    };
+    for (key, value) in mission_workstream_builder_defaults(workstream) {
+        builder_map.entry(key).or_insert(value);
+    }
+    Some(Value::Object(root))
 }
 
 fn merge_model_policy(

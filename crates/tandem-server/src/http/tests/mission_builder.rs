@@ -163,3 +163,91 @@ async fn mission_builder_apply_persists_draft_automation() {
         Some("mission_blueprint")
     );
 }
+
+#[tokio::test]
+async fn mission_builder_apply_preserves_research_web_expectation_metadata() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut blueprint = sample_blueprint();
+    let workstreams = blueprint
+        .get_mut("workstreams")
+        .and_then(Value::as_array_mut)
+        .expect("workstreams");
+    workstreams[0] = json!({
+        "workstream_id": "research",
+        "title": "Research",
+        "objective": "Research the latest competitor signals",
+        "role": "researcher",
+        "prompt": "Research the latest competitor news and produce a citation-backed brief.",
+        "depends_on": [],
+        "input_refs": [],
+        "output_contract": { "kind": "brief" },
+        "metadata": {
+            "builder": {
+                "web_research_expected": true,
+                "note": "require current web coverage"
+            }
+        }
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mission-builder/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "blueprint": blueprint,
+                        "creator_id": "desktop"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let automation_id = payload
+        .get("automation")
+        .and_then(|row| row.get("automation_id"))
+        .and_then(Value::as_str)
+        .expect("automation id");
+    let stored = state
+        .get_automation_v2(automation_id)
+        .await
+        .expect("stored");
+    let research = stored
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "research")
+        .expect("research node");
+    assert_eq!(
+        research
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(|builder| builder.get("web_research_expected"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        research
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(|builder| builder.get("note"))
+            .and_then(Value::as_str),
+        Some("require current web coverage")
+    );
+    assert_eq!(
+        research
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.validator),
+        Some(crate::AutomationOutputValidatorKind::ResearchBrief)
+    );
+}
