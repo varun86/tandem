@@ -122,6 +122,10 @@ pub struct WorkflowRunRecord {
     pub run_id: String,
     pub workflow_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_event: Option<String>,

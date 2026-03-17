@@ -110,7 +110,9 @@
 - Retried `automation_v2` publish nodes now include attempt-aware receipt identity, so external-action history keeps each retry instead of overwriting an earlier publish attempt.
 - `skills_compile` now emits an additive `automation_preview` for installed skill workflows by compiling `workflow.yaml` recipes through the shared `WorkflowPlan -> AutomationV2Spec` path.
 - Installed `pack_builder_recipe` skills now expose the same runtime-spec preview shape as mission builder and workflow planner instead of stopping at an abstract execution summary.
-- Workflow registry list/get surfaces now also expose additive `automation_preview` payloads compiled through the same shared plan compiler, so installed workflows share the same preview model without replacing the existing workflow executor yet.
+- Workflow registry list/get surfaces now also expose additive `automation_preview` payloads compiled through the same shared plan compiler.
+- Pack Builder apply now persists a mirrored `AutomationV2Spec` alongside the existing routine wrapper and returns the registered automation ids in its apply result.
+- Manual workflow runs and workflow-hook dispatches now mirror into linked `automation_v2` specs/runs, and workflow run records now surface `automation_id` / `automation_run_id` so operators can pivot straight into the canonical runtime.
 
 ### Workflow Studio Models
 

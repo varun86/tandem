@@ -506,7 +506,7 @@ async fn pack_builder_apply_endpoint_honors_thread_scoped_pending_plan() {
             Arc::new(crate::pack_builder::PackBuilderTool::new(state.clone())),
         )
         .await;
-    let app = app_router(state);
+    let app = app_router(state.clone());
 
     let preview_a = Request::builder()
         .method("POST")
@@ -517,7 +517,7 @@ async fn pack_builder_apply_endpoint_honors_thread_scoped_pending_plan() {
                 "session_id": "pb-session-threads",
                 "thread_key": "thread:a",
                 "auto_apply": false,
-                "goal": "Create a useful automation pack"
+                "goal": "Create a pack to summarize public headline news daily."
             })
             .to_string(),
         ))
@@ -547,7 +547,7 @@ async fn pack_builder_apply_endpoint_honors_thread_scoped_pending_plan() {
                 "session_id": "pb-session-threads",
                 "thread_key": "thread:b",
                 "auto_apply": false,
-                "goal": "Create a useful automation pack"
+                "goal": "Create a pack to summarize public headline news daily."
             })
             .to_string(),
         ))
@@ -583,10 +583,45 @@ async fn pack_builder_apply_endpoint_honors_thread_scoped_pending_plan() {
         .await
         .expect("apply body");
     let apply_payload: Value = serde_json::from_slice(&apply_body).expect("apply json");
-    assert_eq!(
-        apply_payload.get("plan_id").and_then(|v| v.as_str()),
-        Some(plan_thread_a.as_str())
-    );
+    let automations_registered = apply_payload["automations_registered"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let routines_registered = apply_payload["routines_registered"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(automations_registered.len(), routines_registered.len());
+    if let Some(automation_id) = automations_registered.first().and_then(Value::as_str) {
+        let automation = state
+            .get_automation_v2(automation_id)
+            .await
+            .expect("stored pack builder automation");
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("origin"))
+                .and_then(|v| v.as_str()),
+            Some("pack_builder")
+        );
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("pack_builder_plan_id"))
+                .and_then(|v| v.as_str()),
+            Some(plan_thread_a.as_str())
+        );
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("routine_id"))
+                .and_then(|v| v.as_str()),
+            routines_registered[0].as_str()
+        );
+    }
 }
 
 #[tokio::test]

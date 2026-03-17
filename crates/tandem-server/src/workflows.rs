@@ -10,6 +10,382 @@ use uuid::Uuid;
 use crate::{now_ms, AppState, WorkflowSourceRef};
 
 #[derive(Debug, Clone)]
+struct PreparedWorkflowAction {
+    action_id: String,
+    spec: WorkflowActionSpec,
+}
+
+fn workflow_action_objective(action: &str, with: Option<&Value>) -> String {
+    match with {
+        Some(with) if !with.is_null() => {
+            format!("Execute workflow action `{action}` with payload {with}.")
+        }
+        _ => format!("Execute workflow action `{action}`."),
+    }
+}
+
+fn workflow_manual_schedule() -> crate::AutomationV2Schedule {
+    crate::AutomationV2Schedule {
+        schedule_type: crate::AutomationV2ScheduleType::Manual,
+        cron_expression: None,
+        interval_seconds: None,
+        timezone: "UTC".to_string(),
+        misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+    }
+}
+
+fn workflow_execution_plan(
+    workflow_id: &str,
+    name: &str,
+    description: Option<String>,
+    actions: &[PreparedWorkflowAction],
+    source_label: &str,
+    source: Option<&WorkflowSourceRef>,
+    trigger_event: Option<&str>,
+) -> crate::WorkflowPlan {
+    crate::WorkflowPlan {
+        plan_id: format!("workflow-plan-{workflow_id}"),
+        planner_version: "workflow_runtime_v1".to_string(),
+        plan_source: source_label.to_string(),
+        original_prompt: description.clone().unwrap_or_else(|| name.to_string()),
+        normalized_prompt: description.clone().unwrap_or_else(|| name.to_string()),
+        confidence: "high".to_string(),
+        title: name.to_string(),
+        description,
+        schedule: workflow_manual_schedule(),
+        execution_target: "automation_v2".to_string(),
+        workspace_root: std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .to_string_lossy()
+            .to_string(),
+        steps: actions
+            .iter()
+            .map(|action| crate::WorkflowPlanStep {
+                step_id: action.action_id.clone(),
+                kind: "workflow_action".to_string(),
+                objective: workflow_action_objective(
+                    &action.spec.action,
+                    action.spec.with.as_ref(),
+                ),
+                depends_on: Vec::new(),
+                agent_role: "operator".to_string(),
+                input_refs: Vec::new(),
+                output_contract: Some(crate::AutomationFlowOutputContract {
+                    kind: "generic_artifact".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    schema: None,
+                    summary_guidance: None,
+                }),
+            })
+            .collect(),
+        requires_integrations: Vec::new(),
+        allowed_mcp_servers: Vec::new(),
+        operator_preferences: Some(json!({
+            "source": source_label,
+            "tool_access_mode": "auto",
+        })),
+        save_options: json!({
+            "origin": source_label,
+            "workflow_source": source,
+            "trigger_event": trigger_event,
+        }),
+    }
+}
+
+pub(crate) fn compile_workflow_spec_to_automation_preview(
+    workflow: &WorkflowSpec,
+) -> crate::AutomationV2Spec {
+    let actions = workflow
+        .steps
+        .iter()
+        .map(|step| PreparedWorkflowAction {
+            action_id: step.step_id.clone(),
+            spec: WorkflowActionSpec {
+                action: step.action.clone(),
+                with: step.with.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut automation = crate::http::compile_plan_to_automation_v2(
+        &workflow_execution_plan(
+            &workflow.workflow_id,
+            &workflow.name,
+            workflow.description.clone(),
+            &actions,
+            "workflow_registry",
+            workflow.source.as_ref(),
+            None,
+        ),
+        "workflow_registry",
+    );
+    if let Some(metadata) = automation.metadata.as_mut().and_then(Value::as_object_mut) {
+        metadata.insert("workflow_id".to_string(), json!(workflow.workflow_id));
+        metadata.insert("workflow_name".to_string(), json!(workflow.name));
+        metadata.insert("workflow_source".to_string(), json!(workflow.source));
+        metadata.insert("workflow_enabled".to_string(), json!(workflow.enabled));
+    }
+    automation
+}
+
+fn compile_workflow_run_automation(
+    workflow_id: &str,
+    workflow_name: Option<&str>,
+    workflow_description: Option<&str>,
+    binding_id: Option<&str>,
+    actions: &[PreparedWorkflowAction],
+    source: Option<&WorkflowSourceRef>,
+    trigger_event: Option<&str>,
+) -> crate::AutomationV2Spec {
+    let automation_id = binding_id
+        .map(|binding| format!("workflow-hook-automation-{workflow_id}-{binding}"))
+        .unwrap_or_else(|| format!("workflow-automation-{workflow_id}"));
+    let title = binding_id
+        .map(|binding| {
+            workflow_name
+                .map(|name| format!("{name} hook {binding}"))
+                .unwrap_or_else(|| format!("Workflow Hook {workflow_id}:{binding}"))
+        })
+        .unwrap_or_else(|| {
+            workflow_name
+                .map(|name| format!("{name} execution"))
+                .unwrap_or_else(|| format!("Workflow {workflow_id}"))
+        });
+    let mut automation = crate::http::compile_plan_to_automation_v2(
+        &workflow_execution_plan(
+            &automation_id,
+            &title,
+            Some(
+                workflow_description
+                    .map(|description| description.to_string())
+                    .unwrap_or_else(|| format!("Mirrored workflow execution for `{workflow_id}`.")),
+            ),
+            actions,
+            "workflow_runtime",
+            source,
+            trigger_event,
+        ),
+        "workflow_runtime",
+    );
+    automation.automation_id = automation_id.clone();
+    automation.name = title;
+    automation.metadata = Some(json!({
+        "workflow_id": workflow_id,
+        "binding_id": binding_id,
+        "workflow_source": source,
+        "trigger_event": trigger_event,
+        "origin": "workflow_runtime_mirror",
+    }));
+    automation
+}
+
+async fn sync_workflow_automation_run_start(
+    state: &AppState,
+    automation: &crate::AutomationV2Spec,
+    run_id: &str,
+) -> anyhow::Result<crate::AutomationV2RunRecord> {
+    let updated = state
+        .update_automation_v2_run(run_id, |run| {
+            run.status = crate::AutomationRunStatus::Running;
+            run.started_at_ms.get_or_insert_with(now_ms);
+            crate::app::state::record_automation_lifecycle_event(
+                run,
+                "workflow_run_started",
+                Some("workflow runtime mirror started".to_string()),
+                None,
+            );
+            crate::app::state::refresh_automation_runtime_state(automation, run);
+        })
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation run `{run_id}` not found"))?;
+    crate::http::context_runs::sync_automation_v2_run_blackboard(state, automation, &updated)
+        .await
+        .map_err(|status| anyhow::anyhow!("failed to sync workflow automation run: {status}"))?;
+    Ok(updated)
+}
+
+async fn sync_workflow_automation_action_started(
+    state: &AppState,
+    automation: &crate::AutomationV2Spec,
+    run_id: &str,
+    action_id: &str,
+) -> anyhow::Result<crate::AutomationV2RunRecord> {
+    let updated = state
+        .update_automation_v2_run(run_id, |run| {
+            let next_attempt = run
+                .checkpoint
+                .node_attempts
+                .get(action_id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1);
+            run.checkpoint
+                .node_attempts
+                .insert(action_id.to_string(), next_attempt);
+            run.detail = Some(format!("Running workflow action `{action_id}`"));
+            crate::app::state::record_automation_lifecycle_event_with_metadata(
+                run,
+                "workflow_action_started",
+                Some(format!("workflow action `{action_id}` started")),
+                None,
+                Some(json!({
+                    "action_id": action_id,
+                    "attempt": next_attempt,
+                })),
+            );
+            crate::app::state::refresh_automation_runtime_state(automation, run);
+        })
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation run `{run_id}` not found"))?;
+    crate::http::context_runs::sync_automation_v2_run_blackboard(state, automation, &updated)
+        .await
+        .map_err(|status| anyhow::anyhow!("failed to sync workflow automation run: {status}"))?;
+    Ok(updated)
+}
+
+async fn sync_workflow_automation_action_completed(
+    state: &AppState,
+    automation: &crate::AutomationV2Spec,
+    run_id: &str,
+    action_id: &str,
+    output: &Value,
+) -> anyhow::Result<crate::AutomationV2RunRecord> {
+    let action_count = automation.flow.nodes.len();
+    let updated = state
+        .update_automation_v2_run(run_id, |run| {
+            run.checkpoint.pending_nodes.retain(|id| id != action_id);
+            if !run
+                .checkpoint
+                .completed_nodes
+                .iter()
+                .any(|id| id == action_id)
+            {
+                run.checkpoint.completed_nodes.push(action_id.to_string());
+            }
+            run.checkpoint.node_outputs.insert(
+                action_id.to_string(),
+                json!(crate::AutomationNodeOutput {
+                    contract_kind: "generic_artifact".to_string(),
+                    validator_kind: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    validator_summary: Some(crate::AutomationValidatorSummary {
+                        kind: crate::AutomationOutputValidatorKind::GenericArtifact,
+                        outcome: "accepted".to_string(),
+                        reason: Some("workflow action completed".to_string()),
+                        unmet_requirements: Vec::new(),
+                        accepted_candidate_source: Some("workflow_runtime".to_string()),
+                        verification_outcome: Some("not_applicable".to_string()),
+                        repair_attempted: false,
+                        repair_succeeded: false,
+                    }),
+                    summary: format!("Workflow action `{action_id}` completed"),
+                    content: json!({
+                        "action_id": action_id,
+                        "output": output,
+                    }),
+                    created_at_ms: now_ms(),
+                    node_id: action_id.to_string(),
+                    status: Some("completed".to_string()),
+                    blocked_reason: None,
+                    approved: None,
+                    workflow_class: Some("workflow_action".to_string()),
+                    phase: Some("execution".to_string()),
+                    failure_kind: None,
+                    tool_telemetry: None,
+                    artifact_validation: None,
+                }),
+            );
+            if run.checkpoint.completed_nodes.len() >= action_count {
+                run.status = crate::AutomationRunStatus::Completed;
+                run.detail = Some("workflow runtime mirror completed".to_string());
+            }
+            crate::app::state::record_automation_lifecycle_event_with_metadata(
+                run,
+                "workflow_action_completed",
+                Some(format!("workflow action `{action_id}` completed")),
+                None,
+                Some(json!({
+                    "action_id": action_id,
+                })),
+            );
+            crate::app::state::refresh_automation_runtime_state(automation, run);
+        })
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation run `{run_id}` not found"))?;
+    crate::http::context_runs::sync_automation_v2_run_blackboard(state, automation, &updated)
+        .await
+        .map_err(|status| anyhow::anyhow!("failed to sync workflow automation run: {status}"))?;
+    Ok(updated)
+}
+
+async fn sync_workflow_automation_action_failed(
+    state: &AppState,
+    automation: &crate::AutomationV2Spec,
+    run_id: &str,
+    action_id: &str,
+    error: &str,
+) -> anyhow::Result<crate::AutomationV2RunRecord> {
+    let updated = state
+        .update_automation_v2_run(run_id, |run| {
+            run.status = crate::AutomationRunStatus::Failed;
+            run.detail = Some(format!("Workflow action `{action_id}` failed"));
+            run.checkpoint.pending_nodes.retain(|id| id != action_id);
+            run.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
+                node_id: action_id.to_string(),
+                reason: error.to_string(),
+                failed_at_ms: now_ms(),
+            });
+            run.checkpoint.node_outputs.insert(
+                action_id.to_string(),
+                json!(crate::AutomationNodeOutput {
+                    contract_kind: "generic_artifact".to_string(),
+                    validator_kind: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    validator_summary: Some(crate::AutomationValidatorSummary {
+                        kind: crate::AutomationOutputValidatorKind::GenericArtifact,
+                        outcome: "rejected".to_string(),
+                        reason: Some(error.to_string()),
+                        unmet_requirements: vec![error.to_string()],
+                        accepted_candidate_source: None,
+                        verification_outcome: Some("failed".to_string()),
+                        repair_attempted: false,
+                        repair_succeeded: false,
+                    }),
+                    summary: format!("Workflow action `{action_id}` failed"),
+                    content: json!({
+                        "action_id": action_id,
+                        "error": error,
+                    }),
+                    created_at_ms: now_ms(),
+                    node_id: action_id.to_string(),
+                    status: Some("failed".to_string()),
+                    blocked_reason: Some(error.to_string()),
+                    approved: None,
+                    workflow_class: Some("workflow_action".to_string()),
+                    phase: Some("execution".to_string()),
+                    failure_kind: Some("workflow_action_failed".to_string()),
+                    tool_telemetry: None,
+                    artifact_validation: None,
+                }),
+            );
+            crate::app::state::record_automation_lifecycle_event_with_metadata(
+                run,
+                "workflow_action_failed",
+                Some(format!("workflow action `{action_id}` failed")),
+                None,
+                Some(json!({
+                    "action_id": action_id,
+                    "error": error,
+                })),
+            );
+            crate::app::state::refresh_automation_runtime_state(automation, run);
+        })
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation run `{run_id}` not found"))?;
+    crate::http::context_runs::sync_automation_v2_run_blackboard(state, automation, &updated)
+        .await
+        .map_err(|status| anyhow::anyhow!("failed to sync workflow automation run: {status}"))?;
+    Ok(updated)
+}
+
+#[derive(Debug, Clone)]
 pub enum ParsedWorkflowAction {
     EventEmit { event_type: String },
     ResourcePut { key: String },
@@ -166,9 +542,12 @@ pub async fn execute_workflow(
     let actions = workflow
         .steps
         .iter()
-        .map(|step| WorkflowActionSpec {
-            action: step.action.clone(),
-            with: step.with.clone(),
+        .map(|step| PreparedWorkflowAction {
+            action_id: step.step_id.clone(),
+            spec: WorkflowActionSpec {
+                action: step.action.clone(),
+                with: step.with.clone(),
+            },
         })
         .collect::<Vec<_>>();
     execute_actions(
@@ -176,6 +555,8 @@ pub async fn execute_workflow(
         &workflow.workflow_id,
         None,
         actions,
+        Some(workflow.name.clone()),
+        workflow.description.clone(),
         workflow.source.clone(),
         trigger_event,
         source_event_id,
@@ -201,7 +582,16 @@ pub async fn execute_hook_binding(
         state,
         &hook.workflow_id,
         Some(hook.binding_id.clone()),
-        hook.actions.clone(),
+        hook.actions
+            .iter()
+            .enumerate()
+            .map(|(idx, action)| PreparedWorkflowAction {
+                action_id: format!("action_{}", idx + 1),
+                spec: action.clone(),
+            })
+            .collect(),
+        None,
+        None,
         workflow.source,
         trigger_event,
         source_event_id,
@@ -215,7 +605,9 @@ async fn execute_actions(
     state: &AppState,
     workflow_id: &str,
     binding_id: Option<String>,
-    actions: Vec<WorkflowActionSpec>,
+    actions: Vec<PreparedWorkflowAction>,
+    workflow_name: Option<String>,
+    workflow_description: Option<String>,
     source: Option<WorkflowSourceRef>,
     trigger_event: Option<String>,
     source_event_id: Option<String>,
@@ -224,9 +616,26 @@ async fn execute_actions(
 ) -> anyhow::Result<WorkflowRunRecord> {
     let run_id = format!("workflow-run-{}", Uuid::new_v4());
     let now = now_ms();
+    let automation = compile_workflow_run_automation(
+        workflow_id,
+        workflow_name.as_deref(),
+        workflow_description.as_deref(),
+        binding_id.as_deref(),
+        &actions,
+        source.as_ref(),
+        trigger_event.as_deref(),
+    );
+    let automation = state.put_automation_v2(automation).await?;
+    let automation_run = state
+        .create_automation_v2_run(&automation, trigger_event.as_deref().unwrap_or("workflow"))
+        .await?;
+    let automation_run =
+        sync_workflow_automation_run_start(state, &automation, &automation_run.run_id).await?;
     let mut run = WorkflowRunRecord {
         run_id: run_id.clone(),
         workflow_id: workflow_id.to_string(),
+        automation_id: Some(automation.automation_id.clone()),
+        automation_run_id: Some(automation_run.run_id.clone()),
         binding_id,
         trigger_event: trigger_event.clone(),
         source_event_id: source_event_id.clone(),
@@ -241,10 +650,9 @@ async fn execute_actions(
         finished_at_ms: if dry_run { Some(now) } else { None },
         actions: actions
             .iter()
-            .enumerate()
-            .map(|(idx, action)| WorkflowActionRunRecord {
-                action_id: format!("action_{}", idx + 1),
-                action: action.action.clone(),
+            .map(|action| WorkflowActionRunRecord {
+                action_id: action.action_id.clone(),
+                action: action.spec.action.clone(),
                 task_id: task_id.clone(),
                 status: if dry_run {
                     WorkflowActionRunStatus::Skipped
@@ -279,6 +687,13 @@ async fn execute_actions(
         action_row.status = WorkflowActionRunStatus::Running;
         action_row.updated_at_ms = now_ms();
         let action_name = action_row.action.clone();
+        let _ = sync_workflow_automation_action_started(
+            state,
+            &automation,
+            automation_run.run_id.as_str(),
+            &action_row.action_id,
+        )
+        .await;
         state
             .update_workflow_run(&run.run_id, |row| {
                 if let Some(target) = row
@@ -307,7 +722,7 @@ async fn execute_actions(
             state,
             &run.run_id,
             workflow_id,
-            action_spec,
+            &action_spec.spec,
             action_row,
             trigger_event.clone(),
         )
@@ -328,6 +743,14 @@ async fn execute_actions(
                         }
                     })
                     .await;
+                let _ = sync_workflow_automation_action_completed(
+                    state,
+                    &automation,
+                    automation_run.run_id.as_str(),
+                    &action_row.action_id,
+                    &output,
+                )
+                .await;
                 if let Some(latest) = state.get_workflow_run(&run.run_id).await {
                     let _ = crate::http::sync_workflow_run_blackboard(state, &latest).await;
                 }
@@ -363,6 +786,14 @@ async fn execute_actions(
                         }
                     })
                     .await;
+                let _ = sync_workflow_automation_action_failed(
+                    state,
+                    &automation,
+                    automation_run.run_id.as_str(),
+                    &action_row.action_id,
+                    &detail,
+                )
+                .await;
                 if let Some(latest) = state.get_workflow_run(&run.run_id).await {
                     let _ = crate::http::sync_workflow_run_blackboard(state, &latest).await;
                 }

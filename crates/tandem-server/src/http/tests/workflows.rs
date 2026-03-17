@@ -231,6 +231,36 @@ async fn workflows_list_validate_and_manual_run() {
         .expect("run body");
     let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
     assert_eq!(run_payload["run"]["status"].as_str(), Some("completed"));
+    let automation_id = run_payload["run"]["automation_id"]
+        .as_str()
+        .expect("workflow automation id")
+        .to_string();
+    let automation_run_id = run_payload["run"]["automation_run_id"]
+        .as_str()
+        .expect("workflow automation run id")
+        .to_string();
+    let automation = state
+        .get_automation_v2(&automation_id)
+        .await
+        .expect("stored workflow automation");
+    assert_eq!(
+        automation
+            .metadata
+            .as_ref()
+            .and_then(|v| v.get("workflow_id"))
+            .and_then(|v| v.as_str()),
+        Some("build_feature")
+    );
+    let automation_run = state
+        .get_automation_v2_run(&automation_run_id)
+        .await
+        .expect("stored workflow automation run");
+    assert_eq!(automation_run.status, crate::AutomationRunStatus::Completed);
+    assert!(automation_run
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "step_1"));
     let workflow_context_run_id =
         crate::http::workflow_context_run_id(run_payload["run"]["run_id"].as_str().unwrap_or(""));
     let blackboard_resp = app
@@ -336,6 +366,8 @@ async fn workflow_dispatch_executes_hooks_and_dedupes() {
     assert!(runs
         .iter()
         .all(|run| run.status == crate::WorkflowRunStatus::Completed));
+    assert!(runs.iter().all(|run| run.automation_id.is_some()));
+    assert!(runs.iter().all(|run| run.automation_run_id.is_some()));
     assert!(runs
         .iter()
         .all(|run| run.task_id.as_deref() == Some("task-1")));

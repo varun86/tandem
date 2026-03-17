@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **More authoring surfaces now compile into `AutomationV2Spec`**:
   - `skills_compile` now emits an additive `automation_preview` for installed skill workflows by compiling `workflow.yaml` recipes through the shared `WorkflowPlan -> AutomationV2Spec` path
   - installed `pack_builder_recipe` skills no longer stop at an abstract execution summary; they now expose the same runtime-spec preview shape as the other automation authoring surfaces
-  - workflow registry list/get surfaces now also expose additive `automation_preview` payloads compiled through the same shared plan compiler, so installed workflows share the same preview model without replacing the existing workflow executor yet
+  - workflow registry list/get surfaces now also expose additive `automation_preview` payloads compiled through the same shared plan compiler
+  - pack-builder apply now persists a mirrored `AutomationV2Spec` alongside the existing routine wrapper and reports the registered automation ids in its apply result
+  - live workflow execution now mirrors manual runs and hook dispatches into linked `automation_v2` specs/runs, and workflow run records now surface `automation_id` / `automation_run_id` so operators can pivot into the canonical runtime directly
 - **Outbound action producers now reuse one receipt path**:
   - Bug Monitor GitHub publish/recheck now falls back to directly discovered MCP tools when capability bindings lag, so read/write GitHub actions do not fail just because bindings are stale
   - repeated Bug Monitor publish calls now reuse the existing posted receipt instead of drifting into a second GitHub side effect

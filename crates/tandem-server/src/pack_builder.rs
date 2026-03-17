@@ -275,6 +275,133 @@ struct RoutineTemplate {
     allowed_tools: Vec<String>,
 }
 
+fn automation_v2_schedule_from_routine(
+    schedule: &RoutineSchedule,
+    timezone: &str,
+) -> crate::AutomationV2Schedule {
+    match schedule {
+        RoutineSchedule::IntervalSeconds { seconds } => crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Interval,
+            cron_expression: None,
+            interval_seconds: Some(*seconds),
+            timezone: timezone.to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        RoutineSchedule::Cron { expression } => crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Cron,
+            cron_expression: Some(expression.clone()),
+            interval_seconds: None,
+            timezone: timezone.to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+    }
+}
+
+fn build_pack_builder_automation(
+    plan: &PreparedPlan,
+    routine_id: &str,
+    execution_mode: &str,
+    max_agents: u32,
+    registered_servers: &[String],
+    enabled: bool,
+) -> crate::AutomationV2Spec {
+    let now = now_ms();
+    let automation_id = format!("automation.{}", routine_id);
+    crate::AutomationV2Spec {
+        automation_id: automation_id.clone(),
+        name: format!("{} automation", plan.pack_name),
+        description: Some(format!(
+            "Pack Builder automation for `{}` generated from plan `{}`.",
+            plan.pack_name, plan.plan_id
+        )),
+        status: if enabled {
+            crate::AutomationV2Status::Active
+        } else {
+            crate::AutomationV2Status::Paused
+        },
+        schedule: automation_v2_schedule_from_routine(
+            &plan.routine_template.schedule,
+            &plan.routine_template.timezone,
+        ),
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "pack_builder_agent".to_string(),
+            template_id: None,
+            display_name: plan.pack_name.clone(),
+            avatar_url: None,
+            model_policy: None,
+            skills: vec![plan.pack_id.clone()],
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: plan.routine_template.allowed_tools.clone(),
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: registered_servers.to_vec(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![crate::AutomationFlowNode {
+                node_id: "pack_builder_execute".to_string(),
+                agent_id: "pack_builder_agent".to_string(),
+                objective: format!(
+                    "Execute the installed pack `{}` for this goal: {}",
+                    plan.pack_name, plan.goal
+                ),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(crate::AutomationFlowOutputContract {
+                    kind: "report_markdown".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: Some(json!({ "max_attempts": 3 })),
+                timeout_ms: None,
+                stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "origin": "pack_builder",
+                        "task_kind": "pack_recipe",
+                        "execution_mode": execution_mode,
+                    },
+                    "pack_builder": {
+                        "pack_id": plan.pack_id,
+                        "pack_name": plan.pack_name,
+                        "plan_id": plan.plan_id,
+                        "routine_id": routine_id,
+                    }
+                })),
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(max_agents.clamp(1, 16)),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![format!("run/{routine_id}/report.md")],
+        created_at_ms: now,
+        updated_at_ms: now,
+        creator_id: "pack_builder".to_string(),
+        workspace_root: None,
+        metadata: Some(json!({
+            "origin": "pack_builder",
+            "pack_builder_plan_id": plan.plan_id,
+            "pack_id": plan.pack_id,
+            "pack_name": plan.pack_name,
+            "goal": plan.goal,
+            "execution_mode": execution_mode,
+            "routine_id": routine_id,
+            "registered_servers": registered_servers,
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CapabilityNeed {
     id: String,
@@ -1018,6 +1145,7 @@ impl PackBuilderTool {
             .await?;
 
         let mut routines_registered = Vec::<String>::new();
+        let mut automations_registered = Vec::<String>::new();
         for routine_id in &plan.routine_ids {
             let exec_mode = input
                 .execution_mode
@@ -1064,6 +1192,16 @@ impl PackBuilderTool {
             if input.approve_enable_routines == Some(false) {
                 routine.status = RoutineStatus::Paused;
             }
+            let automation = build_pack_builder_automation(
+                &plan,
+                routine_id,
+                exec_mode,
+                max_agents,
+                &registered_servers,
+                input.approve_enable_routines != Some(false),
+            );
+            let stored_automation = self.state.put_automation_v2(automation).await?;
+            automations_registered.push(stored_automation.automation_id.clone());
             let stored = self
                 .state
                 .put_routine(routine)
@@ -1092,6 +1230,7 @@ impl PackBuilderTool {
             },
             "connectors": connector_results,
             "registered_servers": registered_servers,
+            "automations_registered": automations_registered,
             "routines_registered": routines_registered,
             "routines_enabled": input.approve_enable_routines != Some(false),
             "fallback_warnings": plan.fallback_warnings,
@@ -2383,5 +2522,93 @@ mod tests {
             score: 9,
         };
         assert!(should_auto_select_connector(&need, &candidate));
+    }
+
+    #[test]
+    fn build_pack_builder_automation_mirrors_routine_template() {
+        let plan = PreparedPlan {
+            plan_id: "plan-pack-builder-test".to_string(),
+            goal: "Create a daily digest pack".to_string(),
+            pack_id: "daily_digest_pack".to_string(),
+            pack_name: "Daily Digest Pack".to_string(),
+            version: "0.1.0".to_string(),
+            capabilities_required: vec!["web.search".to_string()],
+            capabilities_optional: Vec::new(),
+            recommended_connectors: Vec::new(),
+            selected_connector_slugs: Vec::new(),
+            selected_mcp_tools: Vec::new(),
+            fallback_warnings: Vec::new(),
+            required_secrets: Vec::new(),
+            generated_zip_path: PathBuf::from("/tmp/daily-digest-pack.zip"),
+            routine_ids: vec!["routine.daily_digest_pack".to_string()],
+            routine_template: RoutineTemplate {
+                routine_id: "routine.daily_digest_pack".to_string(),
+                name: "Daily Digest Pack".to_string(),
+                timezone: "UTC".to_string(),
+                schedule: RoutineSchedule::Cron {
+                    expression: "0 8 * * *".to_string(),
+                },
+                entrypoint: "packs/daily_digest_pack/run".to_string(),
+                allowed_tools: vec!["web_search".to_string(), "write_file".to_string()],
+            },
+            created_at_ms: 0,
+        };
+
+        let automation = build_pack_builder_automation(
+            &plan,
+            "routine.daily_digest_pack",
+            "team",
+            6,
+            &["slack".to_string(), "github".to_string()],
+            true,
+        );
+
+        assert_eq!(
+            automation.automation_id,
+            "automation.routine.daily_digest_pack"
+        );
+        assert_eq!(automation.status, crate::AutomationV2Status::Active);
+        assert_eq!(
+            automation.schedule.schedule_type,
+            crate::AutomationV2ScheduleType::Cron
+        );
+        assert_eq!(
+            automation.schedule.cron_expression.as_deref(),
+            Some("0 8 * * *")
+        );
+        assert_eq!(automation.agents.len(), 1);
+        assert_eq!(automation.flow.nodes.len(), 1);
+        assert_eq!(automation.flow.nodes[0].node_id, "pack_builder_execute");
+        assert_eq!(
+            automation.flow.nodes[0]
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.validator.clone()),
+            Some(Some(crate::AutomationOutputValidatorKind::GenericArtifact))
+        );
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("origin"))
+                .and_then(|v| v.as_str()),
+            Some("pack_builder")
+        );
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("pack_builder_plan_id"))
+                .and_then(|v| v.as_str()),
+            Some("plan-pack-builder-test")
+        );
+        assert_eq!(
+            automation
+                .metadata
+                .as_ref()
+                .and_then(|v| v.get("routine_id"))
+                .and_then(|v| v.as_str()),
+            Some("routine.daily_digest_pack")
+        );
     }
 }

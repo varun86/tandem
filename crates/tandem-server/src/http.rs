@@ -117,6 +117,7 @@ pub(crate) use context_runs::session_context_run_id;
 pub(crate) use context_runs::sync_workflow_run_blackboard;
 #[cfg(test)]
 pub(crate) use context_runs::workflow_context_run_id;
+pub(crate) use workflow_planner::{compile_plan_to_automation_v2, schedule_from_value};
 
 #[derive(Debug, Deserialize)]
 struct ListSessionsQuery {
