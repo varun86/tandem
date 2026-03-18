@@ -7133,10 +7133,15 @@ fn validate_automation_artifact_output(
     let mut paragraph_count = 0usize;
     let mut artifact_candidates = Vec::<Value>::new();
     let mut accepted_candidate_source = None::<String>;
+    let mut blocked_handoff_cleanup_action = None::<String>;
     let execution_mode = execution_policy
         .get("mode")
         .and_then(Value::as_str)
         .unwrap_or("artifact_write");
+    let enforcement_requires_evidence = !enforcement.required_tools.is_empty()
+        || !enforcement.required_evidence.is_empty()
+        || !enforcement.required_sections.is_empty()
+        || !enforcement.prewrite_gates.is_empty();
     let parsed_status = parse_status_json(session_text);
     let repair_exhausted_hint = parsed_status
         .as_ref()
@@ -7239,15 +7244,29 @@ fn validate_automation_artifact_output(
                 &discovered_relevant_paths,
             ));
         }
-        if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty()) {
-            candidate_assessments.push(assess_artifact_candidate(
-                node,
-                workspace_root,
-                "preexisting_output",
-                previous,
-                &read_paths,
-                &discovered_relevant_paths,
-            ));
+        let executed_tools_for_attempt = tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let current_attempt_has_recorded_activity =
+            !executed_tools_for_attempt.is_empty() || !session_write_candidates.is_empty();
+        let allow_preexisting_candidate =
+            !enforcement_requires_evidence || current_attempt_has_recorded_activity;
+        if allow_preexisting_candidate {
+            if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty()) {
+                candidate_assessments.push(assess_artifact_candidate(
+                    node,
+                    workspace_root,
+                    "preexisting_output",
+                    previous,
+                    &read_paths,
+                    &discovered_relevant_paths,
+                ));
+            }
+        }
+        if !allow_preexisting_candidate {
+            accepted_candidate_source = Some("current_attempt_missing_activity".to_string());
         }
         let best_candidate = best_artifact_candidate(&candidate_assessments);
         artifact_candidates = candidate_assessments
@@ -7447,6 +7466,42 @@ fn validate_automation_artifact_output(
                 });
             }
         }
+        let writes_blocked_handoff_artifact = accepted_output
+            .as_ref()
+            .map(|(_, accepted_text)| accepted_text.to_ascii_lowercase())
+            .is_some_and(|lowered| {
+                (lowered.contains("status: blocked")
+                    || lowered.contains("blocked pending")
+                    || lowered.contains("node produced a blocked handoff artifact"))
+                    && (lowered.contains("cannot be finalized")
+                        || lowered.contains("required source reads")
+                        || lowered.contains("web research")
+                        || lowered.contains("toolset available"))
+            });
+        if has_research_contract
+            && semantic_block_reason.is_some()
+            && writes_blocked_handoff_artifact
+        {
+            if let Some((path, _)) = accepted_output.as_ref() {
+                if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty())
+                {
+                    if let Ok(resolved) = resolve_automation_output_path(workspace_root, path) {
+                        let _ = std::fs::write(&resolved, previous);
+                    }
+                    accepted_output = None;
+                    accepted_candidate_source = None;
+                    blocked_handoff_cleanup_action =
+                        Some("restored_preexisting_output".to_string());
+                } else {
+                    if let Ok(resolved) = resolve_automation_output_path(workspace_root, path) {
+                        let _ = std::fs::remove_file(&resolved);
+                    }
+                    accepted_output = None;
+                    accepted_candidate_source = None;
+                    blocked_handoff_cleanup_action = Some("removed_blocked_output".to_string());
+                }
+            }
+        }
         if rejected_reason.is_none()
             && matches!(execution_mode, "git_patch" | "filesystem_patch")
             && preexisting_output.is_some()
@@ -7490,6 +7545,12 @@ fn validate_automation_artifact_output(
         }
         if repair_attempted && semantic_block_reason.is_none() {
             repair_succeeded = true;
+        }
+        if semantic_block_reason.is_some()
+            && enforcement_requires_evidence
+            && !current_attempt_has_recorded_activity
+        {
+            accepted_output = None;
         }
         if semantic_block_reason.is_some() {
             let output_is_substantive =
@@ -7571,6 +7632,9 @@ fn validate_automation_artifact_output(
                 .unwrap_or_default(),
             enforcement_requires_external_sources(&enforcement),
             &unmet_requirements,
+            tool_telemetry
+                .get("latest_web_research_failure")
+                .and_then(Value::as_str),
             repair_exhausted,
         )
         .map(str::to_string)
@@ -7592,6 +7656,9 @@ fn validate_automation_artifact_output(
             enforcement_requires_external_sources(&enforcement),
             &unmet_requirements,
             &unreviewed_relevant_paths,
+            tool_telemetry
+                .get("latest_web_research_failure")
+                .and_then(Value::as_str),
         )
     } else {
         Vec::new()
@@ -7620,6 +7687,7 @@ fn validate_automation_artifact_output(
         "paragraph_count": paragraph_count,
         "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
         "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
+        "blocked_handoff_cleanup_action": blocked_handoff_cleanup_action,
         "repair_attempted": repair_attempted,
         "repair_attempt": repair_attempt,
         "repair_attempts_remaining": repair_attempts_remaining,
@@ -7827,6 +7895,107 @@ fn summarize_automation_tool_activity(
             }
         }
     }
+    if executed_tools.is_empty() {
+        for message in &session.messages {
+            for part in &message.parts {
+                let MessagePart::Text { text } = part else {
+                    continue;
+                };
+                if !text.contains("Tool result summary:") {
+                    continue;
+                }
+                let mut current_tool = None::<String>;
+                let mut current_block = String::new();
+                let flush_summary_block =
+                    |tool_name: &Option<String>,
+                     block: &str,
+                     executed_tools: &mut Vec<String>,
+                     counts: &mut serde_json::Map<String, Value>,
+                     workspace_inspection_used: &mut bool,
+                     web_research_used: &mut bool,
+                     web_research_succeeded: &mut bool,
+                     latest_web_research_failure: &mut Option<String>| {
+                        let Some(tool_name) = tool_name.as_ref() else {
+                            return;
+                        };
+                        let normalized = tool_name.trim().to_ascii_lowercase().replace('-', "_");
+                        if !executed_tools.iter().any(|entry| entry == &normalized) {
+                            executed_tools.push(normalized.clone());
+                        }
+                        let next_count = counts
+                            .get(&normalized)
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        counts.insert(normalized.clone(), json!(next_count));
+                        if matches!(
+                            normalized.as_str(),
+                            "glob" | "read" | "grep" | "search" | "codesearch" | "ls" | "list"
+                        ) {
+                            *workspace_inspection_used = true;
+                        }
+                        if matches!(
+                            normalized.as_str(),
+                            "websearch" | "webfetch" | "webfetch_html"
+                        ) {
+                            *web_research_used = true;
+                            let lowered = block.to_ascii_lowercase();
+                            if lowered.contains("authorization required")
+                                || lowered.contains("authorize here:")
+                            {
+                                *latest_web_research_failure =
+                                    Some("web research authorization required".to_string());
+                            } else if lowered.contains("timed out")
+                                || lowered.contains("no results received")
+                            {
+                                *latest_web_research_failure =
+                                    Some("web research timed out".to_string());
+                            } else if !block.trim().is_empty() {
+                                *web_research_succeeded = true;
+                                *latest_web_research_failure = None;
+                            }
+                        }
+                    };
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("Tool `") && trimmed.ends_with("` result:") {
+                        flush_summary_block(
+                            &current_tool,
+                            &current_block,
+                            &mut executed_tools,
+                            &mut counts,
+                            &mut workspace_inspection_used,
+                            &mut web_research_used,
+                            &mut web_research_succeeded,
+                            &mut latest_web_research_failure,
+                        );
+                        current_block.clear();
+                        current_tool = trimmed
+                            .strip_prefix("Tool `")
+                            .and_then(|value| value.strip_suffix("` result:"))
+                            .map(str::to_string);
+                        continue;
+                    }
+                    if current_tool.is_some() {
+                        if !current_block.is_empty() {
+                            current_block.push('\n');
+                        }
+                        current_block.push_str(trimmed);
+                    }
+                }
+                flush_summary_block(
+                    &current_tool,
+                    &current_block,
+                    &mut executed_tools,
+                    &mut counts,
+                    &mut workspace_inspection_used,
+                    &mut web_research_used,
+                    &mut web_research_succeeded,
+                    &mut latest_web_research_failure,
+                );
+            }
+        }
+    }
     let verification = session_verification_summary(node, session);
     json!({
         "requested_tools": requested_tools,
@@ -7857,6 +8026,7 @@ fn classify_research_validation_state(
     executed_tools: &[Value],
     web_research_expected: bool,
     unmet_requirements: &[String],
+    latest_web_research_failure: Option<&str>,
     repair_exhausted: bool,
 ) -> Option<&'static str> {
     if unmet_requirements.is_empty() {
@@ -7876,6 +8046,14 @@ fn classify_research_validation_state(
         .any(|value| value.as_str() == Some("websearch"));
     if repair_exhausted {
         return Some("coverage_incomplete_after_retry");
+    }
+    if web_research_expected
+        && latest_web_research_failure.is_some_and(|value| {
+            let lowered = value.to_ascii_lowercase();
+            lowered.contains("authorization required") || lowered.contains("authorize")
+        })
+    {
+        return Some("tool_unavailable");
     }
     if (!requested_has_read
         && unmet_requirements.iter().any(|value| {
@@ -7906,6 +8084,7 @@ fn research_required_next_tool_actions(
     web_research_expected: bool,
     unmet_requirements: &[String],
     unreviewed_relevant_paths: &[String],
+    latest_web_research_failure: Option<&str>,
 ) -> Vec<String> {
     let requested_has_read = requested_tools
         .iter()
@@ -7944,10 +8123,20 @@ fn research_required_next_tool_actions(
             || has_unmet("missing_successful_web_research")
             || has_unmet("web_sources_reviewed_missing"))
     {
-        actions.push(
-            "Use `websearch` successfully and include the resulting sources in `Web sources reviewed`."
-                .to_string(),
-        );
+        if latest_web_research_failure.is_some_and(|value| {
+            let lowered = value.to_ascii_lowercase();
+            lowered.contains("authorization required") || lowered.contains("authorize")
+        }) {
+            actions.push(
+                "Authorize `websearch` first, then rerun current web research and include the resulting sources in `Web sources reviewed`."
+                    .to_string(),
+            );
+        } else {
+            actions.push(
+                "Use `websearch` successfully and include the resulting sources in `Web sources reviewed`."
+                    .to_string(),
+            );
+        }
     }
     if has_unmet("citations_missing") {
         actions.push(
@@ -11847,6 +12036,7 @@ mod tests {
             true,
             &unmet_requirements,
             &unreviewed_relevant_paths,
+            None,
         );
 
         assert!(actions
@@ -11858,6 +12048,100 @@ mod tests {
         assert!(actions
             .iter()
             .any(|value| value.contains("Files not reviewed")));
+    }
+
+    #[test]
+    fn research_required_next_tool_actions_surface_websearch_authorization() {
+        let requested_tools = vec![
+            json!("glob"),
+            json!("read"),
+            json!("websearch"),
+            json!("write"),
+        ];
+        let executed_tools = vec![json!("glob"), json!("websearch")];
+        let unmet_requirements = vec![
+            "no_concrete_reads".to_string(),
+            "missing_successful_web_research".to_string(),
+            "web_sources_reviewed_missing".to_string(),
+        ];
+
+        let actions = research_required_next_tool_actions(
+            &requested_tools,
+            &executed_tools,
+            true,
+            &unmet_requirements,
+            &Vec::new(),
+            Some("web research authorization required"),
+        );
+
+        assert!(actions
+            .iter()
+            .any(|value| value.contains("Authorize `websearch` first")));
+    }
+
+    #[test]
+    fn summarize_automation_tool_activity_recovers_tools_from_synthetic_summary() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: None,
+        };
+        let mut session = Session::new(Some("synthetic summary".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::Text {
+                text: "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\nTool `glob` result:\n/home/evan/marketing-tandem/marketing-brief.md\nTool `websearch` result:\nAuthorization required for `websearch`.\nThis integration requires authorization before this action can run.\n\nAuthorize here: https://dashboard.exa.ai/api-keys".to_string(),
+            }],
+        ));
+
+        let telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            telemetry
+                .get("executed_tools")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["glob", "websearch"])
+        );
+        assert_eq!(
+            telemetry
+                .get("workspace_inspection_used")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            telemetry.get("web_research_used").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            telemetry
+                .get("latest_web_research_failure")
+                .and_then(Value::as_str),
+            Some("web research authorization required")
+        );
     }
 
     #[test]
@@ -13608,6 +13892,267 @@ mod tests {
         let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
             .expect("read placeholder");
         assert_eq!(disk_text, placeholder);
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn research_validation_does_not_accept_preexisting_output_without_current_attempt_activity() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-preexisting-research-block-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let stale_preexisting = format!(
+            "# Marketing Brief\n\n## Workspace source audit\n{}\n\n## Campaign Goal\nCarry over stale content.\n\n## Files Reviewed\nNone\n\n## Files Not Reviewed\nAll\n\n## Web Sources Reviewed\nNone\n",
+            "Stale brief content from an earlier failed run. ".repeat(30)
+        );
+        let current_disk_output = "# Marketing Brief\n\nAttempt wrote nothing new.\n".to_string();
+        std::fs::write(
+            workspace_root.join("marketing-brief.md"),
+            &current_disk_output,
+        )
+        .expect("seed output");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let session = Session::new(
+            Some("empty attempt".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "I completed project analysis steps using tools, but the model returned no final narrative text.",
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": [],
+                "workspace_inspection_used": false,
+                "web_research_used": false,
+                "web_research_succeeded": false
+            }),
+            Some(&stale_preexisting),
+            Some(("marketing-brief.md".to_string(), current_disk_output.clone())),
+            &snapshot,
+        );
+
+        assert!(accepted_output.is_none());
+        assert_eq!(
+            metadata
+                .get("accepted_candidate_source")
+                .and_then(Value::as_str),
+            Some("verified_output")
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without concrete file reads or required source coverage")
+        );
+        assert_eq!(
+            metadata
+                .get("semantic_block_reason")
+                .and_then(Value::as_str),
+            Some("research completed without concrete file reads or required source coverage")
+        );
+
+        let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
+            .expect("read unchanged output");
+        assert_eq!(disk_text, current_disk_output);
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn research_validation_removes_blocked_handoff_artifact_without_preexisting_output() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-blocked-handoff-remove-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let blocked_text = "# Marketing Brief\n\nStatus: blocked pending required source reads and web research in this run.\n\nThis file cannot be finalized from the current toolset available in this session because the required discovery and external research tools referenced by the task (`read`, `glob`, `websearch`) are not available to me here.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &blocked_text)
+            .expect("seed blocked handoff");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let session = Session::new(
+            Some("blocked handoff".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            &blocked_text,
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": ["glob", "websearch", "write"],
+                "workspace_inspection_used": true,
+                "web_research_used": true,
+                "web_research_succeeded": false,
+                "latest_web_research_failure": "web research authorization required"
+            }),
+            None,
+            Some(("marketing-brief.md".to_string(), blocked_text.clone())),
+            &snapshot,
+        );
+
+        assert!(accepted_output.is_none());
+        assert_eq!(
+            metadata
+                .get("blocked_handoff_cleanup_action")
+                .and_then(Value::as_str),
+            Some("removed_blocked_output")
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without concrete file reads or required source coverage")
+        );
+        assert!(!workspace_root.join("marketing-brief.md").exists());
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn research_validation_restores_preexisting_output_without_accepting_blocked_handoff() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-blocked-handoff-restore-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let previous = "# Marketing Brief\n\n## Workspace source audit\nPrepared from earlier sourced work.\n\n## Files reviewed\n- docs/source.md\n\n## Web sources reviewed\n- https://example.com\n".to_string();
+        let blocked_text = "# Marketing Brief\n\nStatus: blocked pending required source reads and web research in this run.\n\nThis file cannot be finalized from the current toolset available in this session because the required discovery and external research tools referenced by the task (`read`, `glob`, `websearch`) are not available to me here.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &blocked_text)
+            .expect("seed blocked handoff");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let session = Session::new(
+            Some("blocked handoff restore".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            &blocked_text,
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": ["glob", "websearch", "write"],
+                "workspace_inspection_used": true,
+                "web_research_used": true,
+                "web_research_succeeded": false,
+                "latest_web_research_failure": "web research authorization required"
+            }),
+            Some(&previous),
+            Some(("marketing-brief.md".to_string(), blocked_text.clone())),
+            &snapshot,
+        );
+
+        assert!(accepted_output.is_none());
+        assert_eq!(
+            metadata
+                .get("blocked_handoff_cleanup_action")
+                .and_then(Value::as_str),
+            Some("restored_preexisting_output")
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without concrete file reads or required source coverage")
+        );
+        let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
+            .expect("read restored artifact");
+        assert_eq!(disk_text, previous);
 
         let _ = std::fs::remove_dir_all(workspace_root);
     }

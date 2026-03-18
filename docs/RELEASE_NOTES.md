@@ -91,6 +91,7 @@
 - Workflow runtime enforcement now resolves from a node’s explicit `output_contract.enforcement` first, then legacy builder metadata, then validator defaults, so repair behavior and output gating follow the authored workflow contract instead of one hard-coded research path.
 - Artifact session-text recovery now honors that enforcement contract before writing back to disk, which stops blocked or under-evidenced runs from silently restoring a stale “best effort” artifact over the declared output file.
 - Write-required nodes that complete tool calls but return no final provider text now get one bounded retry that points at the declared output target or the next missing evidence step, reducing empty-completion stalls during artifact workflows.
+- Synthetic empty-completion summaries now backfill fallback tool telemetry, so auth-blocked `websearch` attempts still show up as attempted-but-unavailable research instead of being misreported as unused tools.
 
 ### Managed Worktree Runtime
 
@@ -102,6 +103,7 @@
 
 - Added artifact-validation checks for declared workflow outputs so placeholder/status-note overwrites no longer silently win.
 - Added rejection and cleanup of undeclared touch/status/marker files created by workflow agents.
+- Research nodes that write a blocked handoff placeholder now restore the prior artifact or remove the placeholder from disk instead of leaving that blocked file behind as the run’s accepted output.
 - Preserved substantive blocked artifacts on disk for inspection instead of deleting them just because the node was semantically blocked.
 - Fresh workflow reruns now preserve prior declared outputs until a replacement artifact is actually produced, so a failed retry does not leave the workspace empty.
 - Streamed malformed write calls now preserve raw/parsed arg previews, recover normalized best-effort args on failed writes, upgrade persisted tool args when stronger structured evidence arrives later, and keep recovered tool args/errors visible in session replay and repo-aware mutation summaries.
