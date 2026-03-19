@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow run recovery controls and richer node metadata**:
   - added `Continue` / `Continue From Here` for blocked `automation_v2` runs and `Retry` / `Retry Workflow` actions in the Run Debugger
   - added semantic node output metadata for `status`, `blocked_reason`, `approved`, tool telemetry, and artifact-validation results
+- **Split staged research pipelines for bundled Studio templates**:
+  - split bundled research-heavy Studio templates into explicit discover, local-source, external-research, and finalize stages so agents cannot jump straight from filename discovery into a generic artifact write
+  - saved Studio workflows created from those bundled templates now auto-migrate in place to `workflow_structure_version = 2` while preserving automation ids and the original final research node ids used by downstream nodes
+  - final staged research writers now validate against upstream blackboard/node-output evidence instead of requiring same-node `read` and `websearch` telemetry to be repeated at artifact-write time
 - **Repo coding backlog task operations**:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2` run APIs instead of remaining read-only debugger projections
   - added stale-lease handling in the shared context-task runtime so expired `in_progress` backlog tasks automatically return to the runnable queue before the next claim
@@ -134,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automation execution now prefers deterministic file-backed workflow behavior**:
   - `automation_v2` nodes now run with explicit required tool sets instead of relying on the generic auto-router alone
   - normalized workflow tool exposure so `read` implies `glob` for workspace discovery
+  - built-in `websearch` now supports backend selection via `TANDEM_SEARCH_BACKEND`, with Tandem-hosted routing plus direct `brave`, `exa`, and self-hosted `searxng` overrides instead of an Exa-only path
+  - official Linux setup now writes search defaults into `/etc/tandem/engine.env`, including `TANDEM_SEARCH_BACKEND=tandem`, `TANDEM_SEARCH_URL`, and optional direct-provider override keys for later operator use
+  - web-research failures now degrade more cleanly when the configured backend is unavailable, so research workflows can continue local-only instead of looping on unavailable search calls
   - added prewrite requirements for workspace inspection and web research before file-finalization retries narrow down to write-only
   - write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists
   - coding workflow scheduling now filters overlapping write scopes out of the same runnable batch so parallel code tasks do not edit the same repo area at once by default

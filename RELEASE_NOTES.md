@@ -7,6 +7,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Added a new top-level `Studio` workflow builder in the control panel
   - template-first multi-agent workflow creation with editable role prompts, stage/dependency editing, saved Studio workflows, and a shared workspace picker
   - direct save/run flows into `automation_v2`
+  - bundled research-heavy Studio templates now use explicit discover, local-source, external-research, and finalize stages so research and writing are no longer overloaded into one node
+  - saved workflows created from those bundled templates now auto-migrate in place to `workflow_structure_version = 2` while preserving automation ids and the original final research node ids
+  - final staged research writers now validate against upstream evidence handoffs instead of forcing same-node `read`/`websearch` work to be repeated during the final artifact write
 
 - Workflow run debugging and recovery are much stronger
   - workflow board now gets its own row and desktop lanes can be horizontally scrolled with jump-to-active controls
@@ -67,6 +70,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - File-backed workflow runtime hardening
   - `automation_v2` nodes now use deterministic required tool sets
   - workflow tool normalization now gives `read` workflows `glob` for discovery
+  - built-in `websearch` now supports backend selection via `TANDEM_SEARCH_BACKEND`, with a Tandem-hosted default route plus direct `brave`, `exa`, and self-hosted `searxng` overrides
+  - official Linux setup now writes search defaults into `/etc/tandem/engine.env`, including `TANDEM_SEARCH_BACKEND=tandem`, `TANDEM_SEARCH_URL`, and optional direct-provider override keys for later use
+  - web-research failures now degrade more cleanly when the configured backend is unavailable, so research workflows can continue local-only instead of looping on dead search calls
   - write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists
   - `/workspace/...` file tool paths now resolve against the real workspace root
   - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs

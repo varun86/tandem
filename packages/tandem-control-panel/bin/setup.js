@@ -173,6 +173,9 @@ const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 1
 const ENGINE_URL = (
   process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`
 ).replace(/\/+$/, "");
+const DEFAULT_TANDEM_SEARCH_URL = (
+  process.env.TANDEM_SEARCH_URL || "https://search.tandem.frumu.ai"
+).replace(/\/+$/, "");
 const SWARM_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-runs.json");
 const SWARM_HIDDEN_RUNS_PATH = resolve(
   homedir(),
@@ -749,6 +752,9 @@ async function installServices() {
     ...engineEnvBase,
     TANDEM_API_TOKEN: token,
     TANDEM_STATE_DIR: stateDir,
+    TANDEM_SEARCH_BACKEND: existingEngineEnv.TANDEM_SEARCH_BACKEND || "tandem",
+    TANDEM_SEARCH_URL: existingEngineEnv.TANDEM_SEARCH_URL || DEFAULT_TANDEM_SEARCH_URL,
+    TANDEM_SEARCH_TIMEOUT_MS: existingEngineEnv.TANDEM_SEARCH_TIMEOUT_MS || "10000",
     TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
     TANDEM_DISABLE_TOOL_GUARD_BUDGETS: existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
     TANDEM_TOOL_ROUTER_ENABLED: existingEngineEnv.TANDEM_TOOL_ROUTER_ENABLED || "0",

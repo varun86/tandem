@@ -5,6 +5,9 @@
 - Added a new top-level `Studio` page in the control panel for template-first multi-agent workflow creation.
 - Added starter workflow templates, editable role prompts, stage/dependency editing, saved Studio workflow cards, and a shared workspace folder picker.
 - Added direct save/run flows from Studio into `automation_v2`, plus reusable-template support when teams want to persist agent prompts separately.
+- Bundled research-heavy Studio templates now compile into explicit discover, local-source, external-research, and finalize stages so research coverage is gathered before the final artifact writer runs.
+- Saved workflows created from those bundled templates now auto-migrate in place to `workflow_structure_version = 2` while preserving automation ids and the original final research node ids used by downstream stages.
+- Final staged research writers now validate against upstream evidence handoffs instead of forcing same-node `read` and `websearch` telemetry to be repeated during the final artifact write.
 
 ### Run Debugger and Workflow Board
 
@@ -67,6 +70,9 @@
 
 - `automation_v2` nodes now run with deterministic required tool sets instead of leaning only on the generic auto-router.
 - Added workflow prewrite requirements so workspace inspection and web research stay available until those requirements are actually satisfied.
+- Built-in `websearch` now supports backend selection via `TANDEM_SEARCH_BACKEND`, with a Tandem-hosted default route plus direct `brave`, `exa`, and self-hosted `searxng` overrides.
+- Official Linux setup now writes search defaults into `/etc/tandem/engine.env`, including `TANDEM_SEARCH_BACKEND=tandem`, `TANDEM_SEARCH_URL`, and optional direct-provider override keys for later use.
+- Web-research failures now degrade more cleanly when the configured backend is unavailable, so research workflows can continue local-only instead of looping on dead search calls.
 - Write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists.
 - Brief/research nodes now also require concrete `read` coverage, successful web research when expected, and one automatic repair pass before they finalize as blocked.
 - Evidence-gated artifact nodes now emit structured repair-attempt metadata, get bounded repair retries after premature writes, and terminate with explicit `PREWRITE_REQUIREMENTS_EXHAUSTED` blocked state when those retries are exhausted.

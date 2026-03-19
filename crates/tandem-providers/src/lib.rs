@@ -14,12 +14,63 @@ use tokio_util::sync::CancellationToken;
 
 use tandem_types::{ModelInfo, ProviderInfo, ToolMode, ToolSchema};
 
-fn provider_max_tokens() -> u32 {
-    std::env::var("TANDEM_PROVIDER_MAX_TOKENS")
-        .ok()
+fn provider_max_tokens_for(provider_id: &str) -> u32 {
+    let normalized = provider_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let provider_specific_env =
+        (!normalized.is_empty()).then(|| format!("TANDEM_PROVIDER_MAX_TOKENS_{normalized}"));
+    provider_specific_env
+        .as_deref()
+        .and_then(|name| std::env::var(name).ok())
+        .or_else(|| std::env::var("TANDEM_PROVIDER_MAX_TOKENS").ok())
         .and_then(|raw| raw.trim().parse::<u32>().ok())
         .filter(|value| *value >= 64)
         .unwrap_or(16384)
+}
+
+fn parse_openrouter_affordable_max_tokens(detail: &str) -> Option<u32> {
+    let marker = "can only afford";
+    let start = detail.to_ascii_lowercase().find(marker)?;
+    let suffix = detail.get(start + marker.len()..)?.trim_start();
+    let digits = suffix
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    digits.parse::<u32>().ok().filter(|value| *value >= 64)
+}
+
+fn format_openai_error_response(status: reqwest::StatusCode, text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| extract_openai_error(&value))
+        .unwrap_or_else(|| {
+            format!(
+                "provider request failed with status {}: {}",
+                status,
+                truncate_for_error(text, 500)
+            )
+        })
+}
+
+fn openrouter_affordability_retry_max_tokens(
+    provider_id: &str,
+    status: reqwest::StatusCode,
+    detail: &str,
+    current_max_tokens: u32,
+) -> Option<u32> {
+    if provider_id != "openrouter" || status != reqwest::StatusCode::PAYMENT_REQUIRED {
+        return None;
+    }
+    parse_openrouter_affordable_max_tokens(detail)
+        .filter(|affordable| *affordable < current_max_tokens)
 }
 
 fn protocol_title_header() -> String {
@@ -1022,7 +1073,8 @@ impl Provider for OpenAICompatibleProvider {
         let url = format!("{}/chat/completions", self.base_url);
         let mut response_opt = None;
         let mut last_send_err: Option<reqwest::Error> = None;
-        let max_tokens = provider_max_tokens();
+        let mut last_error_detail: Option<String> = None;
+        let mut max_tokens = provider_max_tokens_for(&self.id);
         for attempt in 0..3 {
             let mut req = self.client.post(url.clone()).json(&json!({
                 "model": model,
@@ -1041,6 +1093,20 @@ impl Provider for OpenAICompatibleProvider {
 
             match req.send().await {
                 Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let text = resp.text().await.unwrap_or_default();
+                        if let Some(affordable_max) = openrouter_affordability_retry_max_tokens(
+                            &self.id, status, &text, max_tokens,
+                        ) {
+                            max_tokens = affordable_max;
+                            if attempt < 2 {
+                                continue;
+                            }
+                        }
+                        last_error_detail = Some(format_openai_error_response(status, &text));
+                        break;
+                    }
                     response_opt = Some(resp);
                     break;
                 }
@@ -1059,6 +1125,8 @@ impl Provider for OpenAICompatibleProvider {
 
         let response = if let Some(resp) = response_opt {
             resp
+        } else if let Some(detail) = last_error_detail {
+            anyhow::bail!(detail);
         } else {
             let err = last_send_err.expect("send error should be captured");
             let category = if err.is_connect() {
@@ -1076,14 +1144,7 @@ impl Provider for OpenAICompatibleProvider {
                 err
             );
         };
-        let status = response.status();
         let value: serde_json::Value = response.json().await?;
-
-        if !status.is_success() {
-            let detail = extract_openai_error(&value)
-                .unwrap_or_else(|| format!("provider request failed with status {}", status));
-            anyhow::bail!(detail);
-        }
 
         if let Some(detail) = extract_openai_error(&value) {
             anyhow::bail!(detail);
@@ -1147,11 +1208,12 @@ impl Provider for OpenAICompatibleProvider {
             })
             .collect::<Vec<_>>();
 
+        let mut max_tokens = provider_max_tokens_for(&self.id);
         let mut body = json!({
             "model": model,
             "messages": wire_messages,
             "stream": true,
-            "max_tokens": provider_max_tokens(),
+            "max_tokens": max_tokens,
         });
         if !wire_tools.is_empty() {
             body["tools"] = serde_json::Value::Array(wire_tools);
@@ -1160,6 +1222,7 @@ impl Provider for OpenAICompatibleProvider {
 
         let mut resp_opt = None;
         let mut last_send_err: Option<reqwest::Error> = None;
+        let mut last_error_detail: Option<String> = None;
         for attempt in 0..3 {
             let mut req = self.client.post(url.clone()).json(&body);
             if self.id == "openrouter" {
@@ -1173,6 +1236,21 @@ impl Provider for OpenAICompatibleProvider {
 
             match req.send().await {
                 Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let text = resp.text().await.unwrap_or_default();
+                        if let Some(affordable_max) = openrouter_affordability_retry_max_tokens(
+                            &self.id, status, &text, max_tokens,
+                        ) {
+                            max_tokens = affordable_max;
+                            body["max_tokens"] = json!(max_tokens);
+                            if attempt < 2 {
+                                continue;
+                            }
+                        }
+                        last_error_detail = Some(format_openai_error_response(status, &text));
+                        break;
+                    }
                     resp_opt = Some(resp);
                     break;
                 }
@@ -1191,6 +1269,8 @@ impl Provider for OpenAICompatibleProvider {
 
         let resp = if let Some(resp) = resp_opt {
             resp
+        } else if let Some(detail) = last_error_detail {
+            anyhow::bail!(detail);
         } else {
             let err = last_send_err.expect("send error should be captured");
             let category = if err.is_connect() {
@@ -2048,5 +2128,28 @@ mod tests {
             normalized["properties"]["filters"]["properties"].is_object(),
             "nested object schemas should include properties for OpenAI validation"
         );
+    }
+
+    #[test]
+    fn openrouter_affordability_retry_uses_affordable_cap() {
+        let detail = r#"{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 16384 tokens, but can only afford 14605."}}"#;
+        assert_eq!(
+            openrouter_affordability_retry_max_tokens(
+                "openrouter",
+                reqwest::StatusCode::PAYMENT_REQUIRED,
+                detail,
+                16_384,
+            ),
+            Some(14_605)
+        );
+    }
+
+    #[test]
+    fn provider_specific_max_tokens_override_is_respected() {
+        std::env::remove_var("TANDEM_PROVIDER_MAX_TOKENS");
+        std::env::set_var("TANDEM_PROVIDER_MAX_TOKENS_OPENROUTER", "24576");
+        assert_eq!(provider_max_tokens_for("openrouter"), 24_576);
+        std::env::remove_var("TANDEM_PROVIDER_MAX_TOKENS_OPENROUTER");
+        assert_eq!(provider_max_tokens_for("openrouter"), 16_384);
     }
 }

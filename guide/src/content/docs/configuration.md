@@ -64,6 +64,17 @@ Use the identity API for structured settings (bot aliases, personality presets, 
   - Used by dashboard **Automations + Cost** metrics.
   - Default: `0` (cost tracking disabled unless explicitly configured).
 
+### Built-in web search
+
+- `TANDEM_SEARCH_BACKEND`: Selects the built-in `websearch` backend.
+  - Supported values: `tandem`, `brave`, `exa`, `searxng`, `none`
+  - Official installs default to `tandem`.
+- `TANDEM_SEARCH_URL`: Hosted Tandem search endpoint or compatible router URL used when `TANDEM_SEARCH_BACKEND=tandem`.
+- `TANDEM_SEARCH_TIMEOUT_MS`: Request timeout for built-in web search.
+- `TANDEM_BRAVE_SEARCH_API_KEY`: Direct Brave Search API key when `TANDEM_SEARCH_BACKEND=brave`.
+- `TANDEM_EXA_API_KEY`: Direct Exa API key when `TANDEM_SEARCH_BACKEND=exa`.
+- `TANDEM_SEARXNG_URL`: Self-hosted SearXNG endpoint when `TANDEM_SEARCH_BACKEND=searxng`.
+
 ## Config File Format
 
 The configuration file is a simple JSON object.

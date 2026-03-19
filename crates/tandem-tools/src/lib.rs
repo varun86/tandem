@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -61,7 +62,20 @@ impl ToolRegistry {
         map.insert("webfetch".to_string(), Arc::new(WebFetchTool));
         map.insert("webfetch_html".to_string(), Arc::new(WebFetchHtmlTool));
         map.insert("mcp_debug".to_string(), Arc::new(McpDebugTool));
-        map.insert("websearch".to_string(), Arc::new(WebSearchTool));
+        let search_backend = SearchBackend::from_env();
+        if search_backend.is_enabled() {
+            map.insert(
+                "websearch".to_string(),
+                Arc::new(WebSearchTool {
+                    backend: search_backend,
+                }),
+            );
+        } else {
+            tracing::info!(
+                reason = search_backend.disabled_reason().unwrap_or("unknown"),
+                "builtin websearch disabled because no search backend is configured"
+            );
+        }
         map.insert("codesearch".to_string(), Arc::new(CodeSearchTool));
         let todo_tool: Arc<dyn Tool> = Arc::new(TodoWriteTool);
         map.insert("todo_write".to_string(), todo_tool.clone());
@@ -290,6 +304,243 @@ impl ToolRegistry {
         };
         tool.execute_with_cancel(args, cancel).await
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SearchBackendKind {
+    Disabled,
+    Tandem,
+    Searxng,
+    Exa,
+    Brave,
+}
+
+#[derive(Clone, Debug)]
+enum SearchBackend {
+    Disabled {
+        reason: String,
+    },
+    Tandem {
+        base_url: String,
+        timeout_ms: u64,
+    },
+    Searxng {
+        base_url: String,
+        engines: Option<String>,
+        timeout_ms: u64,
+    },
+    Exa {
+        api_key: String,
+        timeout_ms: u64,
+    },
+    Brave {
+        api_key: String,
+        timeout_ms: u64,
+    },
+}
+
+impl SearchBackend {
+    fn from_env() -> Self {
+        let explicit = std::env::var("TANDEM_SEARCH_BACKEND")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty());
+        let timeout_ms = search_backend_timeout_ms();
+
+        match explicit.as_deref() {
+            Some("none") | Some("disabled") => {
+                return Self::Disabled {
+                    reason: "TANDEM_SEARCH_BACKEND explicitly disabled websearch".to_string(),
+                };
+            }
+            Some("tandem") => {
+                return search_backend_from_tandem_env(timeout_ms, true);
+            }
+            Some("searxng") => {
+                return search_backend_from_searxng_env(timeout_ms).unwrap_or_else(|| {
+                    Self::Disabled {
+                        reason: "TANDEM_SEARCH_BACKEND=searxng but TANDEM_SEARXNG_URL is missing"
+                            .to_string(),
+                    }
+                });
+            }
+            Some("exa") => {
+                return search_backend_from_exa_env(timeout_ms).unwrap_or_else(|| Self::Disabled {
+                    reason:
+                        "TANDEM_SEARCH_BACKEND=exa but EXA_API_KEY/TANDEM_EXA_API_KEY is missing"
+                            .to_string(),
+                });
+            }
+            Some("brave") => {
+                return search_backend_from_brave_env(timeout_ms).unwrap_or_else(|| {
+                    Self::Disabled {
+                        reason:
+                            "TANDEM_SEARCH_BACKEND=brave but BRAVE_SEARCH_API_KEY/TANDEM_BRAVE_SEARCH_API_KEY is missing"
+                                .to_string(),
+                    }
+                });
+            }
+            Some(other) => {
+                return Self::Disabled {
+                    reason: format!(
+                        "TANDEM_SEARCH_BACKEND `{other}` is unsupported; expected tandem, searxng, exa, brave, or none"
+                    ),
+                };
+            }
+            None => {}
+        }
+
+        if std::env::var("TANDEM_SEARCH_URL")
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return search_backend_from_tandem_env(timeout_ms, false);
+        }
+        if let Some(config) = search_backend_from_searxng_env(timeout_ms) {
+            return config;
+        }
+        if let Some(config) = search_backend_from_brave_env(timeout_ms) {
+            return config;
+        }
+        if let Some(config) = search_backend_from_exa_env(timeout_ms) {
+            return config;
+        }
+
+        Self::Disabled {
+            reason:
+                "set TANDEM_SEARCH_URL or configure tandem, searxng, brave, or exa to enable websearch"
+                    .to_string(),
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !matches!(self, Self::Disabled { .. })
+    }
+
+    fn kind(&self) -> SearchBackendKind {
+        match self {
+            Self::Disabled { .. } => SearchBackendKind::Disabled,
+            Self::Tandem { .. } => SearchBackendKind::Tandem,
+            Self::Searxng { .. } => SearchBackendKind::Searxng,
+            Self::Exa { .. } => SearchBackendKind::Exa,
+            Self::Brave { .. } => SearchBackendKind::Brave,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self.kind() {
+            SearchBackendKind::Disabled => "disabled",
+            SearchBackendKind::Tandem => "tandem",
+            SearchBackendKind::Searxng => "searxng",
+            SearchBackendKind::Exa => "exa",
+            SearchBackendKind::Brave => "brave",
+        }
+    }
+
+    fn disabled_reason(&self) -> Option<&str> {
+        match self {
+            Self::Disabled { reason } => Some(reason.as_str()),
+            _ => None,
+        }
+    }
+
+    fn schema_description(&self) -> String {
+        match self {
+            Self::Tandem { .. } => {
+                "Search web results using Tandem's hosted search backend".to_string()
+            }
+            Self::Searxng { .. } => {
+                "Search web results using the configured SearxNG backend".to_string()
+            }
+            Self::Exa { .. } => "Search web results using the configured Exa backend".to_string(),
+            Self::Brave { .. } => {
+                "Search web results using the configured Brave Search backend".to_string()
+            }
+            Self::Disabled { .. } => {
+                "Search web results using the configured search backend".to_string()
+            }
+        }
+    }
+}
+
+fn search_backend_timeout_ms() -> u64 {
+    std::env::var("TANDEM_SEARCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(10_000)
+        .clamp(1_000, 120_000)
+}
+
+fn search_backend_from_tandem_env(timeout_ms: u64, allow_default_url: bool) -> SearchBackend {
+    const DEFAULT_TANDEM_SEARCH_URL: &str = "https://search.tandem.frumu.ai";
+    let base_url = std::env::var("TANDEM_SEARCH_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| allow_default_url.then(|| DEFAULT_TANDEM_SEARCH_URL.to_string()));
+    match base_url {
+        Some(base_url) => SearchBackend::Tandem {
+            base_url,
+            timeout_ms,
+        },
+        None => SearchBackend::Disabled {
+            reason: "TANDEM_SEARCH_BACKEND=tandem but TANDEM_SEARCH_URL is missing".to_string(),
+        },
+    }
+}
+
+fn search_backend_from_searxng_env(timeout_ms: u64) -> Option<SearchBackend> {
+    let base_url = std::env::var("TANDEM_SEARXNG_URL").ok()?;
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        return None;
+    }
+    let engines = std::env::var("TANDEM_SEARXNG_ENGINES")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Some(SearchBackend::Searxng {
+        base_url,
+        engines,
+        timeout_ms,
+    })
+}
+
+fn search_backend_from_exa_env(timeout_ms: u64) -> Option<SearchBackend> {
+    let api_key = std::env::var("TANDEM_EXA_API_KEY")
+        .ok()
+        .or_else(|| std::env::var("EXA_API_KEY").ok())?;
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        return None;
+    }
+    Some(SearchBackend::Exa {
+        api_key,
+        timeout_ms,
+    })
+}
+
+fn search_backend_from_brave_env(timeout_ms: u64) -> Option<SearchBackend> {
+    let api_key = std::env::var("TANDEM_BRAVE_SEARCH_API_KEY")
+        .ok()
+        .or_else(|| std::env::var("BRAVE_SEARCH_API_KEY").ok())?;
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        return None;
+    }
+    Some(SearchBackend::Brave {
+        api_key,
+        timeout_ms,
+    })
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct SearchResultEntry {
+    title: String,
+    url: String,
+    snippet: String,
+    source: String,
 }
 
 fn canonical_tool_name(name: &str) -> String {
@@ -1947,13 +2198,15 @@ impl Tool for McpDebugTool {
     }
 }
 
-struct WebSearchTool;
+struct WebSearchTool {
+    backend: SearchBackend,
+}
 #[async_trait]
 impl Tool for WebSearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "websearch".to_string(),
-            description: "Search web results using Exa.ai MCP endpoint".to_string(),
+            description: self.backend.schema_description(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1996,132 +2249,479 @@ impl Tool for WebSearchTool {
             });
         }
         let num_results = extract_websearch_limit(&args).unwrap_or(8);
-
-        #[derive(serde::Serialize)]
-        struct McpSearchRequest {
-            jsonrpc: String,
-            id: u32,
-            method: String,
-            params: McpSearchParams,
+        let outcome = execute_websearch_backend(&self.backend, &query, num_results).await?;
+        let mut metadata = json!({
+            "query": query,
+            "query_source": query_source,
+            "query_hash": query_hash,
+            "backend": self.backend.name(),
+            "loop_guard_triggered": false,
+            "count": outcome.results.len(),
+            "partial": outcome.partial
+        });
+        if let Some(kind) = outcome.unavailable_kind {
+            metadata["error"] = json!(kind);
         }
 
-        #[derive(serde::Serialize)]
-        struct McpSearchParams {
-            name: String,
-            arguments: McpSearchArgs,
+        if let Some(message) = outcome.unavailable_message {
+            return Ok(ToolResult {
+                output: message,
+                metadata: metadata,
+            });
         }
 
-        #[derive(serde::Serialize)]
-        struct McpSearchArgs {
-            query: String,
-            #[serde(rename = "numResults")]
-            num_results: u64,
-        }
-
-        let request = McpSearchRequest {
-            jsonrpc: "2.0".to_string(),
-            id: 1,
-            method: "tools/call".to_string(),
-            params: McpSearchParams {
-                name: "web_search_exa".to_string(),
-                arguments: McpSearchArgs {
-                    query: query.to_string(),
-                    num_results,
-                },
-            },
-        };
-
-        let client = reqwest::Client::new();
-        let res = client
-            .post("https://mcp.exa.ai/mcp")
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json, text/event-stream")
-            .json(&request)
-            .send()
-            .await?;
-
-        if !res.status().is_success() {
-            let error_text = res.text().await?;
-            return Err(anyhow::anyhow!("Search error: {}", error_text));
-        }
-
-        let mut stream = res.bytes_stream();
-        let mut buffer = Vec::new();
-        let timeout_duration = std::time::Duration::from_secs(10); // Wait at most 10s for first chunk
-
-        // We use a loop but breaks on first result.
-        // We also want to apply a timeout to receiving ANY chunk from the stream.
-        loop {
-            let chunk_future = stream.next();
-            match tokio::time::timeout(timeout_duration, chunk_future).await {
-                Ok(Some(chunk_result)) => {
-                    let chunk = chunk_result?;
-                    tracing::info!("WebSearchTool received chunk size: {}", chunk.len());
-                    buffer.extend_from_slice(&chunk);
-
-                    while let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
-                        let line_bytes: Vec<u8> = buffer.drain(..=idx).collect();
-                        let line = String::from_utf8_lossy(&line_bytes);
-                        let line = line.trim();
-                        tracing::info!("WebSearchTool parsing line: {}", line);
-
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if let Ok(val) = serde_json::from_str::<Value>(data.trim()) {
-                                if let Some(content) = val
-                                    .get("result")
-                                    .and_then(|r| r.get("content"))
-                                    .and_then(|c| c.as_array())
-                                {
-                                    if let Some(first) = content.first() {
-                                        if let Some(text) =
-                                            first.get("text").and_then(|t| t.as_str())
-                                        {
-                                            return Ok(ToolResult {
-                                                output: text.to_string(),
-                                                metadata: json!({
-                                                    "query": query,
-                                                    "query_source": query_source,
-                                                    "query_hash": query_hash,
-                                                    "loop_guard_triggered": false
-                                                }),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(None) => {
-                    tracing::info!("WebSearchTool stream ended without result.");
-                    break;
-                }
-                Err(_) => {
-                    tracing::warn!("WebSearchTool stream timed out waiting for chunk.");
-                    return Ok(ToolResult {
-                        output: "Search timed out. No results received.".to_string(),
-                        metadata: json!({
-                            "query": query,
-                            "error": "timeout",
-                            "query_source": query_source,
-                            "query_hash": query_hash,
-                            "loop_guard_triggered": false
-                        }),
-                    });
-                }
-            }
-        }
+        let output = json!({
+            "query": query,
+            "backend": self.backend.name(),
+            "result_count": outcome.results.len(),
+            "partial": outcome.partial,
+            "results": outcome.results,
+        });
 
         Ok(ToolResult {
-            output: "No search results found.".to_string(),
-            metadata: json!({
-                "query": query,
-                "query_source": query_source,
-                "query_hash": query_hash,
-                "loop_guard_triggered": false
-            }),
+            output: serde_json::to_string_pretty(&output)?,
+            metadata,
         })
     }
+}
+
+struct SearchExecutionOutcome {
+    results: Vec<SearchResultEntry>,
+    partial: bool,
+    unavailable_message: Option<String>,
+    unavailable_kind: Option<&'static str>,
+}
+
+async fn execute_websearch_backend(
+    backend: &SearchBackend,
+    query: &str,
+    num_results: u64,
+) -> anyhow::Result<SearchExecutionOutcome> {
+    match backend {
+        SearchBackend::Disabled { reason } => Ok(SearchExecutionOutcome {
+            results: Vec::new(),
+            partial: false,
+            unavailable_message: Some(format!(
+                "Search backend is unavailable for `websearch`: {reason}"
+            )),
+            unavailable_kind: Some("backend_unavailable"),
+        }),
+        SearchBackend::Tandem {
+            base_url,
+            timeout_ms,
+        } => execute_tandem_search(base_url, *timeout_ms, query, num_results).await,
+        SearchBackend::Searxng {
+            base_url,
+            engines,
+            timeout_ms,
+        } => {
+            execute_searxng_search(
+                base_url,
+                engines.as_deref(),
+                *timeout_ms,
+                query,
+                num_results,
+            )
+            .await
+        }
+        SearchBackend::Exa {
+            api_key,
+            timeout_ms,
+        } => execute_exa_search(api_key, *timeout_ms, query, num_results).await,
+        SearchBackend::Brave {
+            api_key,
+            timeout_ms,
+        } => execute_brave_search(api_key, *timeout_ms, query, num_results).await,
+    }
+}
+
+fn search_backend_unavailable_outcome() -> SearchExecutionOutcome {
+    SearchExecutionOutcome {
+        results: Vec::new(),
+        partial: false,
+        unavailable_message: Some(
+            "Web search is currently unavailable for `websearch`.\nContinue with local file reads and note that external research could not be completed in this run."
+                .to_string(),
+        ),
+        unavailable_kind: Some("backend_unavailable"),
+    }
+}
+
+fn search_backend_authorization_required_outcome() -> SearchExecutionOutcome {
+    SearchExecutionOutcome {
+        results: Vec::new(),
+        partial: false,
+        unavailable_message: Some(
+            "Authorization required for `websearch`.\nThis integration requires authorization before this action can run."
+                .to_string(),
+        ),
+        unavailable_kind: Some("authorization_required"),
+    }
+}
+
+async fn execute_tandem_search(
+    base_url: &str,
+    timeout_ms: u64,
+    query: &str,
+    num_results: u64,
+) -> anyhow::Result<SearchExecutionOutcome> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()?;
+    let endpoint = format!("{}/search", base_url.trim_end_matches('/'));
+    let response = match client
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&json!({
+            "query": query,
+            "limit": num_results,
+        }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let status = response.status();
+    if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Ok(search_backend_authorization_required_outcome());
+    }
+    if !status.is_success() {
+        return Ok(search_backend_unavailable_outcome());
+    }
+    let body: Value = match response.json().await {
+        Ok(value) => value,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let raw_results = body
+        .get("results")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let results = normalize_tandem_results(&raw_results, num_results as usize);
+    let partial = body
+        .get("partial")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| raw_results.len() > results.len());
+    Ok(SearchExecutionOutcome {
+        results,
+        partial,
+        unavailable_message: None,
+        unavailable_kind: None,
+    })
+}
+
+async fn execute_searxng_search(
+    base_url: &str,
+    engines: Option<&str>,
+    timeout_ms: u64,
+    query: &str,
+    num_results: u64,
+) -> anyhow::Result<SearchExecutionOutcome> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()?;
+    let endpoint = format!("{}/search", base_url.trim_end_matches('/'));
+    let mut params: Vec<(&str, String)> = vec![
+        ("q", query.to_string()),
+        ("format", "json".to_string()),
+        ("pageno", "1".to_string()),
+    ];
+    if let Some(engines) = engines {
+        params.push(("engines", engines.to_string()));
+    }
+    let response = client.get(&endpoint).query(&params).send().await?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(search_backend_authorization_required_outcome());
+    }
+    if !status.is_success() {
+        return Ok(search_backend_unavailable_outcome());
+    }
+    let status_for_error = status;
+    let body: Value = match response.json().await {
+        Ok(value) => value,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let raw_results = body
+        .get("results")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let results = normalize_searxng_results(&raw_results, num_results as usize);
+    let partial = raw_results.len() > results.len()
+        || status_for_error == reqwest::StatusCode::PARTIAL_CONTENT;
+    Ok(SearchExecutionOutcome {
+        results,
+        partial,
+        unavailable_message: None,
+        unavailable_kind: None,
+    })
+}
+
+async fn execute_exa_search(
+    api_key: &str,
+    timeout_ms: u64,
+    query: &str,
+    num_results: u64,
+) -> anyhow::Result<SearchExecutionOutcome> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()?;
+    let response = match client
+        .post("https://api.exa.ai/search")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .header("x-api-key", api_key)
+        .json(&json!({
+            "query": query,
+            "numResults": num_results,
+        }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let status = response.status();
+    if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED
+            | reqwest::StatusCode::FORBIDDEN
+            | reqwest::StatusCode::PAYMENT_REQUIRED
+    ) {
+        return Ok(search_backend_authorization_required_outcome());
+    }
+    if !status.is_success() {
+        return Ok(search_backend_unavailable_outcome());
+    }
+    let body: Value = match response.json().await {
+        Ok(value) => value,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let raw_results = body
+        .get("results")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let results = normalize_exa_results(&raw_results, num_results as usize);
+    Ok(SearchExecutionOutcome {
+        partial: raw_results.len() > results.len(),
+        results,
+        unavailable_message: None,
+        unavailable_kind: None,
+    })
+}
+
+async fn execute_brave_search(
+    api_key: &str,
+    timeout_ms: u64,
+    query: &str,
+    num_results: u64,
+) -> anyhow::Result<SearchExecutionOutcome> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()?;
+    let count = num_results.to_string();
+    let response = match client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "gzip")
+        .header("X-Subscription-Token", api_key)
+        .query(&[("q", query), ("count", count.as_str())])
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let status = response.status();
+    if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED
+            | reqwest::StatusCode::FORBIDDEN
+            | reqwest::StatusCode::PAYMENT_REQUIRED
+    ) {
+        return Ok(search_backend_authorization_required_outcome());
+    }
+    if !status.is_success() {
+        return Ok(search_backend_unavailable_outcome());
+    }
+    let body: Value = match response.json().await {
+        Ok(value) => value,
+        Err(_) => return Ok(search_backend_unavailable_outcome()),
+    };
+    let raw_results = body
+        .get("web")
+        .and_then(|value| value.get("results"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let results = normalize_brave_results(&raw_results, num_results as usize);
+    Ok(SearchExecutionOutcome {
+        partial: raw_results.len() > results.len(),
+        results,
+        unavailable_message: None,
+        unavailable_kind: None,
+    })
+}
+
+fn normalize_tandem_results(raw_results: &[Value], limit: usize) -> Vec<SearchResultEntry> {
+    raw_results
+        .iter()
+        .filter_map(|entry| {
+            let title = entry
+                .get("title")
+                .or_else(|| entry.get("name"))
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            let url = entry.get("url").and_then(Value::as_str)?.trim().to_string();
+            if title.is_empty() || url.is_empty() {
+                return None;
+            }
+            let snippet = entry
+                .get("snippet")
+                .or_else(|| entry.get("content"))
+                .or_else(|| entry.get("description"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            let source = entry
+                .get("source")
+                .or_else(|| entry.get("provider"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("tandem")
+                .to_string();
+            Some(SearchResultEntry {
+                title,
+                url,
+                snippet,
+                source,
+            })
+        })
+        .take(limit)
+        .collect()
+}
+
+fn normalize_searxng_results(raw_results: &[Value], limit: usize) -> Vec<SearchResultEntry> {
+    raw_results
+        .iter()
+        .filter_map(|entry| {
+            let title = entry
+                .get("title")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            let url = entry.get("url").and_then(Value::as_str)?.trim().to_string();
+            if title.is_empty() || url.is_empty() {
+                return None;
+            }
+            let snippet = entry
+                .get("content")
+                .and_then(Value::as_str)
+                .or_else(|| entry.get("snippet").and_then(Value::as_str))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let source = entry
+                .get("engine")
+                .and_then(Value::as_str)
+                .map(|engine| format!("searxng:{engine}"))
+                .unwrap_or_else(|| "searxng".to_string());
+            Some(SearchResultEntry {
+                title,
+                url,
+                snippet,
+                source,
+            })
+        })
+        .take(limit)
+        .collect()
+}
+
+fn normalize_exa_results(raw_results: &[Value], limit: usize) -> Vec<SearchResultEntry> {
+    raw_results
+        .iter()
+        .filter_map(|entry| {
+            let title = entry
+                .get("title")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            let url = entry.get("url").and_then(Value::as_str)?.trim().to_string();
+            if title.is_empty() || url.is_empty() {
+                return None;
+            }
+            let snippet = entry
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    entry
+                        .get("highlights")
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.iter().find_map(Value::as_str))
+                })
+                .unwrap_or("")
+                .chars()
+                .take(400)
+                .collect::<String>()
+                .trim()
+                .to_string();
+            Some(SearchResultEntry {
+                title,
+                url,
+                snippet,
+                source: "exa".to_string(),
+            })
+        })
+        .take(limit)
+        .collect()
+}
+
+fn normalize_brave_results(raw_results: &[Value], limit: usize) -> Vec<SearchResultEntry> {
+    raw_results
+        .iter()
+        .filter_map(|entry| {
+            let title = entry
+                .get("title")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            let url = entry.get("url").and_then(Value::as_str)?.trim().to_string();
+            if title.is_empty() || url.is_empty() {
+                return None;
+            }
+            let snippet = entry
+                .get("description")
+                .and_then(Value::as_str)
+                .or_else(|| entry.get("snippet").and_then(Value::as_str))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let source = entry
+                .get("profile")
+                .and_then(|value| value.get("long_name"))
+                .and_then(Value::as_str)
+                .map(|value| format!("brave:{value}"))
+                .unwrap_or_else(|| "brave".to_string());
+            Some(SearchResultEntry {
+                title,
+                url,
+                snippet,
+                source,
+            })
+        })
+        .take(limit)
+        .collect()
 }
 
 fn stable_hash(input: &str) -> String {
@@ -4553,6 +5153,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use tokio::fs;
     use tokio_util::sync::CancellationToken;
 
@@ -4580,6 +5181,23 @@ mod tests {
         ) -> anyhow::Result<ToolResult> {
             self.execute(args).await
         }
+    }
+
+    fn search_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_search_env() {
+        std::env::remove_var("TANDEM_SEARCH_BACKEND");
+        std::env::remove_var("TANDEM_SEARCH_URL");
+        std::env::remove_var("TANDEM_SEARXNG_URL");
+        std::env::remove_var("TANDEM_SEARXNG_ENGINES");
+        std::env::remove_var("TANDEM_SEARCH_TIMEOUT_MS");
+        std::env::remove_var("TANDEM_EXA_API_KEY");
+        std::env::remove_var("EXA_API_KEY");
+        std::env::remove_var("TANDEM_BRAVE_SEARCH_API_KEY");
+        std::env::remove_var("BRAVE_SEARCH_API_KEY");
     }
 
     #[test]
@@ -4744,6 +5362,93 @@ mod tests {
             extract_websearch_limit(&json!({"input":{"num_results": 6}})),
             Some(6)
         );
+    }
+
+    #[test]
+    fn search_backend_defaults_to_searxng_when_configured() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+        std::env::set_var("TANDEM_SEARXNG_URL", "http://localhost:8080");
+
+        let backend = SearchBackend::from_env();
+
+        match backend {
+            SearchBackend::Searxng { base_url, .. } => {
+                assert_eq!(base_url, "http://localhost:8080");
+            }
+            other => panic!("expected searxng backend, got {other:?}"),
+        }
+
+        clear_search_env();
+    }
+
+    #[test]
+    fn search_backend_defaults_to_tandem_when_search_url_configured() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+        std::env::set_var("TANDEM_SEARCH_URL", "https://search.tandem.frumu.ai");
+
+        let backend = SearchBackend::from_env();
+
+        match backend {
+            SearchBackend::Tandem { base_url, .. } => {
+                assert_eq!(base_url, "https://search.tandem.frumu.ai");
+            }
+            other => panic!("expected tandem backend, got {other:?}"),
+        }
+
+        clear_search_env();
+    }
+
+    #[test]
+    fn search_backend_explicit_none_disables_websearch() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+        std::env::set_var("TANDEM_SEARCH_BACKEND", "none");
+        std::env::set_var("TANDEM_SEARXNG_URL", "http://localhost:8080");
+
+        let backend = SearchBackend::from_env();
+
+        assert!(matches!(backend, SearchBackend::Disabled { .. }));
+
+        clear_search_env();
+    }
+
+    #[tokio::test]
+    async fn tool_registry_omits_websearch_when_search_backend_disabled() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+
+        let registry = ToolRegistry::new();
+        let names = registry
+            .list()
+            .await
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect::<Vec<_>>();
+
+        assert!(!names.iter().any(|name| name == "websearch"));
+
+        clear_search_env();
+    }
+
+    #[test]
+    fn normalize_searxng_results_preserves_title_url_and_engine() {
+        let results = normalize_searxng_results(
+            &[json!({
+                "title": "Tandem Docs",
+                "url": "https://tandem.docs.frumu.ai/",
+                "content": "Official documentation for Tandem.",
+                "engine": "duckduckgo"
+            })],
+            8,
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Tandem Docs");
+        assert_eq!(results[0].url, "https://tandem.docs.frumu.ai/");
+        assert_eq!(results[0].snippet, "Official documentation for Tandem.");
+        assert_eq!(results[0].source, "searxng:duckduckgo");
     }
 
     #[test]

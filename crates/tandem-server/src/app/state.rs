@@ -1,4 +1,5 @@
 use crate::config::channels::normalize_allowed_tools;
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -1134,6 +1135,7 @@ impl AppState {
     pub async fn load_automations_v2(&self) -> anyhow::Result<()> {
         let mut merged = std::collections::HashMap::<String, AutomationV2Spec>::new();
         let mut loaded_from_alternate = false;
+        let mut migrated = false;
         let mut path_counts = Vec::new();
         let mut canonical_loaded = false;
         if self.automations_v2_path.exists() {
@@ -1207,8 +1209,11 @@ impl AppState {
             merged_count = merged.len(),
             "loaded automation v2 definitions"
         );
+        for automation in merged.values_mut() {
+            migrated = migrate_bundled_studio_research_split_automation(automation) || migrated;
+        }
         *self.automations_v2.write().await = merged;
-        if loaded_from_alternate {
+        if loaded_from_alternate || migrated {
             let _ = self.persist_automations_v2().await;
         } else if canonical_loaded {
             let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
@@ -2507,6 +2512,7 @@ impl AppState {
             automation.next_fire_at_ms =
                 automation_schedule_next_fire_at_ms(&automation.schedule, now);
         }
+        migrate_bundled_studio_research_split_automation(&mut automation);
         self.automations_v2
             .write()
             .await
@@ -4510,6 +4516,16 @@ fn automation_node_builder_metadata(node: &AutomationFlowNode, key: &str) -> Opt
         .map(str::to_string)
 }
 
+fn automation_node_research_stage(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "research_stage")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_is_research_finalize(node: &AutomationFlowNode) -> bool {
+    automation_node_research_stage(node).as_deref() == Some("research_finalize")
+}
+
 fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
     node.metadata
         .as_ref()
@@ -4518,6 +4534,553 @@ fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
         .and_then(Value::as_i64)
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
+}
+
+#[derive(Clone, Copy)]
+struct SplitResearchTemplateConfig {
+    template_id: &'static str,
+    final_node_id: &'static str,
+    final_agent_id: &'static str,
+    discover_node_id: &'static str,
+    discover_agent_id: &'static str,
+    discover_title: &'static str,
+    discover_objective: &'static str,
+    discover_display_name: &'static str,
+    local_node_id: &'static str,
+    local_agent_id: &'static str,
+    local_title: &'static str,
+    local_objective: &'static str,
+    local_display_name: &'static str,
+    external_node_id: &'static str,
+    external_agent_id: &'static str,
+    external_title: &'static str,
+    external_objective: &'static str,
+    external_display_name: &'static str,
+    final_title: &'static str,
+    final_objective: &'static str,
+}
+
+fn split_research_template_config(template_id: &str) -> Option<SplitResearchTemplateConfig> {
+    match template_id {
+        "marketing-content-pipeline" => Some(SplitResearchTemplateConfig {
+            template_id: "marketing-content-pipeline",
+            final_node_id: "research-brief",
+            final_agent_id: "research",
+            discover_node_id: "research-discover-sources",
+            discover_agent_id: "research-discover",
+            discover_title: "Discover Sources",
+            discover_objective:
+                "Enumerate the workspace, identify the relevant source corpus, and prioritize which local files must be read for the marketing brief.",
+            discover_display_name: "Research Discover",
+            local_node_id: "research-local-sources",
+            local_agent_id: "research-local-sources",
+            local_title: "Read Local Sources",
+            local_objective:
+                "Read the prioritized local product and marketing files and produce source-backed notes for the brief.",
+            local_display_name: "Research Local Sources",
+            external_node_id: "research-external-research",
+            external_agent_id: "research-external",
+            external_title: "External Research",
+            external_objective:
+                "Perform targeted external research that complements the local source notes and record what web evidence was gathered or unavailable.",
+            external_display_name: "Research External",
+            final_title: "Research Brief",
+            final_objective:
+                "Write `marketing-brief.md` from the structured discovery, local source notes, and external research gathered earlier in the workflow.",
+        }),
+        "competitor-research-pipeline" => Some(SplitResearchTemplateConfig {
+            template_id: "competitor-research-pipeline",
+            final_node_id: "scan-market",
+            final_agent_id: "market-scan",
+            discover_node_id: "scan-market-discover",
+            discover_agent_id: "market-discover",
+            discover_title: "Discover Market Sources",
+            discover_objective:
+                "Identify the local source corpus and file inventory that should guide the competitor scan.",
+            discover_display_name: "Market Discover",
+            local_node_id: "scan-market-local-sources",
+            local_agent_id: "market-local-sources",
+            local_title: "Read Market Sources",
+            local_objective:
+                "Read the prioritized local competitor and strategy sources before external scanning.",
+            local_display_name: "Market Local Sources",
+            external_node_id: "scan-market-external-research",
+            external_agent_id: "market-external",
+            external_title: "Research Market",
+            external_objective:
+                "Gather current external competitor evidence guided by the local market context.",
+            external_display_name: "Market External",
+            final_title: "Scan Market",
+            final_objective:
+                "Synthesize the discovered local and external evidence into the final competitor scan.",
+        }),
+        "weekly-newsletter-builder" => Some(SplitResearchTemplateConfig {
+            template_id: "weekly-newsletter-builder",
+            final_node_id: "curate-issue",
+            final_agent_id: "curator",
+            discover_node_id: "curate-issue-discover",
+            discover_agent_id: "curator-discover",
+            discover_title: "Discover Issue Sources",
+            discover_objective:
+                "Identify the local source corpus and candidate files that should feed this week's issue.",
+            discover_display_name: "Curator Discover",
+            local_node_id: "curate-issue-local-sources",
+            local_agent_id: "curator-local-sources",
+            local_title: "Read Issue Sources",
+            local_objective:
+                "Read the prioritized local source files and extract the strongest issue candidates.",
+            local_display_name: "Curator Local Sources",
+            external_node_id: "curate-issue-external-research",
+            external_agent_id: "curator-external",
+            external_title: "Research Issue",
+            external_objective:
+                "Gather timely external signals that should influence this week's issue.",
+            external_display_name: "Curator External",
+            final_title: "Curate Issue",
+            final_objective:
+                "Curate the best items for this week's issue from the staged research handoffs.",
+        }),
+        "sales-prospecting-team" => Some(SplitResearchTemplateConfig {
+            template_id: "sales-prospecting-team",
+            final_node_id: "research-account",
+            final_agent_id: "account-research",
+            discover_node_id: "research-account-discover",
+            discover_agent_id: "account-discover",
+            discover_title: "Discover Account Sources",
+            discover_objective: "Identify the source corpus that should guide account research.",
+            discover_display_name: "Account Discover",
+            local_node_id: "research-account-local-sources",
+            local_agent_id: "account-local-sources",
+            local_title: "Read Account Sources",
+            local_objective:
+                "Read the prioritized local account and ICP files before drafting the account brief.",
+            local_display_name: "Account Local Sources",
+            external_node_id: "research-account-external-research",
+            external_agent_id: "account-external",
+            external_title: "Research Account Externally",
+            external_objective:
+                "Gather targeted external account context and buying signals to support the brief.",
+            external_display_name: "Account External",
+            final_title: "Research Account",
+            final_objective:
+                "Prepare the final account brief from the staged discovery, local evidence, and external research.",
+        }),
+        _ => None,
+    }
+}
+
+fn studio_template_id(automation: &AutomationV2Spec) -> Option<String> {
+    automation
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("studio"))
+        .and_then(Value::as_object)
+        .and_then(|studio| {
+            studio
+                .get("template_id")
+                .or_else(|| studio.get("templateId"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn split_research_stage_metadata(
+    title: &str,
+    role: &str,
+    prompt: String,
+    research_stage: &str,
+    output_path: Option<&str>,
+    required_tools: &[&str],
+    write_required: bool,
+) -> Option<Value> {
+    let mut builder = serde_json::Map::new();
+    builder.insert("title".to_string(), json!(title));
+    builder.insert("role".to_string(), json!(role));
+    builder.insert("prompt".to_string(), json!(prompt));
+    builder.insert("research_stage".to_string(), json!(research_stage));
+    if let Some(path) = output_path {
+        builder.insert("output_path".to_string(), json!(path));
+    }
+    if !required_tools.is_empty() {
+        builder.insert("required_tools".to_string(), json!(required_tools));
+    }
+    if write_required {
+        builder.insert("write_required".to_string(), json!(true));
+    }
+    let mut studio = serde_json::Map::new();
+    studio.insert("research_stage".to_string(), json!(research_stage));
+    if let Some(path) = output_path {
+        studio.insert("output_path".to_string(), json!(path));
+    }
+    Some(json!({
+        "builder": Value::Object(builder),
+        "studio": Value::Object(studio),
+    }))
+}
+
+fn migrated_stage_agent(
+    base: &AutomationAgentProfile,
+    agent_id: &str,
+    display_name: &str,
+    allowlist: &[&str],
+) -> AutomationAgentProfile {
+    let mut agent = base.clone();
+    agent.agent_id = agent_id.to_string();
+    agent.display_name = display_name.to_string();
+    agent.template_id = None;
+    agent.tool_policy.allowlist = config::channels::normalize_allowed_tools(
+        allowlist.iter().map(|value| (*value).to_string()).collect(),
+    );
+    agent.tool_policy.denylist =
+        config::channels::normalize_allowed_tools(agent.tool_policy.denylist.clone());
+    agent
+}
+
+fn migrate_split_research_studio_metadata(metadata: &mut Value) {
+    let Some(root) = metadata.as_object_mut() else {
+        return;
+    };
+    let studio = root
+        .entry("studio".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(studio_obj) = studio.as_object_mut() else {
+        return;
+    };
+    studio_obj.insert("version".to_string(), json!(2));
+    studio_obj.insert("workflow_structure_version".to_string(), json!(2));
+    studio_obj.remove("agent_drafts");
+    studio_obj.remove("node_drafts");
+    studio_obj.remove("node_layout");
+}
+
+fn migrate_bundled_studio_research_split_automation(automation: &mut AutomationV2Spec) -> bool {
+    let Some(template_id) = studio_template_id(automation) else {
+        return false;
+    };
+    let Some(config) = split_research_template_config(&template_id) else {
+        return false;
+    };
+    if automation
+        .flow
+        .nodes
+        .iter()
+        .any(|node| node.node_id == config.discover_node_id)
+        || automation
+            .flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == config.final_node_id)
+            .is_some_and(automation_node_is_research_finalize)
+    {
+        if let Some(metadata) = automation.metadata.as_mut() {
+            migrate_split_research_studio_metadata(metadata);
+        }
+        return false;
+    }
+    let Some(final_node_index) = automation
+        .flow
+        .nodes
+        .iter()
+        .position(|node| node.node_id == config.final_node_id)
+    else {
+        return false;
+    };
+    let Some(base_agent) = automation
+        .agents
+        .iter()
+        .find(|agent| agent.agent_id == config.final_agent_id)
+        .cloned()
+    else {
+        return false;
+    };
+    let existing_final_node = automation.flow.nodes[final_node_index].clone();
+    let output_path = automation_node_required_output_path(&existing_final_node);
+    let final_contract_kind = existing_final_node
+        .output_contract
+        .as_ref()
+        .map(|contract| contract.kind.clone())
+        .unwrap_or_else(|| "artifact".to_string());
+    let final_is_brief_like = final_contract_kind.trim().eq_ignore_ascii_case("brief");
+    let final_summary_guidance = existing_final_node
+        .output_contract
+        .as_ref()
+        .and_then(|contract| contract.summary_guidance.clone());
+    let discover_prompt = "Enumerate the workspace, identify the relevant source corpus, and return a structured handoff with `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial`. Read only enough to identify the corpus for the next stage, and do not write final workspace artifacts in this stage.".to_string();
+    let local_prompt = "Use the upstream `source_inventory` handoff to decide which concrete local files to read. Perform concrete `read` calls, extract the product or market facts supported by those reads, and return a structured handoff with `read_paths`, `reviewed_facts`, `files_reviewed`, `files_not_reviewed`, and `citations_local`. Do not invent facts from filenames alone.".to_string();
+    let external_prompt = "Use the upstream `source_inventory` and `local_source_notes` handoffs to guide targeted external research. Perform `websearch` and fetch result pages when snippets are not enough, then return `external_research_mode`, `queries_attempted`, `sources_reviewed`, `citations_external`, and `research_limitations`. If search is unavailable, record that limitation clearly instead of inventing evidence.".to_string();
+    let final_prompt = match config.template_id {
+        "marketing-content-pipeline" => "Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth. Read `marketing-brief.md` from disk only as a fallback or verification step. Synthesize the final marketing brief from those handoffs instead of repeating discovery or fresh web research in this stage. Include a workspace source audit, audience, positioning, proof points with citations, `Files reviewed`, `Files not reviewed`, and `Web sources reviewed`, and clearly note any research limitations.".to_string(),
+        "competitor-research-pipeline" => "Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth for the final competitor scan. Separate observed evidence from inference, keep the scan current and signal-focused, and do not rerun discovery or fresh web research in this stage.".to_string(),
+        "weekly-newsletter-builder" => "Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs to curate the final issue. Turn them into the final shortlist and section order without repeating discovery or fresh web research in this stage.".to_string(),
+        "sales-prospecting-team" => "Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth for the final account brief. Separate observed facts from hypotheses and do not rerun discovery or fresh web research in this stage.".to_string(),
+        _ => "Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth and synthesize the final artifact without repeating discovery or fresh web research in this stage.".to_string(),
+    };
+
+    let discover_node = AutomationFlowNode {
+        node_id: config.discover_node_id.to_string(),
+        agent_id: config.discover_agent_id.to_string(),
+        objective: config.discover_objective.to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some(
+                "Return a structured handoff in the final response instead of writing workspace files."
+                    .to_string(),
+            ),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: split_research_stage_metadata(
+            config.discover_title,
+            "watcher",
+            discover_prompt,
+            "research_discover",
+            None,
+            &["glob", "read"],
+            false,
+        ),
+    };
+    let local_node = AutomationFlowNode {
+        node_id: config.local_node_id.to_string(),
+        agent_id: config.local_agent_id.to_string(),
+        objective: config.local_objective.to_string(),
+        depends_on: vec![config.discover_node_id.to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: config.discover_node_id.to_string(),
+            alias: "source_inventory".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some(
+                "Return a structured handoff backed by concrete local file reads.".to_string(),
+            ),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: split_research_stage_metadata(
+            config.local_title,
+            "watcher",
+            local_prompt,
+            "research_local_sources",
+            None,
+            &["read"],
+            false,
+        ),
+    };
+    let external_node = AutomationFlowNode {
+        node_id: config.external_node_id.to_string(),
+        agent_id: config.external_agent_id.to_string(),
+        objective: config.external_objective.to_string(),
+        depends_on: vec![
+            config.discover_node_id.to_string(),
+            config.local_node_id.to_string(),
+        ],
+        input_refs: vec![
+            AutomationFlowInputRef {
+                from_step_id: config.discover_node_id.to_string(),
+                alias: "source_inventory".to_string(),
+            },
+            AutomationFlowInputRef {
+                from_step_id: config.local_node_id.to_string(),
+                alias: "local_source_notes".to_string(),
+            },
+        ],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some(
+                "Return a structured handoff describing external research findings or limitations."
+                    .to_string(),
+            ),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: split_research_stage_metadata(
+            config.external_title,
+            "watcher",
+            external_prompt,
+            "research_external_sources",
+            None,
+            &["websearch", "webfetch", "read"],
+            false,
+        ),
+    };
+    let mut final_node = existing_final_node.clone();
+    final_node.objective = config.final_objective.to_string();
+    final_node.depends_on = vec![
+        config.discover_node_id.to_string(),
+        config.local_node_id.to_string(),
+        config.external_node_id.to_string(),
+    ];
+    final_node.input_refs = vec![
+        AutomationFlowInputRef {
+            from_step_id: config.discover_node_id.to_string(),
+            alias: "source_inventory".to_string(),
+        },
+        AutomationFlowInputRef {
+            from_step_id: config.local_node_id.to_string(),
+            alias: "local_source_notes".to_string(),
+        },
+        AutomationFlowInputRef {
+            from_step_id: config.external_node_id.to_string(),
+            alias: "external_research".to_string(),
+        },
+    ];
+    final_node.stage_kind = Some(AutomationNodeStageKind::Workstream);
+    final_node.output_contract = Some(AutomationFlowOutputContract {
+        kind: final_contract_kind,
+        validator: existing_final_node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.validator)
+            .or(if final_is_brief_like {
+                Some(crate::AutomationOutputValidatorKind::ResearchBrief)
+            } else {
+                None
+            }),
+        enforcement: Some(crate::AutomationOutputEnforcement {
+            required_tools: Vec::new(),
+            required_evidence: vec![
+                "local_source_reads".to_string(),
+                "external_sources".to_string(),
+            ],
+            required_sections: if final_is_brief_like {
+                vec![
+                    "files_reviewed".to_string(),
+                    "files_not_reviewed".to_string(),
+                    "citations".to_string(),
+                    "web_sources_reviewed".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
+            prewrite_gates: Vec::new(),
+            retry_on_missing: if final_is_brief_like {
+                vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                    "files_reviewed".to_string(),
+                    "files_not_reviewed".to_string(),
+                    "citations".to_string(),
+                    "web_sources_reviewed".to_string(),
+                ]
+            } else {
+                vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                ]
+            },
+            terminal_on: vec![
+                "tool_unavailable".to_string(),
+                "repair_budget_exhausted".to_string(),
+            ],
+            repair_budget: Some(5),
+            session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+        }),
+        schema: existing_final_node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.schema.clone()),
+        summary_guidance: final_summary_guidance,
+    });
+    final_node.metadata = split_research_stage_metadata(
+        config.final_title,
+        "watcher",
+        final_prompt,
+        "research_finalize",
+        output_path.as_deref(),
+        &[],
+        output_path.is_some(),
+    );
+
+    let mut new_nodes = Vec::with_capacity(automation.flow.nodes.len() + 3);
+    let mut inserted = false;
+    for node in automation.flow.nodes.clone() {
+        if node.node_id == config.final_node_id {
+            new_nodes.push(discover_node.clone());
+            new_nodes.push(local_node.clone());
+            new_nodes.push(external_node.clone());
+            new_nodes.push(final_node.clone());
+            inserted = true;
+        } else if node.node_id != config.discover_node_id
+            && node.node_id != config.local_node_id
+            && node.node_id != config.external_node_id
+        {
+            new_nodes.push(node);
+        }
+    }
+    if !inserted {
+        return false;
+    }
+    automation.flow.nodes = new_nodes;
+
+    for candidate in [
+        migrated_stage_agent(
+            &base_agent,
+            config.discover_agent_id,
+            config.discover_display_name,
+            &["glob", "read"],
+        ),
+        migrated_stage_agent(
+            &base_agent,
+            config.local_agent_id,
+            config.local_display_name,
+            &["read"],
+        ),
+        migrated_stage_agent(
+            &base_agent,
+            config.external_agent_id,
+            config.external_display_name,
+            &["websearch", "webfetch", "read"],
+        ),
+    ] {
+        if !automation
+            .agents
+            .iter()
+            .any(|agent| agent.agent_id == candidate.agent_id)
+        {
+            automation.agents.push(candidate);
+        }
+    }
+    if let Some(final_agent) = automation
+        .agents
+        .iter_mut()
+        .find(|agent| agent.agent_id == config.final_agent_id)
+    {
+        final_agent.tool_policy.allowlist = config::channels::normalize_allowed_tools(vec![
+            "read".to_string(),
+            "write".to_string(),
+        ]);
+    }
+    if let Some(metadata) = automation.metadata.as_mut() {
+        migrate_split_research_studio_metadata(metadata);
+    } else {
+        automation.metadata = Some(json!({
+            "studio": {
+                "template_id": config.template_id,
+                "version": 2,
+                "workflow_structure_version": 2
+            }
+        }));
+    }
+    true
 }
 
 fn automation_phase_execution_mode_map(
@@ -4989,6 +5552,7 @@ fn render_automation_v2_prompt(
     attempt: u32,
     agent: &AutomationAgentProfile,
     upstream_inputs: &[Value],
+    requested_tools: &[String],
     template_system_prompt: Option<&str>,
     standup_report_path: Option<&str>,
     memory_project_id: Option<&str>,
@@ -5127,9 +5691,11 @@ fn render_automation_v2_prompt(
         };
         sections.push(output_rules);
     }
-    if automation_node_web_research_expected(node) {
+    if automation_node_web_research_expected(node)
+        && requested_tools.iter().any(|tool| tool == "websearch")
+    {
         sections.push(
-            "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Include only evidence you can support from local files or current web findings."
+            "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Include only evidence you can support from local files or current web findings.\n- If `websearch` returns an authorization-required or unavailable result, treat external research as unavailable for this run, continue with local file reads, and note the web-research limitation instead of stopping."
                 .to_string(),
         );
     }
@@ -5786,6 +6352,19 @@ fn normalize_automation_requested_tools(
     normalized
 }
 
+fn filter_requested_tools_to_available(
+    requested_tools: Vec<String>,
+    available_tool_names: &HashSet<String>,
+) -> Vec<String> {
+    if requested_tools.iter().any(|tool| tool == "*") {
+        return requested_tools;
+    }
+    requested_tools
+        .into_iter()
+        .filter(|tool| available_tool_names.contains(tool))
+        .collect()
+}
+
 fn automation_node_prewrite_requirements(
     node: &AutomationFlowNode,
     requested_tools: &[String],
@@ -5806,27 +6385,30 @@ fn automation_node_prewrite_requirements(
         .required_sections
         .iter()
         .any(|item| item == "files_reviewed");
+    let research_finalize = automation_node_is_research_finalize(node);
     let has_required_read = required_tools.iter().any(|tool| tool == "read");
     let has_required_websearch = required_tools.iter().any(|tool| tool == "websearch");
     let has_any_required_tools = !required_tools.is_empty();
-    let concrete_read_required = (brief_research_node
-        || has_required_read
-        || enforcement
-            .prewrite_gates
-            .iter()
-            .any(|gate| gate == "concrete_reads"))
+    let concrete_read_required = !research_finalize
+        && (brief_research_node
+            || has_required_read
+            || enforcement
+                .prewrite_gates
+                .iter()
+                .any(|gate| gate == "concrete_reads"))
         && requested_tools.iter().any(|tool| tool == "read");
-    let successful_web_research_required = (brief_research_node
-        || has_required_websearch
-        || enforcement
-            .prewrite_gates
-            .iter()
-            .any(|gate| gate == "successful_web_research"))
+    let successful_web_research_required = !research_finalize
+        && (brief_research_node
+            || has_required_websearch
+            || enforcement
+                .prewrite_gates
+                .iter()
+                .any(|gate| gate == "successful_web_research"))
         && web_research_expected
         && requested_tools.iter().any(|tool| tool == "websearch");
     Some(PrewriteRequirements {
-        workspace_inspection_required,
-        web_research_required,
+        workspace_inspection_required: workspace_inspection_required && !research_finalize,
+        web_research_required: web_research_required && !research_finalize,
         concrete_read_required,
         successful_web_research_required,
         repair_on_unmet_requirements: brief_research_node || has_any_required_tools,
@@ -6624,6 +7206,117 @@ fn session_read_paths(session: &Session, workspace_root: &str) -> Vec<String> {
     paths
 }
 
+#[derive(Debug, Clone, Default)]
+struct AutomationUpstreamEvidence {
+    read_paths: Vec<String>,
+    discovered_relevant_paths: Vec<String>,
+    web_research_attempted: bool,
+    web_research_succeeded: bool,
+}
+
+async fn collect_automation_upstream_research_evidence(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+) -> AutomationUpstreamEvidence {
+    let mut evidence = AutomationUpstreamEvidence::default();
+    let mut upstream_node_ids = node
+        .input_refs
+        .iter()
+        .map(|input| input.from_step_id.clone())
+        .collect::<Vec<_>>();
+    upstream_node_ids.extend(node.depends_on.clone());
+    upstream_node_ids.sort();
+    upstream_node_ids.dedup();
+    let flow_nodes = automation
+        .flow
+        .nodes
+        .iter()
+        .map(|entry| (entry.node_id.as_str(), entry))
+        .collect::<std::collections::HashMap<_, _>>();
+    for upstream_node_id in upstream_node_ids {
+        let Some(output) = run.checkpoint.node_outputs.get(&upstream_node_id) else {
+            continue;
+        };
+        if let Some(validation) = output.get("artifact_validation") {
+            if let Some(rows) = validation.get("read_paths").and_then(Value::as_array) {
+                evidence
+                    .read_paths
+                    .extend(rows.iter().filter_map(Value::as_str).map(str::to_string));
+            }
+            if let Some(rows) = validation
+                .get("discovered_relevant_paths")
+                .and_then(Value::as_array)
+            {
+                evidence
+                    .discovered_relevant_paths
+                    .extend(rows.iter().filter_map(Value::as_str).map(str::to_string));
+            }
+            evidence.web_research_attempted |= validation
+                .get("web_research_attempted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            evidence.web_research_succeeded |= validation
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        }
+        if let Some(tool_telemetry) = output.get("tool_telemetry") {
+            evidence.web_research_attempted |= tool_telemetry
+                .get("web_research_used")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            evidence.web_research_succeeded |= tool_telemetry
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        }
+        if let Some(session_id) = automation_output_session_id(output) {
+            if let Some(session) = state.storage.get_session(&session_id).await {
+                evidence
+                    .read_paths
+                    .extend(session_read_paths(&session, workspace_root));
+                evidence
+                    .discovered_relevant_paths
+                    .extend(session_discovered_relevant_paths(&session, workspace_root));
+                if let Some(upstream_node) = flow_nodes.get(upstream_node_id.as_str()) {
+                    let requested_tools = output
+                        .get("tool_telemetry")
+                        .and_then(|value| value.get("requested_tools"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let telemetry = summarize_automation_tool_activity(
+                        upstream_node,
+                        &session,
+                        &requested_tools,
+                    );
+                    evidence.web_research_attempted |= telemetry
+                        .get("web_research_used")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    evidence.web_research_succeeded |= telemetry
+                        .get("web_research_succeeded")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                }
+            }
+        }
+    }
+    evidence.read_paths.sort();
+    evidence.read_paths.dedup();
+    evidence.discovered_relevant_paths.sort();
+    evidence.discovered_relevant_paths.dedup();
+    evidence
+}
+
 fn session_discovered_relevant_paths(session: &Session, workspace_root: &str) -> Vec<String> {
     let workspace = PathBuf::from(workspace_root);
     let mut paths = Vec::new();
@@ -7078,6 +7771,30 @@ fn validate_automation_artifact_output(
     verified_output: Option<(String, String)>,
     workspace_snapshot_before: &std::collections::BTreeSet<String>,
 ) -> (Option<(String, String)>, Value, Option<String>) {
+    validate_automation_artifact_output_with_upstream(
+        node,
+        session,
+        workspace_root,
+        session_text,
+        tool_telemetry,
+        preexisting_output,
+        verified_output,
+        workspace_snapshot_before,
+        None,
+    )
+}
+
+fn validate_automation_artifact_output_with_upstream(
+    node: &AutomationFlowNode,
+    session: &Session,
+    workspace_root: &str,
+    session_text: &str,
+    tool_telemetry: &Value,
+    preexisting_output: Option<&str>,
+    verified_output: Option<(String, String)>,
+    workspace_snapshot_before: &std::collections::BTreeSet<String>,
+    upstream_evidence: Option<&AutomationUpstreamEvidence>,
+) -> (Option<(String, String)>, Value, Option<String>) {
     let suspicious_after = list_suspicious_automation_marker_files(workspace_root);
     let undeclared_files_created = suspicious_after
         .iter()
@@ -7091,6 +7808,7 @@ fn validate_automation_artifact_output(
     }
 
     let enforcement = automation_node_output_enforcement(node);
+    let validator_kind = automation_output_validator_kind(node);
     let execution_policy = automation_node_execution_policy(node, workspace_root);
     let mutation_summary = session_file_mutation_summary(session, workspace_root);
     let verification_summary = session_verification_summary(node, session);
@@ -7120,8 +7838,22 @@ fn validate_automation_artifact_output(
     let mut semantic_block_reason = None::<String>;
     let mut accepted_output = verified_output;
     let mut recovered_from_session_write = false;
-    let read_paths = session_read_paths(session, workspace_root);
-    let mut discovered_relevant_paths = session_discovered_relevant_paths(session, workspace_root);
+    let current_read_paths = session_read_paths(session, workspace_root);
+    let current_discovered_relevant_paths =
+        session_discovered_relevant_paths(session, workspace_root);
+    let use_upstream_evidence = automation_node_is_research_finalize(node);
+    let mut read_paths = current_read_paths.clone();
+    let mut discovered_relevant_paths = current_discovered_relevant_paths.clone();
+    if use_upstream_evidence {
+        if let Some(upstream) = upstream_evidence {
+            read_paths.extend(upstream.read_paths.clone());
+            discovered_relevant_paths.extend(upstream.discovered_relevant_paths.clone());
+        }
+    }
+    read_paths.sort();
+    read_paths.dedup();
+    discovered_relevant_paths.sort();
+    discovered_relevant_paths.dedup();
     let mut reviewed_paths_backed_by_read = Vec::<String>::new();
     let mut unreviewed_relevant_paths = Vec::<String>::new();
     let mut unmet_requirements = Vec::<String>::new();
@@ -7193,20 +7925,42 @@ fn validate_automation_artifact_output(
             .get("requested_tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
-        let executed_has_read = tool_telemetry
+        let requested_has_websearch = tool_telemetry
+            .get("requested_tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| {
+                tools
+                    .iter()
+                    .any(|value| value.as_str() == Some("websearch"))
+            });
+        let current_executed_has_read = tool_telemetry
             .get("executed_tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
-        let web_research_expected = enforcement_requires_external_sources(&enforcement);
-        let web_research_succeeded = tool_telemetry
+        let upstream_has_read = use_upstream_evidence
+            && upstream_evidence.is_some_and(|evidence| !evidence.read_paths.is_empty());
+        let executed_has_read = current_executed_has_read || upstream_has_read;
+        let latest_web_research_failure = tool_telemetry
+            .get("latest_web_research_failure")
+            .and_then(Value::as_str);
+        let web_research_backend_unavailable =
+            web_research_unavailable(latest_web_research_failure);
+        let web_research_unavailable = !requested_has_websearch || web_research_backend_unavailable;
+        let web_research_expected =
+            enforcement_requires_external_sources(&enforcement) && !web_research_unavailable;
+        let current_web_research_succeeded = tool_telemetry
             .get("web_research_succeeded")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let web_research_succeeded = current_web_research_succeeded
+            || (use_upstream_evidence
+                && upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded));
         let workspace_inspection_satisfied = tool_telemetry
             .get("workspace_inspection_used")
             .and_then(Value::as_bool)
             .unwrap_or(false)
-            || executed_has_read;
+            || executed_has_read
+            || (use_upstream_evidence && !discovered_relevant_paths.is_empty());
         let prewrite_requirements =
             automation_node_prewrite_requirements(node, &requested_tools_for_contract);
         let session_text_recovery_requires_prewrite =
@@ -7249,8 +8003,9 @@ fn validate_automation_artifact_output(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let current_attempt_has_recorded_activity =
-            !executed_tools_for_attempt.is_empty() || !session_write_candidates.is_empty();
+        let current_attempt_has_recorded_activity = !executed_tools_for_attempt.is_empty()
+            || !session_write_candidates.is_empty()
+            || (use_upstream_evidence && upstream_evidence.is_some());
         let allow_preexisting_candidate =
             !enforcement_requires_evidence || current_attempt_has_recorded_activity;
         if allow_preexisting_candidate {
@@ -7314,9 +8069,6 @@ fn validate_automation_artifact_output(
                     .unwrap_or(0)
                     > 1);
         let selected_assessment = best_candidate.as_ref();
-        let validator_kind = automation_output_validator_kind(node);
-        let is_research_brief =
-            validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
         let required_tools_for_node = enforcement.required_tools.clone();
         let has_required_tools = !required_tools_for_node.is_empty();
         let requires_local_source_reads = enforcement
@@ -7326,7 +8078,8 @@ fn validate_automation_artifact_output(
         let requires_external_sources = enforcement
             .required_evidence
             .iter()
-            .any(|item| item == "external_sources");
+            .any(|item| item == "external_sources")
+            && !web_research_unavailable;
         let requires_files_reviewed = enforcement
             .required_sections
             .iter()
@@ -7342,7 +8095,8 @@ fn validate_automation_artifact_output(
         let requires_web_sources_reviewed = enforcement
             .required_sections
             .iter()
-            .any(|item| item == "web_sources_reviewed");
+            .any(|item| item == "web_sources_reviewed")
+            && !web_research_unavailable;
         let has_research_contract = requires_local_source_reads
             || requires_external_sources
             || requires_files_reviewed
@@ -7352,7 +8106,8 @@ fn validate_automation_artifact_output(
         let requires_read = required_tools_for_node.iter().any(|tool| tool == "read");
         let requires_websearch = required_tools_for_node
             .iter()
-            .any(|tool| tool == "websearch");
+            .any(|tool| tool == "websearch")
+            && !web_research_unavailable;
         if has_research_contract && (requested_has_read || requires_local_source_reads) {
             let missing_concrete_reads = requires_local_source_reads && !executed_has_read;
             let files_reviewed_backed = selected_assessment.is_some_and(|assessment| {
@@ -7566,27 +8321,11 @@ fn validate_automation_artifact_output(
                     assessment.substantive && !assessment.placeholder_like
                 });
             if output_is_substantive {
-                // For research-brief nodes: only waive the semantic block once the model has
-                // actually used at least one required research tool, OR has already gone through
-                // at least one repair attempt (meaning the engine already tried to get it to
-                // improve and the waiver mechanism is legitimately kicking in).
-                // This prevents accepting a "confession document" on the very first attempt.
-                let is_brief_research_node = has_research_contract;
-                let should_clear = if is_brief_research_node {
-                    let executed_has_read = tool_telemetry
-                        .get("executed_tools")
-                        .and_then(Value::as_array)
-                        .is_some_and(|tools| tools.iter().any(|t| t.as_str() == Some("read")));
-                    let executed_has_websearch = tool_telemetry
-                        .get("executed_tools")
-                        .and_then(Value::as_array)
-                        .is_some_and(|tools| tools.iter().any(|t| t.as_str() == Some("websearch")));
-                    // Allow waiver if the model did actual research, OR already had a repair pass
-                    repair_attempted || executed_has_read || executed_has_websearch
-                } else {
-                    // Non-research nodes: always accept substantive output
-                    true
-                };
+                // Research artifacts may stay on disk for operator inspection, but unmet source
+                // coverage should continue to block or repair the node until requirements are
+                // actually satisfied. Only non-research artifacts are allowed to clear semantic
+                // validation purely because the produced file looks substantive.
+                let should_clear = !has_research_contract;
                 if should_clear {
                     semantic_block_reason = None;
                 }
@@ -7603,7 +8342,6 @@ fn validate_automation_artifact_output(
         semantic_block_reason.as_deref(),
         tool_telemetry,
     );
-    let validator_kind = automation_output_validator_kind(node);
     let has_required_tools = !enforcement.required_tools.is_empty();
     let contract_requires_repair = !enforcement.retry_on_missing.is_empty() || has_required_tools;
     let validation_outcome = if contract_requires_repair && semantic_block_reason.is_some() {
@@ -7618,6 +8356,30 @@ fn validate_automation_artifact_output(
         "passed"
     };
     let should_classify = contract_requires_repair;
+    let latest_web_research_failure = tool_telemetry
+        .get("latest_web_research_failure")
+        .and_then(Value::as_str);
+    let requested_has_websearch = tool_telemetry
+        .get("requested_tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|value| value.as_str() == Some("websearch"))
+        });
+    let web_research_expected_for_classification =
+        enforcement_requires_external_sources(&enforcement)
+            && requested_has_websearch
+            && !web_research_unavailable(latest_web_research_failure);
+    let external_research_mode = if enforcement_requires_external_sources(&enforcement) {
+        if !requested_has_websearch || web_research_unavailable(latest_web_research_failure) {
+            "waived_unavailable"
+        } else {
+            "required"
+        }
+    } else {
+        "not_required"
+    };
     let blocking_classification = if should_classify {
         classify_research_validation_state(
             &tool_telemetry
@@ -7630,11 +8392,9 @@ fn validate_automation_artifact_output(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
-            enforcement_requires_external_sources(&enforcement),
+            web_research_expected_for_classification,
             &unmet_requirements,
-            tool_telemetry
-                .get("latest_web_research_failure")
-                .and_then(Value::as_str),
+            latest_web_research_failure,
             repair_exhausted,
         )
         .map(str::to_string)
@@ -7653,12 +8413,10 @@ fn validate_automation_artifact_output(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
-            enforcement_requires_external_sources(&enforcement),
+            web_research_expected_for_classification,
             &unmet_requirements,
             &unreviewed_relevant_paths,
-            tool_telemetry
-                .get("latest_web_research_failure")
-                .and_then(Value::as_str),
+            latest_web_research_failure,
         )
     } else {
         Vec::new()
@@ -7678,19 +8436,34 @@ fn validate_automation_artifact_output(
         "verification": verification_summary,
         "git_diff_summary": git_diff_summary_for_paths(workspace_root, &touched_files),
         "read_paths": read_paths,
+        "current_node_read_paths": current_read_paths,
         "discovered_relevant_paths": discovered_relevant_paths,
+        "current_node_discovered_relevant_paths": current_discovered_relevant_paths,
         "reviewed_paths_backed_by_read": reviewed_paths_backed_by_read,
         "unreviewed_relevant_paths": unreviewed_relevant_paths,
         "citation_count": citation_count,
         "web_sources_reviewed_present": web_sources_reviewed_present,
         "heading_count": heading_count,
         "paragraph_count": paragraph_count,
-        "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
-        "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
+        "web_research_attempted": if use_upstream_evidence {
+            json!(tool_telemetry.get("web_research_used").and_then(Value::as_bool).unwrap_or(false)
+                || upstream_evidence.is_some_and(|evidence| evidence.web_research_attempted))
+        } else {
+            tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false))
+        },
+        "web_research_succeeded": if use_upstream_evidence {
+            json!(tool_telemetry.get("web_research_succeeded").and_then(Value::as_bool).unwrap_or(false)
+                || upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded))
+        } else {
+            tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false))
+        },
+        "external_research_mode": external_research_mode,
+        "upstream_evidence_applied": use_upstream_evidence,
         "blocked_handoff_cleanup_action": blocked_handoff_cleanup_action,
         "repair_attempted": repair_attempted,
         "repair_attempt": repair_attempt,
         "repair_attempts_remaining": repair_attempts_remaining,
+        "repair_budget_spent": repair_attempt > 0,
         "repair_succeeded": repair_succeeded,
         "repair_exhausted": repair_exhausted,
         "validation_outcome": validation_outcome,
@@ -7819,21 +8592,40 @@ fn summarize_automation_tool_activity(
             else {
                 continue;
             };
+            let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
+            let is_workspace_tool = matches!(
+                normalized.as_str(),
+                "glob" | "read" | "grep" | "search" | "codesearch" | "ls" | "list"
+            );
+            let is_web_tool = matches!(
+                normalized.as_str(),
+                "websearch" | "webfetch" | "webfetch_html"
+            );
             if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
-                let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
-                if matches!(
-                    normalized.as_str(),
-                    "websearch" | "webfetch" | "webfetch_html"
-                ) {
+                if !executed_tools.iter().any(|entry| entry == &normalized) {
+                    executed_tools.push(normalized.clone());
+                }
+                let next_count = counts
+                    .get(&normalized)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    .saturating_add(1);
+                counts.insert(normalized.clone(), json!(next_count));
+                if is_workspace_tool {
+                    workspace_inspection_used = true;
+                }
+                if is_web_tool {
+                    web_research_used = true;
+                }
+                if is_web_tool {
                     latest_web_research_failure = error
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .map(str::to_string);
+                        .map(normalize_web_research_failure_label);
                 }
                 continue;
             }
-            let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
             if !executed_tools.iter().any(|entry| entry == &normalized) {
                 executed_tools.push(normalized.clone());
             }
@@ -7843,16 +8635,10 @@ fn summarize_automation_tool_activity(
                 .unwrap_or(0)
                 .saturating_add(1);
             counts.insert(normalized.clone(), json!(next_count));
-            if matches!(
-                normalized.as_str(),
-                "glob" | "read" | "grep" | "search" | "codesearch" | "ls" | "list"
-            ) {
+            if is_workspace_tool {
                 workspace_inspection_used = true;
             }
-            if matches!(
-                normalized.as_str(),
-                "websearch" | "webfetch" | "webfetch_html"
-            ) {
+            if is_web_tool {
                 web_research_used = true;
                 let metadata = result
                     .as_ref()
@@ -7872,25 +8658,33 @@ fn summarize_automation_tool_activity(
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(str::to_string);
-                let timed_out = metadata
-                    .get("error")
-                    .and_then(Value::as_str)
+                let timed_out = result_error
+                    .as_deref()
                     .is_some_and(|value| value.eq_ignore_ascii_case("timeout"))
                     || output.contains("search timed out")
-                    || output.contains("no results received");
-                if result_error.is_none() && !timed_out && !output.is_empty() {
+                    || output.contains("no results received")
+                    || output.contains("timed out");
+                let unavailable = result_error
+                    .as_deref()
+                    .is_some_and(web_research_unavailable_failure)
+                    || web_research_unavailable_failure(&output);
+                if result_error.is_none() && !timed_out && !unavailable && !output.is_empty() {
                     web_research_succeeded = true;
                     latest_web_research_failure = None;
                 } else if latest_web_research_failure.is_none() {
-                    latest_web_research_failure = result_error.or_else(|| {
-                        if timed_out {
-                            Some("web research timed out".to_string())
-                        } else if output.is_empty() {
-                            Some("web research returned no usable output".to_string())
-                        } else {
-                            Some("web research returned an unusable result".to_string())
-                        }
-                    });
+                    latest_web_research_failure = result_error
+                        .map(|value| normalize_web_research_failure_label(&value))
+                        .or_else(|| {
+                            if timed_out {
+                                Some("web research timed out".to_string())
+                            } else if unavailable {
+                                Some(normalize_web_research_failure_label(&output))
+                            } else if output.is_empty() {
+                                Some("web research returned no usable output".to_string())
+                            } else {
+                                Some("web research returned an unusable result".to_string())
+                            }
+                        });
                 }
             }
         }
@@ -7940,16 +8734,14 @@ fn summarize_automation_tool_activity(
                         ) {
                             *web_research_used = true;
                             let lowered = block.to_ascii_lowercase();
-                            if lowered.contains("authorization required")
-                                || lowered.contains("authorize here:")
-                            {
-                                *latest_web_research_failure =
-                                    Some("web research authorization required".to_string());
-                            } else if lowered.contains("timed out")
+                            if lowered.contains("timed out")
                                 || lowered.contains("no results received")
                             {
                                 *latest_web_research_failure =
                                     Some("web research timed out".to_string());
+                            } else if web_research_unavailable_failure(&lowered) {
+                                *latest_web_research_failure =
+                                    Some(normalize_web_research_failure_label(&lowered));
                             } else if !block.trim().is_empty() {
                                 *web_research_succeeded = true;
                                 *latest_web_research_failure = None;
@@ -8021,6 +8813,50 @@ fn summarize_automation_tool_activity(
     })
 }
 
+fn normalize_web_research_failure_label(raw: &str) -> String {
+    let lowered = raw.trim().to_ascii_lowercase();
+    if lowered.contains("authorization required")
+        || lowered.contains("authorization_required")
+        || lowered.contains("authorize")
+    {
+        "web research authorization required".to_string()
+    } else if lowered.contains("backend unavailable")
+        || lowered.contains("backend_unavailable")
+        || lowered.contains("web research unavailable")
+        || lowered.contains("service unavailable")
+        || lowered.contains("currently unavailable")
+        || lowered.contains("connection refused")
+        || lowered.contains("dns error")
+        || lowered.contains("network error")
+        || lowered.contains("temporarily unavailable")
+    {
+        "web research unavailable".to_string()
+    } else if lowered.contains("timed out") || lowered.contains("timeout") {
+        "web research timed out".to_string()
+    } else {
+        raw.trim().to_string()
+    }
+}
+
+fn web_research_unavailable_failure(raw: &str) -> bool {
+    let lowered = raw.trim().to_ascii_lowercase();
+    lowered.contains("authorization required")
+        || lowered.contains("authorization_required")
+        || lowered.contains("authorize")
+        || lowered.contains("backend unavailable")
+        || lowered.contains("backend_unavailable")
+        || lowered.contains("web research unavailable")
+        || lowered.contains("service unavailable")
+        || lowered.contains("currently unavailable")
+        || lowered.contains("temporarily unavailable")
+        || lowered.contains("timed out")
+        || lowered.contains("timeout")
+}
+
+fn web_research_unavailable(latest_web_research_failure: Option<&str>) -> bool {
+    latest_web_research_failure.is_some_and(web_research_unavailable_failure)
+}
+
 fn classify_research_validation_state(
     requested_tools: &[Value],
     executed_tools: &[Value],
@@ -8047,12 +8883,7 @@ fn classify_research_validation_state(
     if repair_exhausted {
         return Some("coverage_incomplete_after_retry");
     }
-    if web_research_expected
-        && latest_web_research_failure.is_some_and(|value| {
-            let lowered = value.to_ascii_lowercase();
-            lowered.contains("authorization required") || lowered.contains("authorize")
-        })
-    {
+    if web_research_expected && web_research_unavailable(latest_web_research_failure) {
         return Some("tool_unavailable");
     }
     if (!requested_has_read
@@ -8123,12 +8954,9 @@ fn research_required_next_tool_actions(
             || has_unmet("missing_successful_web_research")
             || has_unmet("web_sources_reviewed_missing"))
     {
-        if latest_web_research_failure.is_some_and(|value| {
-            let lowered = value.to_ascii_lowercase();
-            lowered.contains("authorization required") || lowered.contains("authorize")
-        }) {
+        if web_research_unavailable(latest_web_research_failure) {
             actions.push(
-                "Authorize `websearch` first, then rerun current web research and include the resulting sources in `Web sources reviewed`."
+                "Skip `websearch` for this run because external research is unavailable. Continue with local file reads and note that web research could not be completed."
                     .to_string(),
             );
         } else {
@@ -9443,8 +10271,17 @@ pub(crate) async fn execute_automation_v2_node(
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
         allowlist.extend(mcp_tools.clone());
     }
-    let requested_tools =
-        normalize_automation_requested_tools(node, &workspace_root, allowlist.clone());
+    let available_tool_names = state
+        .tools
+        .list()
+        .await
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect::<HashSet<_>>();
+    let requested_tools = filter_requested_tools_to_available(
+        normalize_automation_requested_tools(node, &workspace_root, allowlist.clone()),
+        &available_tool_names,
+    );
     state
         .engine_loop
         .set_session_allowed_tools(&session_id, requested_tools.clone())
@@ -9477,6 +10314,7 @@ pub(crate) async fn execute_automation_v2_node(
         attempt,
         agent,
         &upstream_inputs,
+        &requested_tools,
         template
             .as_ref()
             .and_then(|value| value.system_prompt.as_deref()),
@@ -9561,8 +10399,22 @@ pub(crate) async fn execute_automation_v2_node(
         None
     };
     let tool_telemetry = summarize_automation_tool_activity(node, &session, &requested_tools);
+    let upstream_evidence = if automation_node_is_research_finalize(node) {
+        Some(
+            collect_automation_upstream_research_evidence(
+                state,
+                automation,
+                &run,
+                node,
+                &workspace_root,
+            )
+            .await,
+        )
+    } else {
+        None
+    };
     let (verified_output, mut artifact_validation, artifact_rejected_reason) =
-        validate_automation_artifact_output(
+        validate_automation_artifact_output_with_upstream(
             node,
             &session,
             &workspace_root,
@@ -9571,6 +10423,7 @@ pub(crate) async fn execute_automation_v2_node(
             preexisting_output.as_deref(),
             verified_output,
             &workspace_snapshot_before,
+            upstream_evidence.as_ref(),
         );
     let _ = artifact_rejected_reason;
     let editorial_publish_block_reason = state
@@ -11684,6 +12537,12 @@ mod tests {
             1,
             &agent,
             &[],
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
             None,
             None,
             None,
@@ -11724,6 +12583,27 @@ mod tests {
         assert_eq!(
             automation_node_required_tools(&node),
             vec!["read".to_string(), "websearch".to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_requested_tools_to_available_removes_unconfigured_websearch() {
+        let requested_tools = vec![
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ];
+        let available_tool_names = ["glob", "read", "write"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+
+        let filtered = filter_requested_tools_to_available(requested_tools, &available_tool_names);
+
+        assert_eq!(
+            filtered,
+            vec!["glob".to_string(), "read".to_string(), "write".to_string()]
         );
     }
 
@@ -11769,6 +12649,66 @@ mod tests {
         assert!(requirements.successful_web_research_required);
         assert!(requirements.repair_on_unmet_requirements);
         assert_eq!(requirements.coverage_mode, PrewriteCoverageMode::None);
+    }
+
+    #[test]
+    fn research_finalize_prewrite_requirements_skip_same_node_reads_and_websearch() {
+        let node = AutomationFlowNode {
+            node_id: "research-brief".to_string(),
+            agent_id: "research".to_string(),
+            objective: "Write marketing brief".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                enforcement: Some(crate::AutomationOutputEnforcement {
+                    required_tools: Vec::new(),
+                    required_evidence: vec![
+                        "local_source_reads".to_string(),
+                        "external_sources".to_string(),
+                    ],
+                    required_sections: vec![
+                        "files_reviewed".to_string(),
+                        "files_not_reviewed".to_string(),
+                        "citations".to_string(),
+                        "web_sources_reviewed".to_string(),
+                    ],
+                    prewrite_gates: Vec::new(),
+                    retry_on_missing: Vec::new(),
+                    terminal_on: Vec::new(),
+                    repair_budget: Some(5),
+                    session_text_recovery: None,
+                }),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "research_stage": "research_finalize"
+                }
+            })),
+        };
+
+        let requirements = automation_node_prewrite_requirements(
+            &node,
+            &[
+                "read".to_string(),
+                "write".to_string(),
+                "websearch".to_string(),
+            ],
+        )
+        .expect("prewrite requirements");
+
+        assert!(!requirements.workspace_inspection_required);
+        assert!(!requirements.web_research_required);
+        assert!(!requirements.concrete_read_required);
+        assert!(!requirements.successful_web_research_required);
     }
 
     #[test]
@@ -12000,6 +12940,7 @@ mod tests {
             1,
             &agent,
             &[],
+            &["read".to_string(), "write".to_string()],
             None,
             None,
             None,
@@ -12076,7 +13017,36 @@ mod tests {
 
         assert!(actions
             .iter()
-            .any(|value| value.contains("Authorize `websearch` first")));
+            .any(|value| value.contains("Skip `websearch` for this run")));
+    }
+
+    #[test]
+    fn research_required_next_tool_actions_surface_generic_websearch_unavailability() {
+        let requested_tools = vec![
+            json!("glob"),
+            json!("read"),
+            json!("websearch"),
+            json!("write"),
+        ];
+        let executed_tools = vec![json!("glob"), json!("websearch")];
+        let unmet_requirements = vec![
+            "no_concrete_reads".to_string(),
+            "missing_successful_web_research".to_string(),
+            "web_sources_reviewed_missing".to_string(),
+        ];
+
+        let actions = research_required_next_tool_actions(
+            &requested_tools,
+            &executed_tools,
+            true,
+            &unmet_requirements,
+            &Vec::new(),
+            Some("web research unavailable"),
+        );
+
+        assert!(actions
+            .iter()
+            .any(|value| value.contains("external research is unavailable")));
     }
 
     #[test]
@@ -12141,6 +13111,128 @@ mod tests {
                 .get("latest_web_research_failure")
                 .and_then(Value::as_str),
             Some("web research authorization required")
+        );
+    }
+
+    #[test]
+    fn summarize_automation_tool_activity_counts_auth_failed_websearch_as_attempted() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: None,
+        };
+        let mut session = Session::new(Some("auth failed websearch".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "websearch".to_string(),
+                args: json!({"query":"tandem competitors"}),
+                result: None,
+                error: Some("Authorization required for `websearch`.".to_string()),
+            }],
+        ));
+
+        let telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            telemetry
+                .get("executed_tools")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["websearch"])
+        );
+        assert_eq!(
+            telemetry.get("web_research_used").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            telemetry
+                .get("latest_web_research_failure")
+                .and_then(Value::as_str),
+            Some("web research authorization required")
+        );
+    }
+
+    #[test]
+    fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_unavailable() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: None,
+        };
+        let mut session = Session::new(Some("backend unavailable websearch".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "websearch".to_string(),
+                args: json!({"query":"tandem competitors"}),
+                result: Some(json!({
+                    "output": "Web search is currently unavailable for `websearch`.",
+                    "metadata": { "error": "backend_unavailable" }
+                })),
+                error: None,
+            }],
+        ));
+
+        let telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            telemetry
+                .get("latest_web_research_failure")
+                .and_then(Value::as_str),
+            Some("web research unavailable")
+        );
+        assert_eq!(
+            telemetry
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool),
+            Some(false)
         );
     }
 
@@ -12478,6 +13570,338 @@ mod tests {
                 .get("web_sources_reviewed_present")
                 .and_then(Value::as_bool),
             Some(false)
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace_root);
+    }
+
+    #[test]
+    fn marketing_template_automation_migrates_to_split_research_flow() {
+        let mut automation = AutomationV2Spec {
+            automation_id: "automation-v2-test".to_string(),
+            name: "Marketing Content Pipeline".to_string(),
+            description: None,
+            status: AutomationV2Status::Active,
+            schedule: AutomationV2Schedule {
+                schedule_type: AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+            },
+            agents: vec![
+                AutomationAgentProfile {
+                    agent_id: "research".to_string(),
+                    template_id: None,
+                    display_name: "Research".to_string(),
+                    avatar_url: None,
+                    model_policy: None,
+                    skills: vec!["analysis".to_string()],
+                    tool_policy: AutomationAgentToolPolicy {
+                        allowlist: vec![
+                            "read".to_string(),
+                            "write".to_string(),
+                            "websearch".to_string(),
+                            "glob".to_string(),
+                        ],
+                        denylist: Vec::new(),
+                    },
+                    mcp_policy: AutomationAgentMcpPolicy {
+                        allowed_servers: Vec::new(),
+                        allowed_tools: None,
+                    },
+                    approval_policy: None,
+                },
+                AutomationAgentProfile {
+                    agent_id: "copywriter".to_string(),
+                    template_id: None,
+                    display_name: "Copywriter".to_string(),
+                    avatar_url: None,
+                    model_policy: None,
+                    skills: Vec::new(),
+                    tool_policy: AutomationAgentToolPolicy {
+                        allowlist: vec!["read".to_string(), "write".to_string()],
+                        denylist: Vec::new(),
+                    },
+                    mcp_policy: AutomationAgentMcpPolicy {
+                        allowed_servers: Vec::new(),
+                        allowed_tools: None,
+                    },
+                    approval_policy: None,
+                },
+            ],
+            flow: AutomationFlowSpec {
+                nodes: vec![
+                    AutomationFlowNode {
+                        node_id: "research-brief".to_string(),
+                        agent_id: "research".to_string(),
+                        objective: "Legacy research".to_string(),
+                        depends_on: Vec::new(),
+                        input_refs: Vec::new(),
+                        output_contract: Some(AutomationFlowOutputContract {
+                            kind: "brief".to_string(),
+                            validator: None,
+                            enforcement: None,
+                            schema: None,
+                            summary_guidance: Some("Write `marketing-brief.md`.".to_string()),
+                        }),
+                        retry_policy: None,
+                        timeout_ms: None,
+                        stage_kind: None,
+                        gate: None,
+                        metadata: Some(json!({
+                            "builder": {
+                                "title": "Research Brief",
+                                "role": "watcher",
+                                "output_path": "marketing-brief.md",
+                                "prompt": "Legacy one-shot research prompt"
+                            },
+                            "studio": {
+                                "output_path": "marketing-brief.md"
+                            }
+                        })),
+                    },
+                    AutomationFlowNode {
+                        node_id: "draft-copy".to_string(),
+                        agent_id: "copywriter".to_string(),
+                        objective: "Draft copy".to_string(),
+                        depends_on: vec!["research-brief".to_string()],
+                        input_refs: vec![AutomationFlowInputRef {
+                            from_step_id: "research-brief".to_string(),
+                            alias: "marketing_brief".to_string(),
+                        }],
+                        output_contract: Some(AutomationFlowOutputContract {
+                            kind: "draft".to_string(),
+                            validator: None,
+                            enforcement: None,
+                            schema: None,
+                            summary_guidance: None,
+                        }),
+                        retry_policy: None,
+                        timeout_ms: None,
+                        stage_kind: None,
+                        gate: None,
+                        metadata: None,
+                    },
+                ],
+            },
+            execution: AutomationExecutionPolicy {
+                max_parallel_agents: Some(1),
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            creator_id: "test".to_string(),
+            workspace_root: Some("/tmp/workspace".to_string()),
+            metadata: Some(json!({
+                "studio": {
+                    "template_id": "marketing-content-pipeline",
+                    "version": 1,
+                    "agent_drafts": [{"agentId":"research"}],
+                    "node_drafts": [{"nodeId":"research-brief"}]
+                }
+            })),
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+        };
+
+        assert!(migrate_bundled_studio_research_split_automation(
+            &mut automation
+        ));
+        assert!(automation
+            .flow
+            .nodes
+            .iter()
+            .any(|node| node.node_id == "research-discover-sources"));
+        assert!(automation
+            .flow
+            .nodes
+            .iter()
+            .any(|node| node.node_id == "research-local-sources"));
+        assert!(automation
+            .flow
+            .nodes
+            .iter()
+            .any(|node| node.node_id == "research-external-research"));
+        let final_node = automation
+            .flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "research-brief")
+            .expect("final node preserved");
+        assert_eq!(
+            automation_node_research_stage(final_node).as_deref(),
+            Some("research_finalize")
+        );
+        assert_eq!(final_node.depends_on.len(), 3);
+        assert!(automation
+            .agents
+            .iter()
+            .any(|agent| agent.agent_id == "research-discover"));
+        assert!(automation
+            .agents
+            .iter()
+            .any(|agent| agent.agent_id == "research-local-sources"));
+        assert!(automation
+            .agents
+            .iter()
+            .any(|agent| agent.agent_id == "research-external"));
+        let studio = automation
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("studio"))
+            .and_then(Value::as_object)
+            .expect("studio metadata");
+        assert_eq!(studio.get("version").and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            studio
+                .get("workflow_structure_version")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert!(!studio.contains_key("agent_drafts"));
+        assert!(!studio.contains_key("node_drafts"));
+    }
+
+    #[test]
+    fn research_finalize_validation_accepts_upstream_read_evidence() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-research-finalize-test-{}", now_ms()));
+        std::fs::create_dir_all(workspace_root.join("inputs")).expect("create workspace");
+        std::fs::write(workspace_root.join("inputs/questions.md"), "Question")
+            .expect("seed input file");
+
+        let node = AutomationFlowNode {
+            node_id: "research-brief".to_string(),
+            agent_id: "research".to_string(),
+            objective: "Write marketing brief".to_string(),
+            depends_on: vec![
+                "research-discover-sources".to_string(),
+                "research-local-sources".to_string(),
+                "research-external-research".to_string(),
+            ],
+            input_refs: vec![
+                AutomationFlowInputRef {
+                    from_step_id: "research-discover-sources".to_string(),
+                    alias: "source_inventory".to_string(),
+                },
+                AutomationFlowInputRef {
+                    from_step_id: "research-local-sources".to_string(),
+                    alias: "local_source_notes".to_string(),
+                },
+                AutomationFlowInputRef {
+                    from_step_id: "research-external-research".to_string(),
+                    alias: "external_research".to_string(),
+                },
+            ],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                enforcement: Some(crate::AutomationOutputEnforcement {
+                    required_tools: Vec::new(),
+                    required_evidence: vec!["local_source_reads".to_string()],
+                    required_sections: vec![
+                        "files_reviewed".to_string(),
+                        "files_not_reviewed".to_string(),
+                        "citations".to_string(),
+                    ],
+                    prewrite_gates: Vec::new(),
+                    retry_on_missing: vec![
+                        "local_source_reads".to_string(),
+                        "files_reviewed".to_string(),
+                        "files_not_reviewed".to_string(),
+                        "citations".to_string(),
+                    ],
+                    terminal_on: Vec::new(),
+                    repair_budget: Some(5),
+                    session_text_recovery: None,
+                }),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "research_stage": "research_finalize",
+                    "title": "Research Brief",
+                    "role": "watcher"
+                }
+            })),
+        };
+
+        let mut session = Session::new(Some("research finalize".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({
+                    "path":"marketing-brief.md",
+                    "content":"# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Files not reviewed\n- inputs/extra.md: not needed for this test.\n\n## Proof Points With Citations\n1. Supported claim. Source note: https://example.com/reference\n"
+                }),
+                result: Some(json!({"output":"written"})),
+                error: None,
+            }],
+        ));
+
+        let tool_telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &["read".to_string(), "write".to_string()],
+        );
+        let upstream_evidence = AutomationUpstreamEvidence {
+            read_paths: vec!["inputs/questions.md".to_string()],
+            discovered_relevant_paths: vec!["inputs/questions.md".to_string()],
+            web_research_attempted: false,
+            web_research_succeeded: false,
+        };
+        let (accepted_output, artifact_validation, rejected) =
+            validate_automation_artifact_output_with_upstream(
+                &node,
+                &session,
+                workspace_root.to_str().expect("workspace root"),
+                "",
+                &tool_telemetry,
+                None,
+                Some((
+                    "marketing-brief.md".to_string(),
+                    "# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Files not reviewed\n- inputs/extra.md: not needed for this test.\n\n## Proof Points With Citations\n1. Supported claim. Source note: https://example.com/reference\n".to_string(),
+                )),
+                &std::collections::BTreeSet::new(),
+                Some(&upstream_evidence),
+            );
+
+        assert!(accepted_output.is_some(), "{artifact_validation:?}");
+        assert!(
+            rejected.is_none(),
+            "rejected={rejected:?} metadata={artifact_validation:?}"
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_outcome")
+                .and_then(Value::as_str),
+            Some("passed")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("upstream_evidence_applied")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            artifact_validation
+                .get("read_paths")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("inputs/questions.md")]
         );
 
         let _ = std::fs::remove_dir_all(&workspace_root);
@@ -14856,6 +16280,210 @@ mod tests {
         assert!(!automation_output_is_blocked(&output));
         assert!(automation_output_needs_repair(&output));
         assert!(!automation_output_repair_exhausted(&output));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn research_brief_passes_when_websearch_is_auth_blocked_but_local_evidence_is_complete() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-research-web-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let brief_text = "# Marketing Brief\n\n## Workspace source audit\nPrepared from workspace sources.\n\n## Campaign goal\nClarify positioning.\n\n## Target audience\n- Operators.\n\n## Core pain points\n- Coordination overhead.\n\n## Positioning angle\nTandem centralizes orchestration.\n\n## Competitor context\nLocal-only comparison for this run.\n\n## Proof points with citations\n1. Supported from docs/source.md. Source note: https://example.com/reference\n\n## Likely objections\n- Proof depth.\n\n## Channel considerations\n- Landing page.\n\n## Recommended message hierarchy\n1. Problem\n2. Promise\n\n## Files reviewed\n- docs/source.md\n\n## Files not reviewed\n- docs/extra.md: not needed for this first pass.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &brief_text).expect("seed brief");
+        let node = AutomationFlowNode {
+            node_id: "research-brief".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Write marketing brief".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("research-web-failure".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"docs/source.md"}),
+                    result: Some(json!({"output":"source"})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "websearch".to_string(),
+                    args: json!({"query":"tandem competitor landscape"}),
+                    result: Some(json!({
+                        "output": "Authorization required for `websearch`.",
+                        "metadata": { "error": "authorization required" }
+                    })),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":"marketing-brief.md","content":brief_text}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+        let requested_tools = vec![
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ];
+        let tool_telemetry = summarize_automation_tool_activity(&node, &session, &requested_tools);
+        let (_accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "Done\n\n{\"status\":\"completed\"}",
+            &tool_telemetry,
+            None,
+            Some(("marketing-brief.md".to_string(), brief_text.clone())),
+            &std::collections::BTreeSet::new(),
+        );
+
+        assert!(rejected.is_none());
+        assert_eq!(
+            artifact_validation
+                .get("semantic_block_reason")
+                .and_then(Value::as_str),
+            None
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_outcome")
+                .and_then(Value::as_str),
+            Some("passed")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("external_research_mode")
+                .and_then(Value::as_str),
+            Some("waived_unavailable")
+        );
+        assert!(!artifact_validation
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .is_some_and(|values| values
+                .iter()
+                .any(|value| { value.as_str() == Some("missing_successful_web_research") })));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn research_brief_passes_local_only_when_websearch_is_not_offered() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-research-local-only-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let brief_text = "# Marketing Brief\n\n## Workspace source audit\nPrepared from workspace sources.\n\n## Campaign goal\nClarify positioning.\n\n## Target audience\n- Operators.\n\n## Core pain points\n- Coordination overhead.\n\n## Positioning angle\nTandem centralizes orchestration.\n\n## Competitor context\nLocal-only comparison for this run.\n\n## Proof points with citations\n1. Supported from docs/source.md. Source note: https://example.com/reference\n\n## Likely objections\n- Proof depth.\n\n## Channel considerations\n- Landing page.\n\n## Recommended message hierarchy\n1. Problem\n2. Promise\n\n## Files reviewed\n- docs/source.md\n\n## Files not reviewed\n- docs/extra.md: not needed for this first pass.\n".to_string();
+        std::fs::write(workspace_root.join("marketing-brief.md"), &brief_text).expect("seed brief");
+        let node = AutomationFlowNode {
+            node_id: "research-brief".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Write marketing brief".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("research-local-only".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"docs/source.md"}),
+                    result: Some(json!({"output":"source"})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":"marketing-brief.md","content":brief_text}),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+        let requested_tools = vec!["glob".to_string(), "read".to_string(), "write".to_string()];
+        let tool_telemetry = summarize_automation_tool_activity(&node, &session, &requested_tools);
+        let (_accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "Done\n\n{\"status\":\"completed\"}",
+            &tool_telemetry,
+            None,
+            Some(("marketing-brief.md".to_string(), brief_text.clone())),
+            &std::collections::BTreeSet::new(),
+        );
+
+        assert!(rejected.is_none());
+        assert_eq!(
+            artifact_validation
+                .get("validation_outcome")
+                .and_then(Value::as_str),
+            Some("passed")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("external_research_mode")
+                .and_then(Value::as_str),
+            Some("waived_unavailable")
+        );
 
         let _ = std::fs::remove_dir_all(workspace_root);
     }

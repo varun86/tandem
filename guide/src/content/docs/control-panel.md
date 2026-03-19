@@ -51,6 +51,9 @@ Useful options:
 - `TANDEM_ENGINE_URL` (default `http://127.0.0.1:39731`)
 - `TANDEM_CONTROL_PANEL_AUTO_START_ENGINE` (`1` or `0`)
 - `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` (engine API token)
+- `TANDEM_SEARCH_BACKEND` (`tandem`, `brave`, `exa`, `searxng`, or `none`)
+- `TANDEM_SEARCH_URL` (default hosted Tandem search endpoint for official installs)
+- `TANDEM_BRAVE_SEARCH_API_KEY` / `TANDEM_EXA_API_KEY` (optional direct-provider overrides in `engine.env`)
 
 ## Automations + Cost (Dashboard)
 

@@ -38,6 +38,7 @@ export type StudioNodeDraft = {
   objective: string;
   dependsOn: string[];
   inputRefs: Array<{ fromStepId: string; alias: string }>;
+  stageKind?: string;
   outputKind: string;
   outputPath: string;
   taskKind?: string;

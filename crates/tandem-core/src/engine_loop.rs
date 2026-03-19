@@ -2012,6 +2012,24 @@ impl EngineLoop {
                     ));
                 }
             }
+            if completion.trim().is_empty()
+                && !last_tool_outputs.is_empty()
+                && requested_write_required
+                && productive_write_tool_calls_total > 0
+            {
+                let final_prewrite_satisfied = prewrite_requirements_satisfied(
+                    &requested_prewrite_requirements,
+                    productive_workspace_inspection_total > 0,
+                    productive_concrete_read_total > 0,
+                    productive_web_research_total > 0,
+                    successful_web_research_total > 0,
+                );
+                completion = synthesize_artifact_write_completion_from_tool_state(
+                    &text,
+                    final_prewrite_satisfied,
+                    prewrite_gate_waived,
+                );
+            }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
                 if !matches!(requested_tool_mode, ToolMode::Required) {
                     if let Some(narrative) = self
@@ -3911,6 +3929,26 @@ fn build_empty_completion_retry_context(
         }
     }
     prompt
+}
+
+fn synthesize_artifact_write_completion_from_tool_state(
+    latest_user_text: &str,
+    prewrite_satisfied: bool,
+    prewrite_gate_waived: bool,
+) -> String {
+    let target = infer_required_output_target_path_from_text(latest_user_text)
+        .unwrap_or_else(|| "the declared output artifact".to_string());
+    let mut completion = format!("Completed the requested tool actions and wrote `{target}`.");
+    if prewrite_gate_waived && !prewrite_satisfied {
+        completion.push_str(
+            "\n\nRuntime validation will decide whether the artifact can be accepted because some evidence requirements were waived in-run."
+        );
+    } else {
+        completion
+            .push_str("\n\nRuntime validation will verify the artifact and finalize node status.");
+    }
+    completion.push_str("\n\n{\"status\":\"completed\"}");
+    completion
 }
 
 fn prewrite_requirements_satisfied(
@@ -8694,6 +8732,29 @@ Required output target:
         assert!(prompt.contains("still need to use `read`"));
         assert!(prompt.contains("use `websearch`"));
         assert!(prompt.contains("After completing the missing requirement"));
+    }
+
+    #[test]
+    fn synthesize_artifact_write_completion_from_tool_state_marks_completed() {
+        let completion = synthesize_artifact_write_completion_from_tool_state(
+            "Create or update `marketing-brief.md` relative to the workspace root.",
+            true,
+            false,
+        );
+        assert!(completion.contains("wrote `marketing-brief.md`"));
+        assert!(completion.contains("\"status\":\"completed\""));
+        assert!(completion.contains("Runtime validation will verify"));
+    }
+
+    #[test]
+    fn synthesize_artifact_write_completion_from_tool_state_mentions_waived_evidence() {
+        let completion = synthesize_artifact_write_completion_from_tool_state(
+            "Create or update `marketing-brief.md` relative to the workspace root.",
+            false,
+            true,
+        );
+        assert!(completion.contains("waived in-run"));
+        assert!(completion.contains("\"status\":\"completed\""));
     }
 
     #[test]

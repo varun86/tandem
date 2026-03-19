@@ -467,6 +467,12 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
         alias: safeString(ref?.alias),
       }))
     ),
+    stageKind: safeString(
+      row?.stageKind ||
+        row?.stage_kind ||
+        metadataBuilder?.research_stage ||
+        row?.metadata?.studio?.research_stage
+    ),
     outputKind: safeString(
       row?.outputKind || row?.output_kind || row?.output_contract?.kind || "artifact"
     ),
@@ -552,6 +558,9 @@ function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDra
     "- Use workspace-relative paths like `README.md` or `subdir/file.md`. Do not use a `/workspace/...` prefix.",
     agent.toolAllowlist.includes("websearch")
       ? "- Use `websearch` to gather current external evidence before finalizing the file."
+      : "",
+    node.stageKind && !safeString(node.outputPath)
+      ? "- Do not write final workspace artifacts in this stage. Return a structured handoff in your final response instead."
       : "",
     codeLike && canPatch
       ? "- Prefer `apply_patch` for multi-line source edits when a git-backed patch tool is available."
@@ -710,6 +719,7 @@ function draftFromAutomation(
   const studio = metadata?.studio && typeof metadata.studio === "object" ? metadata.studio : {};
   const workflowMeta =
     studio?.workflow && typeof studio.workflow === "object" ? studio.workflow : {};
+  const starterTemplateId = safeString(studio?.template_id || studio?.templateId);
   const studioAgents = Array.isArray(studio?.agent_drafts)
     ? studio.agent_drafts.map(normalizeAgentDraft)
     : [];
@@ -720,25 +730,46 @@ function draftFromAutomation(
     ? automation.agents.map((agent: any) => {
         const templateId = safeString(agent?.template_id || agent?.templateId);
         const linked = templateId ? templateMap.get(templateId) : null;
+        const starterFallback =
+          !linked && starterTemplateId
+            ? defaultAgentFromStarter(
+                starterTemplateId,
+                safeString(agent?.agent_id || agent?.agentId),
+                safeString(
+                  automation?.workspace_root ||
+                    automation?.workspaceRoot ||
+                    metadata?.workspace_root ||
+                    defaultWorkspace
+                )
+              )
+            : null;
         return normalizeAgentDraft({
           agentId: agent?.agent_id || agent?.agentId,
           displayName:
-            agent?.display_name || agent?.displayName || agent?.agent_id || agent?.agentId,
-          role: linked?.role || "worker",
+            agent?.display_name ||
+            agent?.displayName ||
+            starterFallback?.displayName ||
+            agent?.agent_id ||
+            agent?.agentId,
+          role: linked?.role || starterFallback?.role || "worker",
           templateId,
           linkedTemplateId: templateId,
-          skills: Array.isArray(agent?.skills) ? agent.skills : linked?.skills || [],
+          skills: Array.isArray(agent?.skills)
+            ? agent.skills
+            : linked?.skills || starterFallback?.skills || [],
           prompt: linked?.systemPrompt
             ? promptSectionsFromFreeform(linked.systemPrompt)
-            : undefined,
+            : starterFallback?.prompt,
           modelProvider:
             agent?.model_policy?.default_model?.provider_id ||
             agent?.modelPolicy?.defaultModel?.providerId ||
+            starterFallback?.modelProvider ||
             linked?.modelProvider ||
             "",
           modelId:
             agent?.model_policy?.default_model?.model_id ||
             agent?.modelPolicy?.defaultModel?.modelId ||
+            starterFallback?.modelId ||
             linked?.modelId ||
             "",
           toolAllowlist: agent?.tool_policy?.allowlist || agent?.toolPolicy?.allowlist || [],
@@ -752,7 +783,12 @@ function draftFromAutomation(
     ? automation.flow.nodes.map((node: any) =>
         normalizeNodeDraft({
           nodeId: node?.node_id || node?.nodeId,
-          title: node?.objective || node?.node_id || node?.nodeId,
+          title:
+            node?.metadata?.builder?.title ||
+            node?.metadata?.studio?.title ||
+            node?.objective ||
+            node?.node_id ||
+            node?.nodeId,
           agentId: node?.agent_id || node?.agentId,
           objective: node?.objective,
           dependsOn: node?.depends_on || node?.dependsOn || [],
@@ -766,7 +802,7 @@ function draftFromAutomation(
     automationId: safeString(
       automation?.automation_id || automation?.automationId || automation?.id
     ),
-    starterTemplateId: safeString(studio?.template_id || studio?.templateId),
+    starterTemplateId,
     name: safeString(automation?.name || "Workflow"),
     description: safeString(automation?.description),
     summary: safeString(studio?.summary),
@@ -849,8 +885,9 @@ function buildStudioMetadata(
 ) {
   const depths = computeNodeDepths(nodes);
   return {
-    version: 1,
+    version: 2,
     template_id: safeString(draft.starterTemplateId),
+    workflow_structure_version: 2,
     summary: safeString(draft.summary),
     icon: safeString(draft.icon),
     created_from: "studio",
@@ -1557,22 +1594,30 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
             const agent = workingDraft.agents.find((entry) => entry.agentId === node.agentId);
             const outputPath = safeString(node.outputPath);
             const codeLike = isCodeLikeNode(node);
+            const researchStage = safeString(node.stageKind);
+            const researchFinalize = researchStage === "research_finalize";
+            const hasExternalResearchInput = node.inputRefs.some(
+              (ref) => safeString(ref.alias) === "external_research"
+            );
             const toolAllowlist = normalizeNodeAwareToolAllowlist(
               agent?.toolAllowlist || [],
               normalizedNodes.filter((entry) => entry.agentId === node.agentId)
             );
-            const expectsWebResearch = !!agent?.toolAllowlist?.includes("websearch");
+            const expectsWebResearch =
+              !!agent?.toolAllowlist?.includes("websearch") && !researchFinalize;
             const isResearchBrief = safeString(node.outputKind) === "brief";
             const requiredTools = outputPath
               ? [
-                  toolAllowlist.includes("read") ? "read" : null,
-                  toolAllowlist.includes("websearch") ? "websearch" : null,
+                  toolAllowlist.includes("read") && !researchFinalize ? "read" : null,
+                  toolAllowlist.includes("websearch") && !researchFinalize ? "websearch" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
             const requiredEvidence = outputPath
               ? [
-                  requiredTools.includes("read") || isResearchBrief ? "local_source_reads" : null,
-                  expectsWebResearch ? "external_sources" : null,
+                  !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
+                    ? "local_source_reads"
+                    : null,
+                  !researchFinalize && expectsWebResearch ? "external_sources" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
             const requiredSections = isResearchBrief
@@ -1580,14 +1625,16 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   "files_reviewed",
                   "files_not_reviewed",
                   "citations",
-                  expectsWebResearch ? "web_sources_reviewed" : null,
+                  expectsWebResearch || hasExternalResearchInput ? "web_sources_reviewed" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
             const prewriteGates = outputPath
               ? [
-                  "workspace_inspection",
-                  requiredTools.includes("read") || isResearchBrief ? "concrete_reads" : null,
-                  expectsWebResearch ? "successful_web_research" : null,
+                  !researchFinalize ? "workspace_inspection" : null,
+                  !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
+                    ? "concrete_reads"
+                    : null,
+                  !researchFinalize && expectsWebResearch ? "successful_web_research" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
             const retryOnMissing = [...requiredEvidence, ...requiredSections, ...prewriteGates];
@@ -1600,6 +1647,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                 from_step_id: safeString(ref.fromStepId),
                 alias: safeString(ref.alias) || safeString(ref.fromStepId).replace(/-/g, "_"),
               })),
+              stage_kind: researchStage ? "workstream" : undefined,
               output_contract: {
                 kind: safeString(node.outputKind) || "artifact",
                 enforcement: outputPath
@@ -1628,11 +1676,13 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               metadata: {
                 studio: {
                   output_path: outputPath || undefined,
+                  research_stage: researchStage || undefined,
                 },
                 builder: {
                   title: safeString(node.title) || safeString(node.nodeId),
                   role: safeString(agent?.role) || "worker",
                   output_path: outputPath || undefined,
+                  research_stage: researchStage || undefined,
                   write_required: !!outputPath,
                   required_tools: requiredTools,
                   web_research_expected: expectsWebResearch,
