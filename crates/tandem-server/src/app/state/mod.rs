@@ -3308,6 +3308,28 @@ impl AppState {
                 changed = true;
                 continue;
             }
+            if experiment.baseline_snapshot_hash != campaign.baseline_snapshot_hash {
+                experiment.status = OptimizationExperimentStatus::Failed;
+                let mut metadata = match experiment.metadata.take() {
+                    Some(Value::Object(map)) => map,
+                    Some(_) => serde_json::Map::new(),
+                    None => serde_json::Map::new(),
+                };
+                metadata.insert(
+                    "eval_failure".to_string(),
+                    json!({
+                        "run_id": run.run_id,
+                        "status": run.status,
+                        "reason": "experiment baseline_snapshot_hash does not match current campaign baseline",
+                    }),
+                );
+                experiment.metadata = Some(Value::Object(metadata));
+                self.put_optimization_experiment(experiment)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                changed = true;
+                continue;
+            }
             let metrics =
                 match derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1) {
                     Ok(metrics) => metrics,
