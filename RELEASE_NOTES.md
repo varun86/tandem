@@ -12,6 +12,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - approved winners now persist a structured apply patch and can be applied back to the saved live workflow with targeted drift checks plus audit metadata on the workflow record
   - optimization campaigns can now reconcile completed baseline replay runs automatically, record replay metrics, queue follow-up baseline runs when required, and promote themselves into `running` once a stable phase-1 baseline is established
   - after a stable baseline is established, campaigns can now generate one bounded deterministic candidate, queue its eval run, ingest the completed run metrics, and surface a promotion recommendation without manually creating experiment records first
+  - unattended candidate evaluation now enforces `max_consecutive_failures`, so campaigns stop instead of searching forever when repeated candidate evals fail
 
 - Added a new top-level `Studio` workflow builder in the control panel
   - template-first multi-agent workflow creation with editable role prompts, stage/dependency editing, saved Studio workflows, and a shared workspace picker

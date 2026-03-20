@@ -2700,6 +2700,18 @@ impl AppState {
         )
     }
 
+    fn optimization_consecutive_failure_count(
+        experiments: &[OptimizationExperimentRecord],
+    ) -> usize {
+        let mut ordered = experiments.to_vec();
+        ordered.sort_by(|a, b| a.created_at_ms.cmp(&b.created_at_ms));
+        ordered
+            .iter()
+            .rev()
+            .take_while(|experiment| experiment.status == OptimizationExperimentStatus::Failed)
+            .count()
+    }
+
     fn optimization_mutation_field_path(field: OptimizationMutableField) -> &'static str {
         match field {
             OptimizationMutableField::Objective => "objective",
@@ -3296,7 +3308,31 @@ impl AppState {
                 continue;
             }
             let metrics =
-                derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1)?;
+                match derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1) {
+                    Ok(metrics) => metrics,
+                    Err(error) => {
+                        experiment.status = OptimizationExperimentStatus::Failed;
+                        let mut metadata = match experiment.metadata.take() {
+                            Some(Value::Object(map)) => map,
+                            Some(_) => serde_json::Map::new(),
+                            None => serde_json::Map::new(),
+                        };
+                        metadata.insert(
+                            "eval_failure".to_string(),
+                            json!({
+                                "run_id": run.run_id,
+                                "status": run.status,
+                                "reason": error,
+                            }),
+                        );
+                        experiment.metadata = Some(Value::Object(metadata));
+                        self.put_optimization_experiment(experiment)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        changed = true;
+                        continue;
+                    }
+                };
             let decision = evaluate_phase1_promotion(baseline_metrics, &metrics);
             experiment.phase1_metrics = Some(metrics.clone());
             experiment.metrics = Some(json!({
@@ -3335,6 +3371,20 @@ impl AppState {
             self.put_optimization_experiment(experiment)
                 .await
                 .map_err(|error| error.to_string())?;
+            changed = true;
+        }
+        let refreshed = self
+            .list_optimization_experiments(&campaign.optimization_id)
+            .await;
+        let consecutive_failures = Self::optimization_consecutive_failure_count(&refreshed);
+        if consecutive_failures >= phase1.budget.max_consecutive_failures as usize
+            && phase1.budget.max_consecutive_failures > 0
+        {
+            campaign.status = OptimizationCampaignStatus::Failed;
+            campaign.last_pause_reason = Some(format!(
+                "phase 1 candidate evaluations reached {} consecutive failures",
+                consecutive_failures
+            ));
             changed = true;
         }
         Ok(changed)

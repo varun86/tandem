@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - approved optimization winners now persist a structured apply patch and can be applied back to the saved live workflow with targeted drift checks and apply audit metadata
   - optimization campaigns can now reconcile completed baseline replay runs without manual replay bookkeeping, re-establish baseline metrics, and queue follow-up replay runs automatically when a baseline is still incomplete
   - once a campaign has a stable phase-1 baseline, the optimizer can now generate one deterministic bounded candidate at a time, queue a candidate eval run, ingest the completed run metrics, and surface promotion recommendations without manually seeding experiment records
+  - unattended phase-1 candidate evaluation now respects `max_consecutive_failures`, marking the campaign failed when repeated candidate evals terminate unsuccessfully
 - **Session and coder runs now point at one canonical journal**:
   - interactive session runs now create deterministic `session-<sessionID>` context runs before `contextRunID` is returned, so replay/debug links do not race durable state creation
   - added a session context-run journal bridge that maps `session.run.started`, `message.part.updated`, and `session.run.finished` into durable context-run lineage

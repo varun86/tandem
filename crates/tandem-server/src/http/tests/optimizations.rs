@@ -1905,6 +1905,150 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
 }
 
 #[tokio::test]
+async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures() {
+    let state = test_state().await;
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-opt-workspace-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    write_phase1_artifacts(&workspace_root);
+    let source = sample_automation(workspace_root.to_str().expect("workspace root"));
+    let frozen_artifacts = crate::OptimizationFrozenArtifacts {
+        objective: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "objective.md",
+        )
+        .expect("freeze objective"),
+        eval: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "eval.yaml",
+        )
+        .expect("freeze eval"),
+        mutation_policy: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "mutation_policy.yaml",
+        )
+        .expect("freeze mutation"),
+        scope: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "scope.yaml",
+        )
+        .expect("freeze scope"),
+        budget: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "budget.yaml",
+        )
+        .expect("freeze budget"),
+    };
+    let mut phase1 = crate::load_optimization_phase1_config(&frozen_artifacts).expect("phase1");
+    phase1.budget.max_consecutive_failures = 1;
+    state
+        .put_automation_v2(source.clone())
+        .await
+        .expect("seed automation");
+    state
+        .put_optimization_campaign(crate::OptimizationCampaignRecord {
+            optimization_id: "opt-failure-stop".to_string(),
+            name: "Optimize Workflow".to_string(),
+            target_kind: crate::OptimizationTargetKind::WorkflowV2PromptObjectiveOptimization,
+            status: crate::OptimizationCampaignStatus::Running,
+            source_workflow_id: source.automation_id.clone(),
+            source_workflow_name: source.name.clone(),
+            source_workflow_snapshot: source.clone(),
+            source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            baseline_snapshot: source.clone(),
+            baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            artifacts: crate::OptimizationArtifactRefs {
+                objective_ref: "objective.md".to_string(),
+                eval_ref: "eval.yaml".to_string(),
+                mutation_policy_ref: "mutation_policy.yaml".to_string(),
+                scope_ref: "scope.yaml".to_string(),
+                budget_ref: "budget.yaml".to_string(),
+                research_log_ref: None,
+                summary_ref: None,
+            },
+            frozen_artifacts: frozen_artifacts.clone(),
+            phase1: Some(phase1),
+            baseline_metrics: Some(crate::OptimizationPhase1Metrics {
+                artifact_validator_pass_rate: 0.5,
+                unmet_requirement_count: 2.0,
+                blocked_node_rate: 0.0,
+                budget_within_limits: true,
+            }),
+            baseline_replays: vec![
+                crate::OptimizationBaselineReplayRecord {
+                    replay_id: "replay-1".to_string(),
+                    automation_run_id: Some("run-1".to_string()),
+                    phase1_metrics: crate::OptimizationPhase1Metrics {
+                        artifact_validator_pass_rate: 0.5,
+                        unmet_requirement_count: 2.0,
+                        blocked_node_rate: 0.0,
+                        budget_within_limits: true,
+                    },
+                    experiment_count_at_recording: 0,
+                    recorded_at_ms: 1,
+                },
+                crate::OptimizationBaselineReplayRecord {
+                    replay_id: "replay-2".to_string(),
+                    automation_run_id: Some("run-2".to_string()),
+                    phase1_metrics: crate::OptimizationPhase1Metrics {
+                        artifact_validator_pass_rate: 0.5,
+                        unmet_requirement_count: 2.0,
+                        blocked_node_rate: 0.0,
+                        budget_within_limits: true,
+                    },
+                    experiment_count_at_recording: 0,
+                    recorded_at_ms: 2,
+                },
+            ],
+            pending_baseline_run_ids: Vec::new(),
+            pending_promotion_experiment_id: None,
+            last_pause_reason: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            metadata: None,
+        })
+        .await
+        .expect("seed campaign");
+    state
+        .reconcile_optimization_campaigns()
+        .await
+        .expect("reconcile candidate creation");
+    let experiments = state
+        .list_optimization_experiments("opt-failure-stop")
+        .await;
+    let experiment = experiments.first().expect("experiment");
+    let eval_run_id = experiment
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("eval_run_id"))
+        .and_then(Value::as_str)
+        .expect("eval_run_id")
+        .to_string();
+    state
+        .update_automation_v2_run(&eval_run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.started_at_ms = Some(1_000);
+            row.finished_at_ms = Some(2_000);
+        })
+        .await
+        .expect("update eval run");
+    state
+        .reconcile_optimization_campaigns()
+        .await
+        .expect("reconcile failure");
+    let campaign = state
+        .get_optimization_campaign("opt-failure-stop")
+        .await
+        .expect("campaign");
+    assert_eq!(campaign.status, crate::OptimizationCampaignStatus::Failed);
+    assert!(campaign
+        .last_pause_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("consecutive failures")));
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[tokio::test]
 async fn optimizations_record_baseline_replay_from_run() {
     let state = test_state().await;
     let workspace_root =
