@@ -2983,6 +2983,363 @@ impl AppState {
         Ok((campaign, stored_experiment, stored_live))
     }
 
+    fn optimization_objective_hint(text: &str) -> String {
+        let cleaned = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hint = if cleaned.is_empty() {
+            "Prioritize validator-complete output with explicit evidence."
+        } else {
+            cleaned.as_str()
+        };
+        let trimmed = hint.trim();
+        let clipped = if trimmed.len() > 140 {
+            trimmed[..140].trim_end()
+        } else {
+            trimmed
+        };
+        let mut sentence = clipped.trim_end_matches('.').to_string();
+        if sentence.is_empty() {
+            sentence = "Prioritize validator-complete output with explicit evidence".to_string();
+        }
+        sentence.push('.');
+        sentence
+    }
+
+    fn build_phase1_candidate_options(
+        baseline: &crate::AutomationV2Spec,
+        phase1: &crate::OptimizationPhase1Config,
+    ) -> Vec<(
+        crate::AutomationV2Spec,
+        crate::OptimizationValidatedMutation,
+    )> {
+        let mut options = Vec::new();
+        let hint = Self::optimization_objective_hint(&phase1.objective_markdown);
+        for (index, node) in baseline.flow.nodes.iter().enumerate() {
+            if phase1
+                .mutation_policy
+                .allowed_text_fields
+                .contains(&OptimizationMutableField::Objective)
+            {
+                let addition = if node.objective.contains(&hint) {
+                    "Prioritize validator-complete output with concrete evidence."
+                } else {
+                    &hint
+                };
+                let mut candidate = baseline.clone();
+                candidate.flow.nodes[index].objective =
+                    format!("{} {}", node.objective.trim(), addition.trim())
+                        .trim()
+                        .to_string();
+                if let Ok(validated) =
+                    validate_phase1_candidate_mutation(baseline, &candidate, phase1)
+                {
+                    options.push((candidate, validated));
+                }
+            }
+            if phase1
+                .mutation_policy
+                .allowed_text_fields
+                .contains(&OptimizationMutableField::OutputContractSummaryGuidance)
+            {
+                if let Some(summary_guidance) = node
+                    .output_contract
+                    .as_ref()
+                    .and_then(|contract| contract.summary_guidance.as_ref())
+                {
+                    let addition = if summary_guidance.contains("Cite concrete evidence") {
+                        "Keep evidence explicit."
+                    } else {
+                        "Cite concrete evidence in the summary."
+                    };
+                    let mut candidate = baseline.clone();
+                    if let Some(contract) = candidate.flow.nodes[index].output_contract.as_mut() {
+                        contract.summary_guidance = Some(
+                            format!("{} {}", summary_guidance.trim(), addition)
+                                .trim()
+                                .to_string(),
+                        );
+                    }
+                    if let Ok(validated) =
+                        validate_phase1_candidate_mutation(baseline, &candidate, phase1)
+                    {
+                        options.push((candidate, validated));
+                    }
+                }
+            }
+            if phase1
+                .mutation_policy
+                .allowed_knob_fields
+                .contains(&OptimizationMutableField::TimeoutMs)
+            {
+                if let Some(timeout_ms) = node.timeout_ms {
+                    let delta_by_percent = ((timeout_ms as f64)
+                        * phase1.mutation_policy.timeout_delta_percent)
+                        .round() as u64;
+                    let delta = delta_by_percent
+                        .min(phase1.mutation_policy.timeout_delta_ms)
+                        .max(1);
+                    let next = timeout_ms
+                        .saturating_add(delta)
+                        .min(phase1.mutation_policy.timeout_max_ms);
+                    if next != timeout_ms {
+                        let mut candidate = baseline.clone();
+                        candidate.flow.nodes[index].timeout_ms = Some(next);
+                        if let Ok(validated) =
+                            validate_phase1_candidate_mutation(baseline, &candidate, phase1)
+                        {
+                            options.push((candidate, validated));
+                        }
+                    }
+                }
+            }
+            if phase1
+                .mutation_policy
+                .allowed_knob_fields
+                .contains(&OptimizationMutableField::RetryPolicyMaxAttempts)
+            {
+                let current = node
+                    .retry_policy
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .and_then(|row| row.get("max_attempts"))
+                    .and_then(Value::as_i64);
+                if let Some(before) = current {
+                    let next = (before + 1).min(phase1.mutation_policy.retry_max as i64);
+                    if next != before {
+                        let mut candidate = baseline.clone();
+                        let policy = candidate.flow.nodes[index]
+                            .retry_policy
+                            .get_or_insert_with(|| json!({}));
+                        if let Some(object) = policy.as_object_mut() {
+                            object.insert("max_attempts".to_string(), json!(next));
+                        }
+                        if let Ok(validated) =
+                            validate_phase1_candidate_mutation(baseline, &candidate, phase1)
+                        {
+                            options.push((candidate, validated));
+                        }
+                    }
+                }
+            }
+            if phase1
+                .mutation_policy
+                .allowed_knob_fields
+                .contains(&OptimizationMutableField::RetryPolicyRetries)
+            {
+                let current = node
+                    .retry_policy
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .and_then(|row| row.get("retries"))
+                    .and_then(Value::as_i64);
+                if let Some(before) = current {
+                    let next = (before + 1).min(phase1.mutation_policy.retry_max as i64);
+                    if next != before {
+                        let mut candidate = baseline.clone();
+                        let policy = candidate.flow.nodes[index]
+                            .retry_policy
+                            .get_or_insert_with(|| json!({}));
+                        if let Some(object) = policy.as_object_mut() {
+                            object.insert("retries".to_string(), json!(next));
+                        }
+                        if let Ok(validated) =
+                            validate_phase1_candidate_mutation(baseline, &candidate, phase1)
+                        {
+                            options.push((candidate, validated));
+                        }
+                    }
+                }
+            }
+        }
+        options
+    }
+
+    async fn maybe_queue_phase1_candidate_experiment(
+        &self,
+        campaign: &mut OptimizationCampaignRecord,
+    ) -> Result<bool, String> {
+        let Some(phase1) = campaign.phase1.as_ref() else {
+            return Ok(false);
+        };
+        let experiment_count = self
+            .count_optimization_experiments(&campaign.optimization_id)
+            .await;
+        if experiment_count >= phase1.budget.max_experiments as usize {
+            campaign.status = OptimizationCampaignStatus::Completed;
+            campaign.last_pause_reason = Some("phase 1 experiment budget exhausted".to_string());
+            campaign.updated_at_ms = now_ms();
+            return Ok(true);
+        }
+        if campaign.baseline_metrics.is_none() || campaign.pending_promotion_experiment_id.is_some()
+        {
+            return Ok(false);
+        }
+        let existing = self
+            .list_optimization_experiments(&campaign.optimization_id)
+            .await;
+        let active_eval_exists = existing.iter().any(|experiment| {
+            matches!(experiment.status, OptimizationExperimentStatus::Draft)
+                && experiment
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("eval_run_id"))
+                    .and_then(Value::as_str)
+                    .is_some()
+        });
+        if active_eval_exists {
+            return Ok(false);
+        }
+        let existing_hashes = existing
+            .iter()
+            .map(|experiment| experiment.candidate_snapshot_hash.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let options = Self::build_phase1_candidate_options(&campaign.baseline_snapshot, phase1);
+        let Some((candidate_snapshot, mutation)) = options.into_iter().find(|(candidate, _)| {
+            !existing_hashes.contains(&optimization_snapshot_hash(candidate))
+        }) else {
+            campaign.status = OptimizationCampaignStatus::Completed;
+            campaign.last_pause_reason = Some(
+                "phase 1 deterministic candidate mutator exhausted available mutations".to_string(),
+            );
+            campaign.updated_at_ms = now_ms();
+            return Ok(true);
+        };
+        let eval_run = self
+            .create_automation_v2_run(&candidate_snapshot, "optimization_candidate_eval")
+            .await
+            .map_err(|error| error.to_string())?;
+        let now = now_ms();
+        let experiment = OptimizationExperimentRecord {
+            experiment_id: format!("opt-exp-{}", uuid::Uuid::new_v4()),
+            optimization_id: campaign.optimization_id.clone(),
+            status: OptimizationExperimentStatus::Draft,
+            candidate_snapshot: candidate_snapshot.clone(),
+            candidate_snapshot_hash: optimization_snapshot_hash(&candidate_snapshot),
+            baseline_snapshot_hash: campaign.baseline_snapshot_hash.clone(),
+            mutation_summary: Some(mutation.summary.clone()),
+            metrics: None,
+            phase1_metrics: None,
+            promotion_recommendation: None,
+            promotion_decision: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            metadata: Some(json!({
+                "generator": "phase1_deterministic_v1",
+                "eval_run_id": eval_run.run_id,
+                "mutation": mutation,
+            })),
+        };
+        self.put_optimization_experiment(experiment)
+            .await
+            .map_err(|error| error.to_string())?;
+        campaign.last_pause_reason = Some("waiting for phase 1 candidate evaluation".to_string());
+        campaign.updated_at_ms = now_ms();
+        Ok(true)
+    }
+
+    async fn reconcile_phase1_candidate_experiments(
+        &self,
+        campaign: &mut OptimizationCampaignRecord,
+    ) -> Result<bool, String> {
+        let Some(phase1) = campaign.phase1.as_ref() else {
+            return Ok(false);
+        };
+        let Some(baseline_metrics) = campaign.baseline_metrics.as_ref() else {
+            return Ok(false);
+        };
+        let experiments = self
+            .list_optimization_experiments(&campaign.optimization_id)
+            .await;
+        let mut changed = false;
+        for mut experiment in experiments {
+            if experiment.status != OptimizationExperimentStatus::Draft {
+                continue;
+            }
+            let Some(eval_run_id) = experiment
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("eval_run_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(run) = self.get_automation_v2_run(&eval_run_id).await else {
+                continue;
+            };
+            if !Self::automation_run_is_terminal(&run.status) {
+                continue;
+            }
+            if run.status != crate::AutomationRunStatus::Completed {
+                experiment.status = OptimizationExperimentStatus::Failed;
+                let mut metadata = match experiment.metadata.take() {
+                    Some(Value::Object(map)) => map,
+                    Some(_) => serde_json::Map::new(),
+                    None => serde_json::Map::new(),
+                };
+                metadata.insert(
+                    "eval_failure".to_string(),
+                    json!({
+                        "run_id": run.run_id,
+                        "status": run.status,
+                    }),
+                );
+                experiment.metadata = Some(Value::Object(metadata));
+                self.put_optimization_experiment(experiment)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                changed = true;
+                continue;
+            }
+            let metrics =
+                derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1)?;
+            let decision = evaluate_phase1_promotion(baseline_metrics, &metrics);
+            experiment.phase1_metrics = Some(metrics.clone());
+            experiment.metrics = Some(json!({
+                "artifact_validator_pass_rate": metrics.artifact_validator_pass_rate,
+                "unmet_requirement_count": metrics.unmet_requirement_count,
+                "blocked_node_rate": metrics.blocked_node_rate,
+                "budget_within_limits": metrics.budget_within_limits,
+            }));
+            experiment.promotion_recommendation = Some(
+                match decision.decision {
+                    OptimizationPromotionDecisionKind::Promote => "promote",
+                    OptimizationPromotionDecisionKind::Discard => "discard",
+                    OptimizationPromotionDecisionKind::NeedsOperatorReview => {
+                        "needs_operator_review"
+                    }
+                }
+                .to_string(),
+            );
+            experiment.promotion_decision = Some(decision.clone());
+            match decision.decision {
+                OptimizationPromotionDecisionKind::Promote
+                | OptimizationPromotionDecisionKind::NeedsOperatorReview => {
+                    experiment.status = OptimizationExperimentStatus::PromotionRecommended;
+                    campaign.pending_promotion_experiment_id =
+                        Some(experiment.experiment_id.clone());
+                    campaign.status = OptimizationCampaignStatus::AwaitingPromotionApproval;
+                    campaign.last_pause_reason = Some(decision.reason.clone());
+                }
+                OptimizationPromotionDecisionKind::Discard => {
+                    experiment.status = OptimizationExperimentStatus::Discarded;
+                    if campaign.status == OptimizationCampaignStatus::Running {
+                        campaign.last_pause_reason = Some(decision.reason.clone());
+                    }
+                }
+            }
+            self.put_optimization_experiment(experiment)
+                .await
+                .map_err(|error| error.to_string())?;
+            changed = true;
+        }
+        Ok(changed)
+    }
+
     async fn reconcile_pending_baseline_replays(
         &self,
         campaign: &mut OptimizationCampaignRecord,
@@ -3071,6 +3428,9 @@ impl AppState {
                 continue;
             };
             let mut changed = self.reconcile_pending_baseline_replays(&mut latest).await?;
+            changed |= self
+                .reconcile_phase1_candidate_experiments(&mut latest)
+                .await?;
             let experiment_count = self
                 .count_optimization_experiments(&latest.optimization_id)
                 .await;
@@ -3120,6 +3480,13 @@ impl AppState {
                 latest.last_pause_reason =
                     Some("waiting for phase 1 baseline replay completion".to_string());
                 changed = true;
+            }
+            if latest.status == OptimizationCampaignStatus::Running
+                && latest.pending_baseline_run_ids.is_empty()
+            {
+                changed |= self
+                    .maybe_queue_phase1_candidate_experiment(&mut latest)
+                    .await?;
             }
             if changed {
                 self.put_optimization_campaign(latest)
