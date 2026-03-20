@@ -230,6 +230,8 @@ export class TandemClient {
   readonly automations: Automations;
   /** Persistent automation flows (V2) */
   readonly automationsV2: AutomationsV2;
+  /** Workflow optimization campaigns */
+  readonly optimizations: Optimizations;
   /** Engine-owned workflow planning */
   readonly workflowPlans: WorkflowPlans;
   /** Semantic memory / vector store */
@@ -272,6 +274,7 @@ export class TandemClient {
     this.routines = new Routines(this.baseUrl, getToken, req);
     this.automations = new Automations(this.baseUrl, getToken, req);
     this.automationsV2 = new AutomationsV2(this.baseUrl, getToken, req);
+    this.optimizations = new Optimizations(req);
     this.workflowPlans = new WorkflowPlans(req);
     this.memory = new Memory(req);
     this.skills = new Skills(req);
@@ -2763,6 +2766,88 @@ class AutomationsV2 {
     return streamSse(`${this.baseUrl}/automations/v2/events${qs}`, this.getToken(), {
       signal: options?.signal,
     });
+  }
+}
+
+// ─── Optimizations namespace ────────────────────────────────────────────────
+
+class Optimizations {
+  constructor(private req: TandemClient["_request"]) {}
+
+  async list(): Promise<{ optimizations: JsonObject[]; count: number }> {
+    return this.req<{ optimizations: JsonObject[]; count: number }>("/optimizations");
+  }
+
+  async create(input: {
+    optimization_id?: string;
+    name?: string;
+    source_workflow_id: string;
+    artifacts: {
+      objective_ref: string;
+      eval_ref: string;
+      mutation_policy_ref: string;
+      scope_ref: string;
+      budget_ref: string;
+      research_log_ref?: string | null;
+      summary_ref?: string | null;
+    };
+    metadata?: JsonObject | null;
+  }): Promise<{ optimization: JsonObject; experimentCount?: number }> {
+    return this.req<{ optimization: JsonObject; experimentCount?: number }>("/optimizations", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async get(id: string): Promise<{ optimization: JsonObject; experimentCount?: number }> {
+    return this.req<{ optimization: JsonObject; experimentCount?: number }>(
+      `/optimizations/${encodeURIComponent(id)}`
+    );
+  }
+
+  async action(
+    id: string,
+    input: {
+      action: string;
+      experiment_id?: string;
+      run_id?: string;
+      reason?: string;
+    }
+  ): Promise<{ optimization: JsonObject; experimentCount?: number }> {
+    return this.req<{ optimization: JsonObject; experimentCount?: number }>(
+      `/optimizations/${encodeURIComponent(id)}/actions`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  async listExperiments(
+    id: string
+  ): Promise<{ optimization: JsonObject; experiments: JsonObject[]; count: number }> {
+    return this.req<{ optimization: JsonObject; experiments: JsonObject[]; count: number }>(
+      `/optimizations/${encodeURIComponent(id)}/experiments`
+    );
+  }
+
+  async getExperiment(
+    id: string,
+    experimentId: string
+  ): Promise<{ optimization: JsonObject; experiment: JsonObject }> {
+    return this.req<{ optimization: JsonObject; experiment: JsonObject }>(
+      `/optimizations/${encodeURIComponent(id)}/experiments/${encodeURIComponent(experimentId)}`
+    );
+  }
+
+  async applyWinner(
+    id: string,
+    experimentId: string
+  ): Promise<{ optimization: JsonObject; experiment: JsonObject; automation: JsonObject }> {
+    return this.req<{ optimization: JsonObject; experiment: JsonObject; automation: JsonObject }>(
+      `/optimizations/${encodeURIComponent(id)}/experiments/${encodeURIComponent(experimentId)}`,
+      { method: "POST", body: JSON.stringify({}) }
+    );
   }
 }
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AutoResearch optimization control surfaces**:
+  - added optimization campaign list and experiment-list HTTP surfaces plus explicit approved-winner apply route for workflow prompt/objective optimization campaigns
+  - added first-pass AutoResearch support in the TypeScript and Python SDKs, including experiment listing, campaign actions, and winner-apply helpers
+  - added an `Optimize` tab to the web control panel Automations page with campaign creation, campaign detail, experiment inspection, and approve/reject/apply controls
 - **Studio workflow builder in the control panel**:
   - added a new top-level `Studio` page for template-first multi-agent workflow design
   - added starter workflow templates, editable per-agent role prompts, stage/dependency editing, and saved Studio workflow cards
@@ -38,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **AutoResearch baseline replay and apply flow now has engine-owned runtime state**:
+  - approved optimization winners now persist a structured apply patch and can be applied back to the saved live workflow with targeted drift checks and apply audit metadata
+  - optimization campaigns can now reconcile completed baseline replay runs without manual replay bookkeeping, re-establish baseline metrics, and queue follow-up replay runs automatically when a baseline is still incomplete
 - **Session and coder runs now point at one canonical journal**:
   - interactive session runs now create deterministic `session-<sessionID>` context runs before `contextRunID` is returned, so replay/debug links do not race durable state creation
   - added a session context-run journal bridge that maps `session.run.started`, `message.part.updated`, and `session.run.finished` into durable context-run lineage

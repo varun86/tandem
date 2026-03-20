@@ -4,6 +4,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.8 (Unreleased)
 
+- AutoResearch workflow optimization now has first-pass product and SDK surfaces
+  - added optimization campaign list and experiment-list HTTP surfaces plus an explicit approved-winner apply route
+  - added optimization support to the TypeScript and Python SDKs so campaigns, experiments, actions, and winner-apply flows can be driven from clients instead of raw HTTP only
+  - added an `Optimize` tab under Automations in the control panel with campaign creation, campaign detail, experiment inspection, and approve/reject/apply controls
+  - approved winners now persist a structured apply patch and can be applied back to the saved live workflow with targeted drift checks plus audit metadata on the workflow record
+  - optimization campaigns can now reconcile completed baseline replay runs automatically, record replay metrics, queue follow-up baseline runs when required, and promote themselves into `running` once a stable phase-1 baseline is established
+
 - Added a new top-level `Studio` workflow builder in the control panel
   - template-first multi-agent workflow creation with editable role prompts, stage/dependency editing, saved Studio workflows, and a shared workspace picker
   - direct save/run flows into `automation_v2`

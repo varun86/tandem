@@ -62,6 +62,7 @@ mod mcp;
 mod middleware;
 mod mission_builder;
 mod missions_teams;
+mod optimizations;
 mod pack_builder;
 mod packs;
 mod permissions_questions;
@@ -78,6 +79,7 @@ mod routes_global;
 mod routes_mcp;
 mod routes_mission_builder;
 mod routes_missions_teams;
+mod routes_optimizations;
 mod routes_pack_builder;
 mod routes_packs;
 mod routes_permissions_questions;
@@ -117,7 +119,7 @@ pub(crate) use context_runs::session_context_run_id;
 pub(crate) use context_runs::sync_workflow_run_blackboard;
 #[cfg(test)]
 pub(crate) use context_runs::workflow_context_run_id;
-pub(crate) use workflow_planner::{compile_plan_to_automation_v2, schedule_from_value};
+pub(crate) use workflow_planner::compile_plan_to_automation_v2;
 
 #[derive(Debug, Deserialize)]
 struct ListSessionsQuery {
@@ -236,6 +238,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let usage_aggregator_state = state.clone();
     let automation_v2_scheduler_state = state.clone();
     let automation_v2_executor_state = state.clone();
+    let optimization_scheduler_state = state.clone();
     let workflow_dispatcher_state = state.clone();
     let agent_team_supervisor_state = state.clone();
     let global_memory_ingestor_state = state.clone();
@@ -284,6 +287,9 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     ));
     let automation_v2_executor = tokio::spawn(crate::run_automation_v2_executor(
         automation_v2_executor_state,
+    ));
+    let optimization_scheduler = tokio::spawn(crate::run_optimization_scheduler(
+        optimization_scheduler_state,
     ));
     let workflow_dispatcher =
         tokio::spawn(crate::run_workflow_dispatcher(workflow_dispatcher_state));
@@ -356,6 +362,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     usage_aggregator.abort();
     automation_v2_scheduler.abort();
     automation_v2_executor.abort();
+    optimization_scheduler.abort();
     workflow_dispatcher.abort();
     agent_team_supervisor.abort();
     bug_monitor.abort();

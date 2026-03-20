@@ -1,19 +1,17 @@
 use std::time::Duration;
 
 use serde_json::Value;
-use tandem_types::{
-    EngineEvent, MessagePart, MessagePartInput, MessageRole, ModelSpec, SendMessageRequest, Session,
-};
+use tandem_types::{EngineEvent, MessagePartInput, SendMessageRequest, Session};
 
 use crate::app::state::{
-    derive_status_index_update, extract_persistable_tool_part, sha256_hex, truncate_text, AppState,
+    derive_status_index_update, extract_persistable_tool_part, truncate_text, AppState,
 };
-use crate::bug_monitor::types::{BugMonitorConfig, BugMonitorIncidentRecord, BugMonitorSubmission};
+use crate::bug_monitor::types::{BugMonitorConfig, BugMonitorIncidentRecord};
 use crate::http::context_runs::{
     append_context_run_event, ensure_session_context_run, session_run_status_to_context,
 };
 use crate::http::context_types::{ContextRunEventAppendInput, ContextRunStatus};
-use crate::routines::types::{RoutineHistoryEvent, RoutineRunRecord, RoutineRunStatus};
+use crate::routines::types::{RoutineHistoryEvent, RoutineRunStatus};
 use crate::util::time::now_ms;
 
 fn extract_event_session_id(properties: &Value) -> Option<String> {
@@ -706,6 +704,19 @@ pub async fn run_automation_v2_scheduler(state: AppState) {
                     }),
                 ));
             }
+        }
+    }
+}
+
+pub async fn run_optimization_scheduler(state: AppState) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let startup = state.startup_snapshot().await;
+        if !matches!(startup.status, crate::app::startup::StartupStatus::Ready) {
+            continue;
+        }
+        if let Err(error) = state.reconcile_optimization_campaigns().await {
+            tracing::warn!("optimization scheduler reconciliation failed: {error}");
         }
     }
 }

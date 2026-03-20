@@ -142,6 +142,7 @@ class TandemClient:
         self.routines = _Routines(self._base_url, self._token, self._http)
         self.automations = _Automations(self._base_url, self._token, self._http)
         self.automations_v2 = _AutomationsV2(self._base_url, self._token, self._http)
+        self.optimizations = _Optimizations(self._http)
         self.workflow_plans = _WorkflowPlans(self._http)
         self.memory = _Memory(self._http)
         self.skills = _Skills(self._http)
@@ -1839,6 +1840,72 @@ class _AutomationsV2:
         res.raise_for_status()
         return AutomationV2RunRecord.model_validate(res.json().get("run", {}))
 
+    async def recover_run(self, run_id: str, reason: str = "") -> AutomationV2RunRecord:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/recover", json={"reason": reason}
+        )
+        res.raise_for_status()
+        return AutomationV2RunRecord.model_validate(res.json().get("run", {}))
+
+    async def repair_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/automations/v2/runs/{quote(run_id)}/repair", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def retry_task(self, run_id: str, node_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/tasks/{quote(node_id)}/retry",
+            json={"reason": reason},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def preview_task_reset(self, run_id: str, node_id: str) -> dict[str, Any]:
+        res = await self._http.get(
+            f"/automations/v2/runs/{quote(run_id)}/tasks/{quote(node_id)}/reset_preview"
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def continue_task(self, run_id: str, node_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/tasks/{quote(node_id)}/continue",
+            json={"reason": reason},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def requeue_task(self, run_id: str, node_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/tasks/{quote(node_id)}/requeue",
+            json={"reason": reason},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def claim_backlog_task(
+        self,
+        run_id: str,
+        task_id: str,
+        payload: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/backlog/tasks/{quote(task_id)}/claim",
+            json=payload or {},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def requeue_backlog_task(
+        self, run_id: str, task_id: str, reason: str = ""
+    ) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/automations/v2/runs/{quote(run_id)}/backlog/tasks/{quote(task_id)}/requeue",
+            json={"reason": reason},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
     async def cancel_run(self, run_id: str, reason: str = "") -> AutomationV2RunRecord:
         res = await self._http.post(
             f"/automations/v2/runs/{quote(run_id)}/cancel", json={"reason": reason}
@@ -1856,6 +1923,51 @@ class _AutomationsV2:
             params.append(f"run_id={quote(run_id)}")
         qs = f"?{'&'.join(params)}" if params else ""
         return stream_sse(f"{self._base_url}/automations/v2/events{qs}", self._token, client=self._http)
+
+
+class _Optimizations:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def list(self) -> dict[str, Any]:
+        res = await self._http.get("/optimizations")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post("/optimizations", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def get(self, optimization_id: str) -> dict[str, Any]:
+        res = await self._http.get(f"/optimizations/{quote(optimization_id)}")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def action(self, optimization_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/optimizations/{quote(optimization_id)}/actions", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_experiments(self, optimization_id: str) -> dict[str, Any]:
+        res = await self._http.get(f"/optimizations/{quote(optimization_id)}/experiments")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def get_experiment(self, optimization_id: str, experiment_id: str) -> dict[str, Any]:
+        res = await self._http.get(
+            f"/optimizations/{quote(optimization_id)}/experiments/{quote(experiment_id)}"
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def apply_winner(self, optimization_id: str, experiment_id: str) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/optimizations/{quote(optimization_id)}/experiments/{quote(experiment_id)}",
+            json={},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
 
 
 # ─── Agent Teams ──────────────────────────────────────────────────────────────
