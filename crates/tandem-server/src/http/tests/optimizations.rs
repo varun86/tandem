@@ -226,6 +226,85 @@ async fn optimizations_create_clones_saved_workflow_snapshot() {
 }
 
 #[tokio::test]
+async fn optimizations_create_applies_execution_override_only_to_campaign_baseline() {
+    let state = test_state().await;
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-opt-workspace-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    write_phase1_artifacts(&workspace_root);
+    state
+        .put_automation_v2(sample_automation(
+            workspace_root.to_str().expect("workspace root"),
+        ))
+        .await
+        .expect("seed automation");
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/optimizations")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "source_workflow_id": "wf-opt",
+                "execution_override": {
+                    "provider_id": "local",
+                    "model_id": "echo-1"
+                },
+                "artifacts": {
+                    "objective_ref": "objective.md",
+                    "eval_ref": "eval.yaml",
+                    "mutation_policy_ref": "mutation_policy.yaml",
+                    "scope_ref": "scope.yaml",
+                    "budget_ref": "budget.yaml"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload
+            .get("optimization")
+            .and_then(|row| row.get("execution_override"))
+            .and_then(|row| row.get("provider_id"))
+            .and_then(Value::as_str),
+        Some("local")
+    );
+    assert_eq!(
+        payload
+            .get("optimization")
+            .and_then(|row| row.get("baseline_snapshot"))
+            .and_then(|row| row.get("agents"))
+            .and_then(Value::as_array)
+            .and_then(|agents| agents.first())
+            .and_then(|agent| agent.get("model_policy"))
+            .and_then(|policy| policy.get("default_model"))
+            .and_then(|model| model.get("model_id"))
+            .and_then(Value::as_str),
+        Some("echo-1")
+    );
+    assert_eq!(
+        payload
+            .get("optimization")
+            .and_then(|row| row.get("source_workflow_snapshot"))
+            .and_then(|row| row.get("agents"))
+            .and_then(Value::as_array)
+            .and_then(|agents| agents.first())
+            .and_then(|agent| agent.get("model_policy")),
+        None
+    );
+    let source = state
+        .get_automation_v2("wf-opt")
+        .await
+        .expect("source workflow");
+    assert!(source.agents[0].model_policy.is_none());
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[tokio::test]
 async fn optimizations_list_returns_campaigns_sorted_by_update_time() {
     let state = test_state().await;
     let workspace_root =
@@ -277,6 +356,7 @@ async fn optimizations_list_returns_campaigns_sorted_by_update_time() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -311,6 +391,7 @@ async fn optimizations_list_returns_campaigns_sorted_by_update_time() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -409,6 +490,7 @@ async fn optimizations_experiments_list_returns_campaign_experiments() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -526,6 +608,7 @@ async fn optimizations_approve_winner_updates_campaign_baseline_without_mutating
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -683,6 +766,7 @@ async fn optimizations_apply_winner_updates_live_workflow_and_records_audit_meta
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -709,8 +793,7 @@ async fn optimizations_apply_winner_updates_live_workflow_and_records_audit_meta
         .await
         .expect("seed campaign");
     let mut candidate = campaign.baseline_snapshot.clone();
-    candidate.flow.nodes[0].objective =
-        "Write a concise report for the leadership team".to_string();
+    candidate.flow.nodes[0].objective = "Write a clear report for the team".to_string();
     state
         .put_optimization_experiment(crate::OptimizationExperimentRecord {
             experiment_id: "exp-apply".to_string(),
@@ -758,7 +841,7 @@ async fn optimizations_apply_winner_updates_live_workflow_and_records_audit_meta
         .expect("live workflow");
     assert_eq!(
         live.flow.nodes[0].objective,
-        "Write a concise report for the leadership team"
+        "Write a clear report for the team"
     );
     assert_eq!(
         live.metadata
@@ -835,6 +918,7 @@ async fn optimizations_apply_winner_rejects_live_workflow_drift() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -861,8 +945,7 @@ async fn optimizations_apply_winner_rejects_live_workflow_drift() {
         .await
         .expect("seed campaign");
     let mut candidate = campaign.baseline_snapshot.clone();
-    candidate.flow.nodes[0].objective =
-        "Write a concise report for the leadership team".to_string();
+    candidate.flow.nodes[0].objective = "Write a clear report for the team".to_string();
     state
         .put_optimization_experiment(crate::OptimizationExperimentRecord {
             experiment_id: "exp-drift".to_string(),
@@ -975,6 +1058,7 @@ async fn optimizations_approve_winner_rejects_candidate_with_multiple_field_fami
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1109,6 +1193,7 @@ async fn optimizations_approve_winner_rejects_candidate_with_worse_phase1_metric
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1256,6 +1341,7 @@ async fn optimizations_start_establishes_stable_phase1_baseline() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1378,6 +1464,7 @@ async fn optimizations_start_pauses_when_baseline_replay_is_unstable() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1504,6 +1591,7 @@ async fn optimizations_start_queues_initial_baseline_replay_when_missing() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1615,6 +1703,7 @@ async fn optimization_reconciler_ingests_completed_replays_and_establishes_basel
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1774,6 +1863,7 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -1957,6 +2047,7 @@ async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures(
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -2099,6 +2190,7 @@ async fn optimizations_record_baseline_replay_from_run() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),
@@ -2257,6 +2349,7 @@ async fn optimizations_record_baseline_replay_rejects_mismatched_snapshot() {
             source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
             baseline_snapshot: source.clone(),
             baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
             artifacts: crate::OptimizationArtifactRefs {
                 objective_ref: "objective.md".to_string(),
                 eval_ref: "eval.yaml".to_string(),

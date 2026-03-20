@@ -43,6 +43,8 @@ export function OptimizationCampaignsPanel({
     mutationPolicyRef: "mutation_policy.yaml",
     scopeRef: "scope.yaml",
     budgetRef: "budget.yaml",
+    modelProvider: "",
+    modelId: "",
     startImmediately: true,
   });
 
@@ -60,10 +62,45 @@ export function OptimizationCampaignsPanel({
       Promise.resolve({ optimizations: [] }),
   });
 
+  const providersCatalogQuery = useQuery({
+    queryKey: ["optimizations", "providers", "catalog"],
+    queryFn: () => client.providers.catalog().catch(() => ({ all: [] })),
+    refetchInterval: 30000,
+  });
+
+  const providersConfigQuery = useQuery({
+    queryKey: ["optimizations", "providers", "config"],
+    queryFn: () => client.providers.config().catch(() => ({})),
+    refetchInterval: 30000,
+  });
+
   const campaigns = useMemo(
     () => toArray(campaignsQuery.data, "optimizations"),
     [campaignsQuery.data]
   );
+
+  const providerOptions = useMemo(() => {
+    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
+      ? (providersCatalogQuery.data as any).all
+      : [];
+    const configProviders =
+      ((providersConfigQuery.data as any)?.providers as Record<string, any> | undefined) || {};
+    return rows
+      .map((provider: any) => ({
+        id: String(provider?.id || "").trim(),
+        models: Object.keys(provider?.models || {}).sort(),
+        configured: !!configProviders[String(provider?.id || "").trim()],
+      }))
+      .filter((provider: any) => provider.id)
+      .sort((a: any, b: any) => a.id.localeCompare(b.id));
+  }, [providersCatalogQuery.data, providersConfigQuery.data]);
+
+  const selectedProviderModels = useMemo(() => {
+    const provider = providerOptions.find(
+      (row: any) => row.id === String(form.modelProvider || "").trim()
+    );
+    return Array.isArray(provider?.models) ? provider.models : [];
+  }, [form.modelProvider, providerOptions]);
 
   const selectedId = selectedCampaignId || String(campaigns[0]?.optimization_id || "").trim();
 
@@ -93,6 +130,13 @@ export function OptimizationCampaignsPanel({
           scope_ref: String(form.scopeRef || "").trim(),
           budget_ref: String(form.budgetRef || "").trim(),
         },
+        execution_override:
+          String(form.modelProvider || "").trim() && String(form.modelId || "").trim()
+            ? {
+                provider_id: String(form.modelProvider || "").trim(),
+                model_id: String(form.modelId || "").trim(),
+              }
+            : undefined,
       };
       const created = await client.optimizations.create(payload);
       if (form.startImmediately) {
@@ -204,6 +248,50 @@ export function OptimizationCampaignsPanel({
                 ))}
               </select>
             </label>
+            <label className="grid gap-1 text-xs text-slate-300">
+              <span>Model provider</span>
+              <select
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                value={form.modelProvider}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    modelProvider: e.target.value,
+                    modelId:
+                      e.target.value && prev.modelProvider !== e.target.value ? "" : prev.modelId,
+                  }))
+                }
+              >
+                <option value="">Use workflow/default model</option>
+                {providerOptions.map((provider: any) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.id}
+                    {provider.configured ? "" : " (catalog only)"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs text-slate-300">
+              <span>Model id</span>
+              <input
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                value={form.modelId}
+                onChange={(e) => setForm((prev) => ({ ...prev, modelId: e.target.value }))}
+                placeholder={
+                  form.modelProvider ? "Pick a cheaper model for this campaign" : "Optional"
+                }
+                list="optimization-model-ids"
+              />
+              <datalist id="optimization-model-ids">
+                {selectedProviderModels.map((modelId: string) => (
+                  <option key={modelId} value={modelId} />
+                ))}
+              </datalist>
+              <span className="tcp-subtle text-[11px]">
+                Fixed for the whole campaign. Leave blank to use the workflow's existing model
+                settings.
+              </span>
+            </label>
             {[
               ["Objective ref", "objectiveRef"],
               ["Eval ref", "evalRef"],
@@ -302,6 +390,12 @@ export function OptimizationCampaignsPanel({
                   <div className="mt-1 text-xs text-slate-500">
                     baseline: {String(detail?.baseline_snapshot_hash || "").slice(0, 12)}
                   </div>
+                  {detail?.execution_override ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      model: {String(detail.execution_override.provider_id || "").trim()}/
+                      {String(detail.execution_override.model_id || "").trim()}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button

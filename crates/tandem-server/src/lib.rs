@@ -45,8 +45,8 @@ pub use automation_v2::types::{
 };
 #[cfg(feature = "browser")]
 pub use browser::{
-    BrowserHealthSummary, BrowserSidecarInstallResult, BrowserSmokeTestResult, BrowserSubsystem,
-    install_browser_sidecar,
+    install_browser_sidecar, BrowserHealthSummary, BrowserSidecarInstallResult,
+    BrowserSmokeTestResult, BrowserSubsystem,
 };
 pub use bug_monitor::types::{
     BugMonitorBindingCandidate, BugMonitorCapabilityMatch, BugMonitorCapabilityReadiness,
@@ -58,17 +58,18 @@ pub use capability_resolver::CapabilityResolver;
 pub use http::serve;
 pub use memory::types::{GovernedMemoryRecord, MemoryAuditEvent};
 pub use optimization::{
-    OptimizationArtifactRefs, OptimizationBaselineReplayRecord, OptimizationBudgetPolicy,
-    OptimizationCampaignRecord, OptimizationCampaignStatus, OptimizationEvalSpec,
-    OptimizationExperimentRecord, OptimizationExperimentStatus, OptimizationFrozenArtifact,
-    OptimizationFrozenArtifacts, OptimizationGuardrailKind, OptimizationMetricKind,
-    OptimizationMutableField, OptimizationMutationPolicy, OptimizationPhase1Config,
-    OptimizationPhase1Metrics, OptimizationPromotionDecision, OptimizationPromotionDecisionKind,
-    OptimizationSafetyScope, OptimizationTargetKind, OptimizationValidatedMutation,
-    derive_phase1_metrics_from_run, establish_phase1_baseline, evaluate_phase1_promotion,
-    freeze_optimization_artifact, load_optimization_phase1_config, optimization_snapshot_hash,
-    parse_phase1_metrics, phase1_baseline_replay_due, validate_phase1_candidate_mutation,
-    validate_phase1_workflow_target,
+    apply_optimization_execution_override, derive_phase1_metrics_from_run,
+    establish_phase1_baseline, evaluate_phase1_promotion, freeze_optimization_artifact,
+    load_optimization_phase1_config, optimization_snapshot_hash, parse_phase1_metrics,
+    phase1_baseline_replay_due, validate_phase1_candidate_mutation,
+    validate_phase1_workflow_target, OptimizationArtifactRefs, OptimizationBaselineReplayRecord,
+    OptimizationBudgetPolicy, OptimizationCampaignRecord, OptimizationCampaignStatus,
+    OptimizationEvalSpec, OptimizationExecutionOverride, OptimizationExperimentRecord,
+    OptimizationExperimentStatus, OptimizationFrozenArtifact, OptimizationFrozenArtifacts,
+    OptimizationGuardrailKind, OptimizationMetricKind, OptimizationMutableField,
+    OptimizationMutationPolicy, OptimizationPhase1Config, OptimizationPhase1Metrics,
+    OptimizationPromotionDecision, OptimizationPromotionDecisionKind, OptimizationSafetyScope,
+    OptimizationTargetKind, OptimizationValidatedMutation,
 };
 pub use pack_manager::PackManager;
 pub use preset_composer::PromptComposeInput;
@@ -107,8 +108,8 @@ pub(crate) fn normalize_absolute_workspace_root(raw: &str) -> Result<String, Str
 
 // Re-exports from app::state (impl AppState moved here)
 pub use crate::app::state::{
-    AppState, ChannelRuntime, ChannelStatus, RoutineExecutionDecision, StatusIndexUpdate,
     derive_status_index_update, evaluate_routine_execution_policy, sha256_hex, truncate_text,
+    AppState, ChannelRuntime, ChannelStatus, RoutineExecutionDecision, StatusIndexUpdate,
 };
 
 pub use crate::app::startup::{StartupSnapshot, StartupState, StartupStatus};
@@ -116,8 +117,8 @@ pub use crate::app::startup::{StartupSnapshot, StartupState, StartupStatus};
 pub use config::channels::{
     ChannelsConfigFile, DiscordConfigFile, SlackConfigFile, TelegramConfigFile,
 };
-pub use config::webui::WebUiConfig;
 pub use config::webui::normalize_web_ui_prefix;
+pub use config::webui::WebUiConfig;
 
 // Also need normalize_allowed_users_or_wildcard?
 pub use crate::app::state::extract_persistable_tool_part;

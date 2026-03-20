@@ -8,9 +8,10 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    freeze_optimization_artifact, load_optimization_phase1_config, now_ms,
-    optimization_snapshot_hash, validate_phase1_workflow_target, AppState,
-    OptimizationArtifactRefs, OptimizationCampaignRecord, OptimizationCampaignStatus,
+    apply_optimization_execution_override, freeze_optimization_artifact,
+    load_optimization_phase1_config, now_ms, optimization_snapshot_hash,
+    validate_phase1_workflow_target, AppState, OptimizationArtifactRefs,
+    OptimizationCampaignRecord, OptimizationCampaignStatus, OptimizationExecutionOverride,
     OptimizationFrozenArtifacts, OptimizationTargetKind,
 };
 
@@ -24,6 +25,8 @@ pub(super) struct OptimizationCreateInput {
     pub name: Option<String>,
     pub source_workflow_id: String,
     pub artifacts: OptimizationArtifactRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_override: Option<OptimizationExecutionOverride>,
     #[serde(default)]
     pub metadata: Option<Value>,
 }
@@ -127,6 +130,27 @@ pub(super) async fn optimizations_create(
         .map_err(|error| optimization_error(StatusCode::BAD_REQUEST, error))?;
     validate_phase1_workflow_target(&source_workflow, &phase1)
         .map_err(|error| optimization_error(StatusCode::BAD_REQUEST, error))?;
+    let execution_override =
+        input
+            .execution_override
+            .as_ref()
+            .map(|value| OptimizationExecutionOverride {
+                provider_id: value.provider_id.trim().to_string(),
+                model_id: value.model_id.trim().to_string(),
+            });
+    if execution_override
+        .as_ref()
+        .is_some_and(|value| value.provider_id.is_empty() || value.model_id.is_empty())
+    {
+        return Err(optimization_error(
+            StatusCode::BAD_REQUEST,
+            "execution_override requires both provider_id and model_id",
+        ));
+    }
+    let baseline_snapshot = execution_override
+        .as_ref()
+        .map(|value| apply_optimization_execution_override(&source_workflow, value))
+        .unwrap_or_else(|| source_workflow.clone());
     let optimization_id = input
         .optimization_id
         .as_deref()
@@ -135,6 +159,7 @@ pub(super) async fn optimizations_create(
         .map(str::to_string)
         .unwrap_or_else(|| format!("opt-{}", Uuid::new_v4()));
     let source_hash = optimization_snapshot_hash(&source_workflow);
+    let baseline_hash = optimization_snapshot_hash(&baseline_snapshot);
     let name = input
         .name
         .as_deref()
@@ -151,8 +176,9 @@ pub(super) async fn optimizations_create(
         source_workflow_name: source_workflow.name.clone(),
         source_workflow_snapshot: source_workflow.clone(),
         source_workflow_snapshot_hash: source_hash.clone(),
-        baseline_snapshot: source_workflow,
-        baseline_snapshot_hash: source_hash,
+        baseline_snapshot,
+        baseline_snapshot_hash: baseline_hash,
+        execution_override,
         artifacts: input.artifacts,
         frozen_artifacts,
         phase1: Some(phase1),

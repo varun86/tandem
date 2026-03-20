@@ -67,6 +67,12 @@ pub struct OptimizationFrozenArtifacts {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OptimizationExecutionOverride {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OptimizationMetricKind {
     ArtifactValidatorPassRate,
@@ -205,6 +211,8 @@ pub struct OptimizationCampaignRecord {
     pub source_workflow_snapshot_hash: String,
     pub baseline_snapshot: AutomationV2Spec,
     pub baseline_snapshot_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_override: Option<OptimizationExecutionOverride>,
     pub artifacts: OptimizationArtifactRefs,
     pub frozen_artifacts: OptimizationFrozenArtifacts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,6 +262,32 @@ pub fn optimization_snapshot_hash(snapshot: &AutomationV2Spec) -> String {
     let mut hasher = Sha256::new();
     hasher.update(canonical);
     format!("{:x}", hasher.finalize())
+}
+
+pub fn apply_optimization_execution_override(
+    workflow: &AutomationV2Spec,
+    execution_override: &OptimizationExecutionOverride,
+) -> AutomationV2Spec {
+    let mut snapshot = workflow.clone();
+    for agent in &mut snapshot.agents {
+        let mut policy = agent
+            .model_policy
+            .clone()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        let fixed_model = serde_json::json!({
+            "provider_id": execution_override.provider_id,
+            "model_id": execution_override.model_id,
+        });
+        policy.insert("default_model".to_string(), fixed_model.clone());
+        if let Some(role_models) = policy.get_mut("role_models").and_then(Value::as_object_mut) {
+            for role_model in role_models.values_mut() {
+                *role_model = fixed_model.clone();
+            }
+        }
+        agent.model_policy = Some(Value::Object(policy));
+    }
+    snapshot
 }
 
 pub fn freeze_optimization_artifact(
