@@ -283,7 +283,7 @@ export const MemoryNodeSchema = z
     node_type: z.string(),
     created_at: z.string(),
     updated_at: z.string(),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
   })
   .passthrough();
 
