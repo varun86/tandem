@@ -10,6 +10,8 @@
 - Added TypeScript and Python SDK coverage for coder project bindings, GitHub Project inbox reads, and project-item intake.
 - Added engine-testing and SDK documentation for validating the new GitHub Project coder flow directly against the engine before relying on desktop UI.
 
+# Tandem v0.4.8 Release Notes (Released)
+
 ### Studio Workflow Builder
 
 - Added a new top-level `Studio` page in the control panel for template-first multi-agent workflow creation.
