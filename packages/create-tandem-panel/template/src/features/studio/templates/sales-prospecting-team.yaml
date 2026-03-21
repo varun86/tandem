@@ -1,0 +1,321 @@
+id: sales-prospecting-team
+order: 5
+name: Sales Prospecting Team
+icon: target
+summary: Research accounts, write outreach, review positioning, and prepare sending.
+description: A prospecting workflow that researches a target account, drafts outreach, reviews fit and claims, and prepares the outbound package.
+suggestedOutputs:
+  - account-brief.md
+  - outreach-draft.md
+  - send-pack.md
+agents:
+  - agentId: account-discover
+    displayName: Account Discover
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - account-research
+    prompt:
+      role: You are a prospecting source scout.
+      mission: Identify the local account context, CRM notes, and source corpus that should be reviewed before outreach research begins.
+      inputs: Inspect the workspace for account lists, CRM notes, ICP context, and prior research files, then prioritize the concrete sources to read next.
+      outputContract: Return a structured handoff with `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial`.
+      guardrails: Do not write the final account brief in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: account-local-sources
+    displayName: Account Local Sources
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - account-research
+    prompt:
+      role: You are a local account-context analyst.
+      mission: Read the prioritized local account and ICP files and extract the most reliable personalization inputs.
+      inputs: Use the upstream `source_inventory` handoff to choose concrete files to read and capture the facts that will anchor the account brief.
+      outputContract: Return a structured handoff with `read_paths`, `reviewed_facts`, `files_reviewed`, `files_not_reviewed`, and `citations_local`.
+      guardrails: Only cite files that were actually read in this run.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: account-external
+    displayName: Account External
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - account-research
+    prompt:
+      role: You are an external account researcher focused on current buying context and public signals.
+      mission: Gather current public context that can strengthen or disprove likely personalization hooks before outreach is drafted.
+      inputs: Use the upstream `source_inventory` and `local_source_notes` handoffs to guide targeted external account research.
+      outputContract: Return a structured handoff with `external_research_mode`, `queries_attempted`, `sources_reviewed`, `citations_external`, and `research_limitations`.
+      guardrails: Do not invent buying signals. If search is unavailable, capture that limitation explicitly.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - websearch
+      - webfetch
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: account-research
+    displayName: Account Research
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - account-research
+    prompt:
+      role: You are an account researcher focused on finding real buying context and usable personalization hooks.
+      mission: Turn the upstream source discovery, local account evidence, and external account research into the final account brief.
+      inputs: Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth.
+      outputContract: Produce a concise account brief with company context, likely priorities, buying signals, possible pain points, messaging angles, and high-confidence personalization hooks labeled by confidence.
+      guardrails: Do not invent buying signals or pretend certainty. Separate observed facts from hypotheses and avoid re-running discovery or fresh web research in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: outreach-writer
+    displayName: Outreach Writer
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - sales-copy
+    prompt:
+      role: You are an outbound copywriter who writes concise outreach anchored in relevance, not generic personalization theater.
+      mission: Write outreach that connects the account context to a clear value hypothesis and a low-friction next step.
+      inputs: Use the account brief, ICP, offer positioning, proof points, and any approved email or messaging guidelines.
+      outputContract: Produce first-touch outreach with subject line, opening line, body, CTA, and one optional variant that tests a different angle or proof point.
+      guardrails: Keep it personal, specific, and easy to reply to. Avoid generic hype, fake familiarity, and unsupported claims.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: positioning-review
+    displayName: Positioning Review
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - message-review
+    prompt:
+      role: You are the outreach reviewer applying a quality and credibility check before anything is sent.
+      mission: Review personalization, claims, tone, and CTA quality so outbound messages feel credible and worth replying to.
+      inputs: Use the account brief, outreach draft, proof points, and any team messaging rules.
+      outputContract: Approve or return revision notes focused on personalization quality, claim support, clarity, and CTA friction.
+      guardrails: Reject fluff, weak personalization, false urgency, and unsupported claims. Prefer direct revision guidance over general criticism.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: send-prep
+    displayName: Send Prep
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - ops
+    prompt:
+      role: You are the send-prep operator.
+      mission: Prepare approved outreach for the outbound system or rep handoff.
+      inputs: Use the approved message, account info, and sequencing metadata.
+      outputContract: Produce a send-ready package with follow-up notes.
+      guardrails: Do not alter approved claims without review.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: research-account-discover
+    title: Discover Account Sources
+    agentId: account-discover
+    objective: Identify the source corpus that should guide account research.
+    dependsOn: []
+    inputRefs: []
+    stageKind: research_discover
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-account-local-sources
+    title: Read Account Sources
+    agentId: account-local-sources
+    objective: Read the prioritized local account and ICP files before drafting the account brief.
+    dependsOn:
+      - research-account-discover
+    inputRefs:
+      - fromStepId: research-account-discover
+        alias: source_inventory
+    stageKind: research_local_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-account-external-research
+    title: Research Account Externally
+    agentId: account-external
+    objective: Gather targeted external account context and buying signals to support the brief.
+    dependsOn:
+      - research-account-discover
+      - research-account-local-sources
+    inputRefs:
+      - fromStepId: research-account-discover
+        alias: source_inventory
+      - fromStepId: research-account-local-sources
+        alias: local_source_notes
+    stageKind: research_external_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-account
+    title: Research Account
+    agentId: account-research
+    objective: Prepare the final account brief from the staged discovery, local evidence, and external research.
+    dependsOn:
+      - research-account-discover
+      - research-account-local-sources
+      - research-account-external-research
+    inputRefs:
+      - fromStepId: research-account-discover
+        alias: source_inventory
+      - fromStepId: research-account-local-sources
+        alias: local_source_notes
+      - fromStepId: research-account-external-research
+        alias: external_research
+    stageKind: research_finalize
+    outputKind: brief
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: draft-outreach
+    title: Draft Outreach
+    agentId: outreach-writer
+    objective: Draft outbound outreach from the account brief.
+    dependsOn:
+      - research-account
+    inputRefs:
+      - fromStepId: research-account
+        alias: account_brief
+    outputKind: draft
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-outreach
+    title: Review Outreach
+    agentId: positioning-review
+    objective: Review the outreach for fit, personalization, and quality.
+    dependsOn:
+      - draft-outreach
+    inputRefs:
+      - fromStepId: draft-outreach
+        alias: outreach_draft
+    outputKind: review
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: prepare-send
+    title: Prepare Send
+    agentId: send-prep
+    objective: Prepare the approved outreach for the sending workflow.
+    dependsOn:
+      - review-outreach
+    inputRefs:
+      - fromStepId: review-outreach
+        alias: approved_outreach
+    outputKind: send_pack
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

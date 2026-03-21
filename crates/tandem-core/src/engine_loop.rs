@@ -7937,7 +7937,7 @@ Call: todowrite(task_id=3, status="in_progress")
         let normalized = normalize_tool_args(
             "mcp.composio_1.gmail_send_email",
             json!({
-                "to": "evan@example.com",
+                "to": "user123@example.com",
                 "subject": "Test",
                 "body": "Hello",
                 "attachment": {
@@ -7956,7 +7956,7 @@ Call: todowrite(task_id=3, status="in_progress")
         let normalized = normalize_tool_args(
             "mcp.composio_1.gmail_send_email",
             json!({
-                "to": "evan@example.com",
+                "to": "user123@example.com",
                 "subject": "Test",
                 "body": "Hello",
                 "attachment": {
@@ -8206,7 +8206,7 @@ Call: todowrite(task_id=3, status="in_progress")
     #[test]
     fn detects_email_delivery_prompt_keywords() {
         assert!(requires_email_delivery_prompt(
-            "send a full report with links to evan@example.com"
+            "send a full report with links to user123@example.com"
         ));
         assert!(!requires_email_delivery_prompt("draft a summary for later"));
     }
@@ -8214,7 +8214,7 @@ Call: todowrite(task_id=3, status="in_progress")
     #[test]
     fn completion_claim_detector_flags_sent_language() {
         assert!(completion_claims_email_sent(
-            "Email Status: Sent to evan@example.com."
+            "Email Status: Sent to user123@example.com."
         ));
         assert!(!completion_claims_email_sent(
             "I could not send email in this run."
@@ -8373,7 +8373,7 @@ Call: todowrite(task_id=3, status="in_progress")
     #[test]
     fn post_tool_final_narrative_prompt_preserves_structured_response_requirements() {
         let prompt = build_post_tool_final_narrative_prompt(&[String::from(
-            "Tool `glob` result:\n/home/evan/marketing-tandem/tandem-reference/SOURCES.md",
+            "Tool `glob` result:\n/home/user123/marketing-tandem/tandem-reference/SOURCES.md",
         )]);
         assert!(prompt.contains("Preserve any requested output contract"));
         assert!(prompt.contains("required JSON structure"));
@@ -8541,7 +8541,7 @@ Required output target:
 
     #[test]
     fn infer_write_file_path_from_text_rejects_workspace_root() {
-        let prompt = "Workspace: /home/evan/game\nCreate the scaffold in the workspace now.";
+        let prompt = "Workspace: /home/user123/game\nCreate the scaffold in the workspace now.";
         assert_eq!(infer_write_file_path_from_text(prompt), None);
     }
 

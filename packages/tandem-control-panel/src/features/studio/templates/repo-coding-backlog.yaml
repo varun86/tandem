@@ -1,0 +1,193 @@
+id: repo-coding-backlog
+order: 1
+name: Repo Coding Backlog
+icon: code-2
+summary: Analyze a repository task backlog, implement scoped changes, verify them, and prepare a merge-ready handoff.
+description: "A coding workflow for long-running repository work: understand the task and repo area, make scoped code changes, run verification, review the outcome, and prepare a handoff with changed files and next steps."
+suggestedOutputs:
+  - coding-backlog-plan.md
+  - implementation-notes.md
+  - verification-report.md
+  - merge-handoff.md
+agents:
+  - agentId: repo-planner
+    displayName: Repo Planner
+    role: delegator
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - planning
+      - codebase-analysis
+    prompt:
+      role: You are a repository task planner turning backlog items into a concrete implementation approach.
+      mission: Inspect the repository, understand the requested task, identify the likely write scope, and prepare an implementation brief that downstream coding stages can execute safely.
+      inputs: Treat the workspace as a real repository, not a single-file task. Enumerate the repo, read the task-relevant source files, docs, manifests, tests, and configuration, and identify the modules most likely to change. If issue text, backlog text, or acceptance criteria are present in the workspace, use them as source-of-truth inputs.
+      outputContract: Create `coding-backlog-plan.md` with the task summary, acceptance criteria, likely write scope, affected files/modules, key architectural constraints, verification commands to run later, and a concise implementation approach. Also include a fenced `json` block for projected backlog tasks so downstream systems can ingest multiple coding tasks from this plan.
+      guardrails: Do not invent repository structure or acceptance criteria. List uncertainties explicitly, distinguish observed facts from inferred approach, and do not treat prior generated workflow artifacts as authoritative task inputs.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+      - write
+      - bash
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: implementer
+    displayName: Implementer
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - coding
+      - debugging
+    prompt:
+      role: You are a coding agent implementing repository changes inside a declared scope with minimal churn.
+      mission: Make the requested code or config changes, keep edits scoped, and leave clear implementation notes for verification and review.
+      inputs: Use the upstream `repo_plan` handoff as the implementation guide, then inspect the referenced source files directly before editing. Prefer repo-local evidence over assumptions. When available, keep changes inside the declared write scope and note any necessary scope expansion explicitly.
+      outputContract: Create `implementation-notes.md` summarizing what changed, files touched, unresolved risks, and which verification commands should be run next. Also make the actual repository edits required by the task.
+      guardrails: Prefer `apply_patch` or `edit` for existing source files, and use `write` only for new files or when patch/edit cannot express the change. Do not replace source files with placeholders, status notes, or preservation notes. Keep modifications inside the planned scope unless new evidence forces a change, and then explain why.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+      - edit
+      - apply_patch
+      - write
+      - bash
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: verifier
+    displayName: Verifier
+    role: tester
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - testing
+      - qa
+    prompt:
+      role: You are a verification engineer responsible for proving whether the repository changes satisfy the task.
+      mission: Run the most relevant build, test, lint, or task-specific verification commands, then summarize whether the implementation is ready to review or needs more work.
+      inputs: Use the upstream `implementation` handoff, the repository files, and the verification commands identified earlier. Read changed files and related tests before running commands so the report explains what was actually checked.
+      outputContract: "Create `verification-report.md` with commands run, pass/fail results, failing output excerpts when relevant, changed files reviewed, and a clear verdict: verified, verify_failed, or blocked."
+      guardrails: Do not claim verification without actually running the commands you report. If a command cannot run, record the exact blocker. Keep the report factual and concise.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+      - write
+      - bash
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: handoff
+    displayName: Handoff
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - code-review
+      - handoff
+    prompt:
+      role: You are the final coding workflow reviewer and handoff operator.
+      mission: Review the implementation notes and verification report, then prepare a merge-ready handoff that clearly states readiness, changed scope, and any remaining follow-up work.
+      inputs: Use the upstream `implementation` and `verification` handoffs as primary inputs. Read the changed files from disk only as needed to confirm claims or summarize the scope of change.
+      outputContract: Create `merge-handoff.md` with the task summary, changed files, verification outcome, review findings, follow-up items, and a clear release/merge recommendation.
+      guardrails: Do not mark work ready if verification failed or critical blockers remain. Keep review comments specific, and do not overwrite prior artifacts with status placeholders.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+      - write
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: plan-backlog-task
+    title: Plan Backlog Task
+    agentId: repo-planner
+    objective: Inspect the repository and backlog context, then write `coding-backlog-plan.md` with task scope, affected areas, and verification approach.
+    dependsOn: []
+    inputRefs: []
+    outputKind: plan
+    outputPath: coding-backlog-plan.md
+    taskKind: repo_plan
+    projectBacklogTasks: true
+    backlogTaskId: backlog-task
+    repoRoot: .
+    writeScope: repository analysis, docs, manifests, and task-relevant source files
+    acceptanceCriteria: Identify the task scope, affected repo areas, constraints, and a concrete verification plan.
+    taskDependencies: ""
+    verificationState: planned
+    taskOwner: repo-planner
+    verificationCommand: ""
+  - nodeId: implement-change
+    title: Implement Change
+    agentId: implementer
+    objective: Implement the repository changes described in the plan, update the relevant source files, and write `implementation-notes.md`.
+    dependsOn:
+      - plan-backlog-task
+    inputRefs:
+      - fromStepId: plan-backlog-task
+        alias: repo_plan
+    outputKind: code_change
+    outputPath: implementation-notes.md
+    taskKind: code_change
+    backlogTaskId: backlog-task
+    repoRoot: .
+    writeScope: task-scoped source files, tests, configs, and new files required by the change
+    acceptanceCriteria: Implement the planned repo change inside scope and leave clear notes for verification.
+    taskDependencies: plan-backlog-task
+    verificationState: pending
+    taskOwner: implementer
+    verificationCommand: Run the repo-appropriate build/test/lint commands for the touched area.
+    projectBacklogTasks: false
+  - nodeId: verify-change
+    title: Verify Change
+    agentId: verifier
+    objective: Verify the implementation with the relevant build, test, or lint commands and write `verification-report.md`.
+    dependsOn:
+      - implement-change
+    inputRefs:
+      - fromStepId: implement-change
+        alias: implementation
+    outputKind: verification
+    outputPath: verification-report.md
+    taskKind: verification
+    backlogTaskId: backlog-task
+    repoRoot: .
+    writeScope: changed files plus directly relevant tests and config
+    acceptanceCriteria: Run the relevant repo-local verification commands and return a factual pass/fail verdict.
+    taskDependencies: implement-change
+    verificationState: required
+    taskOwner: verifier
+    verificationCommand: Use the best repo-local verification commands for the touched files and report exact results.
+    projectBacklogTasks: false
+  - nodeId: prepare-merge-handoff
+    title: Prepare Merge Handoff
+    agentId: handoff
+    objective: Review the implementation and verification outputs, then write `merge-handoff.md` with merge readiness and follow-up notes.
+    dependsOn:
+      - verify-change
+    inputRefs:
+      - fromStepId: implement-change
+        alias: implementation
+      - fromStepId: verify-change
+        alias: verification
+    outputKind: review
+    outputPath: merge-handoff.md
+    taskKind: review
+    backlogTaskId: backlog-task
+    repoRoot: .
+    writeScope: implementation notes, verification report, and changed files for spot checks
+    acceptanceCriteria: Summarize change scope, verification outcome, and merge readiness for the backlog task.
+    taskDependencies: implement-change, verify-change
+    verificationState: reported
+    taskOwner: handoff
+    verificationCommand: ""
+    projectBacklogTasks: false

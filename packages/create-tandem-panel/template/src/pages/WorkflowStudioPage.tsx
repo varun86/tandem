@@ -15,6 +15,7 @@ import type {
   StudioRole,
   StudioWorkflowDraft,
 } from "../features/studio/schema";
+import { createEmptyAgentDraft, createEmptyNodeDraft } from "../features/studio/schema";
 import { EmptyState, PageCard } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -360,30 +361,6 @@ function computeNodeDepths(nodes: StudioNodeDraft[]) {
   };
   for (const node of nodes) visit(node.nodeId);
   return cache;
-}
-
-function emptyAgent(agentId: string, displayName: string): StudioAgentDraft {
-  return {
-    agentId,
-    displayName,
-    role: "worker",
-    avatarUrl: "",
-    templateId: "",
-    linkedTemplateId: "",
-    skills: [],
-    prompt: {
-      role: "",
-      mission: "",
-      inputs: "",
-      outputContract: "",
-      guardrails: "",
-    },
-    modelProvider: "",
-    modelId: "",
-    toolAllowlist: ["read", "write", "glob"],
-    toolDenylist: [],
-    mcpAllowedServers: [],
-  };
 }
 
 function normalizeAgentDraft(row: any): StudioAgentDraft {
@@ -1293,7 +1270,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
       agents: [
         ...current.agents,
         applyDefaultModelToAgents(
-          [emptyAgent(uniqueId, `Agent ${current.agents.length + 1}`)],
+          [createEmptyAgentDraft(uniqueId, `Agent ${current.agents.length + 1}`)],
           studioDefaultModel
         )[0],
       ],
@@ -1305,28 +1282,18 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
     const nextIndex = draft.nodes.length + 1;
     const fallbackId = `stage-${nextIndex}`;
     const agentId = selectedAgent?.agentId || draft.agents[0]?.agentId || "";
-    const nextNode: StudioNodeDraft = {
-      nodeId: fallbackId,
-      title: `Stage ${nextIndex}`,
+    const nextNode: StudioNodeDraft = createEmptyNodeDraft(
+      fallbackId,
+      `Stage ${nextIndex}`,
       agentId,
-      objective: "Describe what this stage should produce.",
-      dependsOn: selectedNode ? [selectedNode.nodeId] : [],
-      inputRefs: selectedNode
+      selectedNode ? [selectedNode.nodeId] : [],
+      selectedNode
         ? [{ fromStepId: selectedNode.nodeId, alias: selectedNode.nodeId.replace(/-/g, "_") }]
         : [],
-      outputKind: "artifact",
-      outputPath: "",
-      taskKind: "",
-      projectBacklogTasks: false,
-      backlogTaskId: "",
-      repoRoot: "",
-      writeScope: "",
-      acceptanceCriteria: "",
-      taskDependencies: "",
-      verificationState: "",
-      taskOwner: "",
-      verificationCommand: "",
-    };
+      {
+        objective: "Describe what this stage should produce.",
+      }
+    );
     setDraft((current) => ({ ...current, nodes: [...current.nodes, nextNode] }));
     setSelectedNodeId(fallbackId);
     if (agentId) setSelectedAgentId(agentId);
@@ -1723,7 +1690,8 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   verification_command: safeString(node.verificationCommand) || undefined,
                   prompt: composeNodeExecutionPrompt(
                     node,
-                    agent || emptyAgent(safeString(node.agentId), safeString(node.agentId))
+                    agent ||
+                      createEmptyAgentDraft(safeString(node.agentId), safeString(node.agentId))
                   ),
                 },
               },

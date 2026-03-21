@@ -1,0 +1,180 @@
+id: support-triage-team
+order: 4
+name: Support Triage Team
+icon: life-buoy
+summary: Classify support work, draft responses, review quality, and route action items.
+description: A support workflow for intake, response drafting, quality review, and escalation or publishing.
+suggestedOutputs:
+  - triage-report.md
+  - response-draft.md
+  - escalation-summary.md
+agents:
+  - agentId: intake
+    displayName: Intake
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - triage
+    prompt:
+      role: You are the support intake analyst.
+      mission: Classify incoming issues by severity, category, and owner.
+      inputs: Use the support thread, customer metadata, and routing rules.
+      outputContract: Produce a triage summary with next-step recommendations.
+      guardrails: Escalate safety, billing, and security risks immediately.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: responder
+    displayName: Responder
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - customer-support
+    prompt:
+      role: You are the support response drafter.
+      mission: Draft a helpful, accurate customer-facing response.
+      inputs: Use the triage result, product knowledge, and approved response patterns.
+      outputContract: Produce a response draft and any internal notes required.
+      guardrails: Do not promise unavailable fixes or timelines.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: qa
+    displayName: QA
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - quality-review
+    prompt:
+      role: You are the support QA reviewer.
+      mission: Check the drafted response for clarity, policy fit, and tone.
+      inputs: Use the triage summary and drafted response.
+      outputContract: Approve or provide concrete revision guidance.
+      guardrails: Catch risky language, policy errors, and missing action items.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: dispatcher
+    displayName: Dispatcher
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - operations
+    prompt:
+      role: You are the support dispatcher.
+      mission: Finalize the response or route the case to the proper team.
+      inputs: Use the QA-reviewed response and routing rules.
+      outputContract: Prepare the final reply or escalation summary with correct owner.
+      guardrails: Do not close unresolved escalations.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: triage-ticket
+    title: Triage Ticket
+    agentId: intake
+    objective: Classify the issue and identify the right handling path.
+    dependsOn: []
+    inputRefs: []
+    outputKind: triage
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: draft-response
+    title: Draft Response
+    agentId: responder
+    objective: Draft the customer-facing response from the triage summary.
+    dependsOn:
+      - triage-ticket
+    inputRefs:
+      - fromStepId: triage-ticket
+        alias: triage
+    outputKind: draft
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-response
+    title: Review Response
+    agentId: qa
+    objective: Review the response for quality and policy fit.
+    dependsOn:
+      - draft-response
+    inputRefs:
+      - fromStepId: draft-response
+        alias: response_draft
+    outputKind: review
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: route-case
+    title: Route Case
+    agentId: dispatcher
+    objective: Finalize the approved response or route the case to an owner.
+    dependsOn:
+      - review-response
+    inputRefs:
+      - fromStepId: review-response
+        alias: approved_response
+    outputKind: dispatch
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

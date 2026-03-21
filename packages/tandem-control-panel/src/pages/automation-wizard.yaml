@@ -1,0 +1,57 @@
+defaults:
+  schedulePreset: Every morning
+  mode: team
+  maxAgents: "4"
+steps:
+  - What?
+  - When?
+  - How?
+  - Review
+goalExamples:
+  - Check my email every morning and send me a summary of what's important
+  - Monitor GitHub issues and post daily standup updates to Slack
+  - Summarize my calendar each Sunday and plan the upcoming week
+  - Watch for price changes on competitor products and alert me
+  - Generate a weekly report from our Notion workspace
+schedulePresets:
+  - label: Every hour
+    desc: Good for monitoring & alerts
+    icon: "⏰"
+    cron: ""
+    intervalSeconds: 3600
+  - label: Every morning
+    desc: Daily digest at 9 AM
+    icon: "☀️"
+    cron: "0 9 * * *"
+  - label: Every evening
+    desc: End-of-day summary at 6 PM
+    icon: "🌙"
+    cron: "0 18 * * *"
+  - label: Daily at midnight
+    desc: Nightly data processing
+    icon: "🔄"
+    cron: "0 0 * * *"
+  - label: Weekly Monday
+    desc: Weekly reports & reviews
+    icon: "📋"
+    cron: "0 9 * * 1"
+  - label: Manual only
+    desc: Run whenever you want
+    icon: "🎯"
+    cron: ""
+executionModes:
+  - id: single
+    label: Single Agent
+    icon: "🤖"
+    desc: One focused AI handles the whole task
+    bestFor: Simple, well-defined tasks
+  - id: team
+    label: Agent Team
+    icon: "👥"
+    desc: Multiple specialized AIs collaborate with a planner and workers
+    bestFor: Complex multi-step tasks (recommended)
+  - id: swarm
+    label: Swarm
+    icon: "🐝"
+    desc: A swarm of AIs work in parallel on sub-tasks
+    bestFor: Large-scale parallel work

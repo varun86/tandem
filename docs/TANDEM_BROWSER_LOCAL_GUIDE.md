@@ -7,13 +7,13 @@ This file documents the current local `tandem-browser` build and the commands to
 Current debug build:
 
 ```text
-/home/evan/tandem/target/debug/tandem-browser
+/home/user123/tandem/target/debug/tandem-browser
 ```
 
 Current release build:
 
 ```text
-/home/evan/tandem/target/release/tandem-browser
+/home/user123/tandem/target/release/tandem-browser
 ```
 
 ## Current browser detection on this host
@@ -94,7 +94,7 @@ For this machine, start the engine with browser automation explicitly enabled:
 
 ```bash
 TANDEM_BROWSER_ENABLED=true \
-TANDEM_BROWSER_SIDECAR=/home/evan/tandem/target/debug/tandem-browser \
+TANDEM_BROWSER_SIDECAR=/home/user123/tandem/target/debug/tandem-browser \
 TANDEM_BROWSER_EXECUTABLE=/snap/bin/chromium \
 TANDEM_API_TOKEN='tk_3b9e2f1f5d194e46b4204f751acb9b27' \
 cargo run -p tandem-ai -- serve --hostname 127.0.0.1 --port 39731
@@ -213,7 +213,7 @@ On this machine:
 
 ```bash
 mkdir -p ~/.tandem/binaries
-cp /home/evan/tandem/target/debug/tandem-browser ~/.tandem/binaries/tandem-browser
+cp /home/user123/tandem/target/debug/tandem-browser ~/.tandem/binaries/tandem-browser
 chmod +x ~/.tandem/binaries/tandem-browser
 ```
 
@@ -244,6 +244,6 @@ Expected result:
 
 ## Notes
 
-- Right now, your working local debug binary is `/home/evan/tandem/target/debug/tandem-browser`.
+- Right now, your working local debug binary is `/home/user123/tandem/target/debug/tandem-browser`.
 - Chromium from Snap is working correctly for the standalone doctor check.
 - If engine checks fail while standalone doctor passes, debug the engine config/path resolution next.

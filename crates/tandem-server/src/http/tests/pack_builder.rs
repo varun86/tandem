@@ -182,7 +182,7 @@ async fn pack_builder_confirmation_goal_applies_last_session_plan() {
                         "__session_id": session_id,
                         "mode": "preview",
                         "auto_apply": false,
-                        "goal": "Build a daily technology digest automation that sends a summary to evan@frumu.ai at 8 AM"
+                        "goal": "Build a daily technology digest automation that sends a summary to info@frumu.ai at 8 AM"
                     }
                 })
                 .to_string(),

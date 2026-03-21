@@ -1,0 +1,36 @@
+kind: summary
+description: Single-node validator-backed workflow for cheap optimization smoke tests.
+status: draft
+schedule:
+  type: manual
+  timezone: UTC
+  misfire_policy: skip
+agents:
+  - agent_id: agent-1
+    display_name: Summarizer
+    skills: []
+    tool_policy:
+      allowlist: []
+      denylist: []
+    mcp_policy:
+      allowed_servers: []
+execution: {}
+output_targets: []
+creator_id: optimization-smoke-pack
+workspace_root: ""
+automation_id: wf-smoke-summary
+name: Smoke Summary Workflow
+flow:
+  nodes:
+    - node_id: node-1
+      agent_id: agent-1
+      objective: Write a clear report for the team
+      depends_on: []
+      input_refs: []
+      output_contract:
+        kind: summary
+        validator: generic_artifact
+        summary_guidance: Return a short, clean artifact that a validator can check.
+      retry_policy:
+        max_attempts: 1
+      timeout_ms: 60000

@@ -36,8 +36,8 @@ Representative failing sessions we inspected directly:
 
 Relevant local persistence paths:
 
-- [`session_meta.json`](/home/evan/.local/share/tandem/storage/session_meta.json)
-- context-run `events.jsonl` under `/home/evan/.local/share/tandem/context_runs/`
+- [`session_meta.json`](/home/user123/.local/share/tandem/storage/session_meta.json)
+- context-run `events.jsonl` under `/home/user123/.local/share/tandem/context_runs/`
 
 Observed persisted shape:
 
@@ -50,7 +50,7 @@ Observed persisted shape:
       "type": "tool_invocation",
       "tool": "glob",
       "args": {
-        "__effective_cwd": "/home/evan/game",
+        "__effective_cwd": "/home/user123/game",
         "__session_id": "..."
       },
       "result": "...",
@@ -79,7 +79,7 @@ Important implication:
 We confirmed an early real bug in strict write recovery:
 
 - the prompt already contained a valid required output target such as `game.html`
-- strict recovery logic in [`engine_loop.rs`](/home/evan/tandem/crates/tandem-core/src/engine_loop.rs) rejected `.html` and similar artifact paths too aggressively
+- strict recovery logic in [`engine_loop.rs`](/home/user123/tandem/crates/tandem-core/src/engine_loop.rs) rejected `.html` and similar artifact paths too aggressively
 - this caused `write {}` to degrade into `FILE_PATH_MISSING` instead of recovering the required target
 
 Status:
@@ -116,7 +116,7 @@ The likely loss point is the streamed tool-call reconstruction/persistence path.
 
 ### A. Strict output-target recovery changes
 
-Implemented in [`engine_loop.rs`](/home/evan/tandem/crates/tandem-core/src/engine_loop.rs):
+Implemented in [`engine_loop.rs`](/home/user123/tandem/crates/tandem-core/src/engine_loop.rs):
 
 - split explicit `output_target.path` sanitization from free-form path guessing
 - allowed structured required targets like `game.html`
@@ -170,7 +170,7 @@ Critical code path that was identified:
 
 ### Engine streaming path
 
-In [`engine_loop.rs`](/home/evan/tandem/crates/tandem-core/src/engine_loop.rs):
+In [`engine_loop.rs`](/home/user123/tandem/crates/tandem-core/src/engine_loop.rs):
 
 - streamed tool-call deltas build reconstructed previews via `parse_streamed_tool_args(...)`
 - earlier behavior published the user-visible/persisted tool part as `args: {}`
@@ -178,14 +178,14 @@ In [`engine_loop.rs`](/home/evan/tandem/crates/tandem-core/src/engine_loop.rs):
 
 ### Server persistence path
 
-In [`lib.rs`](/home/evan/tandem/crates/tandem-server/src/lib.rs):
+In [`lib.rs`](/home/user123/tandem/crates/tandem-server/src/lib.rs):
 
 - the session part persister stores the `part`
 - if `part.args` is already `{}`, the persisted session remains empty unless we explicitly copy the streamed preview into persistence
 
 ### Session merge path
 
-In [`storage.rs`](/home/evan/tandem/crates/tandem-core/src/storage.rs):
+In [`storage.rs`](/home/user123/tandem/crates/tandem-core/src/storage.rs):
 
 - merge logic operates on persisted tool parts
 - it cannot recover streamed preview args that were never copied into `part.args`
@@ -196,7 +196,7 @@ To improve debuggability and stop dropping streamed args, we added two changes.
 
 ### 1. Publish parsed streamed args into the tool part
 
-Updated [`engine_loop.rs`](/home/evan/tandem/crates/tandem-core/src/engine_loop.rs):
+Updated [`engine_loop.rs`](/home/user123/tandem/crates/tandem-core/src/engine_loop.rs):
 
 - when a streamed tool delta has a reconstructed args preview, publish that preview into `WireMessagePart::tool_invocation(..., args, ...)`
 - do not keep emitting `args: {}`
@@ -207,7 +207,7 @@ Intent:
 
 ### 2. Server-side persistence fallback
 
-Updated [`lib.rs`](/home/evan/tandem/crates/tandem-server/src/lib.rs):
+Updated [`lib.rs`](/home/user123/tandem/crates/tandem-server/src/lib.rs):
 
 - if `part.args` is empty, the persister now falls back to `toolCallDelta.parsedArgsPreview` when available
 
@@ -217,7 +217,7 @@ Intent:
 
 ### 3. Regression coverage
 
-Added a tandem-server regression test in [`sessions.rs`](/home/evan/tandem/crates/tandem-server/src/http/tests/sessions.rs):
+Added a tandem-server regression test in [`sessions.rs`](/home/user123/tandem/crates/tandem-server/src/http/tests/sessions.rs):
 
 - verifies persistence prefers `toolCallDelta.parsedArgsPreview` when `part.args` is empty
 

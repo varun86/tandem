@@ -122,7 +122,6 @@ export function DashboardPage(props: AppPageProps) {
         helper: providerStatus.ready ? providerStatus.defaultModel : "Needs setup",
       },
       {
-        label: "Workflow contexts",
         label: "Context runs",
         value: workflowContextRows.length,
         tone: activeWorkflowContexts.length ? ("warn" as const) : ("info" as const),

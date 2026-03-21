@@ -71,6 +71,8 @@ function isComposioTransport(transport: string) {
   return host.endsWith("composio.dev");
 }
 
+const CONTROL_PANEL_READINESS_WORKFLOW_ID = "control-panel-readiness";
+
 function normalizeServerRow(input: any, fallbackName = ""): McpServer | null {
   if (!input || typeof input !== "object") return null;
   const row = input;
@@ -348,7 +350,7 @@ export function McpPage({ client, api, toast }: AppPageProps) {
 
       if ((client as any).capabilities?.readiness) {
         return (client as any).capabilities.readiness({
-          workflow_id: "control-panel-readiness",
+          workflow_id: CONTROL_PANEL_READINESS_WORKFLOW_ID,
           required_capabilities: required,
         });
       }
@@ -356,7 +358,7 @@ export function McpPage({ client, api, toast }: AppPageProps) {
       return api("/api/engine/capabilities/readiness", {
         method: "POST",
         body: JSON.stringify({
-          workflow_id: "control-panel-readiness",
+          workflow_id: CONTROL_PANEL_READINESS_WORKFLOW_ID,
           required_capabilities: required,
         }),
       });

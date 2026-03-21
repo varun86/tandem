@@ -1,0 +1,321 @@
+id: competitor-research-pipeline
+order: 2
+name: Competitor Research Pipeline
+icon: radar
+summary: Track competitors, synthesize movements, and brief the team on strategic changes.
+description: A recurring competitor workflow that scans rivals, synthesizes patterns, reviews implications, and prepares a distribution-ready summary.
+suggestedOutputs:
+  - competitor-scan.md
+  - strategic-summary.md
+agents:
+  - agentId: market-discover
+    displayName: Market Discover
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - analysis
+    prompt:
+      role: You are a market-source scout.
+      mission: Identify the local context, competitor list, and source corpus that should guide the competitor scan before evidence gathering begins.
+      inputs: Inspect any local competitor lists, prior scans, strategy docs, changelogs, and source bundles. Return a clear inventory of what should be read next.
+      outputContract: Return a structured handoff with `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial`.
+      guardrails: Do not jump to conclusions or write the final competitor scan in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: market-local-sources
+    displayName: Market Local Sources
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - analysis
+    prompt:
+      role: You are a local-source analyst for competitor intelligence.
+      mission: Read the prioritized local sources and extract the competitor context, prior findings, and product framing that should shape the scan.
+      inputs: Use the upstream `source_inventory` handoff to choose concrete files to read and capture the facts that later scanning should compare against.
+      outputContract: Return a structured handoff with `read_paths`, `reviewed_facts`, `files_reviewed`, `files_not_reviewed`, and `citations_local`.
+      guardrails: Only cite local files that were actually read in this run.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: market-external
+    displayName: Market External
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - websearch
+      - trend-analysis
+    prompt:
+      role: You are an external competitor-research analyst.
+      mission: Gather current web evidence about competitor launches, pricing moves, positioning shifts, and customer sentiment.
+      inputs: Use the upstream `source_inventory` and `local_source_notes` handoffs to focus the search and fetch specific sources when snippets are not enough.
+      outputContract: Return a structured handoff with `external_research_mode`, `queries_attempted`, `sources_reviewed`, `citations_external`, and `research_limitations`.
+      guardrails: If search is unavailable, record the limitation clearly instead of inventing web evidence.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - websearch
+      - webfetch
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: market-scan
+    displayName: Market Scan
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - trend-analysis
+    prompt:
+      role: You are a competitor intelligence analyst responsible for finding real market changes and separating signal from noise.
+      mission: Turn the upstream discovery, local source notes, and external market research into the final competitor scan.
+      inputs: Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth for the final scan.
+      outputContract: Produce a structured scan with what changed, why it matters, evidence links, confidence level, affected audience or buyer stage, and whether the signal is emerging, confirmed, or low-confidence.
+      guardrails: Ignore rumors and recycled noise. Separate evidence from inference, be honest about uncertainty, and do not redo web research in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: synthesist
+    displayName: Synthesist
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - synthesis
+    prompt:
+      role: You are a strategy synthesist who turns raw competitor monitoring into a useful decision brief.
+      mission: Convert the market scan into clear strategic implications, priority calls, and recommended responses for the team.
+      inputs: Use the competitor scan, prior strategy context, product positioning, and known customer objections or differentiators.
+      outputContract: Produce a summary with key themes, what changed, why it matters, threats, opportunities, confidence levels, and recommended actions ranked by urgency and impact.
+      guardrails: Do not overreact to a single data point. Distinguish hard facts from interpretation, and explain why each recommended response matters to the business.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: review
+    displayName: Review
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - qa
+    prompt:
+      role: You are the review editor for competitor intelligence, responsible for evidence quality, honest framing, and practical usefulness.
+      mission: Review the strategic summary for unsupported conclusions, weak evidence, and recommendations that do not follow from the data.
+      inputs: Use the summary, the raw scan evidence, and any relevant positioning context or review criteria.
+      outputContract: Approve or request revisions with exact issues grouped by evidence, interpretation, recommendation quality, and missing context.
+      guardrails: Reject unsupported conclusions, misleading framing, and advice that skips over uncertainty. Preserve nuance instead of flattening every insight into a threat.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: briefing
+    displayName: Briefing
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - reporting
+    prompt:
+      role: You are the internal briefing operator who packages approved competitor intelligence for busy stakeholders.
+      mission: Turn the approved summary into a concise update the team can skim quickly and act on.
+      inputs: Use the reviewed summary, destination channel guidance, and any audience-specific formatting requirements.
+      outputContract: Generate a concise update with headline, TL;DR, the top changes, recommended follow-ups, and any owners or deadlines if the brief implies action.
+      guardrails: Keep recommendations grounded in the approved evidence, and do not add new claims while packaging the brief.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: scan-market-discover
+    title: Discover Market Sources
+    agentId: market-discover
+    objective: Identify the local source corpus and file inventory that should guide the competitor scan.
+    dependsOn: []
+    inputRefs: []
+    stageKind: research_discover
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: scan-market-local-sources
+    title: Read Market Sources
+    agentId: market-local-sources
+    objective: Read the prioritized local competitor and strategy sources before external scanning.
+    dependsOn:
+      - scan-market-discover
+    inputRefs:
+      - fromStepId: scan-market-discover
+        alias: source_inventory
+    stageKind: research_local_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: scan-market-external-research
+    title: Research Market
+    agentId: market-external
+    objective: Gather current external competitor evidence guided by the local market context.
+    dependsOn:
+      - scan-market-discover
+      - scan-market-local-sources
+    inputRefs:
+      - fromStepId: scan-market-discover
+        alias: source_inventory
+      - fromStepId: scan-market-local-sources
+        alias: local_source_notes
+    stageKind: research_external_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: scan-market
+    title: Scan Market
+    agentId: market-scan
+    objective: Synthesize the discovered local and external evidence into the final competitor scan.
+    dependsOn:
+      - scan-market-discover
+      - scan-market-local-sources
+      - scan-market-external-research
+    inputRefs:
+      - fromStepId: scan-market-discover
+        alias: source_inventory
+      - fromStepId: scan-market-local-sources
+        alias: local_source_notes
+      - fromStepId: scan-market-external-research
+        alias: external_research
+    stageKind: research_finalize
+    outputKind: scan
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: synthesize-signals
+    title: Synthesize Signals
+    agentId: synthesist
+    objective: Turn the raw scan into a strategic competitor summary.
+    dependsOn:
+      - scan-market
+    inputRefs:
+      - fromStepId: scan-market
+        alias: scan
+    outputKind: summary
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-summary
+    title: Review Summary
+    agentId: review
+    objective: Review the summary for evidence quality and useful recommendations.
+    dependsOn:
+      - synthesize-signals
+    inputRefs:
+      - fromStepId: synthesize-signals
+        alias: summary
+    outputKind: review
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: publish-brief
+    title: Publish Brief
+    agentId: briefing
+    objective: Prepare the reviewed summary for internal distribution.
+    dependsOn:
+      - review-summary
+    inputRefs:
+      - fromStepId: review-summary
+        alias: approved_summary
+    outputKind: brief
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

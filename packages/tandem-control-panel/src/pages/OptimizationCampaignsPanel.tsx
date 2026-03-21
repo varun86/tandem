@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import YAML from "yaml";
 import { EmptyState } from "./ui";
 
 function toArray(input: any, key: string) {
@@ -26,106 +27,43 @@ function prettyMetric(value: any) {
   return num.toFixed(3);
 }
 
-function buildSmokeWorkflowPayload(kind: "summary" | "extract_format", workspaceRoot: string) {
-  const root = String(workspaceRoot || "").trim();
-  const base = {
-    description:
-      kind === "summary"
-        ? "Single-node validator-backed workflow for cheap optimization smoke tests."
-        : "Two-node validator-backed workflow for cheap optimization smoke tests.",
-    status: "draft",
-    schedule: {
-      type: "manual",
-      timezone: "UTC",
-      misfire_policy: "skip",
-    },
-    agents: [
-      {
-        agent_id: "agent-1",
-        display_name: kind === "summary" ? "Summarizer" : "Extractor",
-        skills: [],
-        tool_policy: {
-          allowlist: [],
-          denylist: [],
-        },
-        mcp_policy: {
-          allowed_servers: [],
-        },
-      },
-    ],
-    execution: {},
-    output_targets: [],
-    creator_id: "optimization-smoke-pack",
-    workspace_root: root,
-  };
-  if (kind === "summary") {
-    return {
-      ...base,
-      automation_id: "wf-smoke-summary",
-      name: "Smoke Summary Workflow",
-      flow: {
-        nodes: [
-          {
-            node_id: "node-1",
-            agent_id: "agent-1",
-            objective: "Write a clear report for the team",
-            depends_on: [],
-            input_refs: [],
-            output_contract: {
-              kind: "summary",
-              validator: "generic_artifact",
-              summary_guidance: "Return a short, clean artifact that a validator can check.",
-            },
-            retry_policy: {
-              max_attempts: 1,
-            },
-            timeout_ms: 60000,
-          },
-        ],
-      },
-    };
-  }
-  return {
-    ...base,
-    automation_id: "wf-smoke-extract-format",
-    name: "Smoke Extract Format Workflow",
-    flow: {
-      nodes: [
-        {
-          node_id: "node-1",
-          agent_id: "agent-1",
-          objective: "Extract the key facts only.",
-          depends_on: [],
-          input_refs: [],
-          retry_policy: {
-            max_attempts: 1,
-          },
-          timeout_ms: 45000,
-        },
-        {
-          node_id: "node-2",
-          agent_id: "agent-1",
-          objective: "Format the extracted facts into a short structured answer.",
-          depends_on: ["node-1"],
-          input_refs: [
-            {
-              from_step_id: "node-1",
-              alias: "facts",
-            },
-          ],
-          output_contract: {
-            kind: "formatted_answer",
-            validator: "structured_json",
-            summary_guidance: "Return a small structured artifact with stable fields.",
-          },
-          retry_policy: {
-            max_attempts: 1,
-          },
-          timeout_ms: 60000,
-        },
-      ],
-    },
-  };
+type SmokeWorkflowKind = "summary" | "extract_format";
+
+type SmokeWorkflowTemplate = {
+  kind: SmokeWorkflowKind;
+  [key: string]: unknown;
+};
+
+const SMOKE_WORKFLOW_SOURCES = import.meta.glob("./smoke-workflows/*.yaml", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
+
+const SMOKE_WORKFLOW_TEMPLATES = Object.entries(SMOKE_WORKFLOW_SOURCES)
+  .map(([sourcePath, source]) => {
+    const parsed = YAML.parse(source) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error(
+        "Invalid smoke workflow template at " + sourcePath + ": expected a YAML object."
+      );
+    }
+    const template = parsed as Partial<SmokeWorkflowTemplate>;
+    const kind = String(template.kind || "").trim() as SmokeWorkflowKind;
+    if (kind !== "summary" && kind !== "extract_format") {
+      throw new Error("Invalid smoke workflow template at " + sourcePath + ": missing kind.");
+    }
+    return { kind, payload: template as Record<string, unknown> };
+  })
+  .sort((left, right) => left.kind.localeCompare(right.kind));
+
+function buildSmokeWorkflowPayload(kind: SmokeWorkflowKind, workspaceRoot: string) {
+  const template = SMOKE_WORKFLOW_TEMPLATES.find((entry) => entry.kind === kind);
+  if (!template) throw new Error("Unknown smoke workflow kind: " + kind);
+  const cloned = structuredClone(template.payload) as Record<string, unknown>;
+  const { kind: _kind, ...payload } = cloned;
+  payload.workspace_root = String(workspaceRoot || "").trim();
+  return payload;
 }
 
 export function OptimizationCampaignsPanel({

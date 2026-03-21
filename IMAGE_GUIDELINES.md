@@ -5,7 +5,7 @@ To successfully include images/screen grabs in your slide decks, please follow t
 ## 1. Storage Location
 
 Place all images in the `assets/` directory at the root of the project:
-`C:\Users\evang\work\tandem\assets\`
+`C:\Users\user123\work\tandem\assets\`
 
 ## 2. File Formats
 

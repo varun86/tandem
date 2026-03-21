@@ -5795,7 +5795,7 @@ mod tests {
     fn memory_db_path_ignores_public_db_path_arg() {
         std::env::set_var("TANDEM_MEMORY_DB_PATH", "/tmp/global-memory.sqlite");
         let resolved = resolve_memory_db_path(&json!({
-            "db_path": "/home/evan/tandem"
+            "db_path": "/home/user123/tandem"
         }));
         assert_eq!(resolved, PathBuf::from("/tmp/global-memory.sqlite"));
         std::env::remove_var("TANDEM_MEMORY_DB_PATH");
@@ -5806,7 +5806,7 @@ mod tests {
         std::env::set_var("TANDEM_MEMORY_DB_PATH", "/tmp/global-memory.sqlite");
         let resolved = resolve_memory_db_path(&json!({
             "__memory_db_path": "/tmp/internal-memory.sqlite",
-            "db_path": "/home/evan/tandem"
+            "db_path": "/home/user123/tandem"
         }));
         assert_eq!(resolved, PathBuf::from("/tmp/internal-memory.sqlite"));
         std::env::remove_var("TANDEM_MEMORY_DB_PATH");

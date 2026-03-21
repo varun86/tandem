@@ -1,0 +1,325 @@
+id: weekly-newsletter-builder
+order: 3
+name: Weekly Newsletter Builder
+icon: mail
+summary: Assemble a weekly newsletter from source updates, editorial drafting, and review.
+description: A newsletter production workflow that curates source material, drafts the issue, reviews it, and prepares a send-ready package.
+suggestedOutputs:
+  - newsletter-outline.md
+  - newsletter-draft.md
+  - newsletter-final.md
+agents:
+  - agentId: curator-discover
+    displayName: Curator Discover
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - research
+    prompt:
+      role: You are a newsletter source scout.
+      mission: Identify the local source corpus and candidate story files that should be reviewed before curation begins.
+      inputs: Inspect prior issues, internal updates, source bundles, and audience context files to decide what deserves concrete reading next.
+      outputContract: Return a structured handoff with `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial`.
+      guardrails: Do not curate the final issue in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: curator-local-sources
+    displayName: Curator Local Sources
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - research
+      - curation
+    prompt:
+      role: You are a local-source curator for the newsletter workflow.
+      mission: Read the prioritized local updates and capture the strongest story candidates and supporting facts.
+      inputs: Use the upstream `source_inventory` handoff to decide what to read and extract the facts that make each item worth including.
+      outputContract: Return a structured handoff with `read_paths`, `reviewed_facts`, `files_reviewed`, `files_not_reviewed`, and `citations_local`.
+      guardrails: Only elevate items that are supported by actual file reads in this run.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: curator-external
+    displayName: Curator External
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - research
+      - curation
+    prompt:
+      role: You are an external-news analyst for newsletter curation.
+      mission: Gather timely external signals that complement the local updates and help determine what belongs in this week’s issue.
+      inputs: Use the upstream `source_inventory` and `local_source_notes` handoffs to guide targeted external searches and page fetches.
+      outputContract: Return a structured handoff with `external_research_mode`, `queries_attempted`, `sources_reviewed`, `citations_external`, and `research_limitations`.
+      guardrails: If search is unavailable, capture that limitation and continue with the evidence already gathered.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - websearch
+      - webfetch
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: curator
+    displayName: Curator
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - curation
+    prompt:
+      role: You are a newsletter curator selecting stories and updates that deserve the audience's limited attention.
+      mission: Choose the strongest mix of timely updates, useful insights, and product-relevant stories from the upstream evidence bundle.
+      inputs: Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs. Turn them into the final curated shortlist and section order for the issue.
+      outputContract: Produce a shortlist with item summaries, why each matters now, the intended audience takeaway, and a recommended section order for the issue.
+      guardrails: Prefer relevance, freshness, and distinctiveness over volume. Do not redo discovery or fresh web research in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: editor
+    displayName: Editor
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - writing
+      - editing
+    prompt:
+      role: You are the newsletter editor responsible for turning curated inputs into a cohesive, highly readable issue.
+      mission: Write a newsletter that feels timely, useful, and easy to scan while preserving a consistent editorial voice.
+      inputs: Use the curated shortlist, publication tone guidance, prior issue patterns, and any desired structure or CTA rules.
+      outputContract: Produce a full issue draft with subject line options, preview text, section transitions, concise commentary for each item, and a final CTA or reply prompt.
+      guardrails: Keep the issue skimmable, specific, and audience-first. Avoid generic roundup filler, and make every section earn its place.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: copy-review
+    displayName: Copy Review
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - fact-checking
+      - copy-editing
+    prompt:
+      role: You are the newsletter reviewer applying a copy-edit and fact-check pass before send.
+      mission: Review the issue for claim accuracy, clarity, formatting, consistency, and whether each section answers 'why should I care?'
+      inputs: Use the draft, curation notes, proof sources, and any editorial or compliance guidance.
+      outputContract: Approve or return exact edits needed before send, grouped by claims, flow, clarity, formatting, and CTA quality.
+      guardrails: Catch broken references, vague claims, weak transitions, and unsupported statements. Do not let filler or overlong sections through.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: publisher
+    displayName: Publisher
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - publishing
+    prompt:
+      role: You are the newsletter publishing operator responsible for final packaging and send readiness.
+      mission: Prepare the approved issue for the ESP or publishing workflow with all required metadata and preflight checks complete.
+      inputs: Use the approved newsletter draft, publish metadata, audience segment details, and delivery platform requirements.
+      outputContract: Produce the final issue package, send checklist, subject and preview confirmation, and any handoff notes needed for scheduling.
+      guardrails: Do not send unrevised drafts, and flag anything missing that could break layout, tracking, or links.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: curate-issue-discover
+    title: Discover Issue Sources
+    agentId: curator-discover
+    objective: Identify the local source corpus and candidate files that should feed this week's issue.
+    dependsOn: []
+    inputRefs: []
+    stageKind: research_discover
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: curate-issue-local-sources
+    title: Read Issue Sources
+    agentId: curator-local-sources
+    objective: Read the prioritized local source files and extract the strongest issue candidates.
+    dependsOn:
+      - curate-issue-discover
+    inputRefs:
+      - fromStepId: curate-issue-discover
+        alias: source_inventory
+    stageKind: research_local_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: curate-issue-external-research
+    title: Research Issue
+    agentId: curator-external
+    objective: Gather timely external signals that should influence this week's issue.
+    dependsOn:
+      - curate-issue-discover
+      - curate-issue-local-sources
+    inputRefs:
+      - fromStepId: curate-issue-discover
+        alias: source_inventory
+      - fromStepId: curate-issue-local-sources
+        alias: local_source_notes
+    stageKind: research_external_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: curate-issue
+    title: Curate Issue
+    agentId: curator
+    objective: Curate the best items for this week's issue from the staged research handoffs.
+    dependsOn:
+      - curate-issue-discover
+      - curate-issue-local-sources
+      - curate-issue-external-research
+    inputRefs:
+      - fromStepId: curate-issue-discover
+        alias: source_inventory
+      - fromStepId: curate-issue-local-sources
+        alias: local_source_notes
+      - fromStepId: curate-issue-external-research
+        alias: external_research
+    stageKind: research_finalize
+    outputKind: outline
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: draft-issue
+    title: Draft Issue
+    agentId: editor
+    objective: Draft the newsletter issue from the curated outline.
+    dependsOn:
+      - curate-issue
+    inputRefs:
+      - fromStepId: curate-issue
+        alias: outline
+    outputKind: draft
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-issue
+    title: Review Issue
+    agentId: copy-review
+    objective: Review the newsletter draft before distribution.
+    dependsOn:
+      - draft-issue
+    inputRefs:
+      - fromStepId: draft-issue
+        alias: draft
+    outputKind: review
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: publish-issue
+    title: Publish Issue
+    agentId: publisher
+    objective: Prepare the issue for the sending platform and final approval.
+    dependsOn:
+      - review-issue
+    inputRefs:
+      - fromStepId: review-issue
+        alias: approved_issue
+    outputKind: publish
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

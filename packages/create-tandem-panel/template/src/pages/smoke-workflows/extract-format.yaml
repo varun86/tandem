@@ -1,0 +1,47 @@
+kind: extract_format
+description: Two-node validator-backed workflow for cheap optimization smoke tests.
+status: draft
+schedule:
+  type: manual
+  timezone: UTC
+  misfire_policy: skip
+agents:
+  - agent_id: agent-1
+    display_name: Extractor
+    skills: []
+    tool_policy:
+      allowlist: []
+      denylist: []
+    mcp_policy:
+      allowed_servers: []
+execution: {}
+output_targets: []
+creator_id: optimization-smoke-pack
+workspace_root: ""
+automation_id: wf-smoke-extract-format
+name: Smoke Extract Format Workflow
+flow:
+  nodes:
+    - node_id: node-1
+      agent_id: agent-1
+      objective: Extract the key facts only.
+      depends_on: []
+      input_refs: []
+      retry_policy:
+        max_attempts: 1
+      timeout_ms: 45000
+    - node_id: node-2
+      agent_id: agent-1
+      objective: Format the extracted facts into a short structured answer.
+      depends_on:
+        - node-1
+      input_refs:
+        - from_step_id: node-1
+          alias: facts
+      output_contract:
+        kind: formatted_answer
+        validator: structured_json
+        summary_guidance: Return a small structured artifact with stable fields.
+      retry_policy:
+        max_attempts: 1
+      timeout_ms: 60000

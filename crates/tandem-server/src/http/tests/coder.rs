@@ -76,7 +76,7 @@ async fn spawn_fake_github_mcp_server() -> (String, tokio::task::JoinHandle<()>)
                                 "number": 314,
                                 "title": "Guard startup recovery config loading.",
                                 "state": "open",
-                                "html_url": "https://github.com/evan/tandem/pull/314",
+                                "html_url": "https://github.com/user123/tandem/pull/314",
                                 "head": {"ref": "coder/issue-313-fix"},
                                 "base": {"ref": "main"}
                             }
@@ -94,7 +94,7 @@ async fn spawn_fake_github_mcp_server() -> (String, tokio::task::JoinHandle<()>)
                             "pull_request": {
                                 "number": 314,
                                 "state": "merged",
-                                "html_url": "https://github.com/evan/tandem/pull/314"
+                                "html_url": "https://github.com/user123/tandem/pull/314"
                             }
                         }),
                         _ => json!({
@@ -265,13 +265,13 @@ async fn coder_issue_triage_run_create_get_and_list() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
                     "kind": "issue",
                     "number": 1234,
-                    "url": "https://github.com/evan/tandem/issues/1234"
+                    "url": "https://github.com/user123/tandem/issues/1234"
                 },
                 "source_client": "desktop_developer_mode"
             })
@@ -386,7 +386,7 @@ async fn coder_issue_triage_run_create_get_and_list() {
             .get("memory_hits")
             .and_then(|row| row.get("query"))
             .and_then(Value::as_str),
-        Some("evan/tandem issue #1234")
+        Some("user123/tandem issue #1234")
     );
     assert_eq!(
         get_payload
@@ -447,13 +447,13 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
                     "kind": "pull_request",
                     "number": 88,
-                    "url": "https://github.com/evan/tandem/pull/88"
+                    "url": "https://github.com/user123/tandem/pull/88"
                 },
                 "source_client": "desktop_developer_mode"
             })
@@ -612,7 +612,7 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem pull request #88 review regressions blockers requested changes")
+        Some("user123/tandem pull request #88 review regressions blockers requested changes")
     );
 }
 
@@ -638,7 +638,7 @@ async fn coder_issue_fix_run_create_gets_seeded_fix_tasks() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -734,7 +734,7 @@ async fn coder_issue_fix_run_create_gets_seeded_fix_tasks() {
             .get("memory_hits")
             .and_then(|row| row.get("query"))
             .and_then(Value::as_str),
-        Some("evan/tandem issue #77")
+        Some("user123/tandem issue #77")
     );
 }
 
@@ -760,7 +760,7 @@ async fn coder_issue_fix_validation_report_advances_fix_run() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -903,7 +903,7 @@ async fn coder_issue_fix_failed_validation_writes_regression_signal() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -1032,7 +1032,7 @@ async fn coder_issue_fix_worker_failure_writes_run_outcome() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -1176,7 +1176,7 @@ async fn coder_pr_review_worker_failure_writes_run_outcome() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -1308,7 +1308,7 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -1604,7 +1604,7 @@ async fn coder_issue_fix_worker_uses_managed_worktree_for_git_repo() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": nested_workspace_root.to_string_lossy(),
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -1717,7 +1717,7 @@ async fn coder_issue_fix_execute_all_runs_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -1799,7 +1799,7 @@ async fn coder_pr_review_execute_all_runs_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
@@ -1882,7 +1882,7 @@ async fn coder_merge_recommendation_execute_all_runs_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -1964,7 +1964,7 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -2154,7 +2154,7 @@ async fn coder_issue_fix_pr_draft_create_writes_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -2284,7 +2284,7 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -2348,7 +2348,7 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Looks good for a draft PR",
                 "dry_run": true
             })
@@ -2506,7 +2506,7 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -2571,7 +2571,7 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Ready to open the draft PR",
                 "dry_run": false,
                 "mcp_server": "github",
@@ -2790,7 +2790,7 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     );
     assert_eq!(
         artifact_payload.get("owner").and_then(Value::as_str),
-        Some("evan")
+        Some("user123")
     );
     assert_eq!(
         artifact_payload.get("repo").and_then(Value::as_str),
@@ -3219,7 +3219,7 @@ async fn coder_issue_fix_pr_submit_merge_auto_spawn_requires_opt_in() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -3284,7 +3284,7 @@ async fn coder_issue_fix_pr_submit_merge_auto_spawn_requires_opt_in() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR and queue review",
                 "dry_run": false,
                 "mcp_server": "github",
@@ -3425,7 +3425,7 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -3490,7 +3490,7 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -3659,7 +3659,7 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
             .get("repo_binding")
             .and_then(|row| row.get("repo_slug"))
             .and_then(Value::as_str),
-        Some("evan/tandem")
+        Some("user123/tandem")
     );
     assert_eq!(
         blocked_event
@@ -3974,7 +3974,7 @@ async fn coder_issue_triage_prefers_failure_patterns_in_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -4048,7 +4048,7 @@ async fn coder_issue_triage_prefers_failure_patterns_in_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -4121,7 +4121,7 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -4176,7 +4176,7 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -4208,7 +4208,7 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem issue #79")
+        Some("user123/tandem issue #79")
     );
     assert_eq!(
         hits_payload
@@ -4263,7 +4263,7 @@ async fn coder_pr_review_evidence_advances_review_run() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
@@ -4404,7 +4404,7 @@ async fn coder_pr_review_execute_next_drives_task_runtime_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
@@ -4545,13 +4545,13 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
                     "kind": "pull_request",
                     "number": 89,
-                    "url": "https://github.com/evan/tandem/pull/89"
+                    "url": "https://github.com/user123/tandem/pull/89"
                 }
             })
             .to_string(),
@@ -4823,7 +4823,7 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -4871,7 +4871,7 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -4925,7 +4925,7 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -4984,7 +4984,7 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem pull request #90 review regressions blockers requested changes")
+        Some("user123/tandem pull request #90 review regressions blockers requested changes")
     );
     assert_eq!(
         hits_payload
@@ -5079,7 +5079,7 @@ async fn coder_merge_recommendation_run_create_gets_seeded_tasks() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -5168,7 +5168,7 @@ async fn coder_merge_recommendation_run_create_gets_seeded_tasks() {
             .and_then(|row| row.get("query"))
             .and_then(Value::as_str),
         Some(
-            "evan/tandem pull request #91 merge recommendation regressions blockers required checks approvals"
+            "user123/tandem pull request #91 merge recommendation regressions blockers required checks approvals"
         )
     );
 }
@@ -5195,7 +5195,7 @@ async fn coder_merge_readiness_report_advances_merge_run() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -5331,7 +5331,7 @@ async fn coder_merge_recommendation_execute_next_drives_task_runtime_to_completi
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -5471,7 +5471,7 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -5717,7 +5717,7 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -6101,7 +6101,7 @@ async fn coder_merge_submit_real_submit_writes_merge_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -6166,7 +6166,7 @@ async fn coder_merge_submit_real_submit_writes_merge_artifact() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Execute the approved merge",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -6389,7 +6389,7 @@ async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem"
+                "repo_slug": "user123/tandem"
             },
             "github_ref": {
                 "kind": "issue",
@@ -6404,7 +6404,7 @@ async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem"
+                "repo_slug": "user123/tandem"
             },
             "github_ref": {
                 "kind": "issue",
@@ -6419,7 +6419,7 @@ async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
                 "project_id": "proj-docs",
                 "workspace_id": "ws-docs",
                 "workspace_root": "/tmp/docs-repo",
-                "repo_slug": "evan/docs"
+                "repo_slug": "user123/docs"
             },
             "github_ref": {
                 "kind": "pull_request",
@@ -6534,7 +6534,7 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
                 "project_id": "ignored-by-endpoint",
                 "workspace_id": "ws-explicit",
                 "workspace_root": "/tmp/explicit-repo",
-                "repo_slug": "evan/tandem-explicit"
+                "repo_slug": "user123/tandem-explicit"
             })
             .to_string(),
         ))
@@ -6575,7 +6575,7 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
             .and_then(|row| row.get("repo_binding"))
             .and_then(|row| row.get("repo_slug"))
             .and_then(Value::as_str),
-        Some("evan/tandem-explicit")
+        Some("user123/tandem-explicit")
     );
 
     let create_req = Request::builder()
@@ -6590,7 +6590,7 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
                     "project_id": "proj-engine",
                     "workspace_id": "ws-derived",
                     "workspace_root": "/tmp/derived-repo",
-                    "repo_slug": "evan/tandem-derived"
+                    "repo_slug": "user123/tandem-derived"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -6635,7 +6635,7 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
             .get("repo_binding")
             .and_then(|row| row.get("repo_slug"))
             .and_then(Value::as_str),
-        Some("evan/tandem-explicit")
+        Some("user123/tandem-explicit")
     );
     assert_eq!(
         engine_project
@@ -6694,7 +6694,7 @@ async fn coder_project_get_returns_policy_binding_and_recent_runs() {
                 "project_id": "ignored-by-endpoint",
                 "workspace_id": "ws-explicit",
                 "workspace_root": "/tmp/explicit-repo",
-                "repo_slug": "evan/tandem-explicit",
+                "repo_slug": "user123/tandem-explicit",
                 "default_branch": "main"
             })
             .to_string(),
@@ -6723,7 +6723,7 @@ async fn coder_project_get_returns_policy_binding_and_recent_runs() {
                         "project_id": "proj-engine",
                         "workspace_id": "ws-derived",
                         "workspace_root": "/tmp/derived-repo",
-                        "repo_slug": "evan/tandem-derived"
+                        "repo_slug": "user123/tandem-derived"
                     },
                     "github_ref": {
                         "kind": "issue",
@@ -6762,7 +6762,7 @@ async fn coder_project_get_returns_policy_binding_and_recent_runs() {
             .and_then(|row| row.get("repo_binding"))
             .and_then(|row| row.get("repo_slug"))
             .and_then(Value::as_str),
-        Some("evan/tandem-explicit")
+        Some("user123/tandem-explicit")
     );
     assert_eq!(
         get_payload
@@ -6879,7 +6879,7 @@ async fn coder_project_run_create_uses_saved_binding_and_requires_it() {
                 "project_id": "ignored-by-endpoint",
                 "workspace_id": "ws-explicit",
                 "workspace_root": "/tmp/explicit-repo",
-                "repo_slug": "evan/tandem-explicit",
+                "repo_slug": "user123/tandem-explicit",
                 "default_branch": "main"
             })
             .to_string(),
@@ -6928,7 +6928,7 @@ async fn coder_project_run_create_uses_saved_binding_and_requires_it() {
             .and_then(|row| row.get("repo_binding"))
             .and_then(|row| row.get("repo_slug"))
             .and_then(Value::as_str),
-        Some("evan/tandem-explicit")
+        Some("user123/tandem-explicit")
     );
     assert_eq!(
         create_payload
@@ -6993,7 +6993,7 @@ async fn coder_project_run_list_filters_to_project_and_sorts_newest_first() {
                         "project_id": project_id,
                         "workspace_id": format!("ws-{project_id}"),
                         "workspace_root": format!("/tmp/{project_id}"),
-                        "repo_slug": format!("evan/{project_id}")
+                        "repo_slug": format!("user123/{project_id}")
                     },
                     "github_ref": {
                         "kind": kind,
@@ -7090,7 +7090,7 @@ async fn coder_status_summarizes_active_and_approval_runs() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem"
+                "repo_slug": "user123/tandem"
             },
             "github_ref": {
                 "kind": "issue",
@@ -7105,7 +7105,7 @@ async fn coder_status_summarizes_active_and_approval_runs() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem"
+                "repo_slug": "user123/tandem"
             },
             "github_ref": {
                 "kind": "pull_request",
@@ -7272,7 +7272,7 @@ async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -7351,7 +7351,7 @@ async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem"
+                "repo_slug": "user123/tandem"
             },
             "github_ref": {
                 "kind": "pull_request",
@@ -7373,7 +7373,7 @@ async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Try to merge anyway",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -7445,7 +7445,7 @@ async fn coder_merge_submit_blocks_auto_mode_without_opt_in() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -7509,7 +7509,7 @@ async fn coder_merge_submit_blocks_auto_mode_without_opt_in() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Try to auto-execute the merge",
                 "submit_mode": "auto",
                 "dry_run": false,
@@ -7582,7 +7582,7 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -7645,7 +7645,7 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR",
                 "dry_run": false,
                 "mcp_server": "github",
@@ -7798,7 +7798,7 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Try to auto-execute the manual follow-on merge",
                 "submit_mode": "auto",
                 "dry_run": false,
@@ -7896,7 +7896,7 @@ async fn coder_merge_policy_reports_auto_execute_eligibility_when_project_enable
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -7959,7 +7959,7 @@ async fn coder_merge_policy_reports_auto_execute_eligibility_when_project_enable
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR and queue review plus merge follow-ons",
                 "dry_run": false,
                 "mcp_server": "github",
@@ -8148,7 +8148,7 @@ async fn coder_merge_submit_blocks_without_approved_sibling_pr_review() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -8211,7 +8211,7 @@ async fn coder_merge_submit_blocks_without_approved_sibling_pr_review() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -8334,7 +8334,7 @@ async fn coder_merge_submit_blocks_without_approved_sibling_pr_review() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Try to merge despite review objections",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -8420,7 +8420,7 @@ async fn coder_merge_submit_uses_latest_completed_sibling_pr_review() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -8483,7 +8483,7 @@ async fn coder_merge_submit_uses_latest_completed_sibling_pr_review() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Open the draft PR",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -8649,7 +8649,7 @@ async fn coder_merge_submit_uses_latest_completed_sibling_pr_review() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "approved_by": "evan",
+                "approved_by": "user123",
                 "reason": "Try to merge using the older approval",
                 "dry_run": false,
                 "mcp_server": "github"
@@ -8716,7 +8716,7 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -8764,7 +8764,7 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -8817,7 +8817,7 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -8850,7 +8850,7 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
         Some(
-            "evan/tandem pull request #93 merge recommendation regressions blockers required checks approvals"
+            "user123/tandem pull request #93 merge recommendation regressions blockers required checks approvals"
         )
     );
     assert_eq!(
@@ -8923,7 +8923,7 @@ async fn coder_run_approve_and_cancel_project_context_run_controls() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9106,13 +9106,13 @@ async fn coder_issue_triage_run_replay_matches_persisted_state_and_checkpoint() 
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem",
+                "repo_slug": "user123/tandem",
                 "default_branch": "main"
             },
             "github_ref": {
                 "kind": "issue",
                 "number": 404,
-                "url": "https://github.com/evan/tandem/issues/404"
+                "url": "https://github.com/user123/tandem/issues/404"
             }
         }),
     )
@@ -9178,13 +9178,13 @@ async fn coder_issue_fix_run_replay_matches_persisted_state_and_checkpoint() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem",
+                "repo_slug": "user123/tandem",
                 "default_branch": "main"
             },
             "github_ref": {
                 "kind": "issue",
                 "number": 405,
-                "url": "https://github.com/evan/tandem/issues/405"
+                "url": "https://github.com/user123/tandem/issues/405"
             }
         }),
     )
@@ -9252,13 +9252,13 @@ async fn coder_pr_review_run_replay_matches_persisted_state_and_checkpoint() {
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem",
+                "repo_slug": "user123/tandem",
                 "default_branch": "main"
             },
             "github_ref": {
                 "kind": "pull_request",
                 "number": 406,
-                "url": "https://github.com/evan/tandem/pull/406"
+                "url": "https://github.com/user123/tandem/pull/406"
             }
         }),
     )
@@ -9326,13 +9326,13 @@ async fn coder_merge_recommendation_run_replay_matches_persisted_state_and_check
                 "project_id": "proj-engine",
                 "workspace_id": "ws-tandem",
                 "workspace_root": "/tmp/tandem-repo",
-                "repo_slug": "evan/tandem",
+                "repo_slug": "user123/tandem",
                 "default_branch": "main"
             },
             "github_ref": {
                 "kind": "pull_request",
                 "number": 407,
-                "url": "https://github.com/evan/tandem/pull/407"
+                "url": "https://github.com/user123/tandem/pull/407"
             }
         }),
     )
@@ -9404,7 +9404,7 @@ async fn coder_artifacts_endpoint_projects_context_blackboard_artifacts() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9469,7 +9469,7 @@ async fn coder_issue_triage_blocks_when_preferred_mcp_server_is_missing() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9518,7 +9518,7 @@ async fn coder_memory_candidate_create_persists_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9606,7 +9606,7 @@ async fn coder_issue_triage_seeds_ranked_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9657,7 +9657,7 @@ async fn coder_issue_triage_seeds_ranked_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9734,7 +9734,7 @@ async fn coder_triage_reproduction_report_advances_triage_run() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -9863,7 +9863,7 @@ async fn coder_triage_reproduction_failed_writes_run_outcome_candidate() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10018,7 +10018,7 @@ async fn coder_triage_reproduction_report_infers_memory_and_prior_runs() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10085,7 +10085,7 @@ async fn coder_triage_reproduction_report_infers_memory_and_prior_runs() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10189,7 +10189,7 @@ async fn coder_triage_inspection_report_advances_to_reproduction() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10309,7 +10309,7 @@ async fn coder_triage_summary_infers_duplicate_linkage_from_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10330,12 +10330,12 @@ async fn coder_triage_summary_infers_duplicate_linkage_from_memory_hits() {
             json!({
                 "kind": "duplicate_linkage",
                 "task_id": "retrieve_memory",
-                "summary": "evan/tandem issue #512 is already linked to pull request #913",
+                "summary": "user123/tandem issue #512 is already linked to pull request #913",
                 "payload": {
                     "type": "duplicate.issue_pr_linkage",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "project_id": "proj-engine",
-                    "summary": "evan/tandem issue #512 is already linked to pull request #913",
+                    "summary": "user123/tandem issue #512 is already linked to pull request #913",
                     "linked_issue_numbers": [512],
                     "linked_pr_numbers": [913],
                     "relationship": "historical_duplicate_linkage",
@@ -10364,7 +10364,7 @@ async fn coder_triage_summary_infers_duplicate_linkage_from_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10486,7 +10486,7 @@ async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10509,10 +10509,10 @@ async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
                 "summary": "Known startup recovery duplicate",
                 "payload": {
                     "type": "failure.pattern",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "fingerprint": "triage-execute-duplicate",
                     "symptoms": ["startup recovery", "issue triage"],
-                    "canonical_markers": ["startup recovery", "issue triage", "evan/tandem issue #198"],
+                    "canonical_markers": ["startup recovery", "issue triage", "user123/tandem issue #198"],
                     "linked_issue_numbers": [198],
                     "recurrence_count": 2,
                     "linked_pr_numbers": [],
@@ -10542,7 +10542,7 @@ async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10693,7 +10693,7 @@ async fn coder_memory_hits_endpoint_returns_ranked_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10767,7 +10767,7 @@ async fn coder_memory_hits_endpoint_returns_ranked_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10908,7 +10908,7 @@ async fn coder_issue_triage_retrieves_governed_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -10972,7 +10972,7 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11252,7 +11252,7 @@ async fn coder_triage_summary_writes_run_outcome_without_summary_text() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11371,7 +11371,7 @@ async fn coder_triage_summary_infers_duplicate_and_memory_fields_from_bootstrap_
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11439,7 +11439,7 @@ async fn coder_triage_summary_infers_duplicate_and_memory_fields_from_bootstrap_
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11550,7 +11550,7 @@ async fn coder_memory_candidate_promote_stores_governed_memory() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11671,7 +11671,7 @@ async fn coder_memory_candidate_promote_stores_governed_memory() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -11870,13 +11870,13 @@ async fn coder_issue_triage_reuses_promoted_fix_pattern_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
                     "kind": "issue",
                     "number": 96,
-                    "url": "https://github.com/evan/tandem/issues/96"
+                    "url": "https://github.com/user123/tandem/issues/96"
                 }
             })
             .to_string(),
@@ -11975,13 +11975,13 @@ async fn coder_issue_triage_reuses_promoted_fix_pattern_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem",
+                    "repo_slug": "user123/tandem",
                     "default_branch": "main"
                 },
                 "github_ref": {
                     "kind": "issue",
                     "number": 96,
-                    "url": "https://github.com/evan/tandem/issues/96"
+                    "url": "https://github.com/user123/tandem/issues/96"
                 }
             })
             .to_string(),
@@ -12009,7 +12009,7 @@ async fn coder_issue_triage_reuses_promoted_fix_pattern_memory_hits() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem issue #96")
+        Some("user123/tandem issue #96")
     );
     assert!(hits_payload
         .get("policy")
@@ -12052,7 +12052,7 @@ async fn coder_promoted_merge_memory_reuses_policy_history_across_pull_requests(
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12154,7 +12154,7 @@ async fn coder_promoted_merge_memory_reuses_policy_history_across_pull_requests(
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12241,7 +12241,7 @@ async fn coder_merge_recommendation_memory_promotion_requires_policy_signals() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12344,7 +12344,7 @@ async fn coder_promoted_merge_outcome_reuses_across_pull_requests() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12442,7 +12442,7 @@ async fn coder_promoted_merge_outcome_reuses_across_pull_requests() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12526,7 +12526,7 @@ async fn coder_duplicate_linkage_promotion_requires_linked_issue_and_pr() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -12622,7 +12622,7 @@ async fn coder_regression_signal_promotion_requires_structured_signals() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -12720,7 +12720,7 @@ async fn coder_terminal_run_outcome_promotion_requires_workflow_evidence() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -12815,7 +12815,7 @@ async fn coder_pr_review_reuses_prior_merge_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12865,7 +12865,7 @@ async fn coder_pr_review_reuses_prior_merge_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12946,7 +12946,7 @@ async fn coder_merge_recommendation_reuses_prior_review_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -12996,7 +12996,7 @@ async fn coder_merge_recommendation_reuses_prior_review_memory_hits() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13076,7 +13076,7 @@ async fn coder_promoted_review_memory_reuses_requested_changes_across_pull_reque
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13177,7 +13177,7 @@ async fn coder_promoted_review_memory_reuses_requested_changes_across_pull_reque
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13259,7 +13259,7 @@ async fn coder_promoted_regression_signal_reuses_across_pull_requests() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13362,7 +13362,7 @@ async fn coder_promoted_regression_signal_reuses_across_pull_requests() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13446,7 +13446,7 @@ async fn coder_merge_recommendation_reuses_promoted_regression_signal_across_pul
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13549,7 +13549,7 @@ async fn coder_merge_recommendation_reuses_promoted_regression_signal_across_pul
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "pull_request",
@@ -13583,7 +13583,7 @@ async fn coder_merge_recommendation_reuses_promoted_regression_signal_across_pul
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
         Some(
-            "evan/tandem pull request #602 merge recommendation regressions blockers required checks approvals"
+            "user123/tandem pull request #602 merge recommendation regressions blockers required checks approvals"
         )
     );
     let promoted_hit = hits_payload
@@ -13641,7 +13641,7 @@ async fn coder_promoted_fix_memory_reuses_strategy_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -13745,7 +13745,7 @@ async fn coder_promoted_fix_memory_reuses_strategy_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -13832,7 +13832,7 @@ async fn coder_promoted_validation_memory_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -13938,7 +13938,7 @@ async fn coder_promoted_validation_memory_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14016,7 +14016,7 @@ async fn coder_promoted_issue_fix_regression_signal_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14123,7 +14123,7 @@ async fn coder_promoted_issue_fix_regression_signal_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14200,7 +14200,7 @@ async fn coder_promoted_failure_pattern_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14299,7 +14299,7 @@ async fn coder_promoted_failure_pattern_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14384,7 +14384,7 @@ async fn coder_promoted_triage_outcome_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14482,7 +14482,7 @@ async fn coder_promoted_triage_outcome_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14567,7 +14567,7 @@ async fn coder_promoted_triage_regression_signal_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14674,7 +14674,7 @@ async fn coder_promoted_triage_regression_signal_reuses_across_issues() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",
@@ -14760,7 +14760,7 @@ async fn coder_memory_events_include_normalized_artifact_fields() {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
                     "workspace_root": "/tmp/tandem-repo",
-                    "repo_slug": "evan/tandem"
+                    "repo_slug": "user123/tandem"
                 },
                 "github_ref": {
                     "kind": "issue",

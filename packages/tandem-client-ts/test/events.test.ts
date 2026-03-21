@@ -78,12 +78,12 @@ describe("Coder SDK coverage", () => {
       const result = await client.coder.listRuns({
         limit: 10,
         workflowMode: "issue_triage",
-        repoSlug: "evan/tandem",
+        repoSlug: "user123/tandem",
       });
       expect(requestedUrl).toContain("/coder/runs?");
       expect(requestedUrl).toContain("limit=10");
       expect(requestedUrl).toContain("workflow_mode=issue_triage");
-      expect(requestedUrl).toContain("repo_slug=evan%2Ftandem");
+      expect(requestedUrl).toContain("repo_slug=user123%2Ftandem");
       expect(result.runs[0]?.coder_run_id).toBe("coder-1");
       expect(result.count).toBe(1);
     } finally {

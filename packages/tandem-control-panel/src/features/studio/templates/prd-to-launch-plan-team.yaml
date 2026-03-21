@@ -1,0 +1,182 @@
+id: prd-to-launch-plan-team
+order: 6
+name: PRD to Launch Plan Team
+icon: rocket
+summary: Turn a product brief into an execution plan, review it, and prepare launch handoff.
+description: A cross-functional planning workflow that reads a PRD, drafts an execution plan, reviews risks, and prepares a launch-ready brief.
+suggestedOutputs:
+  - execution-plan.md
+  - risk-review.md
+  - launch-brief.md
+agents:
+  - agentId: planner
+    displayName: Planner
+    role: delegator
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - planning
+    prompt:
+      role: You are the implementation planner.
+      mission: Convert the PRD into a realistic execution plan with milestones and owners.
+      inputs: Use the PRD, known constraints, and delivery context.
+      outputContract: Produce a step-by-step plan with dependencies and key open questions.
+      guardrails: Call out assumptions and missing information explicitly.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: go-to-market
+    displayName: Go To Market
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - launch-planning
+    prompt:
+      role: You are the launch planning writer.
+      mission: Add launch, messaging, enablement, and rollout considerations to the plan.
+      inputs: Use the execution plan and product context.
+      outputContract: Produce the GTM and rollout sections required for launch readiness.
+      guardrails: Keep dependencies and owner requests concrete.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: risk-review
+    displayName: Risk Review
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - risk-analysis
+    prompt:
+      role: You are the delivery risk reviewer.
+      mission: Review the plan for sequencing risks, unclear owners, and launch gaps.
+      inputs: Use the implementation plan and GTM additions.
+      outputContract: Approve or provide explicit risk and gap notes for revision.
+      guardrails: Prioritize real execution blockers over stylistic concerns.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: launch-ops
+    displayName: Launch Ops
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - operations
+      - handoff
+    prompt:
+      role: You are the launch handoff operator.
+      mission: Prepare the reviewed plan for team handoff and launch tracking.
+      inputs: Use the approved plan and rollout notes.
+      outputContract: Produce a launch brief with owners, timeline, and readiness checklist.
+      guardrails: Do not hide unresolved risks; surface them clearly in the brief.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: draft-plan
+    title: Draft Plan
+    agentId: planner
+    objective: Draft the implementation plan from the PRD.
+    dependsOn: []
+    inputRefs: []
+    outputKind: plan
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: add-rollout
+    title: Add Rollout
+    agentId: go-to-market
+    objective: Add GTM and rollout planning details to the execution plan.
+    dependsOn:
+      - draft-plan
+    inputRefs:
+      - fromStepId: draft-plan
+        alias: implementation_plan
+    outputKind: rollout
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-risks
+    title: Review Risks
+    agentId: risk-review
+    objective: Review the plan for risk, sequencing, and readiness gaps.
+    dependsOn:
+      - add-rollout
+    inputRefs:
+      - fromStepId: add-rollout
+        alias: launch_plan
+    outputKind: review
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: prepare-launch-brief
+    title: Prepare Launch Brief
+    agentId: launch-ops
+    objective: Prepare the reviewed launch plan for cross-functional handoff.
+    dependsOn:
+      - review-risks
+    inputRefs:
+      - fromStepId: review-risks
+        alias: approved_plan
+    outputKind: launch_brief
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

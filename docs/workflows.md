@@ -226,7 +226,7 @@ curl -X PATCH http://localhost:4000/workflow-hooks/build_feature.task_completed.
 
 ## Example Pack
 
-See [`examples/packs/workflow_hook_demo`](/home/evan/tandem/examples/packs/workflow_hook_demo) for a minimal pack that adds:
+See [`examples/packs/workflow_hook_demo`](/home/user123/tandem/examples/packs/workflow_hook_demo) for a minimal pack that adds:
 
 - `task_created -> capability:kanban.update`
 - `task_completed -> capability:slack.notify`

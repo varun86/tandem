@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import YAML from "yaml";
 import { renderIcons } from "../app/icons.js";
 import { projectOrchestrationRun } from "../features/orchestrator/blackboardProjection";
 import { TaskBoard } from "../features/orchestration/TaskBoard";
@@ -124,63 +125,125 @@ interface WorkflowNodeEditDraft {
   agentId: string;
 }
 
+interface AutomationWizardConfig {
+  defaults: {
+    schedulePreset: string;
+    mode: ExecutionMode;
+    maxAgents: string;
+  };
+  steps: string[];
+  schedulePresets: SchedulePreset[];
+  executionModes: Array<{
+    id: ExecutionMode;
+    label: string;
+    icon: string;
+    desc: string;
+    bestFor: string;
+  }>;
+  goalExamples: string[];
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const SCHEDULE_PRESETS: SchedulePreset[] = [
-  {
-    label: "Every hour",
-    desc: "Good for monitoring & alerts",
-    icon: "⏰",
-    cron: "",
-    intervalSeconds: 3600,
-  },
-  { label: "Every morning", desc: "Daily digest at 9 AM", icon: "☀️", cron: "0 9 * * *" },
-  { label: "Every evening", desc: "End-of-day summary at 6 PM", icon: "🌙", cron: "0 18 * * *" },
-  { label: "Daily at midnight", desc: "Nightly data processing", icon: "🔄", cron: "0 0 * * *" },
-  { label: "Weekly Monday", desc: "Weekly reports & reviews", icon: "📋", cron: "0 9 * * 1" },
-  { label: "Manual only", desc: "Run whenever you want", icon: "🎯", cron: "" },
-];
+const AUTOMATION_WIZARD_SOURCES = import.meta.glob("./automation-wizard.yaml", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
 
-const EXECUTION_MODES: {
-  id: ExecutionMode;
-  label: string;
-  icon: string;
-  desc: string;
-  bestFor: string;
-}[] = [
-  {
-    id: "single",
-    label: "Single Agent",
-    icon: "🤖",
-    desc: "One focused AI handles the whole task",
-    bestFor: "Simple, well-defined tasks",
-  },
-  {
-    id: "team",
-    label: "Agent Team",
-    icon: "👥",
-    desc: "Multiple specialized AIs collaborate with a planner and workers",
-    bestFor: "Complex multi-step tasks (recommended)",
-  },
-  {
-    id: "swarm",
-    label: "Swarm",
-    icon: "🐝",
-    desc: "A swarm of AIs work in parallel on sub-tasks",
-    bestFor: "Large-scale parallel work",
-  },
-];
+function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
+  const parsed = YAML.parse(source) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Invalid automation wizard config: expected a YAML object.");
+  }
 
-const GOAL_EXAMPLES = [
-  "Check my email every morning and send me a summary of what's important",
-  "Monitor GitHub issues and post daily standup updates to Slack",
-  "Summarize my calendar each Sunday and plan the upcoming week",
-  "Watch for price changes on competitor products and alert me",
-  "Generate a weekly report from our Notion workspace",
-];
+  const config = parsed as Partial<AutomationWizardConfig>;
+  const defaults = config.defaults || {};
+  const steps = config.steps;
+  const schedulePresets = config.schedulePresets;
+  const executionModes = config.executionModes;
+  const goalExamples = config.goalExamples;
+
+  if (!Array.isArray(steps) || !steps.length) {
+    throw new Error("Invalid automation wizard config: steps must be a non-empty array.");
+  }
+  if (!Array.isArray(schedulePresets) || !schedulePresets.length) {
+    throw new Error("Invalid automation wizard config: schedulePresets must be a non-empty array.");
+  }
+  if (!Array.isArray(executionModes) || !executionModes.length) {
+    throw new Error("Invalid automation wizard config: executionModes must be a non-empty array.");
+  }
+  if (!Array.isArray(goalExamples) || !goalExamples.length) {
+    throw new Error("Invalid automation wizard config: goalExamples must be a non-empty array.");
+  }
+
+  return {
+    defaults: {
+      schedulePreset: String(defaults.schedulePreset || "").trim() || "Every morning",
+      mode:
+        defaults.mode === "single" || defaults.mode === "team" || defaults.mode === "swarm"
+          ? defaults.mode
+          : "team",
+      maxAgents: String(defaults.maxAgents || "").trim() || "4",
+    },
+    steps: steps.map((step) => String(step || "").trim()).filter(Boolean),
+    schedulePresets: schedulePresets.map((preset: any) => ({
+      label: String(preset?.label || "").trim(),
+      desc: String(preset?.desc || "").trim(),
+      icon: String(preset?.icon || "").trim(),
+      cron: String(preset?.cron || "").trim(),
+      intervalSeconds:
+        preset?.intervalSeconds === undefined || preset?.intervalSeconds === null
+          ? undefined
+          : Number(preset.intervalSeconds),
+    })),
+    executionModes: executionModes.map((mode: any) => ({
+      id: mode?.id === "single" || mode?.id === "team" || mode?.id === "swarm" ? mode.id : "team",
+      label: String(mode?.label || "").trim(),
+      icon: String(mode?.icon || "").trim(),
+      desc: String(mode?.desc || "").trim(),
+      bestFor: String(mode?.bestFor || "").trim(),
+    })),
+    goalExamples: goalExamples.map((example) => String(example || "").trim()).filter(Boolean),
+  };
+}
+
+const AUTOMATION_WIZARD_CONFIG = parseAutomationWizardConfig(
+  Object.values(AUTOMATION_WIZARD_SOURCES)[0] || ""
+);
 
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 const AUTOMATIONS_STUDIO_HANDOFF_KEY = "tandem.automations.studioHandoff";
+
+function createDefaultWizardState(
+  defaultProvider: string,
+  defaultModel: string,
+  workspaceRoot = ""
+): WizardState {
+  return {
+    goal: "",
+    workspaceRoot,
+    schedulePreset: AUTOMATION_WIZARD_CONFIG.defaults.schedulePreset,
+    cron: "",
+    mode: AUTOMATION_WIZARD_CONFIG.defaults.mode,
+    maxAgents: AUTOMATION_WIZARD_CONFIG.defaults.maxAgents,
+    routedSkill: "",
+    routingConfidence: "",
+    modelProvider: String(defaultProvider || ""),
+    modelId: String(defaultModel || ""),
+    plannerModelProvider: "",
+    plannerModelId: "",
+    roleModelsJson: "",
+    toolAccessMode: "all",
+    customToolsText: "",
+    selectedMcpServers: [],
+    exportPackDraft: false,
+    advancedMode: false,
+    customSkillName: "",
+    customSkillDescription: "",
+    customWorkflowKind: "pack_builder_recipe",
+  };
+}
 
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
@@ -226,7 +289,9 @@ function toSchedulePayload(wizard: WizardState) {
   if (customCron) {
     return { cron: { expression: customCron } };
   }
-  const preset = SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset);
+  const preset = AUTOMATION_WIZARD_CONFIG.schedulePresets.find(
+    (p) => p.label === wizard.schedulePreset
+  );
   if (preset?.intervalSeconds) {
     return { interval_seconds: { seconds: preset.intervalSeconds } };
   }
@@ -1141,7 +1206,7 @@ function Step1Goal({
       </p>
       <textarea
         className="tcp-input min-h-[120px] text-base"
-        placeholder={`e.g. "${GOAL_EXAMPLES[0]}"`}
+        placeholder={`e.g. "${AUTOMATION_WIZARD_CONFIG.goalExamples[0]}"`}
         value={value}
         onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
         autoFocus
@@ -1149,7 +1214,7 @@ function Step1Goal({
       <div className="grid gap-2">
         <p className="text-xs text-slate-500">Need inspiration? Try one of these:</p>
         <div className="flex flex-wrap gap-2">
-          {GOAL_EXAMPLES.slice(1).map((ex) => (
+          {AUTOMATION_WIZARD_CONFIG.goalExamples.slice(1).map((ex) => (
             <button
               key={ex}
               className="tcp-btn truncate text-left text-xs"
@@ -1332,7 +1397,7 @@ function Step2Schedule({
     <div className="grid gap-3">
       <p className="text-sm text-slate-400">When should this automation run?</p>
       <div className="grid gap-2 sm:grid-cols-2">
-        {SCHEDULE_PRESETS.map((preset) => (
+        {AUTOMATION_WIZARD_CONFIG.schedulePresets.map((preset) => (
           <button
             key={preset.label}
             onClick={() => onSelect(preset)}
@@ -1460,7 +1525,7 @@ function Step3Mode({
         How should the AI handle this task? (You can always change this later.)
       </p>
       <div className="grid gap-3">
-        {EXECUTION_MODES.map((m) => (
+        {AUTOMATION_WIZARD_CONFIG.executionModes.map((m) => (
           <button
             key={m.id}
             onClick={() => onSelect(m.id)}
@@ -1823,8 +1888,12 @@ function Step4Review({
   const [expandedStepIds, setExpandedStepIds] = useState<Record<string, boolean>>({});
   const wizardSchedule = wizard.cron
     ? wizard.cron
-    : SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset)?.intervalSeconds
-      ? `Every ${SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset)!.intervalSeconds! / 3600}h`
+    : AUTOMATION_WIZARD_CONFIG.schedulePresets.find((p) => p.label === wizard.schedulePreset)
+          ?.intervalSeconds
+      ? `Every ${
+          AUTOMATION_WIZARD_CONFIG.schedulePresets.find((p) => p.label === wizard.schedulePreset)!
+            .intervalSeconds! / 3600
+        }h`
       : wizard.schedulePreset || "Manual";
   const planOperatorPreferences =
     planPreview && typeof planPreview === "object"
@@ -1833,7 +1902,7 @@ function Step4Review({
   const effectiveMode = String(
     (planOperatorPreferences as any)?.execution_mode || wizard.mode || "team"
   ).trim() as ExecutionMode;
-  const modeInfo = EXECUTION_MODES.find((m) => m.id === effectiveMode);
+  const modeInfo = AUTOMATION_WIZARD_CONFIG.executionModes.find((m) => m.id === effectiveMode);
   const effectiveMaxParallel = Number(
     (planOperatorPreferences as any)?.max_parallel_agents ??
       (planOperatorPreferences as any)?.maxParallelAgents ??
@@ -2349,29 +2418,9 @@ function CreateWizard({
   const [showArtifactPreview, setShowArtifactPreview] = useState<boolean>(false);
   const [artifactPreviewKey, setArtifactPreviewKey] = useState<string>("SKILL.md");
   const [installStatus, setInstallStatus] = useState<string>("");
-  const [wizard, setWizard] = useState<WizardState>({
-    goal: "",
-    workspaceRoot: "",
-    schedulePreset: "Every morning",
-    cron: "",
-    mode: "team",
-    maxAgents: "4",
-    routedSkill: "",
-    routingConfidence: "",
-    modelProvider: String(defaultProvider || ""),
-    modelId: String(defaultModel || ""),
-    plannerModelProvider: "",
-    plannerModelId: "",
-    roleModelsJson: "",
-    toolAccessMode: "all",
-    customToolsText: "",
-    selectedMcpServers: [],
-    exportPackDraft: false,
-    advancedMode: false,
-    customSkillName: "",
-    customSkillDescription: "",
-    customWorkflowKind: "pack_builder_recipe",
-  });
+  const [wizard, setWizard] = useState<WizardState>(() =>
+    createDefaultWizardState(defaultProvider, defaultModel)
+  );
 
   const providersCatalogQuery = useQuery({
     queryKey: ["settings", "providers", "catalog"],
@@ -2700,33 +2749,17 @@ function CreateWizard({
         queryClient.invalidateQueries({ queryKey: ["automations"] }),
         queryClient.invalidateQueries({ queryKey: ["mcp"] }),
       ]);
-      setWizard({
-        goal: "",
-        workspaceRoot: String(
-          (healthQuery.data as any)?.workspaceRoot ||
-            (healthQuery.data as any)?.workspace_root ||
-            ""
-        ).trim(),
-        schedulePreset: "Every morning",
-        cron: "",
-        mode: "team",
-        maxAgents: "4",
-        routedSkill: "",
-        routingConfidence: "",
-        modelProvider: String(defaultProvider || ""),
-        modelId: String(defaultModel || ""),
-        plannerModelProvider: "",
-        plannerModelId: "",
-        roleModelsJson: "",
-        toolAccessMode: "all",
-        customToolsText: "",
-        selectedMcpServers: [],
-        exportPackDraft: false,
-        advancedMode: false,
-        customSkillName: "",
-        customSkillDescription: "",
-        customWorkflowKind: "pack_builder_recipe",
-      });
+      setWizard(
+        createDefaultWizardState(
+          defaultProvider,
+          defaultModel,
+          String(
+            (healthQuery.data as any)?.workspaceRoot ||
+              (healthQuery.data as any)?.workspace_root ||
+              ""
+          ).trim()
+        )
+      );
       setRouterMatches([]);
       setPlanSource("automations_page");
       setPlanPreview(null);
@@ -2763,7 +2796,6 @@ function CreateWizard({
           ? !!wizard.mode && !workspaceRootError && !plannerModelError && !roleModelsError
           : true;
 
-  const STEPS = ["What?", "When?", "How?", "Review"];
   const goToNextStep = async () => {
     if (step === 1) {
       const result = await matchMutation.mutateAsync(wizard.goal);
@@ -2825,7 +2857,7 @@ function CreateWizard({
     <div className="grid gap-4">
       {/* Progress Bar */}
       <div className="flex items-center gap-2">
-        {STEPS.map((label, i) => {
+        {AUTOMATION_WIZARD_CONFIG.steps.map((label, i) => {
           const num = (i + 1) as WizardStep;
           const active = num === step;
           const done = num < step;
@@ -7075,7 +7107,7 @@ function MyAutomations({
                             )
                           }
                         >
-                          {EXECUTION_MODES.map((mode) => (
+                          {AUTOMATION_WIZARD_CONFIG.executionModes.map((mode) => (
                             <option key={mode.id} value={mode.id}>
                               {mode.label}
                             </option>

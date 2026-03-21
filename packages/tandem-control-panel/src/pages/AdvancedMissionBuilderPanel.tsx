@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import YAML from "yaml";
 import type { TandemClient } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
-import agenticDesignPresetSource from "../presets/mission-builder/agentic-design.yaml?raw";
-import aiOpportunityPresetSource from "../presets/mission-builder/ai-opportunity.yaml?raw";
-import automationRolloutPresetSource from "../presets/mission-builder/automation-rollout.yaml?raw";
-import workflowAuditPresetSource from "../presets/mission-builder/workflow-audit.yaml?raw";
 
 type ApiFn = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -24,11 +21,6 @@ type McpServerOption = {
 type CreateModeTab = "mission" | "team" | "workstreams" | "review" | "compile";
 type ScheduleKind = "manual" | "interval" | "cron";
 type ModelDraft = { provider: string; model: string };
-type StarterPresetId =
-  | "ai-opportunity"
-  | "workflow-audit"
-  | "agentic-design"
-  | "automation-rollout";
 
 type MissionBlueprint = {
   mission_id: string;
@@ -113,11 +105,31 @@ type MissionBlueprint = {
 };
 
 type MissionPreset = {
-  id: StarterPresetId;
+  id: string;
   label: string;
   description: string;
   blueprint: MissionBlueprint;
 };
+
+type StarterPresetFile = {
+  id: string;
+  label: string;
+  description: string;
+  blueprint: MissionBlueprint;
+};
+
+const STARTER_PRESET_ICON_BY_ID: Record<string, string> = {
+  "ai-opportunity": "sparkles",
+  "workflow-audit": "workflow",
+  "agentic-design": "bot",
+  "automation-rollout": "arrow-up-circle",
+};
+
+const STARTER_PRESET_SOURCES = import.meta.glob("../presets/mission-builder/*.yaml", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
 
 function normalizeMcpServers(raw: any): McpServerOption[] {
   if (Array.isArray(raw?.servers)) {
@@ -230,480 +242,33 @@ function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
   };
 }
 
-function parseMissionPreset(source: string): MissionPreset {
-  return Function(`"use strict"; return (${source});`)() as MissionPreset;
-}
-
-const STARTER_PRESETS = [
-  parseMissionPreset(aiOpportunityPresetSource),
-  parseMissionPreset(workflowAuditPresetSource),
-  parseMissionPreset(agenticDesignPresetSource),
-  parseMissionPreset(automationRolloutPresetSource),
-];
-
-function starterBlueprint(preset: StarterPresetId, workspaceRoot: string): MissionBlueprint {
-  const root = defaultBlueprint(workspaceRoot);
-  switch (preset) {
-    case "ai-opportunity":
-      return {
-        ...root,
-        title: "AI opportunity assessment",
-        goal: "Identify the highest-value AI opportunities in the target business process and produce a prioritized implementation brief.",
-        success_criteria: [
-          "Workflow bottlenecks and repetitive work are identified",
-          "AI opportunities are ranked by value, feasibility, and risk",
-          "Final brief recommends concrete next pilots",
-        ],
-        shared_context:
-          "Audience is operators and product leadership. Focus on realistic AI leverage, not hype. Separate automation, copilots, and fully agentic opportunities. Flag data, tooling, and approval constraints explicitly.",
-        phases: [
-          { phase_id: "discovery", title: "Discovery", execution_mode: "soft" },
-          { phase_id: "recommendation", title: "Recommendation", execution_mode: "barrier" },
-        ],
-        milestones: [
-          {
-            milestone_id: "opportunity-map-ready",
-            title: "Opportunity map ready",
-            phase_id: "discovery",
-            required_stage_ids: ["workflow-analysis", "capability-map"],
-          },
-        ],
-        workstreams: [
-          {
-            workstream_id: "workflow-analysis",
-            title: "Workflow analysis",
-            objective:
-              "Break down the current workflow, identify friction, handoffs, delays, and repeated manual work.",
-            role: "analyst",
-            prompt:
-              "Act as an AI workflow analyst. Map the current workflow step by step, identify where humans are spending time, where handoffs fail, where decisions bottleneck, and where information must be gathered, transformed, or checked. Produce a workflow analysis memo that distinguishes repetitive work, judgment-heavy work, and coordination-heavy work.",
-            priority: 1,
-            phase_id: "discovery",
-            lane: "workflow",
-            milestone: "opportunity-map-ready",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "report_markdown",
-              summary_guidance:
-                "Workflow steps, bottlenecks, repeated work, approval points, and observed failure modes.",
-            },
-          },
-          {
-            workstream_id: "capability-map",
-            title: "AI capability map",
-            objective:
-              "Match workflow problems to realistic AI patterns such as extraction, triage, drafting, routing, review, and autonomous follow-through.",
-            role: "strategist",
-            prompt:
-              "Act as an agentic systems strategist. Review the workflow analysis context and map each major problem to practical AI patterns. Distinguish simple automation, LLM copilots, tool-using agents, and multi-agent orchestration. Be explicit about prerequisites, risks, and where human approval is still required.",
-            priority: 2,
-            phase_id: "discovery",
-            lane: "capability",
-            milestone: "opportunity-map-ready",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "report_markdown",
-              summary_guidance:
-                "Problem-to-capability map with candidate AI patterns, prerequisites, and operational risks.",
-            },
-          },
-          {
-            workstream_id: "opportunity-brief",
-            title: "Opportunity brief",
-            objective:
-              "Synthesize the findings into a prioritized AI opportunity brief with clear next pilots.",
-            role: "analyst",
-            prompt:
-              "Synthesize the workflow analysis and capability map into an executive-ready AI opportunity brief. Rank candidates by expected value, implementation complexity, operator trust requirements, and data/tool prerequisites. Recommend the best near-term pilots and explain why weaker options were not prioritized.",
-            priority: 1,
-            phase_id: "recommendation",
-            lane: "synthesis",
-            depends_on: ["workflow-analysis", "capability-map"],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "brief_markdown",
-              summary_guidance:
-                "Ranked AI opportunities, reasoning, operational implications, and recommended pilots.",
-            },
-          },
-        ],
-        review_stages: [
-          {
-            stage_id: "opportunity-review",
-            stage_kind: "review",
-            title: "Feasibility and trust review",
-            target_ids: ["opportunity-brief"],
-            role: "reviewer",
-            prompt:
-              "Review the opportunity brief for realism. Reject vague AI claims, hidden implementation assumptions, and missing trust or approval considerations. The brief should make clear what can be automated, what needs a copilot, and what still requires strong human judgment.",
-            checklist: [
-              "Opportunities are realistically scoped",
-              "Human approval needs are explicit",
-              "Recommended pilots are specific and actionable",
-            ],
-            priority: 1,
-            phase_id: "recommendation",
-            lane: "review",
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-          },
-        ],
-      };
-    case "workflow-audit":
-      return {
-        ...root,
-        title: "Workflow automation audit",
-        goal: "Audit an existing workflow and produce a concrete automation design with failure points, control points, and implementation recommendations.",
-        success_criteria: [
-          "Current-state workflow is documented",
-          "Automation candidates include controls and failure handling",
-          "A practical implementation plan is produced",
-        ],
-        shared_context:
-          "Focus on operational reliability. Make human approvals, logging needs, repair loops, and recovery paths explicit. Favor concrete workflow shapes over abstract transformation language.",
-        phases: [
-          { phase_id: "audit", title: "Audit", execution_mode: "soft" },
-          { phase_id: "design", title: "Design", execution_mode: "barrier" },
-        ],
-        milestones: [
-          {
-            milestone_id: "audit-complete",
-            title: "Audit complete",
-            phase_id: "audit",
-            required_stage_ids: ["current-state", "failure-analysis"],
-          },
-        ],
-        workstreams: [
-          {
-            workstream_id: "current-state",
-            title: "Current-state workflow",
-            objective: "Document the current workflow, actors, triggers, tools, and handoffs.",
-            role: "operator",
-            prompt:
-              "Act as an operations architect. Document the workflow as it exists today: triggers, inputs, outputs, handoffs, approvals, tools, data dependencies, and places where work stalls or gets retried.",
-            priority: 1,
-            phase_id: "audit",
-            lane: "mapping",
-            milestone: "audit-complete",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "report_markdown",
-              summary_guidance:
-                "Current-state workflow map, actors, tools, handoffs, and bottlenecks.",
-            },
-          },
-          {
-            workstream_id: "failure-analysis",
-            title: "Failure and control analysis",
-            objective:
-              "Identify where workflow automation can fail, what needs approval, and what must be observable.",
-            role: "reviewer",
-            prompt:
-              "Act as a workflow reliability reviewer. Inspect the current-state map and identify failure modes, ambiguous steps, risky autonomous actions, missing approvals, recovery gaps, and required logging or metrics.",
-            priority: 1,
-            phase_id: "audit",
-            lane: "controls",
-            milestone: "audit-complete",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "brief_markdown",
-              summary_guidance:
-                "Failure modes, control points, approval needs, logging, and recovery requirements.",
-            },
-          },
-          {
-            workstream_id: "automation-design",
-            title: "Automation design",
-            objective: "Turn the audit into a practical automation architecture and rollout plan.",
-            role: "planner",
-            prompt:
-              "Design the target workflow automation. Specify which steps remain human, which become deterministic automation, which should use agents, and where review gates, kill switches, repair loops, and observability are required. Produce a rollout plan that can be implemented incrementally.",
-            priority: 2,
-            phase_id: "design",
-            lane: "design",
-            depends_on: ["current-state", "failure-analysis"],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "plan_markdown",
-              summary_guidance:
-                "Target workflow design, control model, observability plan, and incremental rollout steps.",
-            },
-          },
-        ],
-        review_stages: [
-          {
-            stage_id: "automation-review",
-            stage_kind: "approval",
-            title: "Automation readiness review",
-            target_ids: ["automation-design"],
-            role: "approver",
-            prompt:
-              "Review the automation design for realism, controllability, operator trust, and failure recovery. Reject designs that automate too aggressively without approvals or observability.",
-            checklist: [
-              "Control points are explicit",
-              "Failure recovery is defined",
-              "Rollout is incremental and realistic",
-            ],
-            priority: 1,
-            phase_id: "design",
-            lane: "approval",
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            gate: {
-              required: true,
-              decisions: ["approve", "rework", "cancel"],
-              rework_targets: ["automation-design"],
-              instructions:
-                "Approve only when the automation design is safe, observable, and realistically deployable.",
-            },
-          },
-        ],
-      };
-    case "agentic-design":
-      return {
-        ...root,
-        title: "Agentic system design mission",
-        goal: "Design a multi-agent workflow for a target operation, including orchestration, handoffs, models, tools, and safeguards.",
-        success_criteria: [
-          "Agent roles and responsibilities are clearly defined",
-          "Handoffs, gates, and dependencies are explicit",
-          "The design includes observability, stop controls, and repair flow",
-        ],
-        shared_context:
-          "This is a design mission, not code generation. Optimize for robust orchestration, role clarity, bounded autonomy, and human trust. Make model/tool choices explicit where they matter.",
-        phases: [
-          { phase_id: "architecture", title: "Architecture", execution_mode: "soft" },
-          { phase_id: "governance", title: "Governance", execution_mode: "barrier" },
-        ],
-        milestones: [
-          {
-            milestone_id: "design-basis-ready",
-            title: "Design basis ready",
-            phase_id: "architecture",
-            required_stage_ids: ["role-design", "flow-design"],
-          },
-        ],
-        workstreams: [
-          {
-            workstream_id: "role-design",
-            title: "Role and agent design",
-            objective:
-              "Define the orchestrator and worker roles with clear responsibilities and escalation boundaries.",
-            role: "architect",
-            prompt:
-              "Design the agent roles for this system. Define the orchestrator, specialized workers, reviewers, testers, and approval actors. Be explicit about what each role owns, when it should escalate, and what outputs it produces.",
-            priority: 1,
-            phase_id: "architecture",
-            lane: "roles",
-            milestone: "design-basis-ready",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "report_markdown",
-              summary_guidance:
-                "Agent roster, role boundaries, escalation points, and expected outputs.",
-            },
-          },
-          {
-            workstream_id: "flow-design",
-            title: "Flow and handoff design",
-            objective: "Design the mission graph, dependencies, handoffs, and artifact contracts.",
-            role: "analyst",
-            prompt:
-              "Design the multi-agent workflow graph. Specify phases, dependencies, artifact contracts, fan-out and fan-in points, and where review or approval gates should exist. Make the handoffs explicit and operationally understandable.",
-            priority: 1,
-            phase_id: "architecture",
-            lane: "flow",
-            milestone: "design-basis-ready",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "report_markdown",
-              summary_guidance: "Mission graph, dependencies, handoffs, and output contracts.",
-            },
-          },
-          {
-            workstream_id: "governance-design",
-            title: "Governance and safety design",
-            objective:
-              "Define runtime controls, observability, kill switches, and repair mechanisms.",
-            role: "coordinator",
-            prompt:
-              "Design the governance layer for the system. Specify approval gates, model and tool boundaries, logging, token or budget guardrails, kill switch semantics, pause and resume behavior, and step-level repair expectations.",
-            priority: 1,
-            phase_id: "governance",
-            lane: "governance",
-            depends_on: ["role-design", "flow-design"],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "plan_markdown",
-              summary_guidance:
-                "Safety model, review points, observability, recovery, and operator controls.",
-            },
-          },
-        ],
-        review_stages: [
-          {
-            stage_id: "design-approval",
-            stage_kind: "approval",
-            title: "Agentic design review",
-            target_ids: ["governance-design"],
-            role: "approver",
-            prompt:
-              "Review the complete agentic design for coherence. Reject designs with unclear role boundaries, missing observability, or unbounded autonomy.",
-            checklist: [
-              "Role boundaries are clear",
-              "Handoffs and gates are explicit",
-              "Safety and repair paths are credible",
-            ],
-            priority: 1,
-            phase_id: "governance",
-            lane: "approval",
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            gate: {
-              required: true,
-              decisions: ["approve", "rework", "cancel"],
-              rework_targets: ["governance-design"],
-              instructions:
-                "Use rework if the design lacks control boundaries, clear outputs, or repairability.",
-            },
-          },
-        ],
-      };
-    case "automation-rollout":
-      return {
-        ...root,
-        title: "Automation rollout mission",
-        goal: "Plan the rollout of an AI or agentic automation initiative across process, tooling, operating model, and measurement.",
-        success_criteria: [
-          "Rollout plan includes sequencing, owners, risks, and readiness needs",
-          "Metrics and operator controls are explicit",
-          "Human change-management needs are addressed",
-        ],
-        shared_context:
-          "Optimize for actual operational rollout. Include enablement, communications, governance, training, and success measurement. Avoid purely technical plans.",
-        phases: [
-          { phase_id: "readiness", title: "Readiness", execution_mode: "soft" },
-          { phase_id: "launch", title: "Launch", execution_mode: "barrier" },
-        ],
-        milestones: [],
-        workstreams: [
-          {
-            workstream_id: "process-readiness",
-            title: "Process readiness",
-            objective: "Define the target operating process, roles, and readiness gaps.",
-            role: "operator",
-            prompt:
-              "Plan the operating-process changes required to adopt the automation. Identify role changes, review points, ownership, runbooks, and readiness blockers.",
-            priority: 1,
-            phase_id: "readiness",
-            lane: "operations",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "plan_markdown",
-              summary_guidance:
-                "Operating model changes, ownership, readiness blockers, and process notes.",
-            },
-          },
-          {
-            workstream_id: "platform-readiness",
-            title: "Platform and tooling readiness",
-            objective:
-              "Define the tooling, integration, data, and observability requirements for launch.",
-            role: "planner",
-            prompt:
-              "Plan the platform requirements for rollout: integrations, tools, permissions, logs, metrics, data dependencies, guardrails, and monitoring expectations.",
-            priority: 1,
-            phase_id: "readiness",
-            lane: "platform",
-            depends_on: [],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "plan_markdown",
-              summary_guidance: "Tooling, integrations, observability, and launch prerequisites.",
-            },
-          },
-          {
-            workstream_id: "launch-plan",
-            title: "Rollout and adoption plan",
-            objective:
-              "Create the rollout sequence, communications, operator enablement, and measurement plan.",
-            role: "coordinator",
-            prompt:
-              "Using the readiness work, create a rollout plan with phases, launch criteria, internal communications, operator training, fallback plans, and success metrics. Make the rollout sequence explicit.",
-            priority: 2,
-            phase_id: "launch",
-            lane: "rollout",
-            depends_on: ["process-readiness", "platform-readiness"],
-            input_refs: [],
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            output_contract: {
-              kind: "plan_markdown",
-              summary_guidance:
-                "Rollout sequencing, enablement, communications, fallback, and success metrics.",
-            },
-          },
-        ],
-        review_stages: [
-          {
-            stage_id: "launch-gate",
-            stage_kind: "approval",
-            title: "Launch readiness gate",
-            target_ids: ["launch-plan"],
-            role: "approver",
-            prompt:
-              "Review the rollout plan for operational readiness. Confirm that controls, training, communications, fallback, and measurement are credible before launch.",
-            checklist: [
-              "Launch prerequisites are explicit",
-              "Operator enablement is covered",
-              "Fallback and measurement are defined",
-            ],
-            priority: 1,
-            phase_id: "launch",
-            lane: "approval",
-            tool_allowlist_override: [],
-            mcp_servers_override: [],
-            gate: {
-              required: true,
-              decisions: ["approve", "rework", "cancel"],
-              rework_targets: ["launch-plan"],
-              instructions:
-                "Use rework if the rollout plan lacks readiness criteria, operator enablement, or fallback handling.",
-            },
-          },
-        ],
-      };
+function parseMissionPreset(source: string, sourcePath: string): MissionPreset {
+  const parsed = YAML.parse(source) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`Invalid mission preset at ${sourcePath}: expected a YAML object.`);
   }
+
+  const preset = parsed as Partial<StarterPresetFile>;
+  const id = String(preset.id || "").trim();
+  const label = String(preset.label || "").trim();
+  const description = String(preset.description || "").trim();
+  const blueprint = preset.blueprint as MissionBlueprint | undefined;
+
+  if (!id) throw new Error(`Invalid mission preset at ${sourcePath}: missing id.`);
+  if (!label) throw new Error(`Invalid mission preset at ${sourcePath}: missing label.`);
+  if (!description) {
+    throw new Error(`Invalid mission preset at ${sourcePath}: missing description.`);
+  }
+  if (!blueprint || typeof blueprint !== "object") {
+    throw new Error(`Invalid mission preset at ${sourcePath}: missing blueprint.`);
+  }
+
+  return { id, label, description, blueprint };
 }
+
+const STARTER_PRESETS = Object.entries(STARTER_PRESET_SOURCES)
+  .map(([sourcePath, source]) => parseMissionPreset(source, sourcePath))
+  .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
 
 function validateWorkspaceRootInput(raw: string) {
   const value = String(raw || "").trim();
@@ -1389,7 +954,7 @@ export function AdvancedMissionBuilderPanel({
     setPreview(null);
   }
 
-  function applyStarterPreset(preset: StarterPresetId) {
+  function applyStarterPreset(preset: string) {
     const presetRecord = STARTER_PRESETS.find((entry) => entry.id === preset);
     if (!presetRecord) return;
     const next = {
@@ -1534,34 +1099,16 @@ export function AdvancedMissionBuilderPanel({
             How this works
           </button>
           <span className="tcp-subtle text-xs">Start from example:</span>
-          <button
-            className="tcp-btn h-8 px-3 text-xs"
-            onClick={() => applyStarterPreset("ai-opportunity")}
-          >
-            <i data-lucide="sparkles"></i>
-            AI Opportunities
-          </button>
-          <button
-            className="tcp-btn h-8 px-3 text-xs"
-            onClick={() => applyStarterPreset("workflow-audit")}
-          >
-            <i data-lucide="workflow"></i>
-            Workflow Audit
-          </button>
-          <button
-            className="tcp-btn h-8 px-3 text-xs"
-            onClick={() => applyStarterPreset("agentic-design")}
-          >
-            <i data-lucide="bot"></i>
-            Agentic Design
-          </button>
-          <button
-            className="tcp-btn h-8 px-3 text-xs"
-            onClick={() => applyStarterPreset("automation-rollout")}
-          >
-            <i data-lucide="arrow-up-circle"></i>
-            Rollout
-          </button>
+          {STARTER_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              className="tcp-btn h-8 px-3 text-xs"
+              onClick={() => applyStarterPreset(preset.id)}
+            >
+              <i data-lucide={STARTER_PRESET_ICON_BY_ID[preset.id] || "sparkles"}></i>
+              {preset.label}
+            </button>
+          ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {(

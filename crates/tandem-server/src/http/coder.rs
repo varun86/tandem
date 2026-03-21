@@ -11316,7 +11316,7 @@ mod tests {
                     "number": 42,
                     "title": "Fix startup recovery",
                     "state": "open",
-                    "html_url": "https://github.com/evan/tandem/pull/42",
+                    "html_url": "https://github.com/user123/tandem/pull/42",
                     "head": {"ref": "coder/issue-42-fix"},
                     "base": {"ref": "main"}
                 }
@@ -11327,7 +11327,7 @@ mod tests {
                     "number": 42,
                     "title": "Fix startup recovery",
                     "state": "open",
-                    "url": "https://github.com/evan/tandem/pull/42",
+                    "url": "https://github.com/user123/tandem/pull/42",
                     "head_ref": "coder/issue-42-fix",
                     "base_ref": "main"
                 }
@@ -11341,7 +11341,7 @@ mod tests {
         assert_eq!(pulls[0].state, "open");
         assert_eq!(
             pulls[0].html_url.as_deref(),
-            Some("https://github.com/evan/tandem/pull/42")
+            Some("https://github.com/user123/tandem/pull/42")
         );
         assert_eq!(pulls[0].head_ref.as_deref(), Some("coder/issue-42-fix"));
         assert_eq!(pulls[0].base_ref.as_deref(), Some("main"));
@@ -11373,7 +11373,7 @@ mod tests {
             number: 77,
             title: "Guard startup recovery config loading".to_string(),
             state: "open".to_string(),
-            html_url: Some("https://github.com/evan/tandem/pull/77".to_string()),
+            html_url: Some("https://github.com/user123/tandem/pull/77".to_string()),
             head_ref: Some("coder/issue-313-fix".to_string()),
             base_ref: Some("main".to_string()),
         };
@@ -11383,7 +11383,7 @@ mod tests {
             json!({
                 "kind": "pull_request",
                 "number": 77,
-                "url": "https://github.com/evan/tandem/pull/77",
+                "url": "https://github.com/user123/tandem/pull/77",
             })
         );
     }

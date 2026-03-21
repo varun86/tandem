@@ -76,6 +76,7 @@ export type StudioWorkflowDraft = {
 
 export type StudioTemplateDefinition = {
   id: string;
+  order?: number;
   name: string;
   icon: string;
   summary: string;
@@ -94,6 +95,60 @@ export function emptyPromptSections(
     inputs: "",
     outputContract: "",
     guardrails: "",
+    ...overrides,
+  };
+}
+
+export function createEmptyAgentDraft(
+  agentId: string,
+  displayName: string,
+  overrides: Partial<StudioAgentDraft> = {}
+): StudioAgentDraft {
+  return {
+    agentId,
+    displayName,
+    role: "worker",
+    avatarUrl: "",
+    templateId: "",
+    linkedTemplateId: "",
+    skills: [],
+    prompt: emptyPromptSections(),
+    modelProvider: "",
+    modelId: "",
+    toolAllowlist: ["read", "write", "glob"],
+    toolDenylist: [],
+    mcpAllowedServers: [],
+    ...overrides,
+  };
+}
+
+export function createEmptyNodeDraft(
+  nodeId: string,
+  title: string,
+  agentId: string,
+  dependsOn: string[] = [],
+  inputRefs: Array<{ fromStepId: string; alias: string }> = [],
+  overrides: Partial<StudioNodeDraft> = {}
+): StudioNodeDraft {
+  return {
+    nodeId,
+    title,
+    agentId,
+    objective: "",
+    dependsOn: [...dependsOn],
+    inputRefs: inputRefs.map((ref) => ({ ...ref })),
+    outputKind: "artifact",
+    outputPath: "",
+    taskKind: "",
+    projectBacklogTasks: false,
+    backlogTaskId: "",
+    repoRoot: "",
+    writeScope: "",
+    acceptanceCriteria: "",
+    taskDependencies: "",
+    verificationState: "",
+    taskOwner: "",
+    verificationCommand: "",
     ...overrides,
   };
 }

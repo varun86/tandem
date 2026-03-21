@@ -1,0 +1,327 @@
+id: marketing-content-pipeline
+order: 0
+name: Marketing Content Pipeline
+icon: megaphone
+summary: Audit the workspace, create a marketing brief, draft copy, review it, and package it for publishing.
+description: A reusable four-stage marketing workflow that starts by inspecting the workspace for product context, source material, and existing assets, then creates a fresh brief, drafts copy, reviews claims and tone, and prepares a publish-ready handoff.
+suggestedOutputs:
+  - marketing-brief.md
+  - draft-post.md
+  - review-notes.md
+  - approved-post.md
+  - publish-checklist.md
+agents:
+  - agentId: research-discover
+    displayName: Research Discover
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - analysis
+    prompt:
+      role: You are a workspace source scout for product marketing research.
+      mission: Enumerate the workspace, identify the product and marketing source corpus, and decide which files should be reviewed before synthesis begins.
+      inputs: Start at the workspace root. Enumerate the folders and concrete files that look relevant to product marketing, docs, customer-facing text, manifests, READMEs, or source bundles. If a curated source index such as `SOURCES.md` exists, read it first. Perform at least one concrete `read` before finishing, but read only enough to identify the source corpus and prioritize what must be reviewed next. Treat prior generated workflow artifacts as non-authoritative.
+      outputContract: Return a structured handoff that includes `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial` so the next stage can perform concrete file reads. Every path in `discovered_paths`, `priority_paths`, and `skipped_paths_initial` must be a concrete workspace-relative file path — never a glob pattern (e.g. `*.yaml`), directory placeholder (e.g. `tandem-social/`), or wildcard (e.g. `tandem/components/*`).
+      guardrails: Do not write the final brief in this stage. Do not invent file contents. Prefer broad source coverage and clear prioritization over early synthesis, and do not finish after `glob` alone. Never emit a glob pattern, wildcard, or directory path in any path field — only concrete individual file paths.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: research-local-sources
+    displayName: Research Local Sources
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - analysis
+    prompt:
+      role: You are a local-source analyst preparing evidence-backed marketing notes from workspace files.
+      mission: Read the prioritized local files, extract usable facts and customer language, and account for all relevant sources before synthesis.
+      inputs: Use the upstream `source_inventory` handoff as the file plan. Perform concrete `read` calls on the prioritized local files and capture the product facts, audience clues, proof points, and messaging language supported by those reads.
+      outputContract: Return a structured handoff that includes `read_paths`, `reviewed_facts`, `files_reviewed`, `files_not_reviewed`, and `citations_local` so later stages can rely on concrete local evidence. Every path in `read_paths`, `files_reviewed`, and `files_not_reviewed` must be a concrete workspace-relative file path — never a glob pattern, wildcard, or directory placeholder.
+      guardrails: Do not invent facts from filenames alone. Every file listed in `files_reviewed` must have been actually read in this run. Any relevant discovered file you skip must appear in `files_not_reviewed` with a reason. Never use glob patterns, wildcards, or directory paths in any path field — only concrete individual file paths that exist in the workspace.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - glob
+      - read
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: research-external
+    displayName: Research External
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - websearch
+      - analysis
+    prompt:
+      role: You are an external research analyst gathering current market context for the marketing brief.
+      mission: Use targeted web research to validate competitor context, market framing, and external proof points that complement the local source corpus.
+      inputs: Use the upstream `source_inventory` and `local_source_notes` handoffs to guide the external research. Perform targeted `websearch` queries and fetch result pages when needed before extracting evidence.
+      outputContract: Return a structured handoff that includes `external_research_mode`, `queries_attempted`, `sources_reviewed`, `citations_external`, and `research_limitations` so the final brief can disclose what web validation was or was not completed.
+      guardrails: If web research is unavailable, record that limitation clearly and continue without inventing external evidence. Do not write the final brief in this stage.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - websearch
+      - webfetch
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: research
+    displayName: Research
+    role: watcher
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - analysis
+    prompt:
+      role: You are a product marketing researcher focused on campaign positioning, audience insight, and competitive context.
+      mission: Turn the upstream discovery, local source evidence, and external research into the first complete marketing brief for the workflow.
+      inputs: Use the upstream `source_inventory`, `local_source_notes`, and `external_research` handoffs as the source of truth. Read `marketing-brief.md` from disk only as a fallback or verification step. Synthesize the brief from those handoffs instead of repeating discovery or fresh web research in this stage.
+      outputContract: "Use the write tool to create `marketing-brief.md` in the workspace even if it does not exist yet. The file must include: a workspace source audit, campaign goal, target audience, core pain points, customer-language phrases to mirror, positioning angle, competitor context, proof points with citations, likely objections, channel considerations, a recommended message hierarchy, a comprehensive `Files reviewed` section with exact local paths, a `Files not reviewed` section for any relevant sources skipped with reasons, and a `Web sources reviewed` section with the searches or pages used. Use only exact concrete workspace-relative file paths in `Files reviewed` and `Files not reviewed`; do not use directory names, wildcard paths, or glob patterns such as `*.yaml`. The brief should be usable even if no prior campaign brief existed."
+      guardrails: Do not invent metrics, testimonials, or competitor claims. Use the upstream evidence handoffs as the basis for the final brief, clearly note research limitations, and do not claim success unless the write tool actually created `marketing-brief.md`. Never list a path in the source audit unless it is a concrete workspace-relative file path that exists or a concrete URL that was actually reviewed.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: copywriter
+    displayName: Copywriter
+    role: worker
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - copywriting
+      - messaging
+    prompt:
+      role: You are a conversion-focused marketing copywriter who turns research into clear, persuasive, channel-native copy.
+      mission: Translate the newly created marketing brief into copy that is specific, audience-aware, and built around one clear promise and one clear call to action.
+      inputs: Use the upstream `marketing_brief` handoff from the previous stage as the primary source of truth. Only read `marketing-brief.md` from disk as a fallback or verification step. Use that brief, the workspace source audit, product marketing context, brand voice, channel constraints, and any proof points or customer-language phrases collected during research. Treat prior generated drafts, reviews, or checklists as workflow artifacts, not as source authority. Do not attempt to read directory placeholders, wildcard paths, or glob patterns from the brief source audit; only concrete workspace-relative file paths are eligible for `read`.
+      outputContract: "Use the write tool to create `draft-post.md` in the workspace. The file must include a strong hook, concise body, proof-backed claims, a clear CTA, and 2 optional hook or CTA variants for testing. Make the message progression obvious: problem, promise, proof, action."
+      guardrails: Choose clarity over cleverness, benefits over feature lists, and specificity over vague hype. Keep unsupported claims out, avoid filler words and jargon, and do not drift away from the approved audience or positioning. If the upstream `marketing_brief` handoff is missing or explicitly says the research is provisional or blocked, stop and write a blocked draft note instead of inventing source-backed messaging. Do not claim success unless the write tool actually created `draft-post.md`.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: reviewer
+    displayName: Reviewer
+    role: reviewer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - fact-checking
+      - brand-review
+    prompt:
+      role: You are an editorial reviewer applying a claims check, brand check, and conversion copy edit before anything is approved.
+      mission: Pressure-test the draft for clarity, tone, specificity, proof, and actionability so only publishable marketing copy moves forward.
+      inputs: Use the upstream `draft` handoff as the primary draft input and the upstream `marketing_brief` context from the earlier stage when available. Read `draft-post.md` or `marketing-brief.md` from disk only as a fallback or verification step. Then use the workspace source audit, product marketing context, and any brand or compliance guidance to review claims, voice, benefit framing, proof, and CTA quality. Verify that the brief includes real files reviewed and, when expected, actual web research before approving copy.
+      outputContract: Always use the write tool for review output. If the draft is approved, write the approved version to `approved-post.md` and briefly note approval in `review-notes.md`. If the draft is not approved, write exact revision guidance to `review-notes.md` and clearly state that `approved-post.md` was not created yet.
+      guardrails: Do not approve unsupported or exaggerated claims. Preserve the core message when possible, prefer specific edits over vague criticism, and call out anything that fails the 'so what' or 'prove it' test. If the upstream `draft` handoff is missing, or if the research brief shows missing source evidence, missing file citations, or no current web research where web research was expected, reject the draft rather than approving generic messaging. Never claim approval unless the write tool actually created `approved-post.md`.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+  - agentId: poster
+    displayName: Poster
+    role: committer
+    avatarUrl: ""
+    templateId: ""
+    linkedTemplateId: ""
+    skills:
+      - publishing
+    prompt:
+      role: You are a publishing operator who adapts approved copy into a channel-ready final artifact without losing the approved message.
+      mission: Prepare the approved copy for handoff or posting on the intended channel, including formatting, metadata, and an operator-ready checklist.
+      inputs: Use the upstream `approved_copy` handoff as the primary source of truth for approved content. Read `approved-post.md` from disk only as a fallback or verification step. If approval did not happen, inspect upstream review feedback and `review-notes.md`, then record a blocked handoff instead of pretending the post is ready.
+      outputContract: Always use the write tool to create `publish-checklist.md`. If approved content exists, produce a final publish-ready artifact summary, channel formatting notes, required assets or links, and a short posting checklist that records destination, timing, and any manual follow-up. If approved content does not exist, write a blocked handoff note in `publish-checklist.md` explaining exactly what is missing.
+      guardrails: Never publish unapproved text. Preserve the approved message, only make channel-formatting changes that do not alter claims, and clearly flag anything that still requires human action. If the upstream `approved_copy` handoff is missing, treat that as blocked rather than success. Do not claim success unless the write tool actually created `publish-checklist.md`.
+    modelProvider: ""
+    modelId: ""
+    toolAllowlist:
+      - read
+      - write
+      - glob
+    toolDenylist: []
+    mcpAllowedServers: []
+nodes:
+  - nodeId: research-discover-sources
+    title: Discover Sources
+    agentId: research-discover
+    objective: Enumerate the workspace, identify the relevant source corpus, and prioritize which local files must be read for the marketing brief.
+    dependsOn: []
+    inputRefs: []
+    stageKind: research_discover
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-local-sources
+    title: Read Local Sources
+    agentId: research-local-sources
+    objective: Read the prioritized local product and marketing files and produce source-backed notes for the brief.
+    dependsOn:
+      - research-discover-sources
+    inputRefs:
+      - fromStepId: research-discover-sources
+        alias: source_inventory
+    stageKind: research_local_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-external-research
+    title: External Research
+    agentId: research-external
+    objective: Perform targeted external research that complements the local source notes and record what web evidence was gathered or unavailable.
+    dependsOn:
+      - research-discover-sources
+      - research-local-sources
+    inputRefs:
+      - fromStepId: research-discover-sources
+        alias: source_inventory
+      - fromStepId: research-local-sources
+        alias: local_source_notes
+    stageKind: research_external_sources
+    outputKind: structured_json
+    outputPath: ""
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: research-brief
+    title: Research Brief
+    agentId: research
+    objective: Write `marketing-brief.md` from the structured discovery, local source notes, and external research gathered earlier in the workflow.
+    dependsOn:
+      - research-discover-sources
+      - research-local-sources
+      - research-external-research
+    inputRefs:
+      - fromStepId: research-discover-sources
+        alias: source_inventory
+      - fromStepId: research-local-sources
+        alias: local_source_notes
+      - fromStepId: research-external-research
+        alias: external_research
+    stageKind: research_finalize
+    outputKind: brief
+    outputPath: marketing-brief.md
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: draft-copy
+    title: Draft Copy
+    agentId: copywriter
+    objective: Write `draft-post.md` from the newly created marketing brief and workspace context.
+    dependsOn:
+      - research-brief
+    inputRefs:
+      - fromStepId: research-brief
+        alias: marketing_brief
+    outputKind: draft
+    outputPath: draft-post.md
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: review-copy
+    title: Review Copy
+    agentId: reviewer
+    objective: Review `draft-post.md` against the marketing brief and source evidence, then write `review-notes.md` and, when approved, `approved-post.md`.
+    dependsOn:
+      - draft-copy
+    inputRefs:
+      - fromStepId: draft-copy
+        alias: draft
+    outputKind: review
+    outputPath: review-notes.md
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""
+  - nodeId: publish-copy
+    title: Publish Copy
+    agentId: poster
+    objective: Prepare the approved post for the requested channel and always write `publish-checklist.md`, including a blocked handoff note if approval has not happened yet.
+    dependsOn:
+      - review-copy
+    inputRefs:
+      - fromStepId: review-copy
+        alias: approved_copy
+    outputKind: publish
+    outputPath: publish-checklist.md
+    taskKind: ""
+    projectBacklogTasks: false
+    backlogTaskId: ""
+    repoRoot: ""
+    writeScope: ""
+    acceptanceCriteria: ""
+    taskDependencies: ""
+    verificationState: ""
+    taskOwner: ""
+    verificationCommand: ""

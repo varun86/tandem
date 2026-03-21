@@ -63,7 +63,7 @@ async def test_coder_list_runs_and_approve_route() -> None:
 
     async with TandemClient(base_url="http://localhost:39731", token="token") as client:
         runs = await client.coder.list_runs(
-            limit=5, workflow_mode="issue_triage", repo_slug="evan/tandem"
+            limit=5, workflow_mode="issue_triage", repo_slug="user123/tandem"
         )
         result = await client.coder.approve_run("coder-1", "looks good")
 

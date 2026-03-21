@@ -209,8 +209,8 @@ mod tests {
 
     #[test]
     fn test_is_user_allowed_specific() {
-        let list = vec!["@evan".to_string(), "@alice".to_string()];
-        assert!(is_user_allowed("@evan", &list));
+        let list = vec!["@user123".to_string(), "@alice".to_string()];
+        assert!(is_user_allowed("@user123", &list));
         assert!(!is_user_allowed("@mallory", &list));
     }
 
@@ -226,8 +226,8 @@ mod tests {
 
     #[test]
     fn test_parse_allowed_users_list() {
-        let result = parse_allowed_users("@evan, @alice, @bob");
-        assert_eq!(result, vec!["@evan", "@alice", "@bob"]);
+        let result = parse_allowed_users("@user123, @alice, @bob");
+        assert_eq!(result, vec!["@user123", "@alice", "@bob"]);
     }
 
     #[test]
