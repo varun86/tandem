@@ -39,6 +39,7 @@ _You want to deploy Tandem to a VPS or headless server so that you, or your exte
 _You want to build custom clients, connect external tools via MCP, or programmatically trigger agent workflows._
 
 - **[Building Automated Agents](./mcp-automated-agents/)** — Trigger agent pipelines automatically.
+- **[Autonomous Coding Agents with GitHub Projects](./autonomous-coding-agents-github-projects/)** — Build coding agents on Tandem's engine-native GitHub MCP path.
 - **[WebMCP for Agents](./webmcp-for-agents/)** — Expose local HTTP APIs to your agents.
 - **[Browser Setup and Testing](./browser-setup-and-testing/)** — Build, install, validate, and incorporate `tandem-browser`.
 - **SDKs:** Integrate Tandem into your own codebases using our official libraries.

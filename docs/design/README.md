@@ -6,7 +6,7 @@ This folder is the single source of truth for planning and execution of the mult
 
 ## Where to Track What
 
-- Scope and architecture: `ENGINE_VS_UI.md`, `ORCHESTRATOR.md`, `DEFAULT_MISSION_FLOW.md`
+- Scope and architecture: `ENGINE_VS_UI.md`, `ORCHESTRATOR.md`, `DEFAULT_MISSION_FLOW.md`, `SPEC_RUNTIME.md`
 - Subsystem specs: `SHARED_RESOURCES.md`, `MEMORY_TIERS.md`, `ROUTINES_CRON.md`
 - Delivery sequencing: `IMPLEMENTATION_PLAN.md`
 - Packaging strategy: `PACKAGING.md`

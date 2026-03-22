@@ -75,6 +75,7 @@ pub struct SessionRepairStats {
 
 const LEGACY_IMPORT_MARKER_FILE: &str = "legacy_import_marker.json";
 const LEGACY_IMPORT_MARKER_VERSION: u32 = 1;
+const MAX_SESSION_SNAPSHOTS: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LegacyTreeCounts {
@@ -119,9 +120,81 @@ fn snapshot_session_messages(
         .entry(session_id.to_string())
         .or_insert_with(SessionMeta::default);
     meta.snapshots.push(session.messages.clone());
-    if meta.snapshots.len() > 25 {
-        let _ = meta.snapshots.remove(0);
+    trim_session_snapshots(&mut meta.snapshots);
+}
+
+fn trim_session_snapshots(snapshots: &mut Vec<Vec<Message>>) {
+    if snapshots.len() > MAX_SESSION_SNAPSHOTS {
+        let keep_from = snapshots.len() - MAX_SESSION_SNAPSHOTS;
+        snapshots.drain(0..keep_from);
     }
+}
+
+fn compact_session_snapshots(snapshots: &mut Vec<Vec<Message>>) -> usize {
+    if snapshots.is_empty() {
+        return 0;
+    }
+
+    let original_len = snapshots.len();
+    let mut compacted = Vec::with_capacity(original_len);
+    let mut previous_encoded: Option<Vec<u8>> = None;
+
+    for snapshot in snapshots.drain(..) {
+        let encoded = serde_json::to_vec(&snapshot).unwrap_or_default();
+        if previous_encoded.as_ref() == Some(&encoded) {
+            continue;
+        }
+        previous_encoded = Some(encoded);
+        compacted.push(snapshot);
+    }
+
+    trim_session_snapshots(&mut compacted);
+    let removed = original_len.saturating_sub(compacted.len());
+    *snapshots = compacted;
+    removed
+}
+
+fn session_meta_is_empty(meta: &SessionMeta) -> bool {
+    meta.parent_id.is_none()
+        && !meta.archived
+        && !meta.shared
+        && meta.share_id.is_none()
+        && meta.summary.is_none()
+        && meta.snapshots.is_empty()
+        && meta.pre_revert.is_none()
+        && meta.todos.is_empty()
+}
+
+#[derive(Debug, Default)]
+struct SessionMetaCompactionStats {
+    metadata_pruned: u64,
+    snapshots_removed: u64,
+}
+
+fn compact_session_metadata(
+    sessions: &HashMap<String, Session>,
+    metadata: &mut HashMap<String, SessionMeta>,
+) -> SessionMetaCompactionStats {
+    let mut stats = SessionMetaCompactionStats::default();
+
+    metadata.retain(|session_id, meta| {
+        if !sessions.contains_key(session_id) {
+            stats.metadata_pruned += 1;
+            return false;
+        }
+
+        let removed = compact_session_snapshots(&mut meta.snapshots) as u64;
+        stats.snapshots_removed += removed;
+
+        if session_meta_is_empty(meta) {
+            stats.metadata_pruned += 1;
+            return false;
+        }
+
+        true
+    });
+
+    stats
 }
 
 fn merge_message_part(message: &mut Message, part: MessagePart) {
@@ -278,12 +351,21 @@ impl Storage {
             imported_legacy_sessions = true;
         }
         let metadata_file = base.join("session_meta.json");
-        let metadata = if metadata_file.exists() {
+        let mut metadata = if metadata_file.exists() {
             let raw = fs::read_to_string(&metadata_file).await?;
             serde_json::from_str::<HashMap<String, SessionMeta>>(&raw).unwrap_or_default()
         } else {
             HashMap::new()
         };
+        let compaction = compact_session_metadata(&sessions, &mut metadata);
+        let metadata_compacted = compaction.metadata_pruned > 0 || compaction.snapshots_removed > 0;
+        if metadata_compacted {
+            tracing::info!(
+                metadata_pruned = compaction.metadata_pruned,
+                snapshots_removed = compaction.snapshots_removed,
+                "compacted persisted session metadata"
+            );
+        }
         let questions_file = base.join("questions.json");
         let question_requests = if questions_file.exists() {
             let raw = fs::read_to_string(&questions_file).await?;
@@ -298,7 +380,7 @@ impl Storage {
             question_requests: RwLock::new(question_requests),
         };
 
-        if imported_legacy_sessions {
+        if imported_legacy_sessions || metadata_compacted {
             storage.flush().await?;
         }
         if let Some(marker) = marker_to_write {
@@ -587,6 +669,7 @@ impl Storage {
             return Ok(false);
         };
         meta.snapshots.push(session.messages.clone());
+        trim_session_snapshots(&mut meta.snapshots);
         session.messages = previous;
         session.time.updated = Utc::now();
         drop(metadata);
@@ -2070,6 +2153,85 @@ mod tests {
             }
             other => panic!("expected tool part, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn startup_compacts_session_snapshot_metadata() {
+        let base = std::env::temp_dir().join(format!(
+            "tandem-core-snapshot-compaction-{}",
+            Uuid::new_v4()
+        ));
+        stdfs::create_dir_all(&base).expect("base dir");
+
+        let mut session = Session::new(
+            Some("snapshot compaction".to_string()),
+            Some(".".to_string()),
+        );
+        session.messages.push(Message::new(
+            MessageRole::User,
+            vec![MessagePart::Text {
+                text: "current".to_string(),
+            }],
+        ));
+        let session_id = session.id.clone();
+
+        let mut sessions = HashMap::new();
+        sessions.insert(session_id.clone(), session);
+        stdfs::write(
+            base.join("sessions.json"),
+            serde_json::to_string_pretty(&sessions).expect("serialize sessions"),
+        )
+        .expect("write sessions");
+
+        let mut snapshots = Vec::new();
+        for label in ["a", "a", "b", "c", "d", "e", "f"] {
+            snapshots.push(vec![Message::new(
+                MessageRole::User,
+                vec![MessagePart::Text {
+                    text: label.to_string(),
+                }],
+            )]);
+        }
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            session_id.clone(),
+            SessionMeta {
+                snapshots,
+                ..SessionMeta::default()
+            },
+        );
+        metadata.insert("orphan".to_string(), SessionMeta::default());
+        stdfs::write(
+            base.join("session_meta.json"),
+            serde_json::to_string_pretty(&metadata).expect("serialize metadata"),
+        )
+        .expect("write metadata");
+        stdfs::write(base.join("questions.json"), "{}").expect("write questions");
+
+        let _storage = Storage::new(&base).await.expect("storage");
+
+        let raw = stdfs::read_to_string(base.join("session_meta.json")).expect("read metadata");
+        let stored: HashMap<String, SessionMeta> =
+            serde_json::from_str(&raw).expect("parse metadata");
+        assert_eq!(stored.len(), 1);
+        let compacted = stored.get(&session_id).expect("session metadata");
+        assert_eq!(compacted.snapshots.len(), MAX_SESSION_SNAPSHOTS);
+
+        let labels = compacted
+            .snapshots
+            .iter()
+            .map(|snapshot| {
+                snapshot[0]
+                    .parts
+                    .iter()
+                    .find_map(|part| match part {
+                        MessagePart::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .expect("snapshot text")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["b", "c", "d", "e", "f"]);
     }
 
     #[tokio::test]
