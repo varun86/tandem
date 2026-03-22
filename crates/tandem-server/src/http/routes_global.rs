@@ -6,7 +6,6 @@ use crate::AppState;
 use super::channels_api::{
     admin_reload_config, channel_tool_preferences_get, channel_tool_preferences_put,
     channels_config, channels_delete, channels_put, channels_status, channels_verify,
-    ChannelToolPreferencesInput,
 };
 use super::config_providers::{global_config, global_config_patch};
 use super::global::*;

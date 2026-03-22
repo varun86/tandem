@@ -2841,6 +2841,7 @@ pub struct ChannelConnectionInput {
     pub mention_only: Option<bool>,
     pub guild_id: Option<String>,
     pub channel_id: Option<String>,
+    pub security_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -2851,6 +2852,8 @@ pub struct ChannelConnectionConfigView {
     pub mention_only: Option<bool>,
     pub guild_id: Option<String>,
     pub channel_id: Option<String>,
+    pub style_profile: Option<String>,
+    pub security_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -2914,6 +2917,8 @@ fn merge_channel_views(
                 mention_only: Some(configs.telegram.mention_only),
                 guild_id: None,
                 channel_id: None,
+                style_profile: Some(configs.telegram.style_profile),
+                security_profile: trim_to_option(Some(configs.telegram.security_profile)),
             },
         },
         discord: ChannelConnectionView {
@@ -2925,6 +2930,8 @@ fn merge_channel_views(
                 mention_only: Some(configs.discord.mention_only),
                 guild_id: trim_to_option(configs.discord.guild_id),
                 channel_id: None,
+                style_profile: None,
+                security_profile: trim_to_option(Some(configs.discord.security_profile)),
             },
         },
         slack: ChannelConnectionView {
@@ -2936,6 +2943,8 @@ fn merge_channel_views(
                 mention_only: None,
                 guild_id: None,
                 channel_id: trim_to_option(configs.slack.channel_id),
+                style_profile: None,
+                security_profile: trim_to_option(Some(configs.slack.security_profile)),
             },
         },
     }
@@ -3356,10 +3365,14 @@ pub async fn set_channel_connection(
             let mention_only = input
                 .mention_only
                 .unwrap_or(existing_cfg.telegram.mention_only);
+            let security_profile = trim_to_option(input.security_profile)
+                .unwrap_or_else(|| existing_cfg.telegram.security_profile.clone());
             serde_json::json!({
                 "bot_token": token,
                 "allowed_users": allowed_users,
                 "mention_only": mention_only,
+                "style_profile": existing_cfg.telegram.style_profile,
+                "security_profile": security_profile,
             })
         }
         "discord" => {
@@ -3369,17 +3382,22 @@ pub async fn set_channel_connection(
                 .mention_only
                 .unwrap_or(existing_cfg.discord.mention_only);
             let guild_id = trim_to_option(input.guild_id).or(existing_cfg.discord.guild_id);
+            let security_profile = trim_to_option(input.security_profile)
+                .unwrap_or_else(|| existing_cfg.discord.security_profile.clone());
             serde_json::json!({
                 "bot_token": token,
                 "allowed_users": allowed_users,
                 "mention_only": mention_only,
                 "guild_id": guild_id,
+                "security_profile": security_profile,
             })
         }
         "slack" => {
             let allowed_users =
                 normalize_allowed_users(input.allowed_users, &existing_cfg.slack.allowed_users);
             let channel_id = trim_to_option(input.channel_id).or(existing_cfg.slack.channel_id);
+            let security_profile = trim_to_option(input.security_profile)
+                .unwrap_or_else(|| existing_cfg.slack.security_profile.clone());
             let channel_id = channel_id.ok_or_else(|| {
                 TandemError::InvalidConfig("Slack channel_id is required".to_string())
             })?;
@@ -3387,6 +3405,7 @@ pub async fn set_channel_connection(
                 "bot_token": token,
                 "allowed_users": allowed_users,
                 "channel_id": channel_id,
+                "security_profile": security_profile,
             })
         }
         _ => {

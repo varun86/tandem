@@ -68,6 +68,10 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
                 .and_then(|cfg| cfg.get("style_profile"))
                 .and_then(Value::as_str)
                 .unwrap_or("default"),
+            "security_profile": telegram
+                .and_then(|cfg| cfg.get("security_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or("operator"),
         },
         "discord": {
             "has_token": discord_has_token,
@@ -80,6 +84,10 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
             "guild_id": discord
                 .and_then(|cfg| cfg.get("guild_id"))
                 .and_then(Value::as_str),
+            "security_profile": discord
+                .and_then(|cfg| cfg.get("security_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or("operator"),
         },
         "slack": {
             "has_token": slack_has_token,
@@ -92,6 +100,10 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
             "channel_id": slack
                 .and_then(|cfg| cfg.get("channel_id"))
                 .and_then(Value::as_str),
+            "security_profile": slack
+                .and_then(|cfg| cfg.get("security_profile"))
+                .and_then(Value::as_str)
+                .unwrap_or("operator"),
         }
     }))
 }

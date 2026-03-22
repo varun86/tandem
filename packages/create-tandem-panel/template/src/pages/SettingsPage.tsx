@@ -177,6 +177,7 @@ type ChannelConfigRow = {
   guild_id?: string;
   channel_id?: string;
   style_profile?: string;
+  security_profile?: string;
 };
 
 type ChannelStatusRow = {
@@ -194,6 +195,7 @@ type ChannelDraft = {
   guildId: string;
   channelId: string;
   styleProfile: string;
+  securityProfile: string;
 };
 
 type ChannelToolPreferencesRow = {
@@ -419,6 +421,7 @@ function normalizeChannelDraft(
     guildId: String(row.guild_id || "").trim(),
     channelId: String(row.channel_id || "").trim(),
     styleProfile: String(row.style_profile || "default").trim() || "default",
+    securityProfile: String(row.security_profile || "operator").trim() || "operator",
   };
 }
 
@@ -1005,6 +1008,7 @@ export function SettingsPage({
       const payload: Record<string, unknown> = {
         allowed_users: parseAllowedUsers(draft.allowedUsers),
         mention_only: !!draft.mentionOnly,
+        security_profile: String(draft.securityProfile || "operator").trim() || "operator",
       };
       const token = String(draft.botToken || "").trim();
       if (token) payload.bot_token = token;
@@ -1864,6 +1868,23 @@ export function SettingsPage({
                           </div>
 
                           <div className="grid gap-3 md:grid-cols-2">
+                            <select
+                              className="tcp-input"
+                              value={draft.securityProfile}
+                              onInput={(e) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    securityProfile: (e.target as HTMLSelectElement).value,
+                                  },
+                                }))
+                              }
+                            >
+                              <option value="operator">Operator</option>
+                              <option value="trusted_team">Trusted team</option>
+                              <option value="public_demo">Public demo</option>
+                            </select>
                             {channel === "telegram" ? (
                               <input
                                 className="tcp-input"
@@ -1929,6 +1950,15 @@ export function SettingsPage({
                               Mention only
                             </label>
                           </div>
+
+                          {draft.securityProfile === "public_demo" ? (
+                            <div className="tcp-subtle text-xs">
+                              Public demo mode blocks operator commands, memory access,
+                              file/workspace access, MCP access, shell access, and tool-scope
+                              widening. `/help` still advertises those capabilities as disabled for
+                              security.
+                            </div>
+                          ) : null}
 
                           <div className="tcp-subtle text-xs">
                             Active sessions: {Number(status.active_sessions || 0)}

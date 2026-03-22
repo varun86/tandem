@@ -9,6 +9,8 @@ pub struct TelegramConfigFile {
     pub mention_only: bool,
     #[serde(default)]
     pub style_profile: tandem_channels::config::TelegramStyleProfile,
+    #[serde(default)]
+    pub security_profile: tandem_channels::config::ChannelSecurityProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +22,8 @@ pub struct DiscordConfigFile {
     pub allowed_users: Vec<String>,
     #[serde(default = "default_discord_mention_only")]
     pub mention_only: bool,
+    #[serde(default)]
+    pub security_profile: tandem_channels::config::ChannelSecurityProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +34,8 @@ pub struct SlackConfigFile {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub mention_only: bool,
+    #[serde(default)]
+    pub security_profile: tandem_channels::config::ChannelSecurityProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

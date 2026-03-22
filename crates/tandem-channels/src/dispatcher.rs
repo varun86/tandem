@@ -31,7 +31,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
-use crate::config::ChannelsConfig;
+use crate::config::{ChannelSecurityProfile, ChannelsConfig};
 use crate::discord::DiscordChannel;
 use crate::slack::SlackChannel;
 use crate::telegram::TelegramChannel;
@@ -97,6 +97,9 @@ pub struct SessionRecord {
 /// `{channel_name}:{sender_id}` → Tandem `SessionRecord`
 pub type SessionMap = Arc<Mutex<HashMap<String, SessionRecord>>>;
 type SetupClarifierMap = Arc<Mutex<HashMap<String, PendingSetupClarifier>>>;
+type ChannelSecurityMap = Arc<HashMap<String, ChannelSecurityProfile>>;
+
+const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &["websearch", "webfetch", "webfetch_html"];
 
 #[derive(Debug, Clone)]
 struct PendingSetupClarifier {
@@ -223,10 +226,6 @@ fn session_map_key(msg: &ChannelMessage) -> String {
 
 fn legacy_session_map_key(msg: &ChannelMessage) -> String {
     format!("{}:{}", msg.channel, msg.sender)
-}
-
-fn channel_scope_key(msg: &ChannelMessage) -> String {
-    format!("{}:{}", msg.channel, msg.scope.id)
 }
 
 fn session_title_prefix(msg: &ChannelMessage) -> String {
@@ -1030,35 +1029,48 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
 
     let session_map: SessionMap = Arc::new(Mutex::new(initial_map));
     let setup_clarifiers: SetupClarifierMap = Arc::new(Mutex::new(HashMap::new()));
+    let mut security_profiles = HashMap::new();
     let mut set = JoinSet::new();
 
     if let Some(tg) = config.telegram {
+        security_profiles.insert("telegram".to_string(), tg.security_profile);
         let channel = Arc::new(TelegramChannel::new(tg));
         let map = session_map.clone();
         let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
+        let profiles = Arc::new(security_profiles.clone());
+        set.spawn(supervise(
+            channel, base_url, api_token, map, clarifiers, profiles,
+        ));
         info!("tandem-channels: Telegram listener started");
     }
 
     if let Some(dc) = config.discord {
+        security_profiles.insert("discord".to_string(), dc.security_profile);
         let channel = Arc::new(DiscordChannel::new(dc));
         let map = session_map.clone();
         let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
+        let profiles = Arc::new(security_profiles.clone());
+        set.spawn(supervise(
+            channel, base_url, api_token, map, clarifiers, profiles,
+        ));
         info!("tandem-channels: Discord listener started");
     }
 
     if let Some(sl) = config.slack {
+        security_profiles.insert("slack".to_string(), sl.security_profile);
         let channel = Arc::new(SlackChannel::new(sl));
         let map = session_map.clone();
         let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
-        set.spawn(supervise(channel, base_url, api_token, map, clarifiers));
+        let profiles = Arc::new(security_profiles.clone());
+        set.spawn(supervise(
+            channel, base_url, api_token, map, clarifiers, profiles,
+        ));
         info!("tandem-channels: Slack listener started");
     }
 
@@ -1076,6 +1088,7 @@ async fn supervise(
     api_token: String,
     session_map: SessionMap,
     setup_clarifiers: SetupClarifierMap,
+    security_profiles: ChannelSecurityMap,
 ) {
     let mut backoff_secs: u64 = 1;
     loop {
@@ -1094,8 +1107,9 @@ async fn supervise(
             let tok = api_token.clone();
             let map = session_map.clone();
             let clarifiers = setup_clarifiers.clone();
+            let profiles = security_profiles.clone();
             tokio::spawn(async move {
-                process_channel_message(msg, ch, &base, &tok, &map, &clarifiers).await;
+                process_channel_message(msg, ch, &base, &tok, &map, &clarifiers, &profiles).await;
             });
         }
 
@@ -1128,11 +1142,21 @@ async fn process_channel_message(
     api_token: &str,
     session_map: &SessionMap,
     setup_clarifiers: &SetupClarifierMap,
+    security_profiles: &ChannelSecurityMap,
 ) {
+    let security_profile = channel_security_profile(&msg.channel, security_profiles);
     // --- Slash command intercept ---
     if msg.content.starts_with('/') {
         if let Some(cmd) = parse_slash_command(&msg.content) {
-            let response = handle_slash_command(cmd, &msg, base_url, api_token, session_map).await;
+            let response = handle_slash_command(
+                cmd,
+                &msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await;
             if let Err(e) = channel
                 .send(&SendMessage {
                     content: response,
@@ -1154,7 +1178,8 @@ async fn process_channel_message(
 
     if let Some(cmd) = parse_pack_builder_reply_command(&msg.content) {
         let map_key = session_map_key(&msg);
-        let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
+        let session_id =
+            get_or_create_session(&msg, base_url, api_token, session_map, security_profile).await;
         let session_id = match session_id {
             Some(id) => id,
             None => {
@@ -1263,7 +1288,8 @@ async fn process_channel_message(
             SetupIntentKind::AutomationCreate => {
                 let map_key = session_map_key(&msg);
                 let session_id =
-                    get_or_create_session(&msg, base_url, api_token, session_map).await;
+                    get_or_create_session(&msg, base_url, api_token, session_map, security_profile)
+                        .await;
                 let session_id = match session_id {
                     Some(id) => id,
                     None => {
@@ -1331,7 +1357,8 @@ async fn process_channel_message(
     }
 
     let map_key = session_map_key(&msg);
-    let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
+    let session_id =
+        get_or_create_session(&msg, base_url, api_token, session_map, security_profile).await;
     let session_id = match session_id {
         Some(id) => id,
         None => {
@@ -1391,7 +1418,7 @@ async fn process_channel_message(
     let route = route_agent_for_channel_message(effective_text);
     let tool_prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
     let effective_allowlist =
-        build_channel_tool_allowlist(route.tool_allowlist.as_ref(), &tool_prefs);
+        build_channel_tool_allowlist(route.tool_allowlist.as_ref(), &tool_prefs, security_profile);
 
     let response = run_in_session(
         &session_id,
@@ -1888,7 +1915,33 @@ fn route_agent_for_channel_message(content: &str) -> AgentRouteDecision {
 fn build_channel_tool_allowlist(
     route_allowlist: Option<&Vec<String>>,
     tool_prefs: &ChannelToolPreferences,
+    security_profile: ChannelSecurityProfile,
 ) -> Option<Vec<String>> {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let mut allowed = PUBLIC_DEMO_ALLOWED_TOOLS
+            .iter()
+            .map(|tool| tool.to_string())
+            .collect::<Vec<_>>();
+        if let Some(route_override) = route_allowlist {
+            allowed.retain(|tool| route_override.iter().any(|candidate| candidate == tool));
+        }
+        allowed.retain(|tool| {
+            !tool_prefs
+                .disabled_tools
+                .iter()
+                .any(|disabled| disabled == tool)
+        });
+        if !tool_prefs.enabled_tools.is_empty() {
+            allowed.retain(|tool| {
+                tool_prefs
+                    .enabled_tools
+                    .iter()
+                    .any(|enabled| enabled == tool)
+            });
+        }
+        return Some(allowed);
+    }
+
     let pack_builder_override = route_allowlist;
     if let Some(pb) = pack_builder_override {
         return Some(pb.clone());
@@ -2400,47 +2453,72 @@ fn is_image_url(url: &str) -> bool {
         .any(|ext| lower.ends_with(ext))
 }
 
+fn channel_security_profile(
+    channel: &str,
+    security_profiles: &ChannelSecurityMap,
+) -> ChannelSecurityProfile {
+    security_profiles
+        .get(channel)
+        .copied()
+        .unwrap_or(ChannelSecurityProfile::Operator)
+}
+
 // ---------------------------------------------------------------------------
 // Session management helpers
 // ---------------------------------------------------------------------------
 
-fn build_channel_session_create_body(title: &str) -> serde_json::Value {
-    serde_json::json!({
+fn build_channel_session_permissions(
+    security_profile: ChannelSecurityProfile,
+) -> Vec<serde_json::Value> {
+    match security_profile {
+        ChannelSecurityProfile::PublicDemo => vec![
+            serde_json::json!({ "permission": "websearch", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "webfetch", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "webfetch_html", "pattern": "*", "action": "allow" }),
+        ],
+        _ => vec![
+            serde_json::json!({ "permission": "ls", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "list", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "glob", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "search", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "grep", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "codesearch", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "read", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "memory_search", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "memory_store", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "memory_list", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "websearch", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "webfetch", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "webfetch_html", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_status", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_open", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_navigate", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_snapshot", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_click", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_type", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_press", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_wait", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_extract", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_screenshot", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "browser_close", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "mcp*", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "bash", "pattern": "*", "action": "allow" }),
+        ],
+    }
+}
+
+fn build_channel_session_create_body(
+    title: &str,
+    security_profile: ChannelSecurityProfile,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
         "title": title,
-        "directory": ".",
-        "permission": [
-            { "permission": "ls", "pattern": "*", "action": "allow" },
-            { "permission": "list", "pattern": "*", "action": "allow" },
-            { "permission": "glob", "pattern": "*", "action": "allow" },
-            { "permission": "search", "pattern": "*", "action": "allow" },
-            { "permission": "grep", "pattern": "*", "action": "allow" },
-            { "permission": "codesearch", "pattern": "*", "action": "allow" },
-            { "permission": "read", "pattern": "*", "action": "allow" },
-            { "permission": "memory_search", "pattern": "*", "action": "allow" },
-            { "permission": "memory_store", "pattern": "*", "action": "allow" },
-            { "permission": "memory_list", "pattern": "*", "action": "allow" },
-            { "permission": "websearch", "pattern": "*", "action": "allow" },
-            { "permission": "webfetch", "pattern": "*", "action": "allow" },
-            { "permission": "webfetch_html", "pattern": "*", "action": "allow" },
-            // Channel sessions do not currently expose an in-app approval queue, so
-            // browser tools must be explicitly pre-approved here to avoid timing
-            // out on permission requests that the operator cannot answer from the
-            // channel surfaces.
-            { "permission": "browser_status", "pattern": "*", "action": "allow" },
-            { "permission": "browser_open", "pattern": "*", "action": "allow" },
-            { "permission": "browser_navigate", "pattern": "*", "action": "allow" },
-            { "permission": "browser_snapshot", "pattern": "*", "action": "allow" },
-            { "permission": "browser_click", "pattern": "*", "action": "allow" },
-            { "permission": "browser_type", "pattern": "*", "action": "allow" },
-            { "permission": "browser_press", "pattern": "*", "action": "allow" },
-            { "permission": "browser_wait", "pattern": "*", "action": "allow" },
-            { "permission": "browser_extract", "pattern": "*", "action": "allow" },
-            { "permission": "browser_screenshot", "pattern": "*", "action": "allow" },
-            { "permission": "browser_close", "pattern": "*", "action": "allow" },
-            { "permission": "mcp*", "pattern": "*", "action": "allow" },
-            { "permission": "bash", "pattern": "*", "action": "allow" }
-        ]
-    })
+        "permission": build_channel_session_permissions(security_profile),
+    });
+    if security_profile != ChannelSecurityProfile::PublicDemo {
+        payload["directory"] = serde_json::json!(".");
+    }
+    payload
 }
 
 /// Look up an existing session or create a new one via `POST /session`.
@@ -2449,6 +2527,7 @@ async fn get_or_create_session(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
 ) -> Option<String> {
     let map_key = session_map_key(msg);
     let legacy_key = legacy_session_map_key(msg);
@@ -2480,7 +2559,7 @@ async fn get_or_create_session(
 
     let client = reqwest::Client::new();
     let title = session_title_prefix(msg);
-    let body = build_channel_session_create_body(&title);
+    let body = build_channel_session_create_body(&title, security_profile);
 
     let resp = add_auth(client.post(format!("{base_url}/session")), api_token)
         .json(&body)
@@ -2937,12 +3016,27 @@ async fn handle_slash_command(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
+    if let Some(reason) = blocked_command_reason(&cmd, security_profile) {
+        return format!(
+            "🔒 This command is disabled in this channel for security.\n{}\nUse `/help` to see which Tandem capabilities are available here versus disabled for this public integration.",
+            reason
+        );
+    }
     match cmd {
-        SlashCommand::Help { topic } => help_text(topic.as_deref()),
+        SlashCommand::Help { topic } => help_text(topic.as_deref(), security_profile),
         SlashCommand::ListSessions => list_sessions_text(msg, base_url, api_token).await,
         SlashCommand::New { name } => {
-            new_session_text(name, msg, base_url, api_token, session_map).await
+            new_session_text(
+                name,
+                msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await
         }
         SlashCommand::Resume { query } => {
             resume_session_text(query, msg, base_url, api_token, session_map).await
@@ -3010,27 +3104,115 @@ async fn handle_slash_command(
     }
 }
 
+fn blocked_command_reason(
+    cmd: &SlashCommand,
+    security_profile: ChannelSecurityProfile,
+) -> Option<&'static str> {
+    if security_profile != ChannelSecurityProfile::PublicDemo {
+        return None;
+    }
+    match cmd {
+        SlashCommand::Providers
+        | SlashCommand::Models { .. }
+        | SlashCommand::Model { .. }
+        | SlashCommand::Schedule { .. }
+        | SlashCommand::Automations { .. }
+        | SlashCommand::Runs { .. }
+        | SlashCommand::Workspace { .. }
+        | SlashCommand::Memory { .. }
+        | SlashCommand::Mcp { .. }
+        | SlashCommand::Packs { .. }
+        | SlashCommand::Config { .. }
+        | SlashCommand::Tools { .. }
+        | SlashCommand::Approve { .. }
+        | SlashCommand::Deny { .. }
+        | SlashCommand::Answer { .. } => Some(
+            "Public demo channels do not expose operator controls, workspace access, MCP access, or runtime reconfiguration.",
+        ),
+        SlashCommand::Todos | SlashCommand::Requests => Some(
+            "Public demo channels keep internal execution and approval queues hidden to avoid leaking runtime details.",
+        ),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Individual slash command implementations
 // ---------------------------------------------------------------------------
 
-fn help_text(topic: Option<&str>) -> String {
+fn help_text(topic: Option<&str>, security_profile: ChannelSecurityProfile) -> String {
     match topic.map(|value| value.trim().to_ascii_lowercase()) {
         Some(topic) if topic == "schedule" || topic == "workflow" || topic == "automation" => {
-            schedule_help_text()
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "schedule",
+                    "Workflow planning and automation setup are disabled in this public channel for security.",
+                )
+            } else {
+                schedule_help_text()
+            }
         }
-        Some(topic) if topic == "automations" => automations_help_text(),
-        Some(topic) if topic == "runs" => runs_help_text(),
-        Some(topic) if topic == "memory" => memory_help_text(),
-        Some(topic) if topic == "workspace" => workspace_help_text(),
-        Some(topic) if topic == "tools" => tools_help_text(),
-        Some(topic) if topic == "mcp" => mcp_help_text(),
-        Some(topic) if topic == "packs" => packs_help_text(),
-        Some(topic) if topic == "config" => config_help_text(),
+        Some(topic) if topic == "automations" => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "automations",
+                    "Automation control commands are disabled in this public channel for security.",
+                )
+            } else {
+                automations_help_text()
+            }
+        }
+        Some(topic) if topic == "runs" => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "runs",
+                    "Run control commands are disabled in this public channel for security.",
+                )
+            } else {
+                runs_help_text()
+            }
+        }
+        Some(topic) if topic == "memory" => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "memory",
+                    "Memory commands are disabled in this public channel until public memory is fully quarantined from trusted and operator memory scopes.",
+                )
+            } else {
+                memory_help_text()
+            }
+        }
+        Some(topic) if topic == "workspace" => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "workspace",
+                    "Workspace and file access commands are disabled in this public channel for security.",
+                )
+            } else {
+                workspace_help_text()
+            }
+        }
+        Some(topic) if topic == "tools" => tools_help_text(security_profile),
+        Some(topic) if topic == "mcp" => mcp_help_text(security_profile),
+        Some(topic) if topic == "packs" => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                disabled_help_text(
+                    "packs",
+                    "Pack install and inspection commands are disabled in this public channel for security.",
+                )
+            } else {
+                packs_help_text()
+            }
+        }
+        Some(topic) if topic == "config" => config_help_text(security_profile),
         Some(topic) => format!(
             "⚠️ Unknown help topic `{topic}`.\nUse `/help` to list command groups or `/help automations`, `/help memory`, `/help workspace`, `/help mcp`, `/help packs`, `/help config`, or `/help schedule`."
         ),
-        None => "🤖 *Tandem Commands*\n\
+        None => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                public_demo_help_text()
+            } else {
+                "🤖 *Tandem Commands*\n\
 Core session commands:\n\
 /new [name] — start a fresh session\n\
 /sessions — list your recent sessions\n\
@@ -3074,8 +3256,42 @@ Help:\n\
 /help packs — pack command guide\n\
 /help config — config command guide\n\
 /help schedule — explain workflow-planning commands"
-            .to_string(),
+                    .to_string()
+            }
+        }
     }
+}
+
+fn disabled_help_text(topic: &str, reason: &str) -> String {
+    format!(
+        "🔒 *{topic} commands are disabled in this channel*\n{reason}\n\nThis Tandem integration supports those capabilities in trusted/operator channels, but they are intentionally blocked here."
+    )
+}
+
+fn public_demo_help_text() -> String {
+    "🤖 *Tandem Public Demo Commands*\n\
+Available here:\n\
+/new [name] — start a fresh session\n\
+/sessions — list your recent sessions\n\
+/resume <id or name> — switch to a previous session\n\
+/rename <name> — rename the current session\n\
+/status — show current session info\n\
+/run — show active run state\n\
+/cancel — cancel the active run\n\
+/help — show this message\n\
+\n\
+Disabled in this public channel for security:\n\
+/providers, /models, /model — runtime and model reconfiguration\n\
+/memory — memory access is disabled until public memory is quarantined\n\
+/workspace — file and repo access\n\
+/mcp — external connector access\n\
+/tools — tool-scope override controls\n\
+/config — runtime configuration access\n\
+/schedule, /automations, /runs — operator workflow control\n\
+/packs — pack install and inspection controls\n\
+\n\
+These are real Tandem capabilities, but this integration is intentionally hardened so you can explore it safely in public."
+        .to_string()
 }
 
 fn schedule_help_text() -> String {
@@ -3139,7 +3355,13 @@ fn workspace_help_text() -> String {
         .to_string()
 }
 
-fn tools_help_text() -> String {
+fn tools_help_text(security_profile: ChannelSecurityProfile) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        return disabled_help_text(
+            "tools",
+            "Tool-scope override commands are disabled because this channel uses an enforced public security profile.",
+        );
+    }
     "🛠 *Tool Scope Commands*\n\
 /tools — show this help\n\
 /tools list — list available tools and their current state\n\
@@ -3152,7 +3374,13 @@ Use `/mcp` commands to manage MCP server access."
         .to_string()
 }
 
-fn mcp_help_text() -> String {
+fn mcp_help_text(security_profile: ChannelSecurityProfile) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        return disabled_help_text(
+            "mcp",
+            "MCP connector commands are disabled in this public channel to avoid exposing external integrations.",
+        );
+    }
     "🔌 *MCP Commands*\n\
 /mcp — list MCP servers\n\
 /mcp tools [server] — list discovered tools\n\
@@ -3176,7 +3404,13 @@ fn packs_help_text() -> String {
         .to_string()
 }
 
-fn config_help_text() -> String {
+fn config_help_text(security_profile: ChannelSecurityProfile) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        return disabled_help_text(
+            "config",
+            "Runtime configuration and model-management commands are disabled in this public channel for security.",
+        );
+    }
     "🛠️ *Config Commands*\n\
 /config — show a runtime config summary\n\
 /config providers — show provider summary\n\
@@ -3521,7 +3755,7 @@ async fn mcp_command_text(
     api_token: &str,
 ) -> String {
     match action {
-        McpCommand::Help => mcp_help_text(),
+        McpCommand::Help => mcp_help_text(ChannelSecurityProfile::Operator),
         McpCommand::List => mcp_list_text(base_url, api_token).await,
         McpCommand::Tools { server } => mcp_tools_text(server, base_url, api_token).await,
         McpCommand::Resources => mcp_resources_text(base_url, api_token).await,
@@ -3564,7 +3798,7 @@ async fn packs_command_text(action: PacksCommand, base_url: &str, api_token: &st
 
 async fn config_command_text(action: ConfigCommand, base_url: &str, api_token: &str) -> String {
     match action {
-        ConfigCommand::Help => config_help_text(),
+        ConfigCommand::Help => config_help_text(ChannelSecurityProfile::Operator),
         ConfigCommand::Show => config_show_text(base_url, api_token).await,
         ConfigCommand::Providers => providers_text(base_url, api_token).await,
         ConfigCommand::Channels => config_channels_text(base_url, api_token).await,
@@ -4192,7 +4426,7 @@ async fn tools_command_text(
     api_token: &str,
 ) -> String {
     match action {
-        ToolsCommand::Help => tools_help_text(),
+        ToolsCommand::Help => tools_help_text(ChannelSecurityProfile::Operator),
         ToolsCommand::List => {
             let prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
             let enabled: std::collections::HashSet<String> =
@@ -4940,11 +5174,12 @@ async fn new_session_text(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
     let map_key = session_map_key(msg);
     let display_name = name.clone().unwrap_or_else(|| session_title_prefix(msg));
     let client = reqwest::Client::new();
-    let body = build_channel_session_create_body(&display_name);
+    let body = build_channel_session_create_body(&display_name, security_profile);
 
     let Ok(resp) = add_auth(client.post(format!("{base_url}/session")), api_token)
         .json(&body)
@@ -5900,7 +6135,7 @@ mod tests {
 
     #[test]
     fn help_text_lists_schedule_topic() {
-        let help = help_text(None);
+        let help = help_text(None, ChannelSecurityProfile::Operator);
         assert!(help.contains("/schedule help"));
         assert!(help.contains("/help schedule"));
         assert!(help.contains("/automations"));
@@ -5909,19 +6144,29 @@ mod tests {
 
     #[test]
     fn schedule_help_text_lists_subcommands() {
-        let help = help_text(Some("schedule"));
+        let help = help_text(Some("schedule"), ChannelSecurityProfile::Operator);
         assert!(help.contains("/schedule plan <prompt>"));
         assert!(help.contains("/schedule apply <plan_id>"));
     }
 
     #[test]
     fn topic_help_for_new_namespaces() {
-        assert!(help_text(Some("automations")).contains("/automations run <id>"));
-        assert!(help_text(Some("memory")).contains("/memory save <text>"));
-        assert!(help_text(Some("workspace")).contains("/workspace branch"));
-        assert!(help_text(Some("mcp")).contains("/mcp tools [server]"));
-        assert!(help_text(Some("packs")).contains("/packs install <path-or-url>"));
-        assert!(help_text(Some("config")).contains("/config set-model <model_id>"));
+        assert!(
+            help_text(Some("automations"), ChannelSecurityProfile::Operator)
+                .contains("/automations run <id>")
+        );
+        assert!(help_text(Some("memory"), ChannelSecurityProfile::Operator)
+            .contains("/memory save <text>"));
+        assert!(
+            help_text(Some("workspace"), ChannelSecurityProfile::Operator)
+                .contains("/workspace branch")
+        );
+        assert!(help_text(Some("mcp"), ChannelSecurityProfile::Operator)
+            .contains("/mcp tools [server]"));
+        assert!(help_text(Some("packs"), ChannelSecurityProfile::Operator)
+            .contains("/packs install <path-or-url>"));
+        assert!(help_text(Some("config"), ChannelSecurityProfile::Operator)
+            .contains("/config set-model <model_id>"));
     }
 
     #[test]
@@ -6021,7 +6266,8 @@ mod tests {
 
     #[test]
     fn channel_session_create_body_allows_memory_and_browser_tools() {
-        let body = build_channel_session_create_body("Channel Session");
+        let body =
+            build_channel_session_create_body("Channel Session", ChannelSecurityProfile::Operator);
         let permissions = body
             .get("permission")
             .and_then(|value| value.as_array())
@@ -6057,6 +6303,68 @@ mod tests {
                     && value.get("action").and_then(|row| row.as_str()) == Some("allow")
             }));
         }
+    }
+
+    #[test]
+    fn public_demo_session_create_body_disables_workspace_and_shell_access() {
+        let body = build_channel_session_create_body(
+            "Public Demo Session",
+            ChannelSecurityProfile::PublicDemo,
+        );
+        let permissions = body
+            .get("permission")
+            .and_then(|value| value.as_array())
+            .expect("permission array");
+
+        assert!(body.get("directory").is_none());
+        assert!(permissions.iter().any(|value| {
+            value.get("permission").and_then(|row| row.as_str()) == Some("websearch")
+                && value.get("action").and_then(|row| row.as_str()) == Some("allow")
+        }));
+        assert!(!permissions.iter().any(|value| {
+            matches!(
+                value.get("permission").and_then(|row| row.as_str()),
+                Some(
+                    "read"
+                        | "bash"
+                        | "browser_open"
+                        | "mcp*"
+                        | "memory_search"
+                        | "memory_store"
+                        | "memory_list"
+                )
+            )
+        }));
+    }
+
+    #[test]
+    fn public_demo_help_lists_disabled_commands_for_security() {
+        let help = help_text(None, ChannelSecurityProfile::PublicDemo);
+        assert!(help.contains("Disabled In This Public Channel For Security"));
+        assert!(help.contains("/workspace"));
+        assert!(help.contains("/memory"));
+        assert!(help.contains("real Tandem capabilities"));
+    }
+
+    #[test]
+    fn public_demo_memory_help_is_disabled() {
+        let help = help_text(Some("memory"), ChannelSecurityProfile::PublicDemo);
+        assert!(help.contains("memory commands are disabled"));
+        assert!(help.contains("quarantined"));
+    }
+
+    #[test]
+    fn public_demo_tool_allowlist_cannot_be_widened_by_route_override() {
+        let prefs = ChannelToolPreferences::default();
+        let route_allowlist = vec!["pack_builder".to_string(), "websearch".to_string()];
+        let result = build_channel_tool_allowlist(
+            Some(&route_allowlist),
+            &prefs,
+            ChannelSecurityProfile::PublicDemo,
+        )
+        .expect("public demo allowlist");
+
+        assert_eq!(result, vec!["websearch".to_string()]);
     }
 
     #[tokio::test]

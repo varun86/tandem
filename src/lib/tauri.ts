@@ -846,6 +846,8 @@ export interface ChannelConnectionConfigView {
   mention_only?: boolean | null;
   guild_id?: string | null;
   channel_id?: string | null;
+  style_profile?: string | null;
+  security_profile?: string | null;
 }
 
 export interface ChannelConnectionView {
@@ -865,6 +867,7 @@ export interface ChannelConnectionInput {
   mention_only?: boolean;
   guild_id?: string | null;
   channel_id?: string | null;
+  security_profile?: string | null;
 }
 
 export interface ChannelVerifyResult {

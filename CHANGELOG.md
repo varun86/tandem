@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added desktop Settings controls for channel tool scope so operators can manage built-ins and MCP servers without relying only on slash commands
   - added control-panel and panel-template Settings controls for the same per-channel tool scope workflow
   - added TypeScript client and desktop Tauri bindings for reading and updating channel tool preferences
+- **Public channel security profiles for channel integrations**:
+  - added per-channel `security_profile` support across Telegram, Discord, and Slack config, API, desktop settings, and panel settings
+  - added a hardened `public_demo` mode that blocks workspace/file access, shell access, MCP access, model/config/operator commands, and tool-scope widening for public-facing channels
+  - updated `/help` in `public_demo` channels so disabled commands are still shown in a dedicated security section, making Tandem’s broader capabilities visible without exposing them
+  - kept `public_demo` web-only for v0.4.10 while public memory access remains disabled pending a proper quarantine path
 
 ### Fixed
 

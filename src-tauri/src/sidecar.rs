@@ -976,6 +976,10 @@ pub struct TelegramChannelConfigView {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub mention_only: bool,
+    #[serde(default)]
+    pub style_profile: String,
+    #[serde(default)]
+    pub security_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -988,6 +992,8 @@ pub struct DiscordChannelConfigView {
     pub mention_only: bool,
     #[serde(default)]
     pub guild_id: Option<String>,
+    #[serde(default)]
+    pub security_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -998,6 +1004,8 @@ pub struct SlackChannelConfigView {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub channel_id: Option<String>,
+    #[serde(default)]
+    pub security_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

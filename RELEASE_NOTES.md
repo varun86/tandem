@@ -19,6 +19,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - added TypeScript client and desktop Tauri bindings for channel tool preference reads and updates
   - fixed the desktop sidecar integration so the new channel tool preference endpoints compile cleanly
 
+- Public channel security profiles for Telegram, Discord, and Slack
+  - added per-channel `security_profile` support across channel config, server/API responses, desktop settings, and panel settings
+  - added a hardened `public_demo` profile for public-facing integrations that blocks file/workspace access, shell access, MCP access, model/config/operator commands, and tool-scope widening
+  - `/help` in `public_demo` channels now includes a disabled-for-security section so users can see Tandem supports richer capabilities in trusted channels
+  - kept `public_demo` web-only for v0.4.10 while memory access stays disabled until public memory can be safely quarantined
+
 - Control-panel package install fix
   - the control-panel package now ships the runtime `lib/` and `server/` files its CLI depends on, avoiding incomplete installs
 

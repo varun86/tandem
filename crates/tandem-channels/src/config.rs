@@ -20,6 +20,15 @@ pub struct ChannelsConfig {
     pub tool_policy: ChannelToolPolicy,
 }
 
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSecurityProfile {
+    #[default]
+    Operator,
+    TrustedTeam,
+    PublicDemo,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelToolPolicy {
@@ -38,6 +47,8 @@ pub struct TelegramConfig {
     pub mention_only: bool,
     /// Presentation preset for outgoing Telegram messages.
     pub style_profile: TelegramStyleProfile,
+    /// Security profile controlling what public channel sessions can do.
+    pub security_profile: ChannelSecurityProfile,
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -59,6 +70,8 @@ pub struct DiscordConfig {
     pub allowed_users: Vec<String>,
     /// Only respond to messages that @-mention the bot.
     pub mention_only: bool,
+    /// Security profile controlling what public channel sessions can do.
+    pub security_profile: ChannelSecurityProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +83,8 @@ pub struct SlackConfig {
     pub allowed_users: Vec<String>,
     /// Only respond to messages that @-mention the bot.
     pub mention_only: bool,
+    /// Security profile controlling what public channel sessions can do.
+    pub security_profile: ChannelSecurityProfile,
 }
 
 /// Parse a comma-separated allowed_users string into a Vec.
@@ -146,11 +161,17 @@ impl ChannelsConfig {
                 _ => TelegramStyleProfile::Default,
             })
             .unwrap_or_default();
+        let security_profile = parse_channel_security_profile_env(
+            std::env::var("TANDEM_TELEGRAM_SECURITY_PROFILE")
+                .ok()
+                .as_deref(),
+        );
         Some(TelegramConfig {
             bot_token,
             allowed_users,
             mention_only,
             style_profile,
+            security_profile,
         })
     }
 
@@ -166,11 +187,17 @@ impl ChannelsConfig {
         let mention_only = std::env::var("TANDEM_DISCORD_MENTION_ONLY")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true); // default true for Discord — avoids bots fighting each other
+        let security_profile = parse_channel_security_profile_env(
+            std::env::var("TANDEM_DISCORD_SECURITY_PROFILE")
+                .ok()
+                .as_deref(),
+        );
         Some(DiscordConfig {
             bot_token,
             guild_id,
             allowed_users,
             mention_only,
+            security_profile,
         })
     }
 
@@ -189,12 +216,30 @@ impl ChannelsConfig {
         let mention_only = std::env::var("TANDEM_SLACK_MENTION_ONLY")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
+        let security_profile = parse_channel_security_profile_env(
+            std::env::var("TANDEM_SLACK_SECURITY_PROFILE")
+                .ok()
+                .as_deref(),
+        );
         Some(SlackConfig {
             bot_token,
             channel_id,
             allowed_users,
             mention_only,
+            security_profile,
         })
+    }
+}
+
+fn parse_channel_security_profile_env(raw: Option<&str>) -> ChannelSecurityProfile {
+    match raw.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "trusted_team" || value == "trusted-team" => {
+            ChannelSecurityProfile::TrustedTeam
+        }
+        Some(value) if value == "public_demo" || value == "public-demo" => {
+            ChannelSecurityProfile::PublicDemo
+        }
+        _ => ChannelSecurityProfile::Operator,
     }
 }
 

@@ -30,6 +30,7 @@ type ChannelDraft = {
   mentionOnly: boolean;
   guildId: string;
   channelId: string;
+  securityProfile: string;
 };
 
 type ChannelDrafts = Record<ChannelName, ChannelDraft>;
@@ -124,6 +125,7 @@ function draftFromConnections(connections: ChannelConnectionsView): ChannelDraft
       mentionOnly: !!connections.telegram.config.mention_only,
       guildId: "",
       channelId: "",
+      securityProfile: connections.telegram.config.security_profile ?? "operator",
     },
     discord: {
       token: "",
@@ -131,6 +133,7 @@ function draftFromConnections(connections: ChannelConnectionsView): ChannelDraft
       mentionOnly: connections.discord.config.mention_only ?? true,
       guildId: connections.discord.config.guild_id ?? "",
       channelId: "",
+      securityProfile: connections.discord.config.security_profile ?? "operator",
     },
     slack: {
       token: "",
@@ -138,15 +141,37 @@ function draftFromConnections(connections: ChannelConnectionsView): ChannelDraft
       mentionOnly: false,
       guildId: "",
       channelId: connections.slack.config.channel_id ?? "",
+      securityProfile: connections.slack.config.security_profile ?? "operator",
     },
   };
 }
 
 function defaultDrafts(): ChannelDrafts {
   return {
-    telegram: { token: "", allowedUsers: "*", mentionOnly: false, guildId: "", channelId: "" },
-    discord: { token: "", allowedUsers: "*", mentionOnly: true, guildId: "", channelId: "" },
-    slack: { token: "", allowedUsers: "*", mentionOnly: false, guildId: "", channelId: "" },
+    telegram: {
+      token: "",
+      allowedUsers: "*",
+      mentionOnly: false,
+      guildId: "",
+      channelId: "",
+      securityProfile: "operator",
+    },
+    discord: {
+      token: "",
+      allowedUsers: "*",
+      mentionOnly: true,
+      guildId: "",
+      channelId: "",
+      securityProfile: "operator",
+    },
+    slack: {
+      token: "",
+      allowedUsers: "*",
+      mentionOnly: false,
+      guildId: "",
+      channelId: "",
+      securityProfile: "operator",
+    },
   };
 }
 
@@ -303,6 +328,7 @@ export function ConnectionsSettings() {
         mention_only: channel === "slack" ? undefined : draft.mentionOnly,
         guild_id: channel === "discord" ? draft.guildId.trim() || null : undefined,
         channel_id: channel === "slack" ? draft.channelId.trim() || null : undefined,
+        security_profile: draft.securityProfile.trim() || undefined,
       };
     },
     [drafts]
@@ -708,6 +734,28 @@ export function ConnectionsSettings() {
                   value={draft.allowedUsers}
                   onChange={(event) => updateDraft(channel, { allowedUsers: event.target.value })}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-text-muted">Security profile</label>
+                <select
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={draft.securityProfile}
+                  onChange={(event) =>
+                    updateDraft(channel, { securityProfile: event.target.value })
+                  }
+                >
+                  <option value="operator">Operator</option>
+                  <option value="trusted_team">Trusted team</option>
+                  <option value="public_demo">Public demo</option>
+                </select>
+                {draft.securityProfile === "public_demo" ? (
+                  <p className="text-xs text-warning">
+                    Public demo mode disables operator commands, memory access, workspace access,
+                    MCP, file tools, and shell access. `/help` will still show those capabilities as
+                    disabled for security.
+                  </p>
+                ) : null}
               </div>
 
               {channel === "discord" && (
