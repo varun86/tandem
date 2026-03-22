@@ -20,6 +20,16 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - fixed the desktop sidecar/orchestrator follow-ups required by the new channel session `project_id` contract
   - updated docs parity coverage for the new `memory_delete` tool
 
+## v0.4.12 (Released 2026-03-22)
+
+- Custom provider support in the `tandem-engine` CLI is now practical for OpenAI-compatible endpoints
+  - `run`, `serve`, and `parallel` now accept custom provider IDs instead of rejecting everything outside the built-in provider catalog
+  - this unblocks engine-config-driven custom providers from being selected directly in headless/CLI workflows
+
+- Explicit OpenAI-compatible base URLs are no longer stomped by env auth bootstrap
+  - if a provider already has a configured `url`, setting an API key env var no longer rewrites that provider back to its built-in default endpoint
+  - fixes headless cases where custom endpoints like MiniMax could be silently redirected back to OpenAI when `OPENAI_API_KEY` was present
+
 ## v0.4.10 (Released 2026-03-21)
 
 - Initial Coding Workflows view in the control panel

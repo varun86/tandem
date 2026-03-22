@@ -860,14 +860,7 @@ fn normalize_and_validate_provider(provider: Option<String>) -> anyhow::Result<O
             SUPPORTED_PROVIDER_IDS.join(", ")
         );
     }
-    if SUPPORTED_PROVIDER_IDS.contains(&normalized.as_str()) {
-        return Ok(Some(normalized));
-    }
-    anyhow::bail!(
-        "unsupported provider `{}`. supported providers: {}",
-        provider,
-        SUPPORTED_PROVIDER_IDS.join(", ")
-    );
+    Ok(Some(normalized))
 }
 
 fn resolve_state_dir(flag: Option<String>) -> PathBuf {
@@ -1639,20 +1632,31 @@ mod tests {
     }
 
     #[test]
-    fn normalize_and_validate_provider_rejects_unknown_value() {
-        let err = normalize_and_validate_provider(Some("openruter".to_string())).unwrap_err();
-        assert!(err.to_string().contains("unsupported provider `openruter`"));
+    fn normalize_and_validate_provider_accepts_custom_values() {
+        let provider =
+            normalize_and_validate_provider(Some(" MiniMax ".to_string())).expect("provider");
+        assert_eq!(provider.as_deref(), Some("minimax"));
     }
 
     #[test]
-    fn build_cli_overrides_rejects_unknown_provider() {
-        let err = build_cli_overrides(
+    fn build_cli_overrides_accepts_custom_provider() {
+        let overrides = build_cli_overrides(
             Some("sk-test".to_string()),
-            Some("openruter".to_string()),
-            Some("x".to_string()),
+            Some("minimax".to_string()),
+            Some("MiniMax-M2".to_string()),
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("unsupported provider `openruter`"));
+        .expect("overrides")
+        .expect("some");
+
+        assert_eq!(overrides["default_provider"], "minimax");
+        assert_eq!(
+            overrides["providers"]["minimax"]["api_key"],
+            json!("sk-test")
+        );
+        assert_eq!(
+            overrides["providers"]["minimax"]["default_model"],
+            json!("MiniMax-M2")
+        );
     }
 
     #[test]

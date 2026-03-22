@@ -639,83 +639,16 @@ fn env_layer() -> Value {
         }
     }
 
-    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-        deep_merge(
-            &mut root,
-            &json!({
-                "providers": {
-                    "openai": {
-                        "api_key": api_key,
-                        "url": "https://api.openai.com/v1",
-                        "default_model": "gpt-5.2"
-                    }
-                }
-            }),
-        );
-    }
-    add_openai_env(
-        &mut root,
-        "openrouter",
-        "OPENROUTER_API_KEY",
-        "https://openrouter.ai/api/v1",
-        "openai/gpt-4o-mini",
-    );
-    add_openai_env(
-        &mut root,
-        "groq",
-        "GROQ_API_KEY",
-        "https://api.groq.com/openai/v1",
-        "llama-3.1-8b-instant",
-    );
-    add_openai_env(
-        &mut root,
-        "mistral",
-        "MISTRAL_API_KEY",
-        "https://api.mistral.ai/v1",
-        "mistral-small-latest",
-    );
-    add_openai_env(
-        &mut root,
-        "together",
-        "TOGETHER_API_KEY",
-        "https://api.together.xyz/v1",
-        "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-    );
-    add_openai_env(
-        &mut root,
-        "azure",
-        "AZURE_OPENAI_API_KEY",
-        "https://example.openai.azure.com/openai/deployments/default",
-        "gpt-4o-mini",
-    );
-    add_openai_env(
-        &mut root,
-        "vertex",
-        "VERTEX_API_KEY",
-        "https://aiplatform.googleapis.com/v1",
-        "gemini-1.5-flash",
-    );
-    add_openai_env(
-        &mut root,
-        "bedrock",
-        "BEDROCK_API_KEY",
-        "https://bedrock-runtime.us-east-1.amazonaws.com",
-        "anthropic.claude-3-5-sonnet-20240620-v1:0",
-    );
-    add_openai_env(
-        &mut root,
-        "copilot",
-        "GITHUB_TOKEN",
-        "https://api.githubcopilot.com",
-        "gpt-4o-mini",
-    );
-    add_openai_env(
-        &mut root,
-        "cohere",
-        "COHERE_API_KEY",
-        "https://api.cohere.com/v2",
-        "command-r-plus",
-    );
+    add_openai_env(&mut root, "openai", "OPENAI_API_KEY");
+    add_openai_env(&mut root, "openrouter", "OPENROUTER_API_KEY");
+    add_openai_env(&mut root, "groq", "GROQ_API_KEY");
+    add_openai_env(&mut root, "mistral", "MISTRAL_API_KEY");
+    add_openai_env(&mut root, "together", "TOGETHER_API_KEY");
+    add_openai_env(&mut root, "azure", "AZURE_OPENAI_API_KEY");
+    add_openai_env(&mut root, "vertex", "VERTEX_API_KEY");
+    add_openai_env(&mut root, "bedrock", "BEDROCK_API_KEY");
+    add_openai_env(&mut root, "copilot", "GITHUB_TOKEN");
+    add_openai_env(&mut root, "cohere", "COHERE_API_KEY");
     if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
         deep_merge(
             &mut root,
@@ -790,7 +723,7 @@ fn first_nonempty_env(keys: &[String]) -> Option<String> {
     })
 }
 
-fn add_openai_env(root: &mut Value, provider: &str, key_env: &str, default_url: &str, model: &str) {
+fn add_openai_env(root: &mut Value, provider: &str, key_env: &str) {
     let Ok(api_key) = std::env::var(key_env) else {
         return;
     };
@@ -802,7 +735,6 @@ fn add_openai_env(root: &mut Value, provider: &str, key_env: &str, default_url: 
 
     let mut provider_cfg = json!({
         "api_key": api_key,
-        "url": default_url,
     });
 
     // Preserve explicit model selection from config by default.
@@ -814,13 +746,15 @@ fn add_openai_env(root: &mut Value, provider: &str, key_env: &str, default_url: 
         format!("{provider_upper}_DEFAULT_MODEL"),
         inferred_model_key,
     ];
-    let explicit_model = first_nonempty_env(&model_keys).unwrap_or_else(|| model.to_string());
+    let explicit_model = first_nonempty_env(&model_keys);
     if model_keys.iter().any(|key| {
         std::env::var(key)
             .ok()
             .is_some_and(|v| !v.trim().is_empty())
     }) {
-        provider_cfg["default_model"] = Value::String(explicit_model);
+        if let Some(model) = explicit_model {
+            provider_cfg["default_model"] = Value::String(model);
+        }
     }
 
     deep_merge(
@@ -1044,6 +978,33 @@ mod tests {
 
         std::env::remove_var("OPENROUTER_API_KEY");
         std::env::remove_var("OPENROUTER_MODEL");
+    }
+
+    #[test]
+    fn openai_api_key_env_does_not_override_explicit_openai_compatible_url() {
+        std::env::set_var("OPENAI_API_KEY", "sk-test");
+
+        let mut merged = json!({
+            "providers": {
+                "openai": {
+                    "url": "https://api.minimax.io/v1",
+                    "default_model": "MiniMax-M2"
+                }
+            }
+        });
+        deep_merge(&mut merged, &env_layer());
+
+        assert_eq!(
+            merged["providers"]["openai"]["url"],
+            json!("https://api.minimax.io/v1")
+        );
+        assert_eq!(
+            merged["providers"]["openai"]["default_model"],
+            json!("MiniMax-M2")
+        );
+        assert_eq!(merged["providers"]["openai"]["api_key"], json!("sk-test"));
+
+        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]

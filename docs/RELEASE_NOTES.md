@@ -1,5 +1,17 @@
 # Tandem Upcoming Release Notes
 
+## Tandem v0.4.12 Release Notes (Released 2026-03-22)
+
+### Custom Provider CLI Support
+
+- `tandem-engine run`, `serve`, and `parallel` now accept custom provider IDs instead of rejecting everything outside the built-in provider list.
+- This makes engine-configured OpenAI-compatible custom providers usable from the headless CLI without forcing them through the `openai` provider slot.
+
+### OpenAI-Compatible URL Preservation
+
+- Provider env bootstrap no longer overwrites an explicitly configured `providers.<id>.url` when the corresponding API key env var is present.
+- Fixes cases where custom OpenAI-compatible endpoints such as MiniMax were silently routed back to OpenAI because `OPENAI_API_KEY` was set.
+
 ### Channel Tool Scope For Channel Sessions
 
 - Added persisted per-channel tool preferences for Telegram, Discord, and Slack sessions, including built-in tool toggles plus MCP server allowlisting.
