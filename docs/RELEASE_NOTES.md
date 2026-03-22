@@ -12,6 +12,8 @@
 - Provider env bootstrap no longer overwrites an explicitly configured `providers.<id>.url` when the corresponding API key env var is present.
 - Fixes cases where custom OpenAI-compatible endpoints such as MiniMax were silently routed back to OpenAI because `OPENAI_API_KEY` was set.
 
+## Tandem v0.4.11 Release Notes (Released 2026-03-22)
+
 ### Channel Tool Scope For Channel Sessions
 
 - Added persisted per-channel tool preferences for Telegram, Discord, and Slack sessions, including built-in tool toggles plus MCP server allowlisting.

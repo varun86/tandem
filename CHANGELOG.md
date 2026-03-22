@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.12] - 2026-03-22
+
+### Fixed
+
+- **Custom provider routing in `tandem-engine` CLI**:
+  - `tandem-engine run`, `serve`, and `parallel` now accept custom provider IDs instead of rejecting anything outside the built-in provider list
+  - custom OpenAI-compatible providers configured through engine config can now be selected directly without having to masquerade as `openai`
+- **OpenAI-compatible URL preservation when env auth is present**:
+  - provider env bootstrap no longer overwrites an explicitly configured `providers.<id>.url` just because an API key env var is set
+  - fixes cases where OpenAI-compatible endpoints such as MiniMax were silently routed back to `https://api.openai.com/v1` when `OPENAI_API_KEY` was present
+
+## [0.4.11] - 2026-03-22
 
 ### Added
 
@@ -27,17 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed the `src-tauri` sidecar integration so channel tool preference endpoints compile cleanly and can be reached from the desktop app
   - fixed `src-tauri` orchestrator session creation after `CreateSessionRequest` gained `project_id`
   - updated tool reference docs so docs parity includes the new `memory_delete` tool
-
-## [0.4.12] - 2026-03-22
-
-### Fixed
-
-- **Custom provider routing in `tandem-engine` CLI**:
-  - `tandem-engine run`, `serve`, and `parallel` now accept custom provider IDs instead of rejecting anything outside the built-in provider list
-  - custom OpenAI-compatible providers configured through engine config can now be selected directly without having to masquerade as `openai`
-- **OpenAI-compatible URL preservation when env auth is present**:
-  - provider env bootstrap no longer overwrites an explicitly configured `providers.<id>.url` just because an API key env var is set
-  - fixes cases where OpenAI-compatible endpoints such as MiniMax were silently routed back to `https://api.openai.com/v1` when `OPENAI_API_KEY` was present
 
 ## [0.4.10] - 2026-03-21
 
