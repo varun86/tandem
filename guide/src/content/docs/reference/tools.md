@@ -22,12 +22,14 @@ The Tandem Engine tool registry currently exposes the following tools.
 - **`websearch`**: Search the web (powered by Exa.ai).
   - Input: `query` (string), `limit` (integer)
 - **`codesearch`**: Semantic code search (if configured).
-- **`memory_list`**: List persisted global memory entries.
-  - Input: optional filters (e.g., `user_id`, `q`, `limit`, `offset`)
-- **`memory_search`**: Search persisted global memory by query.
-  - Input: `query` with optional filters (e.g., `user_id`, tags, limit).
-- **`memory_store`**: Persist memory content into global memory.
-  - Input: `content` (or `text`) plus optional metadata (e.g., `run_id`, `source_type`, tags).
+- **`memory_list`**: List stored memory chunks from the current session, project, or global scope.
+  - Input: optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, `allow_global`
+- **`memory_search`**: Search memory by query across the current session, project, or global scope.
+  - Input: `query` plus optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, `allow_global`
+- **`memory_store`**: Persist content into session, project, or global memory.
+  - Input: `content` plus optional scope and metadata such as `tier`, `session_id`, `project_id`, `source`, `metadata`, `allow_global`
+- **`memory_delete`**: Delete a stored memory chunk within the current allowed scope.
+  - Input: `chunk_id` (or `id`) plus optional scope controls such as `tier`, `session_id`, `project_id`, `allow_global`
 
 ## Web
 
