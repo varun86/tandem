@@ -15,11 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GitHub Projects MCP bootstrap improvements**:
   - documented and wired the Tandem-native GitHub MCP path so GitHub Projects can auto-bootstrap from PAT-backed auth without relying on a separate `gh` adapter
   - clarified the engine-first guidance for GitHub Projects so client work stays on top of the built-in MCP integration instead of inventing a second adapter layer
+- **Per-channel tool scope for channel sessions**:
+  - added persisted per-channel tool preferences for Telegram, Discord, and Slack sessions, including built-in tool toggles plus MCP server allowlisting
+  - added desktop Settings controls for channel tool scope so operators can manage built-ins and MCP servers without relying only on slash commands
+  - added control-panel and panel-template Settings controls for the same per-channel tool scope workflow
+  - added TypeScript client and desktop Tauri bindings for reading and updating channel tool preferences
 
 ### Fixed
 
 - **Control-panel package runtime completeness**:
   - the published control-panel package now includes the runtime `lib/` and `server/` files its CLI expects, avoiding broken installs where the app bootstraps without its own server helpers
+- **Desktop sidecar compilation for channel tool preferences**:
+  - fixed the `src-tauri` sidecar integration so the new channel tool preference endpoints compile cleanly and can be reached from the desktop app
 
 ## [0.4.9] - 2026-03-21
 

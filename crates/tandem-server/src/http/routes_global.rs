@@ -4,8 +4,9 @@ use axum::Router;
 use crate::AppState;
 
 use super::channels_api::{
-    admin_reload_config, channels_config, channels_delete, channels_put, channels_status,
-    channels_verify,
+    admin_reload_config, channel_tool_preferences_get, channel_tool_preferences_put,
+    channels_config, channels_delete, channels_put, channels_status, channels_verify,
+    ChannelToolPreferencesInput,
 };
 use super::config_providers::{global_config, global_config_patch};
 use super::global::*;
@@ -41,6 +42,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/channels/{name}",
             put(channels_put).delete(channels_delete),
+        )
+        .route(
+            "/channels/{name}/tool-preferences",
+            get(channel_tool_preferences_get).put(channel_tool_preferences_put),
         )
         .route(
             "/worktree",

@@ -9,13 +9,18 @@ import {
   deleteChannelConnectionToken,
   disableChannelConnection,
   getChannelConnections,
+  getChannelToolPreferences,
+  mcpListServers,
   onSidecarEventV2,
   setChannelConnection,
+  setChannelToolPreferences,
   verifyChannelConnection,
   type ChannelConnectionInput,
   type ChannelConnectionsView,
   type ChannelVerifyResult,
   type ChannelName,
+  type ChannelToolPreferencesView,
+  type McpServerRecord,
   type StreamEventEnvelopeV2,
 } from "@/lib/tauri";
 
@@ -35,6 +40,69 @@ type ChannelVerifyFeedback = {
 };
 
 const CHANNELS: ChannelName[] = ["telegram", "discord", "slack"];
+const BUILTIN_TOOL_GROUPS = [
+  { label: "File", tools: ["read", "glob", "ls", "list", "grep", "codesearch", "search"] },
+  { label: "Web", tools: ["websearch", "webfetch", "webfetch_html"] },
+  { label: "Terminal", tools: ["bash", "write", "edit", "apply_patch"] },
+  { label: "Memory", tools: ["memory_search", "memory_store", "memory_list"] },
+  { label: "Other", tools: ["skill", "task", "question", "pack_builder"] },
+] as const;
+
+function defaultToolPreferences(): ChannelToolPreferencesView {
+  return {
+    enabled_tools: [],
+    disabled_tools: [],
+    enabled_mcp_servers: [],
+  };
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function toolIsEnabled(prefs: ChannelToolPreferencesView, tool: string): boolean {
+  if (prefs.disabled_tools.includes(tool)) return false;
+  return prefs.enabled_tools.length === 0 || prefs.enabled_tools.includes(tool);
+}
+
+function nextToolPreferences(
+  prefs: ChannelToolPreferencesView,
+  tool: string,
+  enabled: boolean
+): ChannelToolPreferencesView {
+  const disabled = prefs.disabled_tools.filter((entry) => entry !== tool);
+  const explicitEnabled = prefs.enabled_tools.length > 0 ? [...prefs.enabled_tools] : [];
+
+  if (enabled) {
+    return {
+      ...prefs,
+      disabled_tools: disabled,
+      enabled_tools:
+        explicitEnabled.length > 0 ? unique([...explicitEnabled, tool]) : explicitEnabled,
+    };
+  }
+
+  return {
+    ...prefs,
+    disabled_tools: unique([...disabled, tool]),
+    enabled_tools:
+      explicitEnabled.length > 0
+        ? explicitEnabled.filter((entry) => entry !== tool)
+        : explicitEnabled,
+  };
+}
+
+function nextMcpServerPreferences(
+  prefs: ChannelToolPreferencesView,
+  server: string,
+  enabled: boolean
+): ChannelToolPreferencesView {
+  const servers = prefs.enabled_mcp_servers.filter((entry) => entry !== server);
+  return {
+    ...prefs,
+    enabled_mcp_servers: enabled ? unique([...servers, server]) : servers,
+  };
+}
 
 function toCsv(users: string[]): string {
   return users.join(", ");
@@ -123,6 +191,15 @@ export function ConnectionsSettings() {
     Partial<Record<ChannelName, ChannelVerifyFeedback>>
   >({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [toolPreferences, setToolPreferences] = useState<
+    Record<ChannelName, ChannelToolPreferencesView>
+  >({
+    telegram: defaultToolPreferences(),
+    discord: defaultToolPreferences(),
+    slack: defaultToolPreferences(),
+  });
+  const [mcpServers, setMcpServers] = useState<string[]>([]);
+  const [scopeAction, setScopeAction] = useState<string | null>(null);
 
   const applyConnections = useCallback((next: ChannelConnectionsView) => {
     setConnections(next);
@@ -133,8 +210,35 @@ export function ConnectionsSettings() {
     async (showSpinner = false) => {
       if (showSpinner) setLoading(true);
       try {
-        const next = await getChannelConnections();
+        const [next, prefsEntries, serverRecords] = await Promise.all([
+          getChannelConnections(),
+          Promise.all(
+            CHANNELS.map(async (channel) => {
+              const prefs = await getChannelToolPreferences(channel).catch(() =>
+                defaultToolPreferences()
+              );
+              return [channel, prefs] as const;
+            })
+          ),
+          mcpListServers().catch(() => [] as McpServerRecord[]),
+        ]);
         applyConnections(next);
+        setToolPreferences({
+          telegram:
+            prefsEntries.find(([channel]) => channel === "telegram")?.[1] ??
+            defaultToolPreferences(),
+          discord:
+            prefsEntries.find(([channel]) => channel === "discord")?.[1] ??
+            defaultToolPreferences(),
+          slack:
+            prefsEntries.find(([channel]) => channel === "slack")?.[1] ?? defaultToolPreferences(),
+        });
+        setMcpServers(
+          serverRecords
+            .map((server) => String(server.name || "").trim())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b))
+        );
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load channel connections");
@@ -172,8 +276,12 @@ export function ConnectionsSettings() {
   }, [refresh]);
 
   const isBusy = useMemo(
-    () => savingChannel !== null || verifyingChannel !== null || busyAction !== null,
-    [savingChannel, verifyingChannel, busyAction]
+    () =>
+      savingChannel !== null ||
+      verifyingChannel !== null ||
+      busyAction !== null ||
+      scopeAction !== null,
+    [savingChannel, verifyingChannel, busyAction, scopeAction]
   );
 
   const updateDraft = (channel: ChannelName, next: Partial<ChannelDraft>) => {
@@ -319,6 +427,29 @@ export function ConnectionsSettings() {
     }
   };
 
+  const onUpdateToolPreferences = async (
+    channel: ChannelName,
+    nextPrefs: ChannelToolPreferencesView | { reset: true }
+  ) => {
+    setScopeAction(`scope:${channel}`);
+    try {
+      const next =
+        "reset" in nextPrefs
+          ? await setChannelToolPreferences(channel, { reset: true })
+          : await setChannelToolPreferences(channel, {
+              enabled_tools: nextPrefs.enabled_tools,
+              disabled_tools: nextPrefs.disabled_tools,
+              enabled_mcp_servers: nextPrefs.enabled_mcp_servers,
+            });
+      setToolPreferences((prev) => ({ ...prev, [channel]: next }));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update tool scope");
+    } finally {
+      setScopeAction(null);
+    }
+  };
+
   if (loading && !connections) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -436,6 +567,110 @@ export function ConnectionsSettings() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              {(() => {
+                const prefs = toolPreferences[channel] ?? defaultToolPreferences();
+                const explicitScope = prefs.enabled_tools.length > 0;
+
+                return (
+                  <div className="rounded-lg border border-border bg-surface-elevated/30 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-text">Channel tool scope</p>
+                        <p className="text-xs text-text-subtle">
+                          Control which built-in tools and MCP servers are visible to
+                          channel-created sessions.
+                        </p>
+                        {explicitScope ? (
+                          <p className="mt-1 text-xs text-warning">
+                            Explicit built-in allowlist is active for this channel.
+                          </p>
+                        ) : null}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void onUpdateToolPreferences(channel, { reset: true })}
+                        disabled={isBusy}
+                      >
+                        Reset scope
+                      </Button>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {BUILTIN_TOOL_GROUPS.map((group) => (
+                        <div key={group.label} className="space-y-2">
+                          <p className="text-xs font-medium uppercase tracking-wide text-text-subtle">
+                            {group.label}
+                          </p>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {group.tools.map((tool) => {
+                              const enabled = toolIsEnabled(prefs, tool);
+                              return (
+                                <div
+                                  key={tool}
+                                  className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-3 py-2"
+                                >
+                                  <span className="font-mono text-xs text-text">{tool}</span>
+                                  <Switch
+                                    checked={enabled}
+                                    onChange={(event) =>
+                                      void onUpdateToolPreferences(
+                                        channel,
+                                        nextToolPreferences(prefs, tool, event.target.checked)
+                                      )
+                                    }
+                                    disabled={isBusy}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-text-subtle">
+                          MCP servers
+                        </p>
+                        {mcpServers.length ? (
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {mcpServers.map((server) => {
+                              const enabled = prefs.enabled_mcp_servers.includes(server);
+                              return (
+                                <div
+                                  key={server}
+                                  className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-3 py-2"
+                                >
+                                  <span className="font-mono text-xs text-text">{server}</span>
+                                  <Switch
+                                    checked={enabled}
+                                    onChange={(event) =>
+                                      void onUpdateToolPreferences(
+                                        channel,
+                                        nextMcpServerPreferences(
+                                          prefs,
+                                          server,
+                                          event.target.checked
+                                        )
+                                      )
+                                    }
+                                    disabled={isBusy}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-text-subtle">
+                            No MCP servers are registered yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="space-y-2">
                 <label className="text-xs font-medium text-text-muted">
                   {t("connections.botToken", { ns: "settings", defaultValue: "Bot token" })}

@@ -906,6 +906,32 @@ export async function deleteChannelConnectionToken(
   return invoke("delete_channel_connection_token", { channel });
 }
 
+export interface ChannelToolPreferencesView {
+  enabled_tools: string[];
+  disabled_tools: string[];
+  enabled_mcp_servers: string[];
+}
+
+export interface SetChannelToolPreferencesInput {
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  enabled_mcp_servers?: string[];
+  reset?: boolean;
+}
+
+export async function getChannelToolPreferences(
+  channel: ChannelName
+): Promise<ChannelToolPreferencesView> {
+  return invoke("get_channel_tool_preferences", { channel });
+}
+
+export async function setChannelToolPreferences(
+  channel: ChannelName,
+  input: SetChannelToolPreferencesInput
+): Promise<ChannelToolPreferencesView> {
+  return invoke("set_channel_tool_preferences", { channel, input });
+}
+
 export interface McpToolCacheEntry {
   tool_name: string;
   description: string;

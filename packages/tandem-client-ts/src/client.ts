@@ -28,6 +28,8 @@ import type {
   ChannelsConfigResponse,
   ChannelsStatusResponse,
   ChannelVerifyResponse,
+  ChannelToolPreferences,
+  ChannelToolPreferencesInput,
   AddMcpServerOptions,
   MemoryPutOptions,
   MemoryPutResponse,
@@ -1127,6 +1129,22 @@ class Channels {
   async verify(channel: ChannelName, payload: JsonObject = {}): Promise<ChannelVerifyResponse> {
     return this.req<ChannelVerifyResponse>(`/channels/${channel}/verify`, {
       method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Read per-channel tool preferences for channel-created sessions. */
+  async toolPreferences(channel: ChannelName): Promise<ChannelToolPreferences> {
+    return this.req<ChannelToolPreferences>(`/channels/${channel}/tool-preferences`);
+  }
+
+  /** Update per-channel tool preferences for channel-created sessions. */
+  async setToolPreferences(
+    channel: ChannelName,
+    payload: ChannelToolPreferencesInput
+  ): Promise<ChannelToolPreferences> {
+    return this.req<ChannelToolPreferences>(`/channels/${channel}/tool-preferences`, {
+      method: "PUT",
       body: JSON.stringify(payload),
     });
   }

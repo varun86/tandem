@@ -350,6 +350,19 @@ export interface ChannelVerifyResponse {
   details?: JsonObject;
 }
 
+export interface ChannelToolPreferences {
+  enabled_tools: string[];
+  disabled_tools: string[];
+  enabled_mcp_servers: string[];
+}
+
+export interface ChannelToolPreferencesInput {
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  enabled_mcp_servers?: string[];
+  reset?: boolean;
+}
+
 // ─── MCP ─────────────────────────────────────────────────────────────────────
 
 export interface AddMcpServerOptions {

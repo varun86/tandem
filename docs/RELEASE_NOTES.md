@@ -10,6 +10,14 @@
 - Documented the Tandem-native GitHub MCP path more clearly so GitHub Projects can bootstrap from PAT-backed MCP auth without relying on a separate `gh` login flow.
 - Tightened engine-first guidance so future GitHub Projects work builds on Tandem’s built-in MCP path instead of reintroducing a parallel client-side adapter.
 
+### Channel Tool Scope For Channel Sessions
+
+- Added persisted per-channel tool preferences for Telegram, Discord, and Slack sessions, including built-in tool toggles plus MCP server allowlisting.
+- Added desktop Settings controls for channel tool scope so operators can manage built-ins and MCP servers without relying only on slash commands.
+- Added control-panel and panel-template Settings controls for the same per-channel scope workflow.
+- Added TypeScript client and desktop Tauri bindings for reading and updating channel tool preferences.
+- Fixed the `src-tauri` sidecar integration so the new channel tool preference endpoints compile cleanly.
+
 ### Control-Panel Package Runtime Completeness
 
 - The control-panel package now includes the runtime `lib/` and `server/` files its CLI expects, avoiding incomplete installs.

@@ -196,6 +196,20 @@ type ChannelDraft = {
   styleProfile: string;
 };
 
+type ChannelToolPreferencesRow = {
+  enabled_tools: string[];
+  disabled_tools: string[];
+  enabled_mcp_servers: string[];
+};
+
+const CHANNEL_TOOL_GROUPS = [
+  { label: "File", tools: ["read", "glob", "ls", "list", "grep", "codesearch", "search"] },
+  { label: "Web", tools: ["websearch", "webfetch", "webfetch_html"] },
+  { label: "Terminal", tools: ["bash", "write", "edit", "apply_patch"] },
+  { label: "Memory", tools: ["memory_search", "memory_store", "memory_list"] },
+  { label: "Other", tools: ["skill", "task", "question", "pack_builder"] },
+] as const;
+
 type McpServerRow = {
   name: string;
   transport: string;
@@ -405,6 +419,75 @@ function normalizeChannelDraft(
     guildId: String(row.guild_id || "").trim(),
     channelId: String(row.channel_id || "").trim(),
     styleProfile: String(row.style_profile || "default").trim() || "default",
+  };
+}
+
+function defaultChannelToolPreferences(): ChannelToolPreferencesRow {
+  return {
+    enabled_tools: [],
+    disabled_tools: [],
+    enabled_mcp_servers: [],
+  };
+}
+
+function uniqueChannelValues(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeChannelToolPreferences(raw: any): ChannelToolPreferencesRow {
+  const row = raw && typeof raw === "object" ? raw : {};
+  return {
+    enabled_tools: Array.isArray(row.enabled_tools)
+      ? uniqueChannelValues(row.enabled_tools.map((value: any) => String(value)))
+      : [],
+    disabled_tools: Array.isArray(row.disabled_tools)
+      ? uniqueChannelValues(row.disabled_tools.map((value: any) => String(value)))
+      : [],
+    enabled_mcp_servers: Array.isArray(row.enabled_mcp_servers)
+      ? uniqueChannelValues(row.enabled_mcp_servers.map((value: any) => String(value)))
+      : [],
+  };
+}
+
+function channelToolEnabled(prefs: ChannelToolPreferencesRow, tool: string) {
+  if (prefs.disabled_tools.includes(tool)) return false;
+  return prefs.enabled_tools.length === 0 || prefs.enabled_tools.includes(tool);
+}
+
+function nextChannelToolPreferences(
+  prefs: ChannelToolPreferencesRow,
+  tool: string,
+  enabled: boolean
+): ChannelToolPreferencesRow {
+  const disabled = prefs.disabled_tools.filter((entry) => entry !== tool);
+  const explicitEnabled = prefs.enabled_tools.length > 0 ? [...prefs.enabled_tools] : [];
+  if (enabled) {
+    return {
+      ...prefs,
+      disabled_tools: disabled,
+      enabled_tools:
+        explicitEnabled.length > 0 ? uniqueChannelValues([...explicitEnabled, tool]) : [],
+    };
+  }
+  return {
+    ...prefs,
+    disabled_tools: uniqueChannelValues([...disabled, tool]),
+    enabled_tools:
+      explicitEnabled.length > 0
+        ? explicitEnabled.filter((entry) => entry !== tool)
+        : explicitEnabled,
+  };
+}
+
+function nextChannelMcpPreferences(
+  prefs: ChannelToolPreferencesRow,
+  server: string,
+  enabled: boolean
+): ChannelToolPreferencesRow {
+  const servers = prefs.enabled_mcp_servers.filter((entry) => entry !== server);
+  return {
+    ...prefs,
+    enabled_mcp_servers: enabled ? uniqueChannelValues([...servers, server]) : servers,
   };
 }
 
@@ -642,6 +725,23 @@ export function SettingsPage({
     queryFn: () => client.channels.status().catch(() => ({})),
     refetchInterval: 6_000,
   });
+  const channelToolPreferencesQuery = useQuery({
+    queryKey: ["settings", "channels", "tool-preferences"],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        (["telegram", "discord", "slack"] as const).map(async (channel) => [
+          channel,
+          normalizeChannelToolPreferences(
+            await api(`/api/engine/channels/${channel}/tool-preferences`, {
+              method: "GET",
+            }).catch(() => defaultChannelToolPreferences())
+          ),
+        ])
+      );
+      return Object.fromEntries(entries) as Record<string, ChannelToolPreferencesRow>;
+    },
+    refetchInterval: 15_000,
+  });
 
   const setDefaultsMutation = useMutation({
     mutationFn: async ({ providerId, modelId }: { providerId: string; modelId: string }) =>
@@ -864,9 +964,40 @@ export function SettingsPage({
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
   const invalidateChannels = useCallback(
-    async () => queryClient.invalidateQueries({ queryKey: ["settings", "channels"] }),
+    async () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "channels"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "channels", "tool-preferences"] }),
+      ]),
     [queryClient]
   );
+  const saveChannelToolPreferencesMutation = useMutation({
+    mutationFn: async ({
+      channel,
+      payload,
+    }: {
+      channel: "telegram" | "discord" | "slack";
+      payload: ChannelToolPreferencesRow | { reset: true };
+    }) => {
+      if ("reset" in payload) {
+        return api(`/api/engine/channels/${channel}/tool-preferences`, {
+          method: "PUT",
+          body: JSON.stringify({ reset: true }),
+        });
+      }
+      return api(`/api/engine/channels/${channel}/tool-preferences`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: async (_, vars) => {
+      await queryClient.invalidateQueries({
+        queryKey: ["settings", "channels", "tool-preferences"],
+      });
+      toast("ok", `Saved ${vars.channel} channel tool scope.`);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
   const saveChannelMutation = useMutation({
     mutationFn: async (channel: "telegram" | "discord" | "slack") => {
       const draft = channelDrafts[channel];
@@ -1650,6 +1781,13 @@ export function SettingsPage({
                       const draft =
                         channelDrafts[channel] || normalizeChannelDraft(channel, config);
                       const verifyResult = channelVerifyResult[channel];
+                      const toolPrefs = normalizeChannelToolPreferences(
+                        (
+                          channelToolPreferencesQuery.data as
+                            | Record<string, ChannelToolPreferencesRow>
+                            | undefined
+                        )?.[channel] || defaultChannelToolPreferences()
+                      );
                       const hasSavedConfig =
                         !!config?.has_token ||
                         !!(Array.isArray(config?.allowed_users) && config.allowed_users.length) ||
@@ -1809,6 +1947,114 @@ export function SettingsPage({
                               </div>
                             </div>
                           ) : null}
+
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">Channel tool scope</div>
+                                <div className="tcp-subtle text-xs">
+                                  Built-in tools and MCP servers available to {channel} sessions.
+                                </div>
+                                {toolPrefs.enabled_tools.length > 0 ? (
+                                  <div className="mt-1 text-xs text-amber-300">
+                                    Explicit built-in allowlist is active for this channel.
+                                  </div>
+                                ) : null}
+                              </div>
+                              <button
+                                className="tcp-btn"
+                                disabled={saveChannelToolPreferencesMutation.isPending}
+                                onClick={() =>
+                                  saveChannelToolPreferencesMutation.mutate({
+                                    channel,
+                                    payload: { reset: true },
+                                  })
+                                }
+                              >
+                                Reset scope
+                              </button>
+                            </div>
+
+                            <div className="grid gap-3">
+                              {CHANNEL_TOOL_GROUPS.map((group) => (
+                                <div key={`${channel}-${group.label}`} className="grid gap-2">
+                                  <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                    {group.label}
+                                  </div>
+                                  <div className="grid gap-2 md:grid-cols-2">
+                                    {group.tools.map((tool) => {
+                                      const enabled = channelToolEnabled(toolPrefs, tool);
+                                      return (
+                                        <label
+                                          key={`${channel}-${tool}`}
+                                          className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
+                                        >
+                                          <span className="font-mono text-xs">{tool}</span>
+                                          <input
+                                            type="checkbox"
+                                            checked={enabled}
+                                            disabled={saveChannelToolPreferencesMutation.isPending}
+                                            onChange={(e) =>
+                                              saveChannelToolPreferencesMutation.mutate({
+                                                channel,
+                                                payload: nextChannelToolPreferences(
+                                                  toolPrefs,
+                                                  tool,
+                                                  e.currentTarget.checked
+                                                ),
+                                              })
+                                            }
+                                          />
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+
+                              <div className="grid gap-2">
+                                <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                  MCP servers
+                                </div>
+                                {mcpServers.length ? (
+                                  <div className="grid gap-2 md:grid-cols-2">
+                                    {mcpServers.map((server) => {
+                                      const enabled = toolPrefs.enabled_mcp_servers.includes(
+                                        server.name
+                                      );
+                                      return (
+                                        <label
+                                          key={`${channel}-mcp-${server.name}`}
+                                          className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
+                                        >
+                                          <span className="font-mono text-xs">{server.name}</span>
+                                          <input
+                                            type="checkbox"
+                                            checked={enabled}
+                                            disabled={saveChannelToolPreferencesMutation.isPending}
+                                            onChange={(e) =>
+                                              saveChannelToolPreferencesMutation.mutate({
+                                                channel,
+                                                payload: nextChannelMcpPreferences(
+                                                  toolPrefs,
+                                                  server.name,
+                                                  e.currentTarget.checked
+                                                ),
+                                              })
+                                            }
+                                          />
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="tcp-subtle text-xs">
+                                    No MCP servers configured yet.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
 
                           <div className="flex flex-wrap gap-2">
                             <button

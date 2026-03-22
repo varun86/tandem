@@ -3647,6 +3647,48 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn channel_tool_preferences(&self, channel: &str) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/channels/{}/tool-preferences",
+            self.base_url().await?,
+            channel
+        );
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!(
+                "Failed to fetch tool preferences for '{}': {}",
+                channel, e
+            ))
+        })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn set_channel_tool_preferences(
+        &self,
+        channel: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/channels/{}/tool-preferences",
+            self.base_url().await?,
+            channel
+        );
+        let response = self
+            .http_client
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!(
+                    "Failed to update tool preferences for '{}': {}",
+                    channel, e
+                ))
+            })?;
+        self.handle_response(response).await
+    }
+
     /// Get todos for a session
     /// OpenCode API: GET /session/{id}/todo
     pub async fn get_session_todos(&self, session_id: &str) -> Result<Vec<TodoItem>> {

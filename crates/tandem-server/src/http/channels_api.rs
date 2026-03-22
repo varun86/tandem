@@ -455,3 +455,88 @@ pub(super) async fn admin_reload_config(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({"ok": true})))
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct ChannelToolPreferences {
+    #[serde(default)]
+    pub enabled_tools: Vec<String>,
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub enabled_mcp_servers: Vec<String>,
+}
+
+fn tool_preferences_path() -> PathBuf {
+    let base = std::env::var("TANDEM_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if let Some(data_dir) = dirs::data_dir() {
+                return data_dir.join("tandem").join("data");
+            }
+            dirs::home_dir()
+                .map(|home| home.join(".tandem").join("data"))
+                .unwrap_or_else(|| PathBuf::from(".tandem"))
+        });
+    base.join("channel_tool_preferences.json")
+}
+
+type ToolPreferencesMap = std::collections::HashMap<String, ChannelToolPreferences>;
+
+async fn load_tool_preferences_map() -> std::collections::HashMap<String, ChannelToolPreferences> {
+    let path = tool_preferences_path();
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return std::collections::HashMap::new();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+async fn save_tool_preferences_map(map: &ToolPreferencesMap) {
+    let path = tool_preferences_path();
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(map) {
+        let _ = tokio::fs::write(&path, json).await;
+    }
+}
+
+pub(super) async fn channel_tool_preferences_get(
+    Path(channel): Path<String>,
+) -> Result<Json<ChannelToolPreferences>, StatusCode> {
+    let map = load_tool_preferences_map().await;
+    let prefs = map.get(&channel).cloned().unwrap_or_default();
+    Ok(Json(prefs))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ChannelToolPreferencesInput {
+    pub enabled_tools: Option<Vec<String>>,
+    pub disabled_tools: Option<Vec<String>>,
+    pub enabled_mcp_servers: Option<Vec<String>>,
+    pub reset: Option<bool>,
+}
+
+pub(super) async fn channel_tool_preferences_put(
+    Path(channel): Path<String>,
+    Json(input): Json<ChannelToolPreferencesInput>,
+) -> Result<Json<ChannelToolPreferences>, StatusCode> {
+    let mut map = load_tool_preferences_map().await;
+    let key = channel.to_string();
+
+    let new_prefs = if input.reset.unwrap_or(false) {
+        ChannelToolPreferences::default()
+    } else {
+        let existing = map.get(&key).cloned().unwrap_or_default();
+        ChannelToolPreferences {
+            enabled_tools: input.enabled_tools.unwrap_or(existing.enabled_tools),
+            disabled_tools: input.disabled_tools.unwrap_or(existing.disabled_tools),
+            enabled_mcp_servers: input
+                .enabled_mcp_servers
+                .unwrap_or(existing.enabled_mcp_servers),
+        }
+    };
+
+    map.insert(key, new_prefs.clone());
+    save_tool_preferences_map(&map).await;
+    Ok(Json(new_prefs))
+}

@@ -3508,6 +3508,53 @@ pub async fn delete_channel_connection_token(
 }
 
 // ============================================================================
+// Channel Tool Preferences
+// ============================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct ChannelToolPreferencesView {
+    pub enabled_tools: Vec<String>,
+    pub disabled_tools: Vec<String>,
+    pub enabled_mcp_servers: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_channel_tool_preferences(
+    state: State<'_, AppState>,
+    channel: String,
+) -> Result<ChannelToolPreferencesView> {
+    let normalized = normalize_channel_name(&channel)?;
+    let json = state.sidecar.channel_tool_preferences(&normalized).await?;
+    let prefs: ChannelToolPreferencesView = serde_json::from_value(json).unwrap_or_default();
+    Ok(prefs)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SetChannelToolPreferencesInput {
+    pub enabled_tools: Option<Vec<String>>,
+    pub disabled_tools: Option<Vec<String>>,
+    pub enabled_mcp_servers: Option<Vec<String>>,
+    pub reset: Option<bool>,
+}
+
+#[tauri::command]
+pub async fn set_channel_tool_preferences(
+    state: State<'_, AppState>,
+    channel: String,
+    input: SetChannelToolPreferencesInput,
+) -> Result<ChannelToolPreferencesView> {
+    let normalized = normalize_channel_name(&channel)?;
+    let body = serde_json::to_value(&input)
+        .map_err(|e| TandemError::InvalidConfig(format!("Failed to serialize input: {}", e)))?;
+    let json = state
+        .sidecar
+        .set_channel_tool_preferences(&normalized, body)
+        .await?;
+    let prefs: ChannelToolPreferencesView = serde_json::from_value(json).unwrap_or_default();
+    Ok(prefs)
+}
+
+// ============================================================================
 // Sidecar Management
 // ============================================================================
 

@@ -12,6 +12,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - documented the Tandem-native GitHub MCP path more clearly so GitHub Projects can connect through PAT-backed MCP bootstrap instead of relying on a separate `gh` login flow
   - tightened the engine-first guidance around GitHub Projects so future client work layers on top of Tandem’s built-in MCP path
 
+- Channel tool scope controls for Telegram, Discord, and Slack
+  - added persisted per-channel tool preferences for built-in tools and MCP servers used by channel-created sessions
+  - added desktop Settings controls for managing channel tool scope without relying only on slash commands
+  - added control-panel and panel-template Settings controls for the same per-channel scope workflow
+  - added TypeScript client and desktop Tauri bindings for channel tool preference reads and updates
+  - fixed the desktop sidecar integration so the new channel tool preference endpoints compile cleanly
+
 - Control-panel package install fix
   - the control-panel package now ships the runtime `lib/` and `server/` files its CLI depends on, avoiding incomplete installs
 

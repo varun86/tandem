@@ -619,6 +619,8 @@ pub fn run() {
             commands::verify_channel_connection,
             commands::disable_channel_connection,
             commands::delete_channel_connection_token,
+            commands::get_channel_tool_preferences,
+            commands::set_channel_tool_preferences,
             // Sidecar management
             commands::start_sidecar,
             commands::stop_sidecar,

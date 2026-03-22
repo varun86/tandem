@@ -60,6 +60,26 @@ fn add_auth(rb: reqwest::RequestBuilder, token: &str) -> reqwest::RequestBuilder
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChannelToolPreferences {
+    #[serde(default)]
+    pub enabled_tools: Vec<String>,
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub enabled_mcp_servers: Vec<String>,
+}
+
+impl Default for ChannelToolPreferences {
+    fn default() -> Self {
+        Self {
+            enabled_tools: Vec::new(),
+            disabled_tools: Vec::new(),
+            enabled_mcp_servers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionRecord {
     pub session_id: String,
     pub created_at_ms: u64,
@@ -70,6 +90,8 @@ pub struct SessionRecord {
     pub scope_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_preferences: Option<ChannelToolPreferences>,
 }
 
 /// `{channel_name}:{sender_id}` → Tandem `SessionRecord`
@@ -203,8 +225,61 @@ fn legacy_session_map_key(msg: &ChannelMessage) -> String {
     format!("{}:{}", msg.channel, msg.sender)
 }
 
+fn channel_scope_key(msg: &ChannelMessage) -> String {
+    format!("{}:{}", msg.channel, msg.scope.id)
+}
+
 fn session_title_prefix(msg: &ChannelMessage) -> String {
     format!("{} — {} — {}", msg.channel, msg.sender, msg.scope.id)
+}
+
+fn tool_preferences_path() -> PathBuf {
+    let base = std::env::var("TANDEM_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if let Some(data_dir) = dirs::data_dir() {
+                return data_dir.join("tandem").join("data");
+            }
+            dirs::home_dir()
+                .map(|home| home.join(".tandem").join("data"))
+                .unwrap_or_else(|| PathBuf::from(".tandem"))
+        });
+    base.join("channel_tool_preferences.json")
+}
+
+async fn load_tool_preferences() -> HashMap<String, ChannelToolPreferences> {
+    let path = tool_preferences_path();
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return HashMap::new();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+async fn save_tool_preferences(map: &HashMap<String, ChannelToolPreferences>) {
+    let path = tool_preferences_path();
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(map) {
+        let _ = tokio::fs::write(&path, json).await;
+    }
+}
+
+async fn load_channel_tool_preferences(channel: &str, scope_id: &str) -> ChannelToolPreferences {
+    let map = load_tool_preferences().await;
+    map.get(&format!("{}:{}", channel, scope_id))
+        .cloned()
+        .unwrap_or_default()
+}
+
+async fn save_channel_tool_preferences(
+    channel: &str,
+    scope_id: &str,
+    prefs: ChannelToolPreferences,
+) {
+    let mut map = load_tool_preferences().await;
+    map.insert(format!("{}:{}", channel, scope_id), prefs);
+    save_tool_preferences(&map).await;
 }
 
 fn persistence_path() -> PathBuf {
@@ -254,6 +329,7 @@ async fn load_session_map() -> HashMap<String, SessionRecord> {
                     sender,
                     scope_id: None,
                     scope_kind: None,
+                    tool_preferences: None,
                 },
             );
         }
@@ -301,9 +377,19 @@ enum SlashCommand {
     Runs { action: RunsCommand },
     Memory { action: MemoryCommand },
     Workspace { action: WorkspaceCommand },
+    Tools { action: ToolsCommand },
     Mcp { action: McpCommand },
     Packs { action: PacksCommand },
     Config { action: ConfigCommand },
+}
+
+#[derive(Debug)]
+enum ToolsCommand {
+    Help,
+    List,
+    Enable { tools: Vec<String> },
+    Disable { tools: Vec<String> },
+    Reset,
 }
 
 #[derive(Debug)]
@@ -382,6 +468,8 @@ enum McpCommand {
     Connect { name: String },
     Disconnect { name: String },
     Refresh { name: String },
+    ChannelEnable { name: String },
+    ChannelDisable { name: String },
 }
 
 #[derive(Debug)]
@@ -441,6 +529,47 @@ fn parse_slash_command(content: &str) -> Option<SlashCommand> {
     }
     if trimmed == "/requests" {
         return Some(SlashCommand::Requests);
+    }
+    if trimmed == "/tools" || trimmed == "/tools help" {
+        return Some(SlashCommand::Tools {
+            action: ToolsCommand::Help,
+        });
+    }
+    if trimmed == "/tools list" {
+        return Some(SlashCommand::Tools {
+            action: ToolsCommand::List,
+        });
+    }
+    if trimmed == "/tools reset" {
+        return Some(SlashCommand::Tools {
+            action: ToolsCommand::Reset,
+        });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/tools enable ") {
+        let tools = rest
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        if !tools.is_empty() {
+            return Some(SlashCommand::Tools {
+                action: ToolsCommand::Enable { tools },
+            });
+        }
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("/tools disable ") {
+        let tools = rest
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        if !tools.is_empty() {
+            return Some(SlashCommand::Tools {
+                action: ToolsCommand::Disable { tools },
+            });
+        }
+        return None;
     }
     if trimmed == "/providers" {
         return Some(SlashCommand::Providers);
@@ -796,6 +925,16 @@ fn parse_mcp_command(rest: &str) -> Option<McpCommand> {
     }
     if let Some(name) = rest.strip_prefix("disconnect ") {
         return Some(McpCommand::Disconnect {
+            name: name.trim().to_string(),
+        });
+    }
+    if let Some(name) = rest.strip_prefix("enable ") {
+        return Some(McpCommand::ChannelEnable {
+            name: name.trim().to_string(),
+        });
+    }
+    if let Some(name) = rest.strip_prefix("disable ") {
+        return Some(McpCommand::ChannelDisable {
             name: name.trim().to_string(),
         });
     }
@@ -1250,6 +1389,9 @@ async fn process_channel_message(
     }
 
     let route = route_agent_for_channel_message(effective_text);
+    let tool_prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+    let effective_allowlist =
+        build_channel_tool_allowlist(route.tool_allowlist.as_ref(), &tool_prefs);
 
     let response = run_in_session(
         &session_id,
@@ -1261,7 +1403,7 @@ async fn process_channel_message(
         msg.attachment_mime.as_deref(),
         msg.attachment_filename.as_deref(),
         route.agent.as_deref(),
-        route.tool_allowlist.as_ref(),
+        effective_allowlist.as_ref(),
     )
     .await;
     if let Err(e) = channel.stop_typing(&msg.reply_target).await {
@@ -1741,6 +1883,79 @@ fn route_agent_for_channel_message(content: &str) -> AgentRouteDecision {
             "webfetch".to_string(),
         ]),
     }
+}
+
+fn build_channel_tool_allowlist(
+    route_allowlist: Option<&Vec<String>>,
+    tool_prefs: &ChannelToolPreferences,
+) -> Option<Vec<String>> {
+    let pack_builder_override = route_allowlist;
+    if let Some(pb) = pack_builder_override {
+        return Some(pb.clone());
+    }
+
+    if tool_prefs.enabled_tools.is_empty() && tool_prefs.disabled_tools.is_empty() {
+        return None;
+    }
+
+    let all_builtin = [
+        "read",
+        "glob",
+        "ls",
+        "list",
+        "grep",
+        "codesearch",
+        "search",
+        "websearch",
+        "webfetch",
+        "webfetch_html",
+        "bash",
+        "write",
+        "edit",
+        "apply_patch",
+        "todowrite",
+        "memory_search",
+        "memory_store",
+        "memory_list",
+        "skill",
+        "task",
+        "question",
+        "pack_builder",
+    ];
+
+    let disabled: std::collections::HashSet<&str> = tool_prefs
+        .disabled_tools
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    let explicit_enabled: std::collections::HashSet<&str> = tool_prefs
+        .enabled_tools
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    let has_explicit_enable = !tool_prefs.enabled_tools.is_empty();
+    let mut result = Vec::new();
+
+    for tool in all_builtin {
+        if disabled.contains(tool) {
+            continue;
+        }
+        if has_explicit_enable && !explicit_enabled.contains(tool) {
+            continue;
+        }
+        result.push(tool.to_string());
+    }
+
+    for server in &tool_prefs.enabled_mcp_servers {
+        result.push(format!("mcp.{}.*", server));
+    }
+
+    if result.is_empty() {
+        return None;
+    }
+    Some(result)
 }
 
 fn is_pack_builder_intent(content: &str) -> bool {
@@ -2308,6 +2523,7 @@ async fn get_or_create_session(
             sender: msg.sender.clone(),
             scope_id: Some(msg.scope.id.clone()),
             scope_kind: Some(session_scope_kind_label(msg).to_string()),
+            tool_preferences: None,
         },
     );
     save_session_map(&guard).await;
@@ -2785,7 +3001,10 @@ async fn handle_slash_command(
         SlashCommand::Workspace { action } => {
             workspace_command_text(action, msg, base_url, api_token, session_map).await
         }
-        SlashCommand::Mcp { action } => mcp_command_text(action, base_url, api_token).await,
+        SlashCommand::Tools { action } => {
+            tools_command_text(action, msg, base_url, api_token).await
+        }
+        SlashCommand::Mcp { action } => mcp_command_text(action, msg, base_url, api_token).await,
         SlashCommand::Packs { action } => packs_command_text(action, base_url, api_token).await,
         SlashCommand::Config { action } => config_command_text(action, base_url, api_token).await,
     }
@@ -2804,6 +3023,7 @@ fn help_text(topic: Option<&str>) -> String {
         Some(topic) if topic == "runs" => runs_help_text(),
         Some(topic) if topic == "memory" => memory_help_text(),
         Some(topic) if topic == "workspace" => workspace_help_text(),
+        Some(topic) if topic == "tools" => tools_help_text(),
         Some(topic) if topic == "mcp" => mcp_help_text(),
         Some(topic) if topic == "packs" => packs_help_text(),
         Some(topic) if topic == "config" => config_help_text(),
@@ -2919,6 +3139,19 @@ fn workspace_help_text() -> String {
         .to_string()
 }
 
+fn tools_help_text() -> String {
+    "🛠 *Tool Scope Commands*\n\
+/tools — show this help\n\
+/tools list — list available tools and their current state\n\
+/tools enable <tool1,tool2> — enable tools for this channel\n\
+/tools disable <tool1,tool2> — disable tools for this channel\n\
+/tools reset — reset to default tool scope\n\
+\n\
+Available built-in tools: read, glob, ls, list, grep, codesearch, websearch,\nwebfetch, webfetch_html, bash, write, edit, apply_patch, todowrite, memory_search,\nmemory_store, memory_list, skill, task, question\n\n\
+Use `/mcp` commands to manage MCP server access."
+        .to_string()
+}
+
 fn mcp_help_text() -> String {
     "🔌 *MCP Commands*\n\
 /mcp — list MCP servers\n\
@@ -2927,7 +3160,9 @@ fn mcp_help_text() -> String {
 /mcp status — summarize connected servers\n\
 /mcp connect <name> — connect a server\n\
 /mcp disconnect <name> — disconnect a server\n\
-/mcp refresh <name> — refresh a server"
+/mcp refresh <name> — refresh a server\n\
+/mcp enable <name> — enable an MCP server for this channel\n\
+/mcp disable <name> — disable an MCP server for this channel"
         .to_string()
 }
 
@@ -3279,7 +3514,12 @@ async fn workspace_command_text(
     }
 }
 
-async fn mcp_command_text(action: McpCommand, base_url: &str, api_token: &str) -> String {
+async fn mcp_command_text(
+    action: McpCommand,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+) -> String {
     match action {
         McpCommand::Help => mcp_help_text(),
         McpCommand::List => mcp_list_text(base_url, api_token).await,
@@ -3289,6 +3529,20 @@ async fn mcp_command_text(action: McpCommand, base_url: &str, api_token: &str) -
         McpCommand::Connect { name } => mcp_connect_text(name, base_url, api_token).await,
         McpCommand::Disconnect { name } => mcp_disconnect_text(name, base_url, api_token).await,
         McpCommand::Refresh { name } => mcp_refresh_text(name, base_url, api_token).await,
+        McpCommand::ChannelEnable { name } => {
+            let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+            if !prefs.enabled_mcp_servers.contains(&name) {
+                prefs.enabled_mcp_servers.push(name.clone());
+            }
+            save_channel_tool_preferences(&msg.channel, &msg.scope.id, prefs).await;
+            format!("✅ MCP server `{}` enabled for this channel.", name)
+        }
+        McpCommand::ChannelDisable { name } => {
+            let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+            prefs.enabled_mcp_servers.retain(|s| s != &name);
+            save_channel_tool_preferences(&msg.channel, &msg.scope.id, prefs).await;
+            format!("🚫 MCP server `{}` disabled for this channel.", name)
+        }
     }
 }
 
@@ -3928,6 +4182,142 @@ async fn workspace_branch_text(
             }
         }
         Err(error) => format!("⚠️ Could not read workspace branch: {error}"),
+    }
+}
+
+async fn tools_command_text(
+    action: ToolsCommand,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    match action {
+        ToolsCommand::Help => tools_help_text(),
+        ToolsCommand::List => {
+            let prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+            let enabled: std::collections::HashSet<String> =
+                prefs.enabled_tools.iter().cloned().collect();
+            let disabled: std::collections::HashSet<String> =
+                prefs.disabled_tools.iter().cloned().collect();
+
+            let all_tools = [
+                "read",
+                "glob",
+                "ls",
+                "list",
+                "grep",
+                "codesearch",
+                "search",
+                "websearch",
+                "webfetch",
+                "webfetch_html",
+                "bash",
+                "write",
+                "edit",
+                "apply_patch",
+                "todowrite",
+                "memory_search",
+                "memory_store",
+                "memory_list",
+                "skill",
+                "task",
+                "question",
+                "pack_builder",
+            ];
+
+            let mut default_lines: Vec<String> = Vec::new();
+            let mut disabled_lines: Vec<String> = Vec::new();
+
+            for tool in all_tools {
+                if disabled.contains(tool) {
+                    disabled_lines.push(tool.to_string());
+                } else if !prefs.enabled_tools.is_empty() && !enabled.contains(tool) {
+                    disabled_lines.push(tool.to_string());
+                } else {
+                    default_lines.push(tool.to_string());
+                }
+            }
+
+            let mut lines = Vec::new();
+            if !default_lines.is_empty() {
+                lines.push(format!("*Enabled:* {}", default_lines.join(", ")));
+            }
+            if !disabled_lines.is_empty() {
+                lines.push(format!("*Disabled:* {}", disabled_lines.join(", ")));
+            }
+
+            let mcp_servers = mcp_servers_for_channel(base_url, api_token).await;
+            if !mcp_servers.is_empty() {
+                let enabled_mcp: std::collections::HashSet<String> =
+                    prefs.enabled_mcp_servers.iter().cloned().collect();
+                let mut mcp_lines = Vec::new();
+                for server in &mcp_servers {
+                    if !prefs.enabled_mcp_servers.is_empty() && !enabled_mcp.contains(server) {
+                        mcp_lines.push(format!("{} (disabled)", server));
+                    } else {
+                        mcp_lines.push(format!("{} (enabled)", server));
+                    }
+                }
+                lines.push(format!("\n*MCP servers:*\n{}", mcp_lines.join(", ")));
+            }
+
+            if lines.is_empty() {
+                "ℹ️ No tool preferences set. All built-in tools are available by default."
+                    .to_string()
+            } else {
+                format!("🛠 *Tool Scope for this channel*\n\n{}", lines.join("\n\n"))
+            }
+        }
+        ToolsCommand::Enable { tools } => {
+            let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+            let mut added = Vec::new();
+            for tool in &tools {
+                if !prefs.enabled_tools.contains(tool) {
+                    prefs.enabled_tools.push(tool.clone());
+                    added.push(tool.clone());
+                }
+                prefs.disabled_tools.retain(|t| t != tool);
+            }
+            if added.is_empty() {
+                "ℹ️ No new tools were enabled.".to_string()
+            } else {
+                save_channel_tool_preferences(&msg.channel, &msg.scope.id, prefs).await;
+                format!("✅ Enabled for this channel: {}", added.join(", "))
+            }
+        }
+        ToolsCommand::Disable { tools } => {
+            let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+            let mut added = Vec::new();
+            for tool in &tools {
+                if !prefs.disabled_tools.contains(tool) {
+                    prefs.disabled_tools.push(tool.clone());
+                    added.push(tool.clone());
+                }
+                prefs.enabled_tools.retain(|t| t != tool);
+            }
+            if added.is_empty() {
+                "ℹ️ No new tools were disabled.".to_string()
+            } else {
+                save_channel_tool_preferences(&msg.channel, &msg.scope.id, prefs).await;
+                format!("🚫 Disabled for this channel: {}", added.join(", "))
+            }
+        }
+        ToolsCommand::Reset => {
+            let prefs = ChannelToolPreferences::default();
+            save_channel_tool_preferences(&msg.channel, &msg.scope.id, prefs).await;
+            "🔄 Tool preferences reset. All built-in tools are now available by default."
+                .to_string()
+        }
+    }
+}
+
+async fn mcp_servers_for_channel(base_url: &str, api_token: &str) -> Vec<String> {
+    match json_request(reqwest::Method::GET, "/mcp", None, base_url, api_token).await {
+        Ok(json) => {
+            let obj = json.as_object();
+            obj.map(|m| m.keys().cloned().collect()).unwrap_or_default()
+        }
+        Err(_) => Vec::new(),
     }
 }
 
@@ -4587,6 +4977,7 @@ async fn new_session_text(
             sender: msg.sender.clone(),
             scope_id: Some(msg.scope.id.clone()),
             scope_kind: Some(session_scope_kind_label(msg).to_string()),
+            tool_preferences: None,
         },
     );
     save_session_map(&guard).await;
@@ -4662,6 +5053,7 @@ async fn resume_session_text(
                     sender: msg.sender.clone(),
                     scope_id: Some(msg.scope.id.clone()),
                     scope_kind: Some(session_scope_kind_label(msg).to_string()),
+                    tool_preferences: None,
                 },
             );
             save_session_map(&guard).await;
@@ -5588,6 +5980,7 @@ mod tests {
             sender: "user1".to_string(),
             scope_id: Some("chat:42".to_string()),
             scope_kind: Some("room".to_string()),
+            tool_preferences: None,
         };
         let serialized = serde_json::to_string(&record).unwrap();
         let deserialized: SessionRecord = serde_json::from_str(&serialized).unwrap();
@@ -5682,6 +6075,7 @@ mod tests {
                 sender: msg.sender.clone(),
                 scope_id: None,
                 scope_kind: None,
+                tool_preferences: None,
             },
         );
         let session_map = std::sync::Arc::new(tokio::sync::Mutex::new(map));
