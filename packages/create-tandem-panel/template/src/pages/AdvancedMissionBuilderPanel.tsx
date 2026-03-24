@@ -22,6 +22,17 @@ type CreateModeTab = "mission" | "team" | "workstreams" | "review" | "compile";
 type ScheduleKind = "manual" | "interval" | "cron";
 type ModelDraft = { provider: string; model: string };
 
+function randomToken() {
+  const browserCrypto = globalThis.crypto as Crypto | undefined;
+  if (browserCrypto?.randomUUID) return browserCrypto.randomUUID().slice(0, 8);
+  if (browserCrypto?.getRandomValues) {
+    const bytes = new Uint32Array(1);
+    browserCrypto.getRandomValues(bytes);
+    return bytes[0].toString(16).padStart(8, "0").slice(0, 8);
+  }
+  return Math.random().toString(16).slice(2, 10).padEnd(8, "0").slice(0, 8);
+}
+
 type MissionBlueprint = {
   mission_id: string;
   title: string;
@@ -202,7 +213,7 @@ function scheduleToPayload(kind: ScheduleKind, intervalSeconds: string, cron: st
 
 function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
   return {
-    mission_id: `mission_${crypto.randomUUID().slice(0, 8)}`,
+    mission_id: `mission_${randomToken()}`,
     title: "",
     goal: "",
     success_criteria: [],
@@ -221,7 +232,7 @@ function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
     },
     workstreams: [
       {
-        workstream_id: `workstream_${crypto.randomUUID().slice(0, 8)}`,
+        workstream_id: `workstream_${randomToken()}`,
         title: "Workstream 1",
         objective: "",
         role: "worker",
@@ -903,7 +914,7 @@ export function AdvancedMissionBuilderPanel({
       workstreams: [
         ...current.workstreams,
         {
-          workstream_id: `workstream_${crypto.randomUUID().slice(0, 8)}`,
+          workstream_id: `workstream_${randomToken()}`,
           title: `Workstream ${current.workstreams.length + 1}`,
           objective: "",
           role: "worker",
@@ -929,7 +940,7 @@ export function AdvancedMissionBuilderPanel({
       review_stages: [
         ...current.review_stages,
         {
-          stage_id: `review_${crypto.randomUUID().slice(0, 8)}`,
+          stage_id: `review_${randomToken()}`,
           stage_kind: "approval",
           title: `Gate ${current.review_stages.length + 1}`,
           target_ids: [],
@@ -960,7 +971,7 @@ export function AdvancedMissionBuilderPanel({
     const next = {
       ...defaultBlueprint(blueprint.workspace_root || workspaceRoot),
       ...presetRecord.blueprint,
-      mission_id: `mission_${crypto.randomUUID().slice(0, 8)}`,
+      mission_id: `mission_${randomToken()}`,
       workspace_root: blueprint.workspace_root || workspaceRoot,
     };
     setBlueprint(next);

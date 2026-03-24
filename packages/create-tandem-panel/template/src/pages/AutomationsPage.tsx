@@ -7638,9 +7638,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
       {instances.length > 0 ? (
         <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            Active Agent Teams
-          </p>
+          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">Active Teams</p>
           {instances.map((instance: any, index: number) => (
             <div
               key={String(instance?.instance_id || instance?.id || index)}
@@ -7666,7 +7664,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
       ) : null}
 
       {!approvals.length && !instances.length ? (
-        <EmptyState text="No pending approvals or active team instances." />
+        <EmptyState text="No active teams or pending approvals right now." />
       ) : null}
     </div>
   );
@@ -7699,7 +7697,7 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
     { id: "list", label: "Automations", icon: "clipboard-list" },
     { id: "running", label: "Tasks", icon: "activity" },
     { id: "optimize", label: "Optimize", icon: "flask-conical" },
-    { id: "approvals", label: "Teams", icon: "users" },
+    { id: "approvals", label: "Active Teams", icon: "users" },
   ];
 
   return (
@@ -7850,8 +7848,8 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
             </PageCard>
           ) : (
             <PageCard
-              title="Teams & Approvals"
-              subtitle="Active agent teams and pending spawn approvals"
+              title="Active Teams"
+              subtitle="Running team instances and pending spawn approvals"
             >
               <SpawnApprovals client={client} toast={toast} />
             </PageCard>

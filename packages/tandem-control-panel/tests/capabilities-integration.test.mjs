@@ -125,14 +125,13 @@ test("Engine up + ACA absent — /api/capabilities returns coding_workflows=true
   const healthBody = health.json();
   assert.equal(healthBody.ok, true);
 
-  // Verify /api/swarm/status works (engine-native, not ACA)
-  const swarm = await request(baseUrl, "/api/swarm/status");
-  assert.equal(swarm.status, 200, `swarm/status failed: ${panelOutput}`);
-
-  // Verify /api/engine/context/runs works
-  const runs = await request(baseUrl, "/api/engine/context/runs");
-  assert.equal(runs.status, 200, `context/runs failed: ${panelOutput}`);
-  assert.ok(Array.isArray(runs.json().runs), "runs should be an array");
+  const login = await request(baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { token: engineToken },
+    json: false,
+  });
+  assert.equal(login.status, 200, `login failed: ${panelOutput}`);
+  assert.ok(extractCookie(login).startsWith("tcp_sid="), "session cookie should be set");
 });
 
 test("Engine down — /api/capabilities returns all features false, no crash", async (t) => {

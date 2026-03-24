@@ -10,10 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Shared agent catalog for Tandem desktop and control panel**:
-  - Added a generated catalog built from `docs/internal/awesome-codex-subagents` so Tandem uses one canonical source for role metadata.
+  - Added a generated catalog built from `awesome-codex-subagents` so Tandem uses one canonical source for role metadata.
   - Added searchable category/group browsing across both desktop Tauri and the control panel, including name, category, tag, filename, and source-path lookup.
   - Added Tandem-native agent manifests that omit per-agent model fields by default and keep only the runtime instructions plus lightweight metadata.
   - Added desktop and control-panel entry points for browsing the catalog and reusing agent roles from workflow authoring surfaces.
+- **ACA-backed coding dashboard flow in the control panel**:
+  - Added authenticated `/api/aca/*` proxying plus ACA token env support so the control panel can talk to ACA project, run, log, summary, and SSE APIs through the server.
+  - Added ACA-backed GitHub Project board and task-intake views with on-demand GitHub refresh, project registration, single-task launch, and multi-select batch launch from the coding page.
+  - Added ACA-aware run detail, log, and execution-history surfaces plus tests for ACA proxy routing and capability integration.
+
+### Changed
+
+- **Control-panel workflow polish and naming cleanups**:
+  - Updated the coding dashboard so GitHub Project board state and ACA execution history are separated more clearly, with per-project column visibility and safer launch gating for non-launchable items.
+  - Renamed Team/approval labels to `Active Teams` in automations surfaces for clearer operator-facing wording.
+  - Replaced direct `crypto.randomUUID()` mission/workstream/review token generation in the advanced mission builder with a browser-safe helper fallback.
 
 ## [0.4.15] - 2026-03-24
 

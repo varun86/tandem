@@ -7639,9 +7639,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
       {instances.length > 0 ? (
         <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            Active Agent Teams
-          </p>
+          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">Active Teams</p>
           {instances.map((instance: any, index: number) => (
             <div
               key={String(instance?.instance_id || instance?.id || index)}
@@ -7667,7 +7665,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
       ) : null}
 
       {!approvals.length && !instances.length ? (
-        <EmptyState text="No pending approvals or active team instances." />
+        <EmptyState text="No active teams or pending approvals right now." />
       ) : null}
     </div>
   );
@@ -7677,7 +7675,6 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
 export function AutomationsPage({ client, api, toast, navigate, providerStatus }: AppPageProps) {
   const caps = useCapabilities();
-  const acaAvailable = caps.data?.aca_integration === true;
   const [tab, setTab] = useState<ActiveTab>("create");
   const [createMode, setCreateMode] = useState<CreateMode>("simple");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
@@ -7702,7 +7699,7 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
     { id: "list", label: "Automations", icon: "clipboard-list" },
     { id: "running", label: "Tasks", icon: "activity" },
     { id: "optimize", label: "Optimize", icon: "flask-conical" },
-    { id: "approvals", label: "Teams", icon: "users" },
+    { id: "approvals", label: "Active Teams", icon: "users" },
   ];
 
   return (
@@ -7778,34 +7775,23 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
                 </div>
 
                 {createMode === "advanced" ? (
-                  acaAvailable ? (
-                    <AdvancedMissionBuilderPanel
-                      client={client}
-                      api={api}
-                      toast={toast}
-                      defaultProvider={providerStatus.defaultProvider}
-                      defaultModel={providerStatus.defaultModel}
-                      editingAutomation={advancedEditAutomation}
-                      onShowAutomations={() => {
-                        setAdvancedEditAutomation(null);
-                        setTab("list");
-                      }}
-                      onShowRuns={() => {
-                        setAdvancedEditAutomation(null);
-                        setTab("running");
-                      }}
-                      onClearEditing={() => setAdvancedEditAutomation(null)}
-                    />
-                  ) : (
-                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-                      <p className="text-sm text-amber-200">
-                        <strong>Advanced mission builder</strong> requires the external ACA (Hal900)
-                        integration. ACA is not currently connected. Use{" "}
-                        <strong>simple mode</strong> to create automations with engine-native
-                        features.
-                      </p>
-                    </div>
-                  )
+                  <AdvancedMissionBuilderPanel
+                    client={client}
+                    api={api}
+                    toast={toast}
+                    defaultProvider={providerStatus.defaultProvider}
+                    defaultModel={providerStatus.defaultModel}
+                    editingAutomation={advancedEditAutomation}
+                    onShowAutomations={() => {
+                      setAdvancedEditAutomation(null);
+                      setTab("list");
+                    }}
+                    onShowRuns={() => {
+                      setAdvancedEditAutomation(null);
+                      setTab("running");
+                    }}
+                    onClearEditing={() => setAdvancedEditAutomation(null)}
+                  />
                 ) : (
                   <CreateWizard
                     client={client}
@@ -7864,8 +7850,8 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
             </PageCard>
           ) : (
             <PageCard
-              title="Teams & Approvals"
-              subtitle="Active agent teams and pending spawn approvals"
+              title="Active Teams"
+              subtitle="Running team instances and pending spawn approvals"
             >
               <SpawnApprovals client={client} toast={toast} />
             </PageCard>

@@ -2,6 +2,23 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.4.16 (Released 2026-03-24)
+
+- Shared agent catalog for Tandem desktop and control panel
+  - added a generated agent catalog sourced from `awesome-codex-subagents`
+  - added shared browsing and reuse surfaces across desktop and control panel
+
+- ACA-backed coding dashboard in the control panel
+  - added authenticated `/api/aca/*` proxying with ACA bearer-token env support
+  - added ACA-backed GitHub Project registration, intake preview, board refresh, and run launch from the coding page
+  - added clearer separation between GitHub Project board state and ACA execution history
+  - added ACA proxy and capability integration test coverage
+
+- Control-panel workflow polish
+  - renamed approvals/runtime wording to `Active Teams`
+  - updated advanced mission builder token generation to use a browser-safe fallback helper
+  - tightened coding-dashboard launch gating for non-launchable GitHub items
+
 ## v0.4.15 (Released 2026-03-24)
 
 - Control panel ACA/Hal900 optional integration

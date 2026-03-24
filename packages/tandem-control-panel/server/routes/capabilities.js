@@ -27,18 +27,25 @@ function logCapabilityTransition(next) {
   const prev = _lastReported;
   const ts = new Date().toISOString();
   if (prev.aca_available !== next.aca_integration) {
-    console.log(`[Capabilities] ${ts} ACA integration: ${prev.aca_available ?? "unknown"} → ${next.aca_integration} (reason: ${next.aca_reason || "n/a"})`);
+    console.log(
+      `[Capabilities] ${ts} ACA integration: ${prev.aca_available ?? "unknown"} → ${next.aca_integration} (reason: ${next.aca_reason || "n/a"})`
+    );
   }
   if (prev.engine_healthy !== next.engine_healthy) {
-    console.log(`[Capabilities] ${ts} Engine healthy: ${prev.engine_healthy ?? "unknown"} → ${next.engine_healthy}`);
+    console.log(
+      `[Capabilities] ${ts} Engine healthy: ${prev.engine_healthy ?? "unknown"} → ${next.engine_healthy}`
+    );
   }
   _lastReported = { aca_available: next.aca_integration, engine_healthy: next.engine_healthy };
 }
 
 function incrementProbeError(reason) {
-  const bucket = reason in _metrics.aca_probe_error_counts
-    ? reason
-    : reason.match(/^aca_health_failed_\d+$/) ? "aca_health_failed_xxx" : null;
+  const bucket =
+    reason in _metrics.aca_probe_error_counts
+      ? reason
+      : reason.match(/^aca_health_failed_\d+$/)
+        ? "aca_health_failed_xxx"
+        : null;
   if (bucket) {
     _metrics.aca_probe_error_counts[bucket] += 1;
   }
@@ -49,6 +56,7 @@ export function createCapabilitiesHandler(deps) {
     PROBE_TIMEOUT_MS = 5_000,
     ACA_BASE_URL,
     ACA_HEALTH_PATH = "/health",
+    getAcaToken,
     engineHealth,
     cacheTtlMs = DEFAULT_CAPABILITY_CACHE_TTL_MS,
   } = deps;
@@ -60,13 +68,17 @@ export function createCapabilitiesHandler(deps) {
       return { available: false, reason: "aca_not_configured" };
     }
     const target = `${base.replace(/\/+$/, "")}${ACA_HEALTH_PATH}`;
+    const token = String(getAcaToken?.() || "").trim();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
     try {
       const res = await fetch(target, {
         method: "GET",
         signal: controller.signal,
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
       clearTimeout(timer);
       if (res.ok) return { available: true, reason: "" };
@@ -88,16 +100,21 @@ export function createCapabilitiesHandler(deps) {
     }
   }
 
-  async function probeEngineFeatures(engineOk) {
-    if (!engineOk) {
+  async function probeEngineFeatures(engineOk, acaOk) {
+    if (!engineOk && !acaOk) {
       return { coding_workflows: false, missions: false, agent_teams: false, coder: false };
     }
     return {
-      coding_workflows: true,
+      coding_workflows: engineOk || acaOk,
       missions: true,
       agent_teams: true,
-      coder: true,
+      coder: engineOk,
     };
+  }
+
+  function engineIsHealthy(health) {
+    const engine = health?.engine && typeof health.engine === "object" ? health.engine : health;
+    return !!(engine?.ready || engine?.healthy);
   }
 
   return async function handleCapabilities(req, res) {
@@ -109,9 +126,9 @@ export function createCapabilitiesHandler(deps) {
 
     const t0 = Date.now();
     const health = await engineHealth().catch(() => null);
-    const engineOk = !!(health?.engine?.ready || health?.engine?.healthy);
+    const engineOk = engineIsHealthy(health);
     const aca = await probeAca();
-    const features = await probeEngineFeatures(engineOk);
+    const features = await probeEngineFeatures(engineOk, aca.available);
     const durationMs = Date.now() - t0;
 
     _metrics.detect_duration_ms = durationMs;

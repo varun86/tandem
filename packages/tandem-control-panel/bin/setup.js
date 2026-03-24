@@ -13,6 +13,7 @@ import { createRequire } from "module";
 import { homedir } from "os";
 import { ensureBootstrapEnv, resolveEnvLoadOrder } from "../lib/setup/env.js";
 import { createSwarmApiHandler, getOrchestratorMetrics } from "../server/routes/swarm.js";
+import { createAcaApiHandler } from "../server/routes/aca.js";
 import { createCapabilitiesHandler, getCapabilitiesMetrics } from "../server/routes/capabilities.js";
 
 function parseDotEnv(content) {
@@ -178,6 +179,9 @@ const ENGINE_PORT = Number.parseInt(process.env.TANDEM_ENGINE_PORT || "39731", 1
 const ENGINE_URL = (
   process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`
 ).replace(/\/+$/, "");
+const ACA_BASE_URL = String(process.env.ACA_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 const DEFAULT_TANDEM_SEARCH_URL = (
   process.env.TANDEM_SEARCH_URL || "https://search.tandem.frumu.ai"
 ).replace(/\/+$/, "");
@@ -194,6 +198,7 @@ const CONFIGURED_ENGINE_TOKEN = (
   process.env.TANDEM_API_TOKEN ||
   ""
 ).trim();
+const ACA_TOKEN_FILE = String(process.env.ACA_API_TOKEN_FILE || "").trim();
 const SESSION_TTL_MS =
   Number.parseInt(process.env.TANDEM_CONTROL_PANEL_SESSION_TTL_MINUTES || "1440", 10) * 60 * 1000;
 const FILES_ROOT = resolve(
@@ -1141,6 +1146,24 @@ function sendJson(res, code, payload) {
     "content-length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function readOptionalTokenFile(pathname) {
+  const target = String(pathname || "").trim();
+  if (!target) return "";
+  try {
+    return readFileSync(resolve(target), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function getAcaToken() {
+  return (
+    String(process.env.ACA_API_TOKEN || "").trim() ||
+    readOptionalTokenFile(ACA_TOKEN_FILE) ||
+    ""
+  );
 }
 
 function pushSwarmEvent(kind, payload = {}) {
@@ -4522,14 +4545,22 @@ const handleSwarmApi = createSwarmApiHandler({
 
 const handleCapabilities = createCapabilitiesHandler({
   PROBE_TIMEOUT_MS: Number.parseInt(process.env.ACA_PROBE_TIMEOUT_MS || "5000", 10),
-  ACA_BASE_URL: process.env.ACA_BASE_URL || "",
-  ACA_HEALTH_PATH: "/health",
+  ACA_BASE_URL,
+  ACA_HEALTH_PATH: process.env.ACA_HEALTH_PATH || "/health",
+  getAcaToken,
   engineHealth: async (token) => {
     const health = await engineHealth(token).catch(() => null);
     return health;
   },
   sendJson,
   cacheTtlMs: Number.parseInt(process.env.ACA_CAPABILITY_CACHE_TTL_MS || "45000", 10),
+});
+
+const handleAcaApi = createAcaApiHandler({
+  PORTAL_PORT,
+  ACA_BASE_URL,
+  getAcaToken,
+  sendJson,
 });
 
 async function handleApi(req, res) {
@@ -4624,6 +4655,12 @@ async function handleApi(req, res) {
     const session = requireSession(req, res);
     if (!session) return true;
     return handleSwarmApi(req, res, session);
+  }
+
+  if (pathname.startsWith("/api/aca")) {
+    const session = requireSession(req, res);
+    if (!session) return true;
+    return handleAcaApi(req, res);
   }
 
   if (pathname.startsWith("/api/files")) {

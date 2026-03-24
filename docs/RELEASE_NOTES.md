@@ -4,10 +4,23 @@
 
 ### Shared Agent Catalog For Tandem Desktop And Control Panel
 
-- Added a generated agent catalog sourced from `docs/internal/awesome-codex-subagents` so Tandem has one canonical registry for specialist roles.
+- Added a generated agent catalog sourced from `awesome-codex-subagents` so Tandem has one canonical registry for specialist roles.
 - Added searchable browsing by name, category, tag, filename, and source path across both the desktop Tauri app and the control panel.
 - Added Tandem-native manifest shaping that keeps instructions and lightweight metadata while dropping per-agent model fields by default.
 - Added desktop and control-panel entry points for discovering agents and reusing them from workflow and automation surfaces.
+
+### ACA-Backed Coding Dashboard In The Control Panel
+
+- Added authenticated ACA proxy routing in the control panel so project, run, log, summary, and event requests can flow through `/api/aca/*` with ACA bearer-token support.
+- Added ACA-backed GitHub Project registration, task-intake preview, board refresh, single-task launch, and batch task launch from the coding dashboard.
+- Added clearer separation between live GitHub Project state and ACA execution history so operators can distinguish board intake from ACA run lifecycle.
+- Added ACA proxy and integration test coverage for the new coding-dashboard request path.
+
+### Control-Panel Workflow Polish
+
+- Updated automations copy to call the approvals/runtime area `Active Teams`.
+- Updated the advanced mission builder to use a browser-safe random token helper instead of assuming `crypto.randomUUID()` is always available.
+- Tightened coding-dashboard launch behavior so non-launchable GitHub items are locked instead of appearing runnable from intake.
 
 ## Tandem v0.4.15 Release Notes (Released 2026-03-24)
 
