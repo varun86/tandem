@@ -430,16 +430,7 @@ function plannerOperatorPreferences(options: {
   const baseModel = safeString(options.defaultModel);
   const selectedPlannerProvider = safeString(options.plannerProvider);
   const selectedPlannerModel = safeString(options.plannerModel);
-  const payload: Record<string, any> = {
-    planner_persona: "scrum-master",
-    project_slug: options.selectedProjectSlug,
-    task_source_type: options.taskSourceType,
-    repo_url: safeString(options.selectedProject?.repoUrl),
-    goal: safeString(options.goal),
-    revision_notes: options.notes,
-    preferred_output:
-      "markdown task plan with per-task summary, affected files, implementation notes, acceptance criteria, verification steps, and expected result",
-  };
+  const payload: Record<string, any> = {};
 
   if (baseProvider && baseModel) {
     payload.model_provider = baseProvider;
@@ -574,6 +565,19 @@ export function TaskPlanningPanel({
   const isGeneratingPlan = planningState === "generating";
   const isRevisingPlan = planningState === "revising";
   const isPlanning = planningState !== "idle";
+  const plannerFallbackReason = safeString(
+    plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
+  );
+  const clarificationNeeded = plannerFallbackReason === "clarification_needed";
+  const clarificationQuestion =
+    (clarificationNeeded && safeString(plannerError)) ||
+    (clarificationNeeded &&
+      safeString(
+        Array.isArray(planningConversation?.messages)
+          ? planningConversation.messages[planningConversation.messages.length - 1]?.text
+          : ""
+      )) ||
+    "";
 
   useEffect(() => {
     const draft = loadDraft(selectedProjectSlug);
@@ -692,22 +696,15 @@ export function TaskPlanningPanel({
     try {
       const response = await client.workflowPlans.chatStart({
         prompt: [
-          `You are scrum-master for Tandem, turning a repo goal into a reviewable task plan.`,
-          `Selected project: ${selectedProjectSlug || "unbound"}`,
-          `Task source: ${taskSourceType || "unknown"}`,
-          `Workspace root: ${trimmedWorkspaceRoot}`,
-          `Repo URL: ${safeString(selectedProject?.repoUrl) || "n/a"}`,
-          `Goal: ${trimmedGoal}`,
-          `Planner provider: ${safeString(plannerProvider) || "workspace default"}`,
-          `Planner model: ${safeString(plannerModel) || "workspace default"}`,
+          `Create a Tandem workflow plan for the repo at ${trimmedWorkspaceRoot} to implement this goal: ${trimmedGoal}`,
+          "Use small ordered implementation steps.",
+          "Prefer step objectives that mention likely files, modules, or repo areas to inspect or change.",
+          "If the target or desired outcome is ambiguous, return a clarification question instead of guessing.",
+          safeString(selectedProject?.repoUrl)
+            ? `Repo URL: ${safeString(selectedProject?.repoUrl)}`
+            : "",
+          selectedProjectSlug ? `Selected project: ${selectedProjectSlug}` : "",
           notes ? `User feedback / revision notes:\n${notes}` : "",
-          "",
-          "Output requirements:",
-          "- Break the work into 3-10 concrete tasks.",
-          "- For each task include the title, summary, affected files/modules, implementation notes, acceptance criteria, verification steps, and expected success result.",
-          "- Prefer small, ordered tasks with explicit dependencies.",
-          "- Use markdown headings and keep the final task list easy to review.",
-          "- If the repo already seems to contain some of the requested behavior, call that out and make the plan focus on verification or remaining gaps.",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -730,11 +727,18 @@ export function TaskPlanningPanel({
       setPlanningConversation(response?.conversation || null);
       setPlanningChangeSummary([]);
       setPlannerDiagnostics(response?.planner_diagnostics || response?.plannerDiagnostics || null);
-      setPlannerError("");
+      setPlannerError(
+        typeof response?.clarifier?.question === "string" ? String(response.clarifier.question) : ""
+      );
       setLastSavedAtMs(Date.now());
       setPublishedTasks([]);
       setSaveStatus("Plan saved locally.");
-      toast("ok", "Planner generated a task draft.");
+      toast(
+        "ok",
+        typeof response?.clarifier?.question === "string"
+          ? "Planner needs clarification before it can draft richer tasks."
+          : "Planner generated a task draft."
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setPlannerError(message);
@@ -767,12 +771,12 @@ export function TaskPlanningPanel({
       const response = await client.workflowPlans.chatMessage({
         plan_id: planPreview.plan_id,
         message: [
-          `Please revise the plan for the selected repo/task source.`,
+          `Revise the workflow plan for repo ${safeString(workspaceRoot)}.`,
           `Goal: ${safeString(goal)}`,
-          `Workspace root: ${safeString(workspaceRoot)}`,
-          `Selected project: ${selectedProjectSlug || "unbound"}`,
-          `Planner provider: ${safeString(plannerProvider) || "workspace default"}`,
-          `Planner model: ${safeString(plannerModel) || "workspace default"}`,
+          selectedProjectSlug ? `Selected project: ${selectedProjectSlug}` : "",
+          "Keep the workflow valid and machine-parseable.",
+          "Prefer concrete repo-aware implementation steps.",
+          "If the request is ambiguous, return a clarification question.",
           "",
           "Revision notes:",
           trimmedNotes,
@@ -1205,7 +1209,11 @@ export function TaskPlanningPanel({
                 className="tcp-input min-h-[96px] text-sm"
                 value={notes}
                 onInput={(event) => setNotes((event.target as HTMLTextAreaElement).value)}
-                placeholder="Tell the planner what to fix, narrow, or rework in the next pass."
+                placeholder={
+                  clarificationNeeded
+                    ? "Answer the planner's question here, then click Answer question."
+                    : "Tell the planner what to fix, narrow, or rework in the next pass."
+                }
                 disabled={isPlanning}
               />
             </label>
@@ -1261,7 +1269,11 @@ export function TaskPlanningPanel({
                   aria-hidden="true"
                 ></i>
               ) : null}
-              {isRevisingPlan ? "Revising…" : "Revise with notes"}
+              {isRevisingPlan
+                ? "Updating…"
+                : clarificationNeeded
+                  ? "Answer question"
+                  : "Revise with notes"}
             </button>
             <button
               type="button"
@@ -1327,7 +1339,18 @@ export function TaskPlanningPanel({
           </div>
 
           {plannerError ? (
-            <div className="rounded-2xl border border-red-500/40 bg-red-950/30 p-3 text-sm text-red-200">
+            <div
+              className={`rounded-2xl p-3 text-sm ${
+                clarificationNeeded
+                  ? "border border-amber-500/40 bg-amber-950/30 text-amber-100"
+                  : "border border-red-500/40 bg-red-950/30 text-red-200"
+              }`}
+            >
+              {clarificationNeeded ? (
+                <div className="mb-1 text-xs uppercase tracking-wide text-amber-300">
+                  Planner question
+                </div>
+              ) : null}
               {plannerError}
             </div>
           ) : null}
@@ -1337,17 +1360,15 @@ export function TaskPlanningPanel({
               <div className="text-xs uppercase tracking-wide text-slate-500">
                 Planner diagnostics
               </div>
-              {safeString(
-                plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
-              ) ? (
+              {plannerFallbackReason ? (
                 <div className="mt-2 text-sm text-slate-300">
-                  {safeString(
-                    plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
-                  ) === "no_planner_model"
+                  {plannerFallbackReason === "no_planner_model"
                     ? "The planner fell back because no usable planner model reached the backend for this generated plan."
-                    : `Fallback reason: ${safeString(
-                        plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
-                      )}`}
+                    : plannerFallbackReason === "clarification_needed"
+                      ? "The planner needs one more answer before it can generate a richer repo-aware plan."
+                      : `Fallback reason: ${safeString(
+                          plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
+                        )}`}
                 </div>
               ) : null}
               <pre className="mt-2 max-h-48 overflow-auto text-xs text-slate-300">
@@ -1495,7 +1516,13 @@ export function TaskPlanningPanel({
                 <button
                   type="button"
                   className="tcp-btn-primary"
-                  disabled={publishing || isPlanning || !goal.trim() || !workspaceRoot.trim()}
+                  disabled={
+                    publishing ||
+                    isPlanning ||
+                    !goal.trim() ||
+                    !workspaceRoot.trim() ||
+                    clarificationNeeded
+                  }
                   onClick={() => void publishTasks()}
                 >
                   {publishing
@@ -1505,9 +1532,11 @@ export function TaskPlanningPanel({
                       : "Save local task bundle"}
                 </button>
                 <div className="text-xs text-slate-500">
-                  {isGitHubProject && canPublishToGitHub
-                    ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
-                    : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
+                  {clarificationNeeded
+                    ? "Answer the planner's question before approving or publishing tasks."
+                    : isGitHubProject && canPublishToGitHub
+                      ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
+                      : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
                 </div>
               </div>
             </div>

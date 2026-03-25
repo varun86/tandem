@@ -2,22 +2,6 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## Upcoming
-
-- Calendar-first Automations workflow
-  - added a weekly calendar view for automations with recurring-slot expansion, overlap stacking, and click-to-edit behavior
-  - added drag-based rescheduling for simple cron-backed automation entries
-  - added a shared provider/model selector used across automation and mission-builder editors
-
-- Control-panel workflow polish
-  - moved the custom OpenAI-compatible provider form into the normal provider catalog list in Settings
-  - updated the Coding Workflows board to use the full width, with run detail and live logs moved below the board and collapsed by default
-  - improved planner UX with visible loading state, disabled regenerate/revise actions while a request is running, and longer planner request timeouts
-
-- Automation runtime sandbox fix
-  - fixed automation execution prompts to include inline node input metadata directly
-  - added workspace-local default artifact paths for standard automation handoff nodes so they stop inventing `/tmp/...` temp files that the sandbox correctly blocks
-
 ## v0.4.16 (Released 2026-03-24)
 
 - Shared agent catalog for Tandem desktop and control panel
@@ -30,10 +14,22 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - added clearer separation between GitHub Project board state and ACA execution history
   - added ACA proxy and capability integration test coverage
 
+- Calendar-first Automations workflow
+  - added a weekly calendar view for automations with recurring-slot expansion, overlap stacking, and click-to-edit behavior
+  - added drag-based rescheduling for simple cron-backed automation entries
+  - added a shared provider/model selector used across automation and mission-builder editors
+
 - Control-panel workflow polish
   - renamed approvals/runtime wording to `Active Teams`
   - updated advanced mission builder token generation to use a browser-safe fallback helper
   - tightened coding-dashboard launch gating for non-launchable GitHub items
+  - moved the custom OpenAI-compatible provider form into the normal provider catalog list in Settings
+  - updated the Coding Workflows board to use the full width, with run detail and live logs moved below the board and collapsed by default
+  - improved planner UX with visible loading state, disabled regenerate/revise actions while a request is running, and longer planner request timeouts
+
+- Automation runtime sandbox fix
+  - fixed automation execution prompts to include inline node input metadata directly
+  - added workspace-local default artifact paths for standard automation handoff nodes so they stop inventing `/tmp/...` temp files that the sandbox correctly blocks
 
 ## v0.4.15 (Released 2026-03-24)
 

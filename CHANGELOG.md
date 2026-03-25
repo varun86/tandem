@@ -5,29 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Calendar-first automations scheduling in the control panel**:
-  - added a weekly calendar view for workflow automations with FullCalendar-based overlap handling and click-through editing
-  - added drag/reschedule support for simple cron-backed automation slots plus UTC occurrence expansion for recurring runs
-  - added a shared provider/model selector component reused across automation and mission-builder editing surfaces
-
-### Changed
-
-- **Control-panel workflow UX improvements**:
-  - moved the custom OpenAI-compatible provider form into the provider catalog so it behaves like the rest of the provider list instead of rendering as a separate default card
-  - updated the coding board layout to use the full page width, with run detail and live logs moved below the board and collapsed by default
-  - improved planner UX in Coding Workflows with visible in-flight status, disabled regenerate/revise controls during active requests, and a longer client timeout for planner chat requests
-
-### Fixed
-
-- **Automation artifact-path sandbox failures**:
-  - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
-  - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox
-  - added regression coverage for prompt rendering with inline inputs and for default artifact-path assignment on standard workflow nodes
-
 ## [0.4.16] - 2026-03-24
 
 ### Added
@@ -41,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added authenticated `/api/aca/*` proxying plus ACA token env support so the control panel can talk to ACA project, run, log, summary, and SSE APIs through the server.
   - Added ACA-backed GitHub Project board and task-intake views with on-demand GitHub refresh, project registration, single-task launch, and multi-select batch launch from the coding page.
   - Added ACA-aware run detail, log, and execution-history surfaces plus tests for ACA proxy routing and capability integration.
+- **Calendar-first automations scheduling in the control panel**:
+  - added a weekly calendar view for workflow automations with FullCalendar-based overlap handling and click-through editing
+  - added drag/reschedule support for simple cron-backed automation slots plus UTC occurrence expansion for recurring runs
+  - added a shared provider/model selector component reused across automation and mission-builder editing surfaces
 
 ### Changed
 
@@ -48,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated the coding dashboard so GitHub Project board state and ACA execution history are separated more clearly, with per-project column visibility and safer launch gating for non-launchable items.
   - Renamed Team/approval labels to `Active Teams` in automations surfaces for clearer operator-facing wording.
   - Replaced direct `crypto.randomUUID()` mission/workstream/review token generation in the advanced mission builder with a browser-safe helper fallback.
+  - moved the custom OpenAI-compatible provider form into the provider catalog so it behaves like the rest of the provider list instead of rendering as a separate default card
+  - updated the coding board layout to use the full page width, with run detail and live logs moved below the board and collapsed by default
+  - improved planner UX in Coding Workflows with visible in-flight status, disabled regenerate/revise controls during active requests, and a longer client timeout for planner chat requests
+
+### Fixed
+
+- **Automation artifact-path sandbox failures**:
+  - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
+  - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox
+  - added regression coverage for prompt rendering with inline inputs and for default artifact-path assignment on standard workflow nodes
 
 ## [0.4.15] - 2026-03-24
 

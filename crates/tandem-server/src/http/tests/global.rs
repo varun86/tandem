@@ -940,6 +940,15 @@ async fn global_health_route_returns_healthy_shape() {
     assert!(payload.get("startup_attempt_id").is_some());
     assert!(payload.get("startup_elapsed_ms").is_some());
     assert!(payload.get("version").and_then(|v| v.as_str()).is_some());
+    assert!(payload.get("build_id").and_then(|v| v.as_str()).is_some());
+    assert!(payload
+        .get("binary_path")
+        .and_then(|v| v.as_str())
+        .is_some());
+    assert!(payload
+        .get("binary_modified_at_ms")
+        .and_then(|v| v.as_u64())
+        .is_some());
     assert!(payload.get("mode").and_then(|v| v.as_str()).is_some());
     assert!(payload.get("environment").is_some());
 }

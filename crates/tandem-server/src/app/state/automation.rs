@@ -3017,6 +3017,43 @@ fn resolve_automation_agent_model(
         .and_then(crate::app::routines::parse_model_spec)
 }
 
+pub(crate) fn automation_node_inline_artifact_payload(node: &AutomationFlowNode) -> Option<Value> {
+    if node.node_id != "collect_inputs" {
+        return None;
+    }
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("inputs"))
+        .filter(|value| !value.is_null())
+        .cloned()
+}
+
+pub(crate) fn write_automation_inline_artifact(
+    workspace_root: &str,
+    output_path: &str,
+    payload: &Value,
+) -> anyhow::Result<(String, String)> {
+    let resolved = resolve_automation_output_path(workspace_root, output_path)?;
+    if let Some(parent) = resolved.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to create parent directory for required output `{}`: {}",
+                output_path,
+                error
+            )
+        })?;
+    }
+    let file_text = serde_json::to_string_pretty(payload)?;
+    std::fs::write(&resolved, &file_text).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to write deterministic workflow artifact `{}`: {}",
+            output_path,
+            error
+        )
+    })?;
+    Ok((output_path.to_string(), file_text))
+}
+
 pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option<String> {
     node.metadata
         .as_ref()
@@ -7127,6 +7164,56 @@ pub(crate) async fn execute_automation_v2_node(
             automation.automation_id
         );
     }
+    let required_output_path = automation_node_required_output_path(node);
+    if let (Some(output_path), Some(payload)) = (
+        required_output_path.as_deref(),
+        automation_node_inline_artifact_payload(node),
+    ) {
+        let verified_output =
+            write_automation_inline_artifact(&workspace_root, output_path, &payload)?;
+        let mut session = Session::new(
+            Some(format!(
+                "Automation {} / {}",
+                automation.automation_id, node.node_id
+            )),
+            Some(workspace_root.clone()),
+        );
+        let session_id = session.id.clone();
+        session.project_id = Some(automation_workspace_project_id(&workspace_root));
+        session.workspace_root = Some(workspace_root.clone());
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::Text {
+                text: format!(
+                    "Prepared deterministic workflow artifact `{}` from the node inputs.\n\n{{\"status\":\"completed\"}}",
+                    output_path
+                ),
+            }],
+        ));
+        state.storage.save_session(session.clone()).await?;
+        tracing::info!(
+            run_id = %run_id,
+            automation_id = %automation.automation_id,
+            node_id = %node.node_id,
+            output_path = %output_path,
+            "automation node used deterministic inline artifact shortcut"
+        );
+        let output = wrap_automation_node_output(
+            node,
+            &session,
+            &[],
+            &session_id,
+            "Prepared deterministic workflow artifact from inline node inputs.",
+            Some(verified_output),
+            Some(json!({
+                "deterministic_artifact": true,
+                "deterministic_source": "node_metadata_inputs",
+                "accepted_candidate_source": "verified_output",
+                "unmet_requirements": [],
+            })),
+        );
+        return Ok(output);
+    }
     let template = if let Some(template_id) = agent.template_id.as_deref().map(str::trim) {
         if template_id.is_empty() {
             None
@@ -7181,7 +7268,6 @@ pub(crate) async fn execute_automation_v2_node(
         .await;
 
     let model = resolve_automation_agent_model(agent, template.as_ref());
-    let required_output_path = automation_node_required_output_path(node);
     let preexisting_output = required_output_path
         .as_deref()
         .and_then(|output_path| resolve_automation_output_path(&workspace_root, output_path).ok())

@@ -15,8 +15,7 @@ pub(super) struct BrowserSmokeTestInput {
 pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoResponse {
     let lease_count = prune_expired_leases(&state).await;
     let startup = state.startup_snapshot().await;
-    let build_id = crate::build_id();
-    let binary_path = crate::binary_path_for_health();
+    let build = crate::build_provenance();
     let environment = state.host_runtime_context();
     let workspace_root = state.workspace_index.snapshot().await.root;
     let browser = state.browser_health_summary().await;
@@ -28,9 +27,11 @@ pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoRes
         "startup_attempt_id": startup.attempt_id,
         "startup_elapsed_ms": startup.elapsed_ms,
         "last_error": startup.last_error,
-        "version": env!("CARGO_PKG_VERSION"),
-        "build_id": build_id,
-        "binary_path": binary_path,
+        "version": build.version,
+        "build_id": build.build_id,
+        "git_sha": build.git_sha,
+        "binary_path": build.binary_path,
+        "binary_modified_at_ms": build.binary_modified_at_ms,
         "mode": state.mode_label(),
         "leaseCount": lease_count,
         "workspace_root": workspace_root,

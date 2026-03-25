@@ -58,8 +58,11 @@ cargo test -p tandem-server -p tandem-core -p tandem-ai
 
 ```bash
 cargo build -p tandem-ai --release
+stat -c '%y %n' crates/tandem-server/src/app/state/automation.rs target/release/tandem-engine
 sudo install -m 755 target/release/tandem-engine /usr/local/bin/tandem-engine
 sudo systemctl restart tandem-engine
+systemctl show tandem-engine.service -p ExecStart -p MainPID
+curl -s http://127.0.0.1:39731/global/health | jq '{version, build_id, git_sha, binary_path, binary_modified_at_ms}'
 ```
 
 # Control panel testing locally

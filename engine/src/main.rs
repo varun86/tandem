@@ -460,6 +460,15 @@ async fn main() -> anyhow::Result<()> {
                 },
             );
             info!("engine logging initialized: {:?}", log_info);
+            let build = tandem_server::build_provenance();
+            tracing::info!(
+                version = %build.version,
+                build_id = %build.build_id,
+                git_sha = ?build.git_sha,
+                binary_path = ?build.binary_path,
+                binary_modified_at_ms = ?build.binary_modified_at_ms,
+                "engine build provenance"
+            );
             let startup_attempt_id = Uuid::new_v4().to_string();
             let state = AppState::new_starting(startup_attempt_id.clone(), in_process);
             state.configure_web_ui(web_ui, web_ui_prefix);

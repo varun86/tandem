@@ -1211,6 +1211,11 @@ export function CodingWorkflowsPage({
                         )}
                       </div>
                     ) : null}
+                    {String(projectTasksQuery.data?.warning || "").trim() ? (
+                      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                        {String(projectTasksQuery.data.warning)}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <EmptyState text="No task preview available yet." />

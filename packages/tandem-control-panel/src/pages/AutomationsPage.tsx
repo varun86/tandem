@@ -4718,7 +4718,7 @@ function MyAutomations({
 
   useEngineStream(
     selectedRunId && selectedSessionId
-      ? `/event?sessionID=${encodeURIComponent(selectedSessionId)}&runID=${encodeURIComponent(selectedRunId)}`
+      ? `/api/event?sessionID=${encodeURIComponent(selectedSessionId)}&runID=${encodeURIComponent(selectedRunId)}`
       : "",
     (msg) => {
       try {

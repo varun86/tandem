@@ -85,7 +85,9 @@ pub use runtime::runs::{ActiveRun, RunRegistry};
 pub use runtime::state::RuntimeState;
 pub use runtime::worktrees::ManagedWorktreeRecord;
 pub use shared_resources::types::{ResourceConflict, ResourceStoreError, SharedResourceRecord};
-pub use util::build::{binary_path_for_health, build_id};
+pub use util::build::{
+    binary_modified_at_ms, binary_path_for_health, build_id, build_provenance, git_sha,
+};
 pub use util::host::detect_host_runtime_context;
 pub use util::time::now_ms;
 pub use workflows::{

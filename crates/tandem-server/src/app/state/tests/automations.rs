@@ -2021,6 +2021,206 @@ fn standard_workflow_nodes_receive_default_workspace_output_paths() {
 }
 
 #[test]
+fn collect_inputs_nodes_write_deterministic_inline_artifacts() {
+    let node = AutomationFlowNode {
+        node_id: "collect_inputs".to_string(),
+        agent_id: "planner".to_string(),
+        objective: "Gather workflow inputs".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "inputs": {
+                "topic": "autonomous AI agentic workflows",
+                "delivery_email": "evan@frumu.ai",
+                "email_format": "simple html",
+                "attachments_allowed": false
+            }
+        })),
+    };
+
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-inline-artifact-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("temp workspace");
+
+    let output_path =
+        automation_node_required_output_path(&node).expect("collect_inputs output path");
+    let payload = automation_node_inline_artifact_payload(&node).expect("inline payload");
+    let (written_path, file_text) = write_automation_inline_artifact(
+        workspace_root.to_str().expect("workspace utf8"),
+        &output_path,
+        &payload,
+    )
+    .expect("inline artifact write");
+
+    assert_eq!(written_path, ".tandem/artifacts/collect-inputs.json");
+    assert!(file_text.contains("autonomous AI agentic workflows"));
+
+    let resolved = workspace_root.join(".tandem/artifacts/collect-inputs.json");
+    assert!(resolved.exists());
+    let persisted = std::fs::read_to_string(&resolved).expect("read artifact");
+    assert!(persisted.contains("\"delivery_email\": \"evan@frumu.ai\""));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-collect-inputs-exec-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("workspace");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-inline-collect-inputs".to_string(),
+        name: "Collect Inputs Shortcut".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![AutomationAgentProfile {
+            agent_id: "agent_planner".to_string(),
+            template_id: None,
+            display_name: "Planner".to_string(),
+            avatar_url: None,
+            model_policy: Some(json!({
+                "default_model": "openrouter/not-a-real-model"
+            })),
+            skills: Vec::new(),
+            tool_policy: AutomationAgentToolPolicy {
+                allowlist: vec!["*".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: AutomationFlowSpec {
+            nodes: vec![AutomationFlowNode {
+                node_id: "collect_inputs".to_string(),
+                agent_id: "agent_planner".to_string(),
+                objective: "Capture the report topic, delivery target, and formatting constraints."
+                    .to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "brief".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "inputs": {
+                        "topic": "autonomous AI agentic workflows",
+                        "delivery_email": "evan@frumu.ai",
+                        "email_format": "simple html",
+                        "attachments_allowed": false
+                    }
+                })),
+            }],
+        },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: crate::now_ms(),
+        updated_at_ms: crate::now_ms(),
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let node = automation.flow.nodes.first().expect("collect_inputs node");
+    let agent = automation.agents.first().expect("planner agent");
+
+    let output = execute_automation_v2_node(&state, &run.run_id, &automation, node, agent)
+        .await
+        .expect("execute collect_inputs");
+
+    assert_eq!(
+        output.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        output
+            .get("artifact_validation")
+            .and_then(|value| value.get("deterministic_artifact"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        output
+            .get("artifact_validation")
+            .and_then(|value| value.get("deterministic_source"))
+            .and_then(Value::as_str),
+        Some("node_metadata_inputs")
+    );
+
+    let artifact_path = workspace_root.join(".tandem/artifacts/collect-inputs.json");
+    assert!(artifact_path.exists());
+    let artifact_text = std::fs::read_to_string(&artifact_path).expect("artifact text");
+    assert!(artifact_text.contains("autonomous AI agentic workflows"));
+
+    let session_id = output
+        .get("content")
+        .and_then(|value| value.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id");
+    let session = state
+        .storage
+        .get_session(session_id)
+        .await
+        .expect("deterministic session");
+    assert!(session.messages.iter().all(|message| {
+        message
+            .parts
+            .iter()
+            .all(|part| !matches!(part, tandem_types::MessagePart::ToolInvocation { .. }))
+    }));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn first_attempt_structured_json_prompt_without_output_path_requires_handoff_even_without_enforcement(
 ) {
     let automation = AutomationV2Spec {
