@@ -1,40 +1,6 @@
 # Tandem Upcoming Release Notes
 
-## Tandem v0.4.17 Release Notes (Released 2026-03-25)
-
-### Shared `ChatInterfacePanel` Component
-
-- Added `ChatInterfacePanel` component (`src/components/ChatInterfacePanel.tsx`) for unified AI chat UX across ChatPage and TaskPlanningPanel.
-- Added motion animations, bot avatar support, thinking dots, streaming text, and file attachment pills to the shared component.
-- Added `BotIdentity` type with `botName` and `botAvatarUrl` for branded AI assistant rendering.
-- Added `ChatQuickReply` type and quick-reply button support for clarifier/choice flows.
-- Added auto-height textarea (up to 180px) with Enter-to-send / Shift+Enter newline.
-- Added auto-scroll to newest messages on updates.
-
-### ChatPage Refactored to Use `ChatInterfacePanel`
-
-- Replaced ~165 lines of inline message/composer code with the shared `ChatInterfacePanel`.
-- ChatPage and TaskPlanningPanel now share the same chat UX component.
-
-### TaskPlanningPanel Unified Planner Chat Flow
-
-- Consolidated Goal + Revision notes into a single planner chat input.
-- Clarifier questions render as quick-reply buttons in the chat interface.
-- Conversation history now lives inside the chat flow instead of a separate panel.
-- Right-side columns (Planned tasks / Plan details) only appear after first planner response.
-- Removed duplicate chat/conversation sections from the form.
-
-### Clarifier Options API Extended
-
-- Added `options[]` array to the planner clarifier JSON response so the UI can render multiple-choice quick-reply buttons.
-- `PlannerClarifierOption` struct added with `id` and `label` fields and `Serialize` derive.
-- All 7 clarifier JSON construction sites in `workflow_planner.rs` now include the options field.
-
-### Workflow Stability Telemetry Fix
-
-- Added `validatorSummary` and `warningRequirements` fields to `workflowTaskInspectionDetails()` so task inspection surfaces show validation warnings that were previously silently dropped.
-
-## Tandem v0.4.16 Release Notes (Released 2026-03-24)
+## Tandem v0.4.16 Release Notes (Released 2026-03-25)
 
 ### Shared Agent Catalog For Tandem Desktop And Control Panel
 
