@@ -1,4 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import FullCalendar from "@fullcalendar/react";
+import interactionPlugin from "@fullcalendar/interaction";
+import timeGridPlugin from "@fullcalendar/timegrid";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
@@ -43,16 +46,52 @@ import { useEngineStream } from "../features/stream/useEngineStream";
 import { useCapabilities } from "../features/system/queries.ts";
 import { api } from "../lib/api";
 import { renderMarkdownSafe } from "../lib/markdown";
+import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { AdvancedMissionBuilderPanel } from "./AdvancedMissionBuilderPanel";
 import { OptimizationCampaignsPanel } from "./OptimizationCampaignsPanel";
 import { PageCard, EmptyState, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
+import agentCatalog from "../generated/agent-catalog.json";
+
+type AgentCatalogCategory = {
+  id: string;
+  title: string;
+  summary: string;
+  source_path: string;
+  count: number;
+};
+
+type AgentCatalogEntry = {
+  id: string;
+  name: string;
+  summary: string;
+  category_id: string;
+  category_title: string;
+  category_summary: string;
+  source_path: string;
+  source_file: string;
+  sandbox_mode: string;
+  target_surfaces: string[];
+  instructions: string;
+  tags: string[];
+  requires: string[];
+  role: string;
+};
+
+type AgentCatalogIndex = {
+  generated_at: string;
+  source_root: string;
+  categories: AgentCatalogCategory[];
+  agents: AgentCatalogEntry[];
+};
+
+const CATALOG = agentCatalog as AgentCatalogIndex;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type ExecutionMode = "single" | "team" | "swarm";
 type WizardStep = 1 | 2 | 3 | 4;
-type ActiveTab = "create" | "list" | "running" | "optimize" | "approvals";
+type ActiveTab = "create" | "calendar" | "list" | "running" | "optimize" | "approvals";
 type CreateMode = "simple" | "advanced";
 type WorkflowToolAccessMode = "all" | "custom";
 
@@ -86,6 +125,7 @@ interface WizardState {
   customSkillName: string;
   customSkillDescription: string;
   customWorkflowKind: "pack_builder_recipe" | "automation_v2_dag";
+  selectedAgentId: string;
 }
 
 interface ProviderOption {
@@ -243,6 +283,7 @@ function createDefaultWizardState(
     customSkillName: "",
     customSkillDescription: "",
     customWorkflowKind: "pack_builder_recipe",
+    selectedAgentId: "",
   };
 }
 
@@ -465,18 +506,6 @@ function normalizeAllowedTools(raw: string[]) {
   return values;
 }
 
-function mergeOptionValues(values: string[], currentValue: string) {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const raw of [currentValue, ...values]) {
-    const value = String(raw || "").trim();
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    merged.push(value);
-  }
-  return merged;
-}
-
 function parseCustomToolText(raw: string) {
   return normalizeAllowedTools(
     String(raw || "")
@@ -668,6 +697,211 @@ function workflowEditToSchedule(draft: WorkflowEditDraft) {
     timezone: "UTC",
     misfire_policy: misfirePolicy,
   };
+}
+
+const CALENDAR_DISPLAY_DURATION_MS = 30 * 60 * 1000;
+const CALENDAR_SLOT_MS = 60 * 1000;
+
+function getAutomationScheduleTimezone(automation: any) {
+  return (
+    String(
+      automation?.schedule?.timezone ||
+        automation?.timezone ||
+        automation?.schedule?.timeZone ||
+        "UTC"
+    ).trim() || "UTC"
+  );
+}
+
+function getAutomationCronExpression(schedule: any) {
+  return String(
+    schedule?.cron?.expression ||
+      schedule?.cron_expression ||
+      schedule?.cronExpression ||
+      schedule?.cron ||
+      ""
+  ).trim();
+}
+
+function splitCronField(field: string) {
+  return String(field || "")
+    .trim()
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function matchesCronAtom(atom: string, value: number, min: number, max: number) {
+  const trimmed = String(atom || "").trim();
+  if (!trimmed || trimmed === "*") return true;
+  const stepParts = trimmed.split("/");
+  const base = stepParts[0] || "*";
+  const step = stepParts[1] ? Number.parseInt(stepParts[1], 10) : 1;
+  const normalizedStep = Number.isFinite(step) && step > 0 ? step : 1;
+  const rangeParts = base.split("-");
+  let start = min;
+  let end = max;
+  if (base !== "*") {
+    if (rangeParts.length === 2) {
+      start = Number.parseInt(rangeParts[0], 10);
+      end = Number.parseInt(rangeParts[1], 10);
+    } else {
+      start = Number.parseInt(base, 10);
+      end = start;
+    }
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const clampedStart = Math.max(min, Math.min(max, start));
+  const clampedEnd = Math.max(min, Math.min(max, end));
+  if (value < clampedStart || value > clampedEnd) return false;
+  return (value - clampedStart) % normalizedStep === 0;
+}
+
+function matchesCronField(field: string, value: number, min: number, max: number) {
+  const atoms = splitCronField(field);
+  if (!atoms.length) return true;
+  return atoms.some((atom) => matchesCronAtom(atom, value, min, max));
+}
+
+function cronMatchesUtc(date: Date, expression: string) {
+  const fields = String(expression || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (fields.length !== 5) return false;
+  const [minuteField, hourField, domField, monthField, dowField] = fields;
+  const minute = date.getUTCMinutes();
+  const hour = date.getUTCHours();
+  const dom = date.getUTCDate();
+  const month = date.getUTCMonth() + 1;
+  const dow = date.getUTCDay();
+  const minuteMatch = matchesCronField(minuteField, minute, 0, 59);
+  const hourMatch = matchesCronField(hourField, hour, 0, 23);
+  const monthMatch = matchesCronField(monthField, month, 1, 12);
+  const domWildcard = !domField || domField === "*";
+  const dowWildcard = !dowField || dowField === "*";
+  const domMatch = domWildcard || matchesCronField(domField, dom, 1, 31);
+  const dowMatch = dowWildcard || matchesCronField(dowField, dow === 0 ? 7 : dow, 0, 7);
+  const dayMatch = domWildcard || dowWildcard ? domMatch && dowMatch : domMatch || dowMatch;
+  return minuteMatch && hourMatch && monthMatch && dayMatch;
+}
+
+function expandCronOccurrences(expression: string, rangeStartMs: number, rangeEndMs: number) {
+  const out: number[] = [];
+  const start = Math.max(0, Math.min(rangeStartMs, rangeEndMs));
+  const end = Math.max(rangeStartMs, rangeEndMs);
+  const cursor = new Date(Math.floor(start / CALENDAR_SLOT_MS) * CALENDAR_SLOT_MS);
+  while (cursor.getTime() < end) {
+    if (cronMatchesUtc(cursor, expression)) {
+      out.push(cursor.getTime());
+    }
+    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
+  }
+  return out;
+}
+
+function isCalendarEditableCron(expression: string) {
+  const fields = String(expression || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (fields.length !== 5) return false;
+  const [minuteField, hourField, domField, monthField, dowField] = fields;
+  const minuteOk = /^\d+$/.test(minuteField);
+  const hourOk = /^\d+$/.test(hourField);
+  const domOk = domField === "*";
+  const monthOk = monthField === "*";
+  const dowOk = dowField === "*" || /^[0-7]$/.test(dowField);
+  return minuteOk && hourOk && domOk && monthOk && dowOk;
+}
+
+function rewriteCronForDroppedStart(expression: string, start: Date) {
+  const fields = String(expression || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (fields.length !== 5) return null;
+  const [minuteField, hourField, domField, monthField, dowField] = fields;
+  if (domField !== "*" || monthField !== "*") return null;
+  if (!/^\d+$/.test(minuteField) || !/^\d+$/.test(hourField)) return null;
+  const minute = String(start.getUTCMinutes()).padStart(2, "0");
+  const hour = String(start.getUTCHours());
+  const weekday = String(start.getUTCDay());
+  const nextDow = weekday === "0" ? "0" : weekday;
+  const nextDowField = dowField === "*" ? "*" : nextDow;
+  return `${minute} ${hour} ${domField} ${monthField} ${nextDowField}`;
+}
+
+function getAutomationCalendarTitle(automation: any) {
+  return String(
+    automation?.name ||
+      automation?.mission?.objective ||
+      automation?.description ||
+      automation?.automation_id ||
+      automation?.automationId ||
+      "Automation"
+  ).trim();
+}
+
+function getAutomationCalendarFamily(automation: any) {
+  const automationId = String(
+    automation?.automation_id || automation?.automationId || automation?.id || ""
+  ).trim();
+  return automationId.startsWith("automation-v2-") ? "v2" : "legacy";
+}
+
+function getAutomationCalendarScheduleStatus(automation: any) {
+  return String(automation?.status || "active").trim() || "active";
+}
+
+function buildCalendarOccurrences({
+  automation,
+  family,
+  rangeStartMs,
+  rangeEndMs,
+}: {
+  automation: any;
+  family: "legacy" | "v2";
+  rangeStartMs: number;
+  rangeEndMs: number;
+}) {
+  const automationId = String(
+    automation?.automation_id || automation?.automationId || automation?.id || ""
+  ).trim();
+  if (!automationId) return [];
+  const schedule = automation?.schedule || {};
+  const scheduleType = String(schedule?.type || "")
+    .trim()
+    .toLowerCase();
+  const cronExpression = getAutomationCronExpression(schedule);
+  if (scheduleType !== "cron" || !cronExpression) return [];
+  const title = getAutomationCalendarTitle(automation);
+  const scheduleLabel =
+    family === "legacy" ? formatScheduleLabel(schedule) : formatAutomationV2ScheduleLabel(schedule);
+  const status = getAutomationCalendarScheduleStatus(automation);
+  const timezone = getAutomationScheduleTimezone(automation);
+  const editable = isCalendarEditableCron(cronExpression);
+  const starts = expandCronOccurrences(cronExpression, rangeStartMs, rangeEndMs);
+  return starts.map((startMs) => ({
+    id: `${automationId}:${startMs}`,
+    title,
+    start: new Date(startMs),
+    end: new Date(startMs + CALENDAR_DISPLAY_DURATION_MS),
+    allDay: false,
+    editable,
+    startEditable: editable,
+    durationEditable: false,
+    extendedProps: {
+      automation,
+      automationId,
+      family,
+      scheduleLabel,
+      scheduleType,
+      cronExpression,
+      status,
+      timezone,
+    },
+  }));
 }
 
 function isStandupAutomation(automation: any) {
@@ -1170,6 +1404,8 @@ function Step1Goal({
   installStatus,
   topMatches,
   isMatching,
+  selectedAgentId,
+  onChangeSelectedAgentId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -1196,9 +1432,31 @@ function Step1Goal({
   installStatus: string;
   topMatches: Array<{ skill_name?: string; confidence?: number }>;
   isMatching: boolean;
+  selectedAgentId: string;
+  onChangeSelectedAgentId: (v: string) => void;
 }) {
+  const [agentSearch, setAgentSearch] = useState("");
   const generatedArtifactKeys = Object.keys(
     (generatedSkill?.artifacts as Record<string, string>) || {}
+  );
+
+  const filteredAgents = useMemo(() => {
+    const query = agentSearch.toLowerCase().trim();
+    if (!query) return CATALOG.agents.slice(0, 20);
+    return CATALOG.agents
+      .filter(
+        (agent) =>
+          agent.name.toLowerCase().includes(query) ||
+          agent.summary.toLowerCase().includes(query) ||
+          agent.tags.some((tag) => tag.toLowerCase().includes(query)) ||
+          agent.category_title.toLowerCase().includes(query)
+      )
+      .slice(0, 20);
+  }, [agentSearch]);
+
+  const selectedAgent = useMemo(
+    () => CATALOG.agents.find((a) => a.id === selectedAgentId) || null,
+    [selectedAgentId]
   );
   return (
     <div className="grid gap-4">
@@ -1213,20 +1471,65 @@ function Step1Goal({
         autoFocus
       />
       <div className="grid gap-2">
-        <p className="text-xs text-slate-500">Need inspiration? Try one of these:</p>
-        <div className="flex flex-wrap gap-2">
-          {AUTOMATION_WIZARD_CONFIG.goalExamples.slice(1).map((ex) => (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-slate-500">Search agents from catalog:</p>
+          {selectedAgentId && (
             <button
-              key={ex}
-              className="tcp-btn truncate text-left text-xs"
-              style={{ maxWidth: "280px" }}
-              onClick={() => onChange(ex)}
+              className="tcp-btn h-6 px-2 text-xs"
+              onClick={() => onChangeSelectedAgentId("")}
             >
-              {ex}
+              Clear
             </button>
-          ))}
+          )}
+        </div>
+        <input
+          className="tcp-input text-xs"
+          placeholder="Search agents by name, tag, or description..."
+          value={agentSearch}
+          onInput={(e) => setAgentSearch((e.target as HTMLInputElement).value)}
+        />
+        <div className="max-h-[200px] overflow-y-auto rounded border border-slate-700/50">
+          {filteredAgents.length === 0 ? (
+            <p className="p-3 text-xs text-slate-500">No agents found</p>
+          ) : (
+            <div className="grid gap-1 p-2">
+              {filteredAgents.map((agent) => (
+                <button
+                  key={agent.id}
+                  className={`tcp-list-item flex flex-col items-start gap-1 text-left transition-all ${
+                    selectedAgentId === agent.id ? "border-amber-400/60 bg-amber-400/10" : ""
+                  }`}
+                  onClick={() => {
+                    onChangeSelectedAgentId(agent.id);
+                    setAgentSearch("");
+                  }}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    <span className="font-medium text-xs truncate">{agent.name}</span>
+                    <span className="tcp-badge-info text-[10px]">{agent.category_title}</span>
+                    <span className="tcp-badge-info text-[10px]">{agent.role}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 line-clamp-2">{agent.summary}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+      {selectedAgent && (
+        <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="font-medium text-amber-300">Selected: {selectedAgent.name}</span>
+            <span className="tcp-badge-info">{selectedAgent.role}</span>
+          </div>
+          <div
+            className="prose prose-sm prose-invert max-w-none text-slate-300"
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdownSafe(selectedAgent.instructions || selectedAgent.summary),
+            }}
+          />
+        </div>
+      )}
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
         <div className="flex items-center justify-between gap-2">
           <span className="uppercase tracking-wide text-slate-500">Reusable Flows</span>
@@ -2945,6 +3248,8 @@ function CreateWizard({
               installStatus={installStatus}
               topMatches={routerMatches}
               isMatching={matchMutation.isPending}
+              selectedAgentId={wizard.selectedAgentId}
+              onChangeSelectedAgentId={(v) => setWizard((s) => ({ ...s, selectedAgentId: v }))}
             />
           ) : step === 2 ? (
             <Step2Schedule
@@ -3116,7 +3421,7 @@ function MyAutomations({
   client: any;
   toast: any;
   navigate: (route: string) => void;
-  viewMode: "list" | "running";
+  viewMode: "calendar" | "list" | "running";
   selectedRunId: string;
   onSelectRunId: (runId: string) => void;
   onOpenRunningView: () => void;
@@ -3157,6 +3462,17 @@ function MyAutomations({
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
   const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
   const [workflowEditDraft, setWorkflowEditDraft] = useState<WorkflowEditDraft | null>(null);
+  const [calendarRange, setCalendarRange] = useState(() => {
+    const now = new Date();
+    const utcDay = now.getUTCDay();
+    const start = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - utcDay, 0, 0, 0, 0)
+    );
+    return {
+      startMs: start.getTime(),
+      endMs: start.getTime() + 7 * 24 * 60 * 60 * 1000,
+    };
+  });
   const isWorkflowRun = selectedRunId.startsWith("automation-v2-run-");
 
   const automationsQuery = useQuery({
@@ -3186,8 +3502,14 @@ function MyAutomations({
   const providerCatalogQuery = useQuery({
     queryKey: ["providers", "catalog", "workflow-edit"],
     queryFn: () =>
-      client?.providers?.catalog?.().catch(() => ({ providers: [] })) ??
-      Promise.resolve({ providers: [] }),
+      client?.providers?.catalog?.().catch(() => ({ all: [] })) ?? Promise.resolve({ all: [] }),
+    refetchInterval: 30000,
+  });
+  const providersConfigQuery = useQuery({
+    queryKey: ["providers", "config", "workflow-edit"],
+    queryFn: () =>
+      client?.providers?.config?.().catch(() => ({ providers: {} })) ??
+      Promise.resolve({ providers: {} }),
     refetchInterval: 30000,
   });
   const mcpServersQuery = useQuery({
@@ -3774,21 +4096,42 @@ function MyAutomations({
     }
     return Array.from(byId.values());
   }, [automationsQuery.data]);
+  const calendarEvents = useMemo(() => {
+    const legacyEvents = automations.flatMap((automation: any) =>
+      buildCalendarOccurrences({
+        automation,
+        family: "legacy",
+        rangeStartMs: calendarRange.startMs,
+        rangeEndMs: calendarRange.endMs,
+      })
+    );
+    const workflowEvents = automationsV2.flatMap((automation: any) =>
+      buildCalendarOccurrences({
+        automation,
+        family: "v2",
+        rangeStartMs: calendarRange.startMs,
+        rangeEndMs: calendarRange.endMs,
+      })
+    );
+    return [...legacyEvents, ...workflowEvents];
+  }, [automations, automationsV2, calendarRange.endMs, calendarRange.startMs]);
   const legacyRuns = toArray(runsQuery.data, "runs");
   const providerOptions = useMemo<ProviderOption[]>(() => {
-    const rows = Array.isArray((providerCatalogQuery.data as any)?.providers)
-      ? (providerCatalogQuery.data as any).providers
-      : [];
+    const rows = Array.isArray((providerCatalogQuery.data as any)?.all)
+      ? (providerCatalogQuery.data as any).all
+      : Array.isArray((providerCatalogQuery.data as any)?.providers)
+        ? (providerCatalogQuery.data as any).providers
+        : [];
+    const configuredProviders = (providersConfigQuery.data as any)?.providers || {};
     return rows
       .map((provider: any) => ({
         id: String(provider?.id || "").trim(),
-        models: Array.isArray(provider?.models)
-          ? provider.models.map((row: any) => String(row || "").trim()).filter(Boolean)
-          : [],
+        models: Object.keys(provider?.models || {}).sort(),
+        configured: !!configuredProviders[String(provider?.id || "").trim()],
       }))
       .filter((provider: ProviderOption) => provider.id)
       .sort((a, b) => a.id.localeCompare(b.id));
-  }, [providerCatalogQuery.data]);
+  }, [providerCatalogQuery.data, providersConfigQuery.data]);
   const mcpServers = useMemo(
     () => normalizeMcpServers(mcpServersQuery.data),
     [mcpServersQuery.data]
@@ -4490,6 +4833,95 @@ function MyAutomations({
     return status === "paused" || status === "disabled";
   };
 
+  const openCalendarAutomationEdit = (automation: any) => {
+    if (!automation) return;
+    if (isMissionBlueprintAutomation(automation)) {
+      onOpenAdvancedEdit(automation);
+      return;
+    }
+    const family = getAutomationCalendarFamily(automation);
+    if (family === "legacy") {
+      beginEdit(automation);
+      return;
+    }
+    const draft = workflowAutomationToEditDraft(automation);
+    if (!draft) {
+      toast("err", "Cannot open this workflow automation for editing.");
+      return;
+    }
+    setWorkflowEditDraft(draft);
+  };
+
+  const updateCalendarAutomationFromEvent = async (info: any) => {
+    const event = info?.event;
+    const automation = event?.extendedProps?.automation;
+    const family =
+      String(event?.extendedProps?.family || "legacy").trim() === "v2" ? "v2" : "legacy";
+    const cronExpression = String(event?.extendedProps?.cronExpression || "").trim();
+    const start = event?.start ? new Date(event.start) : null;
+    const nextCron = start ? rewriteCronForDroppedStart(cronExpression, start) : null;
+    if (!automation || !start || !nextCron) {
+      info?.revert?.();
+      toast("info", "That schedule cannot be moved from the calendar yet.");
+      return;
+    }
+    try {
+      if (family === "legacy") {
+        const automationId = String(
+          automation?.automation_id || automation?.id || automation?.routine_id || ""
+        ).trim();
+        const scheduleEditor = scheduleToEditor(automation?.schedule);
+        await updateAutomationMutation.mutateAsync({
+          automationId,
+          name: String(automation?.name || automationId || "").trim(),
+          objective: String(
+            automation?.mission?.objective || automation?.mission_snapshot?.objective || ""
+          ).trim(),
+          mode:
+            String(automation?.mode || "").toLowerCase() === "standalone"
+              ? "standalone"
+              : "orchestrated",
+          requiresApproval:
+            automation?.requires_approval === true ||
+            automation?.policy?.approval?.requires_approval === true,
+          scheduleKind: "cron",
+          cronExpression: nextCron,
+          intervalSeconds: String(scheduleEditor.intervalSeconds || 3600),
+        });
+        return;
+      }
+      const draft = workflowAutomationToEditDraft(automation);
+      if (!draft) {
+        throw new Error("Workflow automation draft could not be created.");
+      }
+      await updateWorkflowAutomationMutation.mutateAsync({
+        ...draft,
+        scheduleKind: "cron",
+        cronExpression: nextCron,
+        intervalSeconds: draft.intervalSeconds || "3600",
+      });
+    } catch (error) {
+      info?.revert?.();
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const renderCalendarEventContent = (arg: any) => {
+    const status = String(arg?.event?.extendedProps?.status || "active").trim() || "active";
+    const scheduleLabel = String(arg?.event?.extendedProps?.scheduleLabel || "").trim();
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg border border-slate-700/60 bg-slate-950/90 px-2 py-1 text-xs shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate font-medium text-slate-100">
+            {String(arg?.event?.title || "")}
+          </span>
+          <span className={statusColor(status)}>{status}</span>
+        </div>
+        <div className="truncate text-[11px] text-slate-400">{scheduleLabel}</div>
+      </div>
+    );
+  };
+
   const legacyAutomationCount = automations.length;
   const workflowAutomationCount = automationsV2.length;
   const totalSavedAutomations = legacyAutomationCount + workflowAutomationCount;
@@ -4529,6 +4961,66 @@ function MyAutomations({
 
   return (
     <div ref={rootRef} className="grid gap-4">
+      {viewMode === "calendar" ? (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="grid gap-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Cron schedules
+              </p>
+              <div className="tcp-subtle text-xs">
+                Drag a card to change when that automation fires. Only cron-based automations are
+                shown here for now.
+              </div>
+            </div>
+            <span className="tcp-badge-info">{calendarEvents.length} scheduled items</span>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2">
+            <FullCalendar
+              plugins={[timeGridPlugin, interactionPlugin]}
+              initialView="timeGridWeek"
+              timeZone="UTC"
+              firstDay={0}
+              height="auto"
+              expandRows
+              nowIndicator
+              editable
+              eventStartEditable
+              eventDurationEditable={false}
+              eventOverlap
+              slotEventOverlap
+              allDaySlot={false}
+              slotMinTime="00:00:00"
+              slotMaxTime="24:00:00"
+              stickyHeaderDates
+              headerToolbar={{
+                left: "prev,next today",
+                center: "title",
+                right: "",
+              }}
+              events={calendarEvents}
+              datesSet={(arg: any) => {
+                setCalendarRange({
+                  startMs: arg.start.getTime(),
+                  endMs: arg.end.getTime(),
+                });
+              }}
+              eventClick={(arg: any) => {
+                arg.jsEvent?.preventDefault?.();
+                openCalendarAutomationEdit(arg.event?.extendedProps?.automation);
+              }}
+              eventDrop={updateCalendarAutomationFromEvent}
+              eventContent={renderCalendarEventContent}
+              eventClassNames={(arg: any) => [
+                String(arg?.event?.extendedProps?.family || "legacy") === "v2"
+                  ? "tcp-calendar-event tcp-calendar-event-v2"
+                  : "tcp-calendar-event tcp-calendar-event-legacy",
+              ]}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {/* Installed packs from pack_builder */}
       {viewMode === "list" && packs.length > 0 ? (
         <div className="grid gap-2">
@@ -7182,73 +7674,38 @@ function MyAutomations({
                     <div className="text-xs uppercase tracking-wide text-slate-500">
                       Model Selection
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div className="grid gap-1">
-                        <label className="text-xs text-slate-400">Model provider</label>
-                        <select
-                          className="tcp-select"
-                          value={workflowEditDraft.modelProvider}
-                          onInput={(e) =>
-                            setWorkflowEditDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    modelProvider: (e.target as HTMLSelectElement).value,
-                                    modelId: "",
-                                  }
-                                : current
-                            )
-                          }
-                        >
-                          <option value="">Workspace default</option>
-                          {mergeOptionValues(
-                            providerOptions.map((provider) => provider.id),
-                            workflowEditDraft.modelProvider
-                          ).map((providerId) => (
-                            <option key={providerId} value={providerId}>
-                              {providerId}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="grid gap-1">
-                        <label className="text-xs text-slate-400">Model</label>
-                        <select
-                          className="tcp-select"
-                          value={workflowEditDraft.modelId}
-                          onInput={(e) =>
-                            setWorkflowEditDraft((current) =>
-                              current
-                                ? { ...current, modelId: (e.target as HTMLSelectElement).value }
-                                : current
-                            )
-                          }
-                        >
-                          <option value="">Workspace default</option>
-                          {mergeOptionValues(
-                            providerOptions.find(
-                              (provider) => provider.id === workflowEditDraft.modelProvider
-                            )?.models || [],
-                            workflowEditDraft.modelId
-                          ).map((modelId) => (
-                            <option key={modelId} value={modelId}>
-                              {modelId}
-                            </option>
-                          ))}
-                        </select>
+                    <ProviderModelSelector
+                      providerLabel="Model provider"
+                      modelLabel="Model"
+                      draft={{
+                        provider: workflowEditDraft.modelProvider,
+                        model: workflowEditDraft.modelId,
+                      }}
+                      providers={providerOptions}
+                      onChange={(draft) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                modelProvider: draft.provider,
+                                modelId: draft.model,
+                              }
+                            : current
+                        )
+                      }
+                      inheritLabel="Workspace default"
+                    />
+                    {validateModelInput(
+                      workflowEditDraft.modelProvider,
+                      workflowEditDraft.modelId
+                    ) ? (
+                      <div className="text-xs text-red-300">
                         {validateModelInput(
                           workflowEditDraft.modelProvider,
                           workflowEditDraft.modelId
-                        ) ? (
-                          <div className="text-xs text-red-300">
-                            {validateModelInput(
-                              workflowEditDraft.modelProvider,
-                              workflowEditDraft.modelId
-                            )}
-                          </div>
-                        ) : null}
+                        )}
                       </div>
-                    </div>
+                    ) : null}
                     <div className="grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
                       <div className="text-xs uppercase tracking-wide text-slate-500">
                         Planner fallback model
@@ -7256,76 +7713,38 @@ function MyAutomations({
                       <div className="text-xs text-slate-400">
                         Optional. Override the workflow model only for planning and revisions.
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <div className="grid gap-1">
-                          <label className="text-xs text-slate-400">Planner provider</label>
-                          <select
-                            className="tcp-select"
-                            value={workflowEditDraft.plannerModelProvider}
-                            onInput={(e) =>
-                              setWorkflowEditDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      plannerModelProvider: (e.target as HTMLSelectElement).value,
-                                      plannerModelId: "",
-                                    }
-                                  : current
-                              )
-                            }
-                          >
-                            <option value="">Use workflow model</option>
-                            {mergeOptionValues(
-                              providerOptions.map((provider) => provider.id),
-                              workflowEditDraft.plannerModelProvider
-                            ).map((providerId) => (
-                              <option key={`planner-${providerId}`} value={providerId}>
-                                {providerId}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="grid gap-1">
-                          <label className="text-xs text-slate-400">Planner model</label>
-                          <select
-                            className="tcp-select"
-                            value={workflowEditDraft.plannerModelId}
-                            onInput={(e) =>
-                              setWorkflowEditDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      plannerModelId: (e.target as HTMLSelectElement).value,
-                                    }
-                                  : current
-                              )
-                            }
-                          >
-                            <option value="">Use workflow model</option>
-                            {mergeOptionValues(
-                              providerOptions.find(
-                                (provider) => provider.id === workflowEditDraft.plannerModelProvider
-                              )?.models || [],
-                              workflowEditDraft.plannerModelId
-                            ).map((modelId) => (
-                              <option key={`planner-model-${modelId}`} value={modelId}>
-                                {modelId}
-                              </option>
-                            ))}
-                          </select>
+                      <ProviderModelSelector
+                        providerLabel="Planner provider"
+                        modelLabel="Planner model"
+                        draft={{
+                          provider: workflowEditDraft.plannerModelProvider,
+                          model: workflowEditDraft.plannerModelId,
+                        }}
+                        providers={providerOptions}
+                        onChange={(draft) =>
+                          setWorkflowEditDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  plannerModelProvider: draft.provider,
+                                  plannerModelId: draft.model,
+                                }
+                              : current
+                          )
+                        }
+                        inheritLabel="Use workflow model"
+                      />
+                      {validatePlannerModelInput(
+                        workflowEditDraft.plannerModelProvider,
+                        workflowEditDraft.plannerModelId
+                      ) ? (
+                        <div className="text-xs text-red-300">
                           {validatePlannerModelInput(
                             workflowEditDraft.plannerModelProvider,
                             workflowEditDraft.plannerModelId
-                          ) ? (
-                            <div className="text-xs text-red-300">
-                              {validatePlannerModelInput(
-                                workflowEditDraft.plannerModelProvider,
-                                workflowEditDraft.plannerModelId
-                              )}
-                            </div>
-                          ) : null}
+                          )}
                         </div>
-                      </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -7675,7 +8094,7 @@ function SpawnApprovals({ client, toast }: { client: any; toast: any }) {
 
 export function AutomationsPage({ client, api, toast, navigate, providerStatus }: AppPageProps) {
   const caps = useCapabilities();
-  const [tab, setTab] = useState<ActiveTab>("create");
+  const [tab, setTab] = useState<ActiveTab>("calendar");
   const [createMode, setCreateMode] = useState<CreateMode>("simple");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [advancedEditAutomation, setAdvancedEditAutomation] = useState<any | null>(null);
@@ -7696,7 +8115,8 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
 
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
     { id: "create", label: "Create", icon: "sparkles" },
-    { id: "list", label: "Automations", icon: "clipboard-list" },
+    { id: "calendar", label: "Calendar", icon: "calendar" },
+    { id: "list", label: "List", icon: "clipboard-list" },
     { id: "running", label: "Tasks", icon: "activity" },
     { id: "optimize", label: "Optimize", icon: "flask-conical" },
     { id: "approvals", label: "Active Teams", icon: "users" },
@@ -7784,7 +8204,7 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
                     editingAutomation={advancedEditAutomation}
                     onShowAutomations={() => {
                       setAdvancedEditAutomation(null);
-                      setTab("list");
+                      setTab("calendar");
                     }}
                     onShowRuns={() => {
                       setAdvancedEditAutomation(null);
@@ -7803,6 +8223,26 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
                   />
                 )}
               </div>
+            </PageCard>
+          ) : tab === "calendar" ? (
+            <PageCard
+              title="Automation Calendar"
+              subtitle="Weekly schedule view for cron automations"
+            >
+              <MyAutomations
+                client={client}
+                toast={toast}
+                navigate={navigate}
+                viewMode="calendar"
+                selectedRunId={selectedRunId}
+                onSelectRunId={setSelectedRunId}
+                onOpenRunningView={() => setTab("running")}
+                onOpenAdvancedEdit={(automation) => {
+                  setAdvancedEditAutomation(automation);
+                  setCreateMode("advanced");
+                  setTab("create");
+                }}
+              />
             </PageCard>
           ) : tab === "list" ? (
             <PageCard title="My Automations" subtitle="Installed packs, routines and run history">

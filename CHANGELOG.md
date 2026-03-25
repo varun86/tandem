@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Calendar-first automations scheduling in the control panel**:
+  - added a weekly calendar view for workflow automations with FullCalendar-based overlap handling and click-through editing
+  - added drag/reschedule support for simple cron-backed automation slots plus UTC occurrence expansion for recurring runs
+  - added a shared provider/model selector component reused across automation and mission-builder editing surfaces
+
+### Changed
+
+- **Control-panel workflow UX improvements**:
+  - moved the custom OpenAI-compatible provider form into the provider catalog so it behaves like the rest of the provider list instead of rendering as a separate default card
+  - updated the coding board layout to use the full page width, with run detail and live logs moved below the board and collapsed by default
+  - improved planner UX in Coding Workflows with visible in-flight status, disabled regenerate/revise controls during active requests, and a longer client timeout for planner chat requests
+
+### Fixed
+
+- **Automation artifact-path sandbox failures**:
+  - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
+  - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox
+  - added regression coverage for prompt rendering with inline inputs and for default artifact-path assignment on standard workflow nodes
+
 ## [0.4.16] - 2026-03-24
 
 ### Added

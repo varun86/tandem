@@ -654,6 +654,7 @@ export function SettingsPage({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
+  const [customProviderFormOpen, setCustomProviderFormOpen] = useState(false);
   const [customProviderId, setCustomProviderId] = useState("custom");
   const [customProviderUrl, setCustomProviderUrl] = useState("");
   const [customProviderModel, setCustomProviderModel] = useState("");
@@ -726,9 +727,7 @@ export function SettingsPage({
     if (currentRoute === "mcp") setActiveSection("mcp");
     if (currentRoute === "channels") setActiveSection("channels");
     if (currentRoute === "bug-monitor") setActiveSection("bug_monitor");
-    if (currentRoute === "settings" && !navigation?.acaMode) setActiveSection("install");
-    if (currentRoute === "settings" && navigation?.acaMode) setActiveSection("navigation");
-  }, [currentRoute, navigation?.acaMode]);
+  }, [currentRoute]);
 
   const installProfileQuery = useQuery({
     queryKey: ["settings", "install", "profile"],
@@ -749,6 +748,23 @@ export function SettingsPage({
       setInstallConfigError("Loaded config could not be rendered as JSON.");
     }
   }, [installConfigQuery.data]);
+
+  useEffect(() => {
+    if (currentRoute !== "settings") return;
+    if (!navigation?.acaMode) {
+      setActiveSection("install");
+      return;
+    }
+    const preferInstall =
+      installProfileQuery.data?.aca_integration !== true ||
+      installProfileQuery.data?.control_panel_config_ready !== true;
+    setActiveSection(preferInstall ? "install" : "navigation");
+  }, [
+    currentRoute,
+    navigation?.acaMode,
+    installProfileQuery.data?.aca_integration,
+    installProfileQuery.data?.control_panel_config_ready,
+  ]);
 
   const providersCatalog = useQuery({
     queryKey: ["settings", "providers", "catalog"],
@@ -2094,140 +2110,6 @@ export function SettingsPage({
                   }
                 >
                   <div className="grid gap-3">
-                    <div className="tcp-list-item grid gap-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium">Custom OpenAI-compatible provider</div>
-                          <div className="tcp-subtle mt-1 text-xs">
-                            Add providers like MiniMax by ID, base URL, default model, and API key.
-                          </div>
-                        </div>
-                        <Badge tone={customConfiguredProviders.length ? "ok" : "info"}>
-                          {customConfiguredProviders.length} configured
-                        </Badge>
-                      </div>
-                      <form
-                        className="grid gap-3"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          saveCustomProviderMutation.mutate({
-                            providerId: customProviderId,
-                            url: customProviderUrl,
-                            modelId: customProviderModel,
-                            apiKey: customProviderApiKey,
-                            makeDefault: customProviderMakeDefault,
-                          });
-                        }}
-                      >
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="grid gap-2">
-                            <label className="text-sm font-medium">Provider ID</label>
-                            <input
-                              className="tcp-input"
-                              value={customProviderId}
-                              onInput={(event) =>
-                                setCustomProviderId((event.target as HTMLInputElement).value)
-                              }
-                              placeholder="custom"
-                            />
-                          </div>
-                          <div className="grid gap-2">
-                            <label className="text-sm font-medium">Default model</label>
-                            <input
-                              className="tcp-input"
-                              value={customProviderModel}
-                              onInput={(event) =>
-                                setCustomProviderModel((event.target as HTMLInputElement).value)
-                              }
-                              placeholder="MiniMax-M2"
-                            />
-                          </div>
-                        </div>
-                        <div className="grid gap-2">
-                          <label className="text-sm font-medium">Base URL</label>
-                          <input
-                            className="tcp-input"
-                            value={customProviderUrl}
-                            onInput={(event) =>
-                              setCustomProviderUrl((event.target as HTMLInputElement).value)
-                            }
-                            placeholder="https://api.minimax.io/v1"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <label className="text-sm font-medium">API key</label>
-                          <input
-                            className="tcp-input"
-                            type="password"
-                            value={customProviderApiKey}
-                            onInput={(event) =>
-                              setCustomProviderApiKey((event.target as HTMLInputElement).value)
-                            }
-                            placeholder="Optional. Leave blank to keep the existing key."
-                          />
-                        </div>
-                        <label className="inline-flex items-center gap-2 text-sm text-slate-200">
-                          <input
-                            type="checkbox"
-                            className="accent-slate-400"
-                            checked={customProviderMakeDefault}
-                            onChange={(event) =>
-                              setCustomProviderMakeDefault(
-                                (event.target as HTMLInputElement).checked
-                              )
-                            }
-                          />
-                          Make this the default provider
-                        </label>
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <button
-                            className="tcp-btn-primary"
-                            type="submit"
-                            disabled={saveCustomProviderMutation.isPending}
-                          >
-                            <i data-lucide="plus"></i>
-                            Save custom provider
-                          </button>
-                        </div>
-                      </form>
-                      {customConfiguredProviders.length ? (
-                        <div className="grid gap-2">
-                          {customConfiguredProviders.map((provider) => (
-                            <div
-                              key={provider.id}
-                              className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2"
-                            >
-                              <div className="min-w-0">
-                                <div className="font-medium">{provider.id}</div>
-                                <div className="tcp-subtle break-all text-xs">
-                                  {provider.url || "No URL configured"}
-                                </div>
-                                <div className="tcp-subtle text-xs">
-                                  Model: {provider.model || "not set"}
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {provider.isDefault ? <Badge tone="ok">default</Badge> : null}
-                                <button
-                                  type="button"
-                                  className="tcp-btn h-8 px-3 text-xs"
-                                  onClick={() => {
-                                    setCustomProviderId(provider.id);
-                                    setCustomProviderUrl(provider.url);
-                                    setCustomProviderModel(provider.model);
-                                    setCustomProviderMakeDefault(provider.isDefault);
-                                    setProviderDefaultsOpen(true);
-                                  }}
-                                >
-                                  <i data-lucide="square-pen"></i>
-                                  Edit
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
                     <button
                       type="button"
                       className="tcp-list-item text-left"
@@ -2265,6 +2147,193 @@ export function SettingsPage({
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -8 }}
                         >
+                          <div className="tcp-list-item grid gap-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">Custom OpenAI-compatible provider</div>
+                                <div className="tcp-subtle mt-1 text-xs">
+                                  Add providers like MiniMax by ID, base URL, default model, and API
+                                  key.
+                                </div>
+                              </div>
+                              <Badge tone={customConfiguredProviders.length ? "ok" : "info"}>
+                                {customConfiguredProviders.length} configured
+                              </Badge>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="tcp-list-item text-left"
+                              onClick={() => setCustomProviderFormOpen((prev) => !prev)}
+                              aria-expanded={customProviderFormOpen}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="font-medium inline-flex items-center gap-2">
+                                    <i
+                                      data-lucide={
+                                        customProviderFormOpen ? "chevron-down" : "chevron-right"
+                                      }
+                                    ></i>
+                                    <span>
+                                      {customProviderFormOpen
+                                        ? "Hide custom provider form"
+                                        : "Show custom provider form"}
+                                    </span>
+                                  </div>
+                                  <div className="tcp-subtle mt-1 text-xs">
+                                    Use this for OpenAI-compatible endpoints. Anthropic is handled
+                                    by the built-in provider row below.
+                                  </div>
+                                </div>
+                                <Badge tone="info">OpenAI-compatible only</Badge>
+                              </div>
+                            </button>
+
+                            <AnimatePresence initial={false}>
+                              {customProviderFormOpen ? (
+                                <motion.div
+                                  className="grid gap-3"
+                                  initial={{ opacity: 0, y: -8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -8 }}
+                                >
+                                  <form
+                                    className="grid gap-3"
+                                    onSubmit={(event) => {
+                                      event.preventDefault();
+                                      saveCustomProviderMutation.mutate({
+                                        providerId: customProviderId,
+                                        url: customProviderUrl,
+                                        modelId: customProviderModel,
+                                        apiKey: customProviderApiKey,
+                                        makeDefault: customProviderMakeDefault,
+                                      });
+                                    }}
+                                  >
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      <div className="grid gap-2">
+                                        <label className="text-sm font-medium">Provider ID</label>
+                                        <input
+                                          className="tcp-input"
+                                          value={customProviderId}
+                                          onInput={(event) =>
+                                            setCustomProviderId(
+                                              (event.target as HTMLInputElement).value
+                                            )
+                                          }
+                                          placeholder="custom"
+                                        />
+                                      </div>
+                                      <div className="grid gap-2">
+                                        <label className="text-sm font-medium">Default model</label>
+                                        <input
+                                          className="tcp-input"
+                                          value={customProviderModel}
+                                          onInput={(event) =>
+                                            setCustomProviderModel(
+                                              (event.target as HTMLInputElement).value
+                                            )
+                                          }
+                                          placeholder="MiniMax-M2"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <label className="text-sm font-medium">Base URL</label>
+                                      <input
+                                        className="tcp-input"
+                                        value={customProviderUrl}
+                                        onInput={(event) =>
+                                          setCustomProviderUrl(
+                                            (event.target as HTMLInputElement).value
+                                          )
+                                        }
+                                        placeholder="https://api.minimax.io/v1"
+                                      />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <label className="text-sm font-medium">API key</label>
+                                      <input
+                                        className="tcp-input"
+                                        type="password"
+                                        value={customProviderApiKey}
+                                        onInput={(event) =>
+                                          setCustomProviderApiKey(
+                                            (event.target as HTMLInputElement).value
+                                          )
+                                        }
+                                        placeholder="Optional. Leave blank to keep the existing key."
+                                      />
+                                    </div>
+                                    <label className="inline-flex items-center gap-2 text-sm text-slate-200">
+                                      <input
+                                        type="checkbox"
+                                        className="accent-slate-400"
+                                        checked={customProviderMakeDefault}
+                                        onChange={(event) =>
+                                          setCustomProviderMakeDefault(
+                                            (event.target as HTMLInputElement).checked
+                                          )
+                                        }
+                                      />
+                                      Make this the default provider
+                                    </label>
+                                    <div className="flex flex-wrap justify-end gap-2">
+                                      <button
+                                        className="tcp-btn-primary"
+                                        type="submit"
+                                        disabled={saveCustomProviderMutation.isPending}
+                                      >
+                                        <i data-lucide="plus"></i>
+                                        Save custom provider
+                                      </button>
+                                    </div>
+                                  </form>
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
+
+                            {customConfiguredProviders.length ? (
+                              <div className="grid gap-2">
+                                {customConfiguredProviders.map((provider) => (
+                                  <div
+                                    key={provider.id}
+                                    className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="font-medium">{provider.id}</div>
+                                      <div className="tcp-subtle break-all text-xs">
+                                        {provider.url || "No URL configured"}
+                                      </div>
+                                      <div className="tcp-subtle text-xs">
+                                        Model: {provider.model || "not set"}
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {provider.isDefault ? <Badge tone="ok">default</Badge> : null}
+                                      <button
+                                        type="button"
+                                        className="tcp-btn h-8 px-3 text-xs"
+                                        onClick={() => {
+                                          setCustomProviderId(provider.id);
+                                          setCustomProviderUrl(provider.url);
+                                          setCustomProviderModel(provider.model);
+                                          setCustomProviderMakeDefault(provider.isDefault);
+                                          setCustomProviderFormOpen(true);
+                                          setProviderDefaultsOpen(true);
+                                        }}
+                                      >
+                                        <i data-lucide="square-pen"></i>
+                                        Edit
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+
                           {providers.length ? (
                             providers.map((provider: any) => {
                               const providerId = String(provider?.id || "");

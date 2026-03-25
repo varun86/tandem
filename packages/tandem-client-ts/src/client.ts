@@ -182,6 +182,10 @@ const parseRunId = (payload: JsonObject): string => {
   throw new Error("Run ID missing in engine response");
 };
 
+type RequestInitWithTimeout = RequestInit & {
+  timeoutMs?: number;
+};
+
 // ─── TandemClient ─────────────────────────────────────────────────────────────
 
 /**
@@ -399,9 +403,10 @@ export class TandemClient {
 
   // ─── Internal HTTP ────────────────────────────────────────────────────────
 
-  async _request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async _request<T>(path: string, init: RequestInitWithTimeout = {}): Promise<T> {
+    const timeoutMs = init.timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     let res: Response;
     try {
@@ -416,7 +421,7 @@ export class TandemClient {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Request timed out after ${this.timeoutMs}ms: ${path}`);
+        throw new Error(`Request timed out after ${timeoutMs}ms: ${path}`);
       }
       throw err;
     } finally {
@@ -431,9 +436,10 @@ export class TandemClient {
     return res.json() as Promise<T>;
   }
 
-  async _requestText(path: string, init: RequestInit = {}): Promise<string> {
+  async _requestText(path: string, init: RequestInitWithTimeout = {}): Promise<string> {
+    const timeoutMs = init.timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     let res: Response;
     try {
@@ -447,7 +453,7 @@ export class TandemClient {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Request timed out after ${this.timeoutMs}ms: ${path}`);
+        throw new Error(`Request timed out after ${timeoutMs}ms: ${path}`);
       }
       throw err;
     } finally {
@@ -2326,6 +2332,8 @@ class Routines {
 class WorkflowPlans {
   constructor(private req: TandemClient["_request"]) {}
 
+  private readonly chatTimeoutMs = 90_000;
+
   async preview(options: {
     prompt: string;
     schedule?: JsonObject;
@@ -2409,6 +2417,7 @@ class WorkflowPlans {
       planner_diagnostics?: JsonObject | null;
     }>("/workflow-plans/chat/start", {
       method: "POST",
+      timeoutMs: this.chatTimeoutMs,
       body: JSON.stringify({
         prompt: options.prompt,
         schedule: options.schedule,
@@ -2448,6 +2457,7 @@ class WorkflowPlans {
       planner_diagnostics?: JsonObject | null;
     }>("/workflow-plans/chat/message", {
       method: "POST",
+      timeoutMs: this.chatTimeoutMs,
       body: JSON.stringify({
         plan_id: options.plan_id ?? options.planId,
         message: options.message,

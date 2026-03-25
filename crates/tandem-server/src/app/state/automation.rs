@@ -1997,6 +1997,22 @@ pub(crate) fn render_automation_v2_prompt(
             "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
         ));
     }
+    if let Some(inputs) = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("inputs"))
+        .filter(|value| !value.is_null())
+    {
+        let rendered = serde_json::to_string_pretty(inputs).unwrap_or_else(|_| inputs.to_string());
+        sections.push(format!(
+            "Node Inputs:\n- Use these values directly when they satisfy the objective.\n- Do not search `/tmp`, shell history, or undeclared temp files for duplicate copies of these inputs.\n{}",
+            rendered
+                .lines()
+                .map(|line| format!("  {}", line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
     let execution_mode = automation_node_execution_mode(node, workspace_root);
     sections.push(format!(
         "Execution Policy:\n- Mode: `{}`.\n- Use only declared workflow artifact paths.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
@@ -3011,6 +3027,63 @@ pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+        .or_else(|| automation_node_default_output_path(node))
+}
+
+fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
+    let extension = match node
+        .output_contract
+        .as_ref()
+        .map(|contract| contract.kind.as_str())
+        .unwrap_or("structured_json")
+    {
+        "report_markdown" => {
+            let format = node
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("format"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if format.eq_ignore_ascii_case("simple_html") {
+                "html"
+            } else {
+                "md"
+            }
+        }
+        "approval_gate" => return None,
+        _ => "json",
+    };
+    let default_enabled = matches!(
+        node.node_id.as_str(),
+        "collect_inputs"
+            | "research_sources"
+            | "extract_pain_points"
+            | "cluster_topics"
+            | "analyze_findings"
+            | "compare_results"
+            | "compare_with_features"
+            | "generate_report"
+    );
+    if !default_enabled {
+        return None;
+    }
+    let slug = node
+        .node_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if slug.is_empty() {
+        return None;
+    }
+    Some(format!(".tandem/artifacts/{slug}.{extension}"))
 }
 
 fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {

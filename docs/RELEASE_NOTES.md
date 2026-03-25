@@ -1,5 +1,24 @@
 # Tandem Upcoming Release Notes
 
+## Upcoming
+
+### Calendar-First Automations Workflow
+
+- Added a weekly calendar view for automations with recurring-slot expansion, overlap stacking, and click-to-edit behavior.
+- Added drag-based rescheduling for simple cron-backed automation entries.
+- Added a shared provider/model selector used across automation and mission-builder editors.
+
+### Control-Panel Workflow Polish
+
+- Moved the custom OpenAI-compatible provider form into the normal provider catalog list in Settings instead of showing it as a separate top-level default block.
+- Updated the Coding Workflows board to use the full width, with run detail and live logs moved below the board and collapsed by default.
+- Improved planner UX with visible loading state, disabled regenerate/revise actions while requests are running, and longer planner chat request timeouts.
+
+### Automation Runtime Sandbox Fix
+
+- Fixed automation execution prompts to include inline node input metadata directly, so runs can use configured inputs without searching undeclared temp files.
+- Added workspace-local default artifact paths for standard automation handoff nodes so they stop inventing `/tmp/...` paths that the workspace sandbox correctly blocks.
+
 ## Tandem v0.4.16 Release Notes (Released 2026-03-24)
 
 ### Shared Agent Catalog For Tandem Desktop And Control Panel

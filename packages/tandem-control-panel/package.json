@@ -42,6 +42,10 @@
   "homepage": "https://tandem.frumu.ai",
   "author": "Frumu Ltd",
   "dependencies": {
+    "@fullcalendar/core": "6.1.20",
+    "@fullcalendar/interaction": "6.1.20",
+    "@fullcalendar/react": "6.1.20",
+    "@fullcalendar/timegrid": "6.1.20",
     "@frumu/tandem": "^0.4.16",
     "@frumu/tandem-client": "^0.4.16",
     "@tanstack/react-query": "^5.90.21",

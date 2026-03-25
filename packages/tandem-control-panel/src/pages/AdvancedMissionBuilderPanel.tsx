@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import YAML from "yaml";
 import type { TandemClient } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
+import { ProviderModelSelector } from "../components/ProviderModelSelector";
 
 type ApiFn = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -566,72 +567,6 @@ function WorkspaceDirectoryPicker({
         </div>
       ) : null}
     </>
-  );
-}
-
-function ProviderModelSelector({
-  providerLabel,
-  modelLabel,
-  draft,
-  providers,
-  onChange,
-  inheritLabel = "Inherit team default",
-}: {
-  providerLabel: string;
-  modelLabel: string;
-  draft: ModelDraft;
-  providers: ProviderOption[];
-  onChange: (draft: ModelDraft) => void;
-  inheritLabel?: string;
-}) {
-  const modelOptions = providers.find((provider) => provider.id === draft.provider)?.models || [];
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      <label className="block text-sm">
-        <div className="mb-1 flex items-center gap-2 font-medium text-slate-200">
-          <i data-lucide="cpu"></i>
-          <span>{providerLabel}</span>
-        </div>
-        <select
-          value={draft.provider}
-          onInput={(event) => {
-            const provider = (event.target as HTMLSelectElement).value;
-            const nextModels = providers.find((row) => row.id === provider)?.models || [];
-            onChange({ provider, model: nextModels[0] || "" });
-          }}
-          className="tcp-select h-10 w-full"
-        >
-          <option value="">{inheritLabel}</option>
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.id}
-              {provider.configured === false ? " (not configured)" : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm">
-        <div className="mb-1 flex items-center gap-2 font-medium text-slate-200">
-          <i data-lucide="sparkles"></i>
-          <span>{modelLabel}</span>
-        </div>
-        <select
-          value={draft.model}
-          onInput={(event) =>
-            onChange({ ...draft, model: (event.target as HTMLSelectElement).value })
-          }
-          className="tcp-select h-10 w-full"
-          disabled={!draft.provider}
-        >
-          <option value="">{draft.provider ? "Select a model" : inheritLabel}</option>
-          {modelOptions.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
   );
 }
 

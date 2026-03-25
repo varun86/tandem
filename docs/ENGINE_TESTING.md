@@ -62,6 +62,12 @@ sudo install -m 755 target/release/tandem-engine /usr/local/bin/tandem-engine
 sudo systemctl restart tandem-engine
 ```
 
+# Control panel testing locally
+
+```bash
+cd packages/tandem-control-panel && pnpm build && sudo systemctl restart tandem-control-panel.service
+```
+
 ## API Token Security Validation
 
 Verify token-gated API behavior:

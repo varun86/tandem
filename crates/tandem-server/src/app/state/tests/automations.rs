@@ -1898,6 +1898,129 @@ fn first_attempt_required_tools_prompt_without_output_path_requires_handoff() {
 }
 
 #[test]
+fn prompt_includes_inline_metadata_inputs_and_temp_file_warning() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-inline-inputs".to_string(),
+        name: "Inline Inputs Automation".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "collect_inputs".to_string(),
+        agent_id: "planner".to_string(),
+        objective: "Capture the report topic, delivery target, and formatting constraints."
+            .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "inputs": {
+                "topic": "autonomous AI agentic workflows",
+                "delivery_email": "evan@frumu.ai",
+                "email_format": "simple html"
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "planner".to_string(),
+        template_id: None,
+        display_name: "Planner".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-inline",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Node Inputs:"));
+    assert!(prompt.contains("autonomous AI agentic workflows"));
+    assert!(prompt.contains("Do not search `/tmp`"));
+}
+
+#[test]
+fn standard_workflow_nodes_receive_default_workspace_output_paths() {
+    let node = AutomationFlowNode {
+        node_id: "research_sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Research sources".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "citations".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+
+    assert_eq!(
+        automation_node_required_output_path(&node).as_deref(),
+        Some(".tandem/artifacts/research-sources.json")
+    );
+}
+
+#[test]
 fn first_attempt_structured_json_prompt_without_output_path_requires_handoff_even_without_enforcement(
 ) {
     let automation = AutomationV2Spec {

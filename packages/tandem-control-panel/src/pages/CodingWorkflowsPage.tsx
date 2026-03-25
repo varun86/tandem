@@ -4,9 +4,10 @@ import { AnimatedPage, Badge, PanelCard, StatusPulse } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import { useCapabilities } from "../features/system/queries.ts";
 import { subscribeSse } from "../services/sse.js";
+import { TaskPlanningPanel } from "./TaskPlanningPanel";
 import type { AppPageProps } from "./pageTypes";
 
-type CodingTab = "overview" | "board" | "manual" | "integrations";
+type CodingTab = "overview" | "board" | "planning" | "manual" | "integrations";
 type TaskSourceType = "manual" | "kanban_board" | "github_project" | "local_backlog";
 
 function toArray(input: any, key: string) {
@@ -61,8 +62,7 @@ function normalizeProjects(raw: any) {
       taskSource: row?.task_source || row?.taskSource || {},
       implicit: row?.implicit === true,
     }))
-    .filter((row: any) => row.slug)
-    .sort((a: any, b: any) => a.slug.localeCompare(b.slug));
+    .filter((row: any) => row.slug);
 
   const bySignature = new Map<string, any>();
   for (const row of rows) {
@@ -417,6 +417,8 @@ export function CodingWorkflowsPage({
   const [lastRunEvent, setLastRunEvent] = useState("");
   const [taskPreviewRefreshAt, setTaskPreviewRefreshAt] = useState<number | null>(null);
   const [githubBoardRefreshAt, setGithubBoardRefreshAt] = useState<number | null>(null);
+  const [runDetailOpen, setRunDetailOpen] = useState(false);
+  const [liveLogsOpen, setLiveLogsOpen] = useState(false);
   const [hiddenGithubColumns, setHiddenGithubColumns] = useState<string[]>([]);
   const [selectedGithubItemIds, setSelectedGithubItemIds] = useState<string[]>([]);
   const [launchingGithubItemIds, setLaunchingGithubItemIds] = useState<Record<string, number>>({});
@@ -587,6 +589,19 @@ export function CodingWorkflowsPage({
   const githubConnected = mcpServers.some((server) => server.name.toLowerCase().includes("github"));
   const selectedProject =
     projects.find((project: any) => project.slug === selectedProjectSlug) || null;
+  const selectedProjectTaskSourceType = String(selectedProject?.taskSource?.type || "").trim();
+  const planningWorkspaceRootSeed = String(
+    (health.data as any)?.workspaceRoot ||
+      (health.data as any)?.workspace_root ||
+      (selectedProjectTaskSourceType === "kanban_board" ||
+      selectedProjectTaskSourceType === "local_backlog"
+        ? selectedProject?.taskSource?.path || ""
+        : "") ||
+      ""
+  ).trim();
+  const connectedMcpServers = mcpServers
+    .filter((server) => server.connected)
+    .map((server) => server.name);
   const githubBoardVisibleColumns = useMemo(
     () =>
       githubBoard.columns.filter(
@@ -756,6 +771,7 @@ export function CodingWorkflowsPage({
   const tabs: Array<{ id: CodingTab; label: string; icon: string }> = [
     { id: "overview", label: "Overview", icon: "layout-dashboard" },
     { id: "board", label: "Board", icon: "kanban-square" },
+    { id: "planning", label: "Planning", icon: "clipboard-list" },
     { id: "manual", label: "Manual tasks", icon: "code" },
     { id: "integrations", label: "Integrations", icon: "plug-zap" },
   ];
@@ -1003,7 +1019,7 @@ export function CodingWorkflowsPage({
                   `ACA_API_TOKEN_FILE`.
                 </p>
                 <button type="button" className="tcp-btn mt-3" onClick={() => navigate("settings")}>
-                  Open Settings
+                  Open ACA setup
                 </button>
               </div>
             </div>
@@ -1208,7 +1224,7 @@ export function CodingWorkflowsPage({
       ) : null}
 
       {tab === "board" ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.85fr)]">
+        <div className="grid gap-4">
           <div className="grid gap-4">
             <PanelCard title="GitHub Project board" subtitle="Live project columns from GitHub MCP">
               <div className="mb-4">
@@ -1528,119 +1544,143 @@ export function CodingWorkflowsPage({
                 ))}
               </div>
             </PanelCard>
-          </div>
-
-          <div className="grid gap-4">
             <PanelCard
               title="Run detail"
               subtitle={selectedRunId ? `ACA detail for ${selectedRunId}` : "Select a run"}
+              actions={
+                <button
+                  type="button"
+                  className="tcp-btn h-8 px-3 text-xs"
+                  onClick={() => setRunDetailOpen((prev) => !prev)}
+                >
+                  <i data-lucide={runDetailOpen ? "chevron-down" : "chevron-right"}></i>
+                  {runDetailOpen ? "Collapse" : "Expand"}
+                </button>
+              }
             >
-              {selectedRunId ? (
-                runDetailQuery.isLoading ? (
-                  <div className="tcp-subtle text-sm">Loading run detail...</div>
-                ) : runDetailQuery.isError ? (
-                  <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
-                    {runDetailQuery.error instanceof Error
-                      ? runDetailQuery.error.message
-                      : "Could not load run detail."}
-                  </div>
-                ) : (
-                  <div className="grid gap-3">
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold">
-                            {String(
-                              runDetailQuery.data?.status?.task?.title ||
-                                selectedRun?.title ||
-                                selectedRunId
-                            )}
-                          </div>
-                          <div className="tcp-subtle mt-1 text-xs">
-                            {String(
-                              runDetailQuery.data?.project_slug ||
-                                selectedRun?.project_slug ||
-                                "unknown"
-                            )}
-                          </div>
-                        </div>
-                        <Badge tone={runDetailQuery.data?.is_running ? "info" : "ok"}>
-                          {formatStatus(
-                            String(
-                              runDetailQuery.data?.status?.run?.status ||
-                                selectedRun?.status ||
-                                "unknown"
-                            )
-                          )}
-                        </Badge>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {runDetailQuery.data?.status?.phase?.name ? (
-                          <Badge tone="info">
-                            Phase {formatStatus(String(runDetailQuery.data.status.phase.name))}
-                          </Badge>
-                        ) : null}
-                        {lastRunEvent ? (
-                          <Badge tone="ghost">Latest {formatStatus(lastRunEvent)}</Badge>
-                        ) : null}
-                        {runDetailQuery.data?.snapshot?.summary_available ? (
-                          <Badge tone="ok">Summary ready</Badge>
-                        ) : null}
-                        {runDetailQuery.data?.error ? <Badge tone="warn">Has error</Badge> : null}
-                      </div>
+              {runDetailOpen ? (
+                selectedRunId ? (
+                  runDetailQuery.isLoading ? (
+                    <div className="tcp-subtle text-sm">Loading run detail...</div>
+                  ) : runDetailQuery.isError ? (
+                    <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+                      {runDetailQuery.error instanceof Error
+                        ? runDetailQuery.error.message
+                        : "Could not load run detail."}
                     </div>
-
-                    {runSummary ? (
+                  ) : (
+                    <div className="grid gap-3">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="mb-2 text-sm font-semibold">Summary</div>
-                        <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
-                          {runSummary}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold">
+                              {String(
+                                runDetailQuery.data?.status?.task?.title ||
+                                  selectedRun?.title ||
+                                  selectedRunId
+                              )}
+                            </div>
+                            <div className="tcp-subtle mt-1 text-xs">
+                              {String(
+                                runDetailQuery.data?.project_slug ||
+                                  selectedRun?.project_slug ||
+                                  "unknown"
+                              )}
+                            </div>
+                          </div>
+                          <Badge tone={runDetailQuery.data?.is_running ? "info" : "ok"}>
+                            {formatStatus(
+                              String(
+                                runDetailQuery.data?.status?.run?.status ||
+                                  selectedRun?.status ||
+                                  "unknown"
+                              )
+                            )}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {runDetailQuery.data?.status?.phase?.name ? (
+                            <Badge tone="info">
+                              Phase {formatStatus(String(runDetailQuery.data.status.phase.name))}
+                            </Badge>
+                          ) : null}
+                          {lastRunEvent ? (
+                            <Badge tone="ghost">Latest {formatStatus(lastRunEvent)}</Badge>
+                          ) : null}
+                          {runDetailQuery.data?.snapshot?.summary_available ? (
+                            <Badge tone="ok">Summary ready</Badge>
+                          ) : null}
+                          {runDetailQuery.data?.error ? <Badge tone="warn">Has error</Badge> : null}
+                        </div>
+                      </div>
+
+                      {runSummary ? (
+                        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <div className="mb-2 text-sm font-semibold">Summary</div>
+                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
+                            {runSummary}
+                          </pre>
+                        </div>
+                      ) : null}
+
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="mb-2 text-sm font-semibold">Blackboard</div>
+                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
+                          {JSON.stringify(blackboard || {}, null, 2)}
                         </pre>
                       </div>
-                    ) : null}
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="mb-2 text-sm font-semibold">Blackboard</div>
-                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
-                        {JSON.stringify(blackboard || {}, null, 2)}
-                      </pre>
                     </div>
-                  </div>
+                  )
+                ) : (
+                  <EmptyState text="Select a run from the board to inspect its status, summary, and blackboard." />
                 )
-              ) : (
-                <EmptyState text="Select a run from the board to inspect its status, summary, and blackboard." />
-              )}
+              ) : null}
             </PanelCard>
 
-            <PanelCard title="Live logs" subtitle="Tail ACA worker and manager logs">
-              {selectedRunId ? (
-                <div className="grid gap-3">
-                  {logRows.length ? (
-                    <select
-                      className="tcp-input"
-                      value={selectedLogName}
-                      onChange={(event) =>
-                        setSelectedLogName((event.target as HTMLSelectElement).value)
-                      }
-                    >
-                      {logRows.map((log: any) => (
-                        <option key={String(log?.name || "")} value={String(log?.name || "")}>
-                          {String(log?.name || "")}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="tcp-subtle text-sm">No logs available yet.</div>
-                  )}
-                  {selectedLogName && logTailQuery.data?.lines ? (
-                    <pre className="max-h-80 overflow-auto rounded-2xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-slate-200">
-                      {toArray(logTailQuery.data, "lines").join("\n")}
-                    </pre>
-                  ) : null}
-                </div>
-              ) : (
-                <EmptyState text="Choose a run to inspect log output." />
-              )}
+            <PanelCard
+              title="Live logs"
+              subtitle="Tail ACA worker and manager logs"
+              actions={
+                <button
+                  type="button"
+                  className="tcp-btn h-8 px-3 text-xs"
+                  onClick={() => setLiveLogsOpen((prev) => !prev)}
+                >
+                  <i data-lucide={liveLogsOpen ? "chevron-down" : "chevron-right"}></i>
+                  {liveLogsOpen ? "Collapse" : "Expand"}
+                </button>
+              }
+            >
+              {liveLogsOpen ? (
+                selectedRunId ? (
+                  <div className="grid gap-3">
+                    {logRows.length ? (
+                      <select
+                        className="tcp-input"
+                        value={selectedLogName}
+                        onChange={(event) =>
+                          setSelectedLogName((event.target as HTMLSelectElement).value)
+                        }
+                      >
+                        {logRows.map((log: any) => (
+                          <option key={String(log?.name || "")} value={String(log?.name || "")}>
+                            {String(log?.name || "")}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="tcp-subtle text-sm">No logs available yet.</div>
+                    )}
+                    {selectedLogName && logTailQuery.data?.lines ? (
+                      <pre className="max-h-80 overflow-auto rounded-2xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-slate-200">
+                        {toArray(logTailQuery.data, "lines").join("\n")}
+                      </pre>
+                    ) : null}
+                  </div>
+                ) : (
+                  <EmptyState text="Choose a run to inspect log output." />
+                )
+              ) : null}
             </PanelCard>
           </div>
         </div>
@@ -1783,47 +1823,23 @@ export function CodingWorkflowsPage({
               </div>
             </PanelCard>
           </div>
-
-          <PanelCard
-            title="Task authoring"
-            subtitle="Git-project task creation belongs here, not the generic mission builder"
-          >
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)] xl:items-start">
-              <div className="grid gap-3">
-                <p className="tcp-subtle">
-                  This page is now scoped to ACA intake and execution. Creating new backlog items
-                  directly in the GitHub Project is the right next workflow for this surface, but it
-                  should be purpose-built around repository analysis, task decomposition, and the
-                  project board shape ACA actually consumes.
-                </p>
-                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-                  <p className="text-sm text-amber-200">
-                    <strong>Left for a later pass.</strong> Before we add "create task" here, we
-                    should first verify the ACA pickup flow end-to-end, then design task drafting
-                    around repo-aware planning instead of generic workflow templates.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone="info">Future: analyze repo</Badge>
-                  <Badge tone="info">Future: draft project tasks</Badge>
-                  <Badge tone="info">Future: push to GitHub Project</Badge>
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <div className="text-sm font-semibold">Planned shape</div>
-                <div className="tcp-subtle mt-2 text-xs leading-6">
-                  1. Inspect the bound repository and recent changes.
-                  <br />
-                  2. Propose a small set of scoped tasks with acceptance criteria.
-                  <br />
-                  3. Write those tasks into the configured Git project or board.
-                  <br />
-                  4. Let ACA pick them up through normal intake.
-                </div>
-              </div>
-            </div>
-          </PanelCard>
         </div>
+      ) : null}
+
+      {tab === "planning" ? (
+        <TaskPlanningPanel
+          client={client}
+          api={api}
+          toast={toast}
+          selectedProjectSlug={selectedProjectSlug}
+          selectedProject={selectedProject}
+          githubProjectBoardSnapshot={projectBoardQuery.data || null}
+          taskSourceType={selectedProjectTaskSourceType}
+          workspaceRootSeed={planningWorkspaceRootSeed}
+          connectedMcpServers={connectedMcpServers}
+          engineHealthy={healthy}
+          providerStatus={providerStatus}
+        />
       ) : null}
 
       {tab === "integrations" ? (

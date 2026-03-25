@@ -2777,6 +2777,113 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   }
 }
 
+.fc {
+  --fc-border-color: rgba(71, 85, 105, 0.55);
+  --fc-neutral-bg-color: rgba(15, 23, 42, 0.95);
+  --fc-page-bg-color: transparent;
+  --fc-today-bg-color: rgba(245, 158, 11, 0.08);
+  --fc-now-indicator-color: rgba(245, 158, 11, 0.9);
+  color: rgb(226, 232, 240);
+}
+
+.fc,
+.fc * {
+  box-sizing: border-box;
+}
+
+.fc .fc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.fc .fc-toolbar-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgb(241, 245, 249);
+}
+
+.fc .fc-button {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(71, 85, 105, 0.65);
+  background: rgba(15, 23, 42, 0.95);
+  color: rgb(226, 232, 240);
+  box-shadow: none;
+  text-transform: none;
+}
+
+.fc .fc-button:hover {
+  background: rgba(30, 41, 59, 0.98);
+}
+
+.fc .fc-button:focus {
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.24);
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: rgba(180, 121, 31, 0.35);
+  border-color: rgba(245, 158, 11, 0.65);
+  color: rgb(252, 211, 77);
+}
+
+.fc .fc-scrollgrid,
+.fc .fc-scrollgrid-section > td {
+  border-color: rgba(71, 85, 105, 0.55);
+}
+
+.fc .fc-scrollgrid {
+  border-radius: 1rem;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.fc .fc-col-header-cell,
+.fc .fc-timegrid-axis,
+.fc .fc-timegrid-slot {
+  border-color: rgba(71, 85, 105, 0.45);
+}
+
+.fc .fc-col-header-cell-cushion,
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-timegrid-slot-label-cushion {
+  color: rgb(148, 163, 184);
+}
+
+.fc .fc-day-today {
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.fc .fc-timegrid-now-indicator-line {
+  border-color: rgba(245, 158, 11, 0.95);
+}
+
+.fc .fc-timegrid-slot {
+  height: 1.75rem;
+}
+
+.fc .fc-timegrid-col-frame,
+.fc .fc-timegrid-col-bg,
+.fc .fc-scrollgrid-sync-table {
+  background: rgba(2, 6, 23, 0.2);
+}
+
+.fc .fc-event {
+  border: none;
+  background: transparent;
+}
+
+.fc .fc-event:hover {
+  cursor: pointer;
+}
+
+.fc .fc-view-harness {
+  min-height: 44rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chip-grid line,
   .chip-trace,
