@@ -2715,14 +2715,14 @@ async fn execute_brave_search(
     let response = match client
         .get("https://api.search.brave.com/res/v1/web/search")
         .header("Accept", "application/json")
-        .header("Accept-Encoding", "gzip")
         .header("X-Subscription-Token", api_key)
         .query(&[("q", query), ("count", count.as_str())])
         .send()
         .await
     {
         Ok(response) => response,
-        Err(_) => {
+        Err(error) => {
+            tracing::warn!("brave websearch request failed: {}", error);
             let mut outcome = search_backend_unavailable_outcome();
             outcome.backend_used = Some("brave".to_string());
             outcome.attempted_backends = vec!["brave".to_string()];
@@ -2753,14 +2753,31 @@ async fn execute_brave_search(
         ));
     }
     if !status.is_success() {
+        tracing::warn!("brave websearch returned non-success status: {}", status);
         let mut outcome = search_backend_unavailable_outcome();
         outcome.backend_used = Some("brave".to_string());
         outcome.attempted_backends = vec!["brave".to_string()];
         return Ok(outcome);
     }
-    let body: Value = match response.json().await {
+    let body_text = match response.text().await {
         Ok(value) => value,
-        Err(_) => {
+        Err(error) => {
+            tracing::warn!("brave websearch body read failed: {}", error);
+            let mut outcome = search_backend_unavailable_outcome();
+            outcome.backend_used = Some("brave".to_string());
+            outcome.attempted_backends = vec!["brave".to_string()];
+            return Ok(outcome);
+        }
+    };
+    let body: Value = match serde_json::from_str(&body_text) {
+        Ok(value) => value,
+        Err(error) => {
+            let snippet = body_text.chars().take(200).collect::<String>();
+            tracing::warn!(
+                "brave websearch JSON parse failed: {} body_prefix={:?}",
+                error,
+                snippet
+            );
             let mut outcome = search_backend_unavailable_outcome();
             outcome.backend_used = Some("brave".to_string());
             outcome.attempted_backends = vec!["brave".to_string()];
@@ -5804,6 +5821,29 @@ mod tests {
         }
 
         clear_search_env();
+    }
+
+    #[test]
+    fn normalize_brave_results_accepts_standard_web_payload_rows() {
+        let raw = vec![json!({
+            "title": "Agentic workflows",
+            "url": "https://example.com/agentic",
+            "description": "A practical overview of agentic workflows.",
+            "profile": {
+                "long_name": "example.com"
+            }
+        })];
+
+        let results = normalize_brave_results(&raw, 5);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Agentic workflows");
+        assert_eq!(results[0].url, "https://example.com/agentic");
+        assert_eq!(
+            results[0].snippet,
+            "A practical overview of agentic workflows."
+        );
+        assert_eq!(results[0].source, "brave:example.com");
     }
 
     #[test]

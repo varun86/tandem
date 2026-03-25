@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
   - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox
   - added regression coverage for prompt rendering with inline inputs and for default artifact-path assignment on standard workflow nodes
+- **Brave websearch request handling**:
+  - fixed Brave `websearch` requests to avoid forcing gzip encoding and to parse from response text before JSON decoding, preventing valid Brave responses from collapsing into generic backend-unavailable failures
+  - added targeted Brave normalization coverage so representative Brave web result payloads keep rendering correctly after the parser change
 - **Chat GitHub URL misclassification**:
   - fixed control-panel chat setup-intent interception so pasted GitHub URLs pass through normal chat instead of incorrectly prompting operators to install GitHub MCP
   - added regression coverage for plain GitHub URL and `read this <url>` chat prompts while preserving the real integration-setup intercept path
