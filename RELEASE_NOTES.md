@@ -1,6 +1,6 @@
 # Release Notes
 
-Canonical release notes live in `docs/RELEASE_NOTES.md`.
+This is the canonical release-notes file used by release tooling.
 
 ## v0.4.16 (Released 2026-03-25)
 

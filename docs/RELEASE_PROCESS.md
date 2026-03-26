@@ -92,7 +92,7 @@ Before creating a release, ensure:
 
 - [ ] All changes are committed and pushed to `main`
 - [ ] `CHANGELOG.md` is updated with the new version
-- [ ] `docs/RELEASE_NOTES.md` is updated with detailed release notes
+- [ ] `RELEASE_NOTES.md` is updated with detailed release notes
 - [ ] **Version numbers are updated in ALL three files** (critical for auto-updater):
   - `src-tauri/tauri.conf.json` - **REQUIRED** (this is what the app reports as its version)
   - `package.json` - **REQUIRED**

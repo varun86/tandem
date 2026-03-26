@@ -4,7 +4,7 @@
  *
  * Sources (in priority order):
  * - docs/WHATS_NEW_vX.Y.Z.md (for focused release messaging)
- * - docs/RELEASE_NOTES.md (per-version sections)
+ * - RELEASE_NOTES.md (per-version sections)
  * - CHANGELOG.md (Keep a Changelog style)
  *
  * Usage:
@@ -38,7 +38,7 @@ const repo =
   'frumu-ai/tandem';
 
 const whatsNewPath = path.join(repoRoot, 'docs', `WHATS_NEW_v${baseVersion}.md`);
-const releaseNotesPath = path.join(repoRoot, 'docs', 'RELEASE_NOTES.md');
+const releaseNotesPath = path.join(repoRoot, 'RELEASE_NOTES.md');
 const changelogPath = path.join(repoRoot, 'CHANGELOG.md');
 
 const intro = 'See the assets below to download the installer for your platform.';
@@ -105,16 +105,21 @@ function extractFromReleaseNotesMd(markdown, versions) {
 }
 
 function extractVersionSectionFromReleaseNotes(markdown, version) {
-  // Match: "# Tandem v0.1.4 ..." (the docs file uses # for per-version sections)
-  const startRe = new RegExp(`^#\\s+Tandem\\s+v${escapeRegExp(version)}\\b.*$`, 'mi');
+  // Match either:
+  // - "## v0.1.4 ..."
+  // - "# Tandem v0.1.4 ..."
+  const startRe = new RegExp(
+    `^(?:##\\s+v${escapeRegExp(version)}\\b.*|#\\s+Tandem\\s+v${escapeRegExp(version)}\\b.*)$`,
+    'mi'
+  );
   const startMatch = markdown.match(startRe);
   if (!startMatch || startMatch.index == null) return null;
 
   const startIdx = startMatch.index;
   const afterStart = markdown.slice(startIdx);
 
-  // End at next "# Tandem vX.Y.Z" section, or EOF.
-  const nextRe = /^#\s+Tandem\s+v\d+\.\d+\.\d+\b.*$/gim;
+  // End at next supported version section, or EOF.
+  const nextRe = /^(?:##\s+v\d+\.\d+\.\d+\b.*|#\s+Tandem\s+v\d+\.\d+\.\d+\b.*)$/gim;
   nextRe.lastIndex = startMatch[0].length;
   const nextMatch = nextRe.exec(afterStart);
   const endIdx = nextMatch?.index != null ? nextMatch.index : afterStart.length;

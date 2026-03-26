@@ -31,5 +31,5 @@ For end-user onboarding journeys (install, first run, desktop/CLI paths), use:
 
 ## Release Notes
 
-- Canonical: [Release Notes](./RELEASE_NOTES.md)
-- Compatibility pointer: `../RELEASE_NOTES.md`
+- Canonical: [Release Notes](../RELEASE_NOTES.md)
+- Compatibility pointer: `./RELEASE_NOTES.md`
