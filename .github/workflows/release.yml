@@ -355,7 +355,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
-          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
+          includeUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Build and upload (macOS, signed/notarized)
         if: ${{ matrix.platform == 'macos-latest' && env.MACOS_SIGNING_ENABLED == 'true' }}
@@ -382,7 +382,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
-          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
+          includeUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Verify macOS DMG (Gatekeeper)
         if: ${{ matrix.platform == 'macos-latest' }}
@@ -463,7 +463,7 @@ jobs:
           retryAttempts: 3
           args: --target ${{ matrix.target }}
           updaterJsonPreferNsis: true
-          uploadUpdaterJson: ${{ matrix.upload_updater_json }}
+          includeUpdaterJson: ${{ matrix.upload_updater_json }}
 
       - name: Package standalone engine/tui/browser assets (Windows)
         if: ${{ matrix.platform == 'windows-latest' }}

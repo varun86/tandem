@@ -282,8 +282,35 @@ function buildCatalog() {
   };
 }
 
+function readExistingCatalog() {
+  for (const outputFile of outputFiles) {
+    if (!fs.existsSync(outputFile)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(outputFile, "utf8"));
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        Array.isArray(parsed.categories) &&
+        Array.isArray(parsed.agents)
+      ) {
+        return parsed;
+      }
+    } catch {
+      // Ignore malformed generated files and keep looking.
+    }
+  }
+  return null;
+}
+
 export function generateAgentCatalog() {
-  const catalog = buildCatalog();
+  const catalog = fs.existsSync(categoryRoot)
+    ? buildCatalog()
+    : readExistingCatalog() ||
+      (() => {
+        throw new Error(
+          `Agent catalog source directory is missing (${categoryRoot}) and no previously generated catalog was found.`
+        );
+      })();
   const serialized = `${JSON.stringify(catalog, null, 2)}\n`;
 
   for (const outputFile of outputFiles) {
