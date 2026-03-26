@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "prebuild": "node scripts/generate-agent-catalog.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev:clean": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-Process | Where-Object { $_.ProcessName -in @('tandem','tandem-engine','node') } | Stop-Process -Force -ErrorAction SilentlyContinue; pnpm tauri dev\"",

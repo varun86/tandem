@@ -10,7 +10,6 @@
   },
   "scripts": {
     "build": "vite build",
-    "prebuild": "node ../../scripts/generate-agent-catalog.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "test:smoke": "node --test tests/smoke.test.mjs",
