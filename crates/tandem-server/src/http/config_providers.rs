@@ -323,27 +323,28 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
     let mut known_ids = std::collections::HashSet::new();
 
     if let Some(default_id) = cfg.get("default_provider").and_then(Value::as_str) {
-        let normalized = default_id.trim().to_ascii_lowercase();
+        let normalized = canonical_provider_id(default_id);
         if !normalized.is_empty() {
             known_ids.insert(normalized);
         }
     }
-    known_ids.extend(providers_cfg.keys().map(|id| id.to_ascii_lowercase()));
-    known_ids.extend(connected.iter().cloned());
-    known_ids.extend(runtime_auth.keys().map(|id| id.to_ascii_lowercase()));
-    known_ids.extend(persisted_ids.iter().cloned());
+    known_ids.extend(providers_cfg.keys().map(|id| canonical_provider_id(id)));
+    known_ids.extend(connected.iter().map(|id| canonical_provider_id(id)));
+    known_ids.extend(runtime_auth.keys().map(|id| canonical_provider_id(id)));
+    known_ids.extend(persisted_ids.iter().map(|id| canonical_provider_id(id)));
 
     let mut ids = known_ids.into_iter().collect::<Vec<_>>();
     ids.sort();
 
     let mut providers = serde_json::Map::new();
     for provider_id in ids {
-        let has_runtime_key = runtime_auth
-            .get(&provider_id)
-            .map(|token| !token.trim().is_empty())
-            .unwrap_or(false);
-        let has_config_key = providers_cfg
-            .get(&provider_id)
+        let has_runtime_key = provider_id_aliases(&provider_id).iter().any(|alias| {
+            runtime_auth
+                .get(*alias)
+                .map(|token| !token.trim().is_empty())
+                .unwrap_or(false)
+        });
+        let has_config_key = provider_config_value(&cfg, &provider_id)
             .and_then(Value::as_object)
             .map(|entry| {
                 entry
@@ -355,7 +356,9 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
             })
             .unwrap_or(false);
         let has_env_key = provider_has_env_secret(&provider_id);
-        let has_persisted_key = persisted_ids.contains(&provider_id);
+        let has_persisted_key = provider_id_aliases(&provider_id)
+            .iter()
+            .any(|alias| persisted_ids.contains(*alias));
         let has_key = has_env_key || has_runtime_key || has_config_key || has_persisted_key;
         let source = if has_env_key {
             "env"
@@ -528,12 +531,27 @@ fn ensure_provider_entry<'a>(
     wire.all.last_mut().expect("provider entry just inserted")
 }
 
+fn canonical_provider_id(provider_id: &str) -> String {
+    match provider_id.trim().to_ascii_lowercase().as_str() {
+        "llama.cpp" => "llama_cpp".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn provider_id_aliases(provider_id: &str) -> &'static [&'static str] {
+    match canonical_provider_id(provider_id).as_str() {
+        "llama_cpp" => &["llama_cpp", "llama.cpp"],
+        _ => &[],
+    }
+}
+
 fn known_provider_name(provider_id: &str) -> Option<&'static str> {
-    match provider_id {
+    match canonical_provider_id(provider_id).as_str() {
         "openrouter" => Some("OpenRouter"),
         "openai" => Some("OpenAI"),
         "anthropic" => Some("Anthropic"),
         "ollama" => Some("Ollama"),
+        "llama_cpp" => Some("llama.cpp"),
         "groq" => Some("Groq"),
         "mistral" => Some("Mistral"),
         "together" => Some("Together"),
@@ -552,6 +570,7 @@ fn ensure_known_provider_entries(wire: &mut WireProviderCatalog) {
         "openai",
         "anthropic",
         "ollama",
+        "llama_cpp",
         "groq",
         "mistral",
         "together",
@@ -584,7 +603,12 @@ fn config_provider_root<'a>(cfg: &'a Value) -> Option<&'a serde_json::Map<String
 }
 
 fn provider_config_value<'a>(cfg: &'a Value, provider_id: &str) -> Option<&'a Value> {
-    config_provider_root(cfg).and_then(|root| root.get(provider_id))
+    let root = config_provider_root(cfg)?;
+    root.get(provider_id).or_else(|| {
+        provider_id_aliases(provider_id)
+            .iter()
+            .find_map(|alias| root.get(*alias))
+    })
 }
 
 fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value) -> Vec<String> {
@@ -594,9 +618,11 @@ fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value
 
     let mut merged = Vec::new();
     for (provider_id, provider_value) in provider_root {
+        let provider_id = canonical_provider_id(provider_id);
         let provider_name = provider_value
             .get("name")
             .and_then(|v| v.as_str())
+            .or(known_provider_name(&provider_id))
             .or(Some(provider_id.as_str()));
 
         let mut model_map: HashMap<String, WireProviderModel> = HashMap::new();
@@ -625,8 +651,8 @@ fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value
         }
 
         if !model_map.is_empty() {
-            merge_provider_model_map(wire, provider_id, provider_name, model_map);
-            merged.push(provider_id.to_string());
+            merge_provider_model_map(wire, &provider_id, provider_name, model_map);
+            merged.push(provider_id);
         }
     }
 
@@ -634,9 +660,10 @@ fn merge_provider_models_from_config(wire: &mut WireProviderCatalog, cfg: &Value
 }
 
 fn provider_default_url(provider_id: &str) -> Option<&'static str> {
-    match provider_id {
+    match canonical_provider_id(provider_id).as_str() {
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "openai" => Some("https://api.openai.com/v1"),
+        "llama_cpp" => Some("http://127.0.0.1:8080/v1"),
         "groq" => Some("https://api.groq.com/openai/v1"),
         "mistral" => Some("https://api.mistral.ai/v1"),
         "together" => Some("https://api.together.xyz/v1"),
@@ -834,21 +861,25 @@ async fn fetch_openai_compatible_models(
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let Some(api_key) = provider_config_api_key(cfg, provider_id, runtime_auth, persisted_auth)
-    else {
+    let api_key = provider_config_api_key(cfg, provider_id, runtime_auth, persisted_auth);
+    if api_key.is_none() && !provider_supports_optional_auth(provider_id) {
         return Err(format!(
             "{} requires an API key before live model discovery is available.",
             known_provider_name(provider_id).unwrap_or(provider_id)
         ));
-    };
+    }
     let Some(base_url) = provider_base_url(cfg, provider_id) else {
         return Err("No provider base URL is configured for live model discovery.".to_string());
     };
     let url = format!("{}/models", normalize_openai_catalog_base(&base_url));
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(api_key)
-        .timeout(Duration::from_secs(20))
+    let client = reqwest::Client::new();
+    let request = client.get(&url).timeout(Duration::from_secs(20));
+    let request = if let Some(api_key) = api_key {
+        request.bearer_auth(api_key)
+    } else {
+        request
+    };
+    let resp = request
         .send()
         .await
         .map_err(|err| format!("Failed to fetch model catalog from {provider_id}: {err}"))?;
@@ -1016,7 +1047,7 @@ async fn fetch_remote_provider_models(
                 }
             }
         },
-        "openai" | "groq" | "mistral" | "together" => {
+        "openai" | "llama_cpp" | "groq" | "mistral" | "together" => {
             match fetch_openai_compatible_models(provider_id, cfg, runtime_auth, persisted_auth)
                 .await
             {
@@ -1062,6 +1093,10 @@ async fn fetch_remote_provider_models(
             message: "Live model discovery is unavailable. Enter a model ID manually.".to_string(),
         },
     }
+}
+
+fn provider_supports_optional_auth(provider_id: &str) -> bool {
+    matches!(canonical_provider_id(provider_id).as_str(), "llama_cpp")
 }
 
 fn provider_env_candidates(provider_id: &str) -> Vec<String> {

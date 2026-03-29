@@ -17,6 +17,17 @@ pub(crate) fn resolve_token_cost_per_1k_usd() -> f64 {
         .max(0.0)
 }
 
+pub(crate) fn resolve_automation_strict_research_quality() -> bool {
+    std::env::var("TANDEM_AUTOMATION_STRICT_RESEARCH_QUALITY")
+        .ok()
+        .and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(true)
+}
+
 pub(crate) fn resolve_bug_monitor_env_config() -> BugMonitorConfig {
     fn env_value(new_name: &str, legacy_name: &str) -> Option<String> {
         std::env::var(new_name)
@@ -113,4 +124,37 @@ pub(crate) fn resolve_bug_monitor_env_config() -> BugMonitorConfig {
         label_mode: BugMonitorLabelMode::ReporterOnly,
         updated_at_ms: 0,
     }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulerMode {
+    Single,
+    Multi,
+}
+
+pub(crate) fn resolve_scheduler_mode() -> SchedulerMode {
+    match std::env::var("TANDEM_SCHEDULER_MODE")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("single") => SchedulerMode::Single,
+        Some("multi") => SchedulerMode::Multi,
+        _ => SchedulerMode::Multi,
+    }
+}
+
+pub(crate) fn resolve_scheduler_max_concurrent_runs() -> usize {
+    std::env::var("TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8)
+}
+
+pub(crate) fn resolve_scheduler_shutdown_timeout_secs() -> u64 {
+    std::env::var("TANDEM_SCHEDULER_SHUTDOWN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(30)
 }

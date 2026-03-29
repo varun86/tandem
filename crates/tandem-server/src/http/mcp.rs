@@ -227,6 +227,136 @@ pub(super) async fn add_mcp(
     Json(json!({"ok": true}))
 }
 
+fn mcp_tool_names_for_server(tool_names: &[String], server_name: &str) -> Vec<String> {
+    let prefix = format!("mcp.{}.", mcp_namespace_segment(server_name));
+    let mut tools = tool_names
+        .iter()
+        .filter(|tool_name| tool_name.starts_with(&prefix))
+        .cloned()
+        .collect::<Vec<_>>();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
+pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
+    let mut server_rows = state.mcp.list().await.into_values().collect::<Vec<_>>();
+    server_rows.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let remote_tools = state.mcp.list_tools().await;
+    let registered_tool_names = state
+        .tools
+        .list()
+        .await
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect::<Vec<_>>();
+
+    let mut connected_server_names = Vec::new();
+    let mut enabled_server_names = Vec::new();
+    let mut all_remote_tool_names = Vec::new();
+    let mut all_registered_tool_names = Vec::new();
+    let mut servers = Vec::new();
+
+    for server in server_rows {
+        let mut remote_tool_names = remote_tools
+            .iter()
+            .filter(|tool| tool.server_name == server.name)
+            .map(|tool| tool.namespaced_name.trim().to_string())
+            .filter(|tool_name| !tool_name.is_empty())
+            .collect::<Vec<_>>();
+        remote_tool_names.sort();
+        remote_tool_names.dedup();
+
+        let registered_names = mcp_tool_names_for_server(&registered_tool_names, &server.name);
+
+        if server.enabled {
+            enabled_server_names.push(server.name.clone());
+        }
+        if server.connected {
+            connected_server_names.push(server.name.clone());
+        }
+        all_remote_tool_names.extend(remote_tool_names.clone());
+        all_registered_tool_names.extend(registered_names.clone());
+
+        let mut pending_auth_tools = server
+            .pending_auth_by_tool
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        pending_auth_tools.sort();
+        pending_auth_tools.dedup();
+
+        servers.push(json!({
+            "name": server.name,
+            "transport": server.transport,
+            "enabled": server.enabled,
+            "connected": server.connected,
+            "last_error": server.last_error,
+            "pending_auth_tools": pending_auth_tools,
+            "remote_tool_count": remote_tool_names.len(),
+            "registered_tool_count": registered_names.len(),
+            "remote_tools": remote_tool_names,
+            "registered_tools": registered_names,
+        }));
+    }
+
+    connected_server_names.sort();
+    connected_server_names.dedup();
+    enabled_server_names.sort();
+    enabled_server_names.dedup();
+    all_remote_tool_names.sort();
+    all_remote_tool_names.dedup();
+    all_registered_tool_names.sort();
+    all_registered_tool_names.dedup();
+
+    json!({
+        "inventory_version": 1,
+        "connected_server_names": connected_server_names,
+        "enabled_server_names": enabled_server_names,
+        "remote_tools": all_remote_tool_names,
+        "registered_tools": all_registered_tool_names,
+        "servers": servers,
+    })
+}
+
+#[derive(Clone)]
+pub(crate) struct McpListTool {
+    state: AppState,
+}
+
+impl McpListTool {
+    pub fn new(state: AppState) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait]
+impl Tool for McpListTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "mcp_list".to_string(),
+            description: "List the currently configured and connected MCP servers and tools"
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            }),
+        }
+    }
+
+    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+        let snapshot = mcp_inventory_snapshot(&self.state).await;
+        let output =
+            serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| snapshot.to_string());
+        Ok(ToolResult {
+            output,
+            metadata: snapshot,
+        })
+    }
+}
+
 pub(crate) fn mcp_namespace_segment(raw: &str) -> String {
     let mut out = String::new();
     let mut previous_underscore = false;

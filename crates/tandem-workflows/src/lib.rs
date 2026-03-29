@@ -6,12 +6,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod mission_builder;
+pub mod plan_package;
 
 pub use mission_builder::{
     validate_mission_blueprint, ApprovalDecision, HumanApprovalGate, InputRefBlueprint,
     MissionBlueprint, MissionMilestoneBlueprint, MissionPhaseBlueprint, MissionPhaseExecutionMode,
     MissionTeamBlueprint, OutputContractBlueprint, ReviewStage, ReviewStageKind, ValidationMessage,
     ValidationSeverity, WorkstreamBlueprint,
+};
+pub use plan_package::{
+    AutomationV2Schedule, AutomationV2ScheduleType, WorkflowPlan, WorkflowPlanChatMessage,
+    WorkflowPlanConversation, WorkflowPlanDraftRecord, WorkflowPlanStep,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

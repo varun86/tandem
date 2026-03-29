@@ -49,6 +49,7 @@ use crate::{
     ActiveRun, AppState, ChannelStatus, DiscordConfigFile, SlackConfigFile, TelegramConfigFile,
 };
 
+mod automation_projection_runtime;
 pub(crate) mod bug_monitor;
 mod capabilities;
 mod channels_api;
@@ -61,6 +62,7 @@ mod global;
 pub(crate) mod mcp;
 mod middleware;
 mod mission_builder;
+mod mission_builder_runtime;
 mod missions_teams;
 mod optimizations;
 mod pack_builder;
@@ -98,6 +100,10 @@ mod setup_understanding;
 mod skills_memory;
 mod system_api;
 mod workflow_planner;
+mod workflow_planner_host;
+mod workflow_planner_policy;
+pub(crate) mod workflow_planner_runtime;
+mod workflow_planner_transport;
 mod workflows;
 
 use capabilities::*;
@@ -119,7 +125,7 @@ pub(crate) use context_runs::session_context_run_id;
 pub(crate) use context_runs::sync_workflow_run_blackboard;
 #[cfg(test)]
 pub(crate) use context_runs::workflow_context_run_id;
-pub(crate) use workflow_planner::compile_plan_to_automation_v2;
+pub(crate) use workflow_planner_runtime::compile_plan_to_automation_v2;
 
 #[derive(Debug, Deserialize)]
 struct ListSessionsQuery {
@@ -247,7 +253,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     tokio::spawn(async move {
         bootstrap_mcp_servers_when_ready(mcp_bootstrap_state).await;
     });
-    let app = app_router(state);
+    let app = app_router(state.clone());
     let reaper = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -299,6 +305,8 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let bug_monitor = tokio::spawn(crate::run_bug_monitor(bug_monitor_state));
     let global_memory_ingestor =
         tokio::spawn(run_global_memory_ingestor(global_memory_ingestor_state));
+    let shutdown_state = state.clone();
+    let shutdown_timeout_secs = crate::config::env::resolve_scheduler_shutdown_timeout_secs();
 
     // --- Memory hygiene background task (runs every 12 hours) ---
     // Opens a fresh connection to memory.sqlite each cycle â€” safe because WAL
@@ -347,9 +355,20 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
             if tokio::signal::ctrl_c().await.is_err() {
                 futures::future::pending::<()>().await;
+            }
+            shutdown_state.set_automation_scheduler_stopping(true);
+            tokio::time::sleep(Duration::from_secs(shutdown_timeout_secs)).await;
+            let failed = shutdown_state
+                .fail_running_automation_runs_for_shutdown()
+                .await;
+            if failed > 0 {
+                tracing::warn!(
+                    failed_runs = failed,
+                    "automation runs marked failed during scheduler shutdown"
+                );
             }
         })
         .await;

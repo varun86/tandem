@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Frumu LTD
+// Licensed under the Business Source License 1.1
+
+pub(crate) fn workflow_plan_common_sections() -> String {
+    // Keep this formatted text stable: downstream behavior depends on the planner prompt shape.
+    let allowed_step_ids = crate::workflow_plan::ALLOWED_WORKFLOW_STEP_IDS.join(", ");
+    let teaching_library = workflow_plan_teaching_library_sections();
+    format!(
+        concat!(
+            "Allowed step ids: {}.\n",
+            "Plan invariants:\n",
+            "- execution_target must be automation_v2\n",
+            "- workspace_root must be a non-empty absolute path\n",
+            "- do not invent unsupported step ids\n",
+            "- keep the graph minimal but sufficient\n",
+            "- steps must form a valid DAG\n",
+            "- input_refs and depends_on must reference existing steps\n",
+            "WorkflowPlan.step schema:\n",
+            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract; metadata is optional\n",
+            "- do not use alternate keys like id, type, label, or config as the primary step schema\n",
+            "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
+            "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations|brief|review|review_summary|approval_gate|code_patch\",\"validator\":\"structured_json|generic_artifact|research_brief|review_decision|code_patch\"}}\n",
+            "- use `code_patch` for code-editing steps that should be judged by patch/apply/test behavior rather than a prose summary\n",
+            "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
+            "{}",
+        ),
+        allowed_step_ids,
+        teaching_library
+    )
+}
+
+fn workflow_plan_teaching_library_sections() -> String {
+    concat!(
+        "Teaching library:\n",
+        "- explain: summarize the plan, why the steps exist, and what output each produces\n",
+        "- objections: call out missing inputs, unsafe assumptions, or missing connectors\n",
+        "- proof points: cite evidence sources, validation checks, or artifacts that will prove success\n",
+        "- code changes: prefer `code_patch` plus an inspect -> patch -> apply -> test -> repair loop, and reserve `write` for brand-new files\n",
+    )
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_plan_common_sections_include_teaching_library() {
+        let sections = workflow_plan_common_sections();
+        assert!(sections.contains("Teaching library:"));
+        assert!(sections.contains("explain: summarize the plan"));
+        assert!(sections.contains("proof points"));
+        assert!(sections.contains("code_patch"));
+        assert!(sections.contains("inspect -> patch -> apply -> test -> repair"));
+        assert!(sections.contains("reserve `write` for brand-new files"));
+    }
+}
