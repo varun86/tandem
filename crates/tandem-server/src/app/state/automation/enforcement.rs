@@ -16,6 +16,13 @@ impl AutomationQualityMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AutomationQualityModeResolution {
+    pub(crate) requested: Option<AutomationQualityMode>,
+    pub(crate) effective: AutomationQualityMode,
+    pub(crate) legacy_rollback_enabled: bool,
+}
+
 pub(crate) fn enforcement_requires_external_sources(
     enforcement: &crate::AutomationOutputEnforcement,
 ) -> bool {
@@ -74,37 +81,76 @@ fn parse_quality_mode(value: &str) -> Option<AutomationQualityMode> {
     }
 }
 
-pub(crate) fn automation_quality_mode_from_metadata(
+fn requested_quality_mode_from_metadata(
+    metadata: Option<&serde_json::Map<String, Value>>,
+) -> Option<AutomationQualityMode> {
+    metadata.and_then(|metadata| {
+        metadata
+            .get("quality_mode")
+            .or_else(|| metadata.get("qualityMode"))
+            .and_then(Value::as_str)
+            .and_then(parse_quality_mode)
+            .or_else(|| {
+                metadata
+                    .get("builder")
+                    .and_then(Value::as_object)
+                    .and_then(|builder| builder.get("quality_mode"))
+                    .and_then(Value::as_str)
+                    .and_then(parse_quality_mode)
+            })
+    })
+}
+
+pub(crate) fn automation_quality_mode_resolution_from_metadata(
     metadata: Option<&serde_json::Map<String, Value>>,
     strict_default: bool,
-) -> AutomationQualityMode {
-    metadata
-        .and_then(|metadata| {
-            metadata
-                .get("quality_mode")
-                .or_else(|| metadata.get("qualityMode"))
-                .and_then(Value::as_str)
-                .and_then(parse_quality_mode)
-                .or_else(|| {
-                    metadata
-                        .get("builder")
-                        .and_then(Value::as_object)
-                        .and_then(|builder| builder.get("quality_mode"))
-                        .and_then(Value::as_str)
-                        .and_then(parse_quality_mode)
-                })
-        })
-        .unwrap_or_else(|| {
+    legacy_rollback_enabled: bool,
+) -> AutomationQualityModeResolution {
+    let requested = requested_quality_mode_from_metadata(metadata);
+    let effective = match requested {
+        Some(AutomationQualityMode::Legacy) if !legacy_rollback_enabled => {
+            AutomationQualityMode::StrictResearchV1
+        }
+        Some(mode) => mode,
+        None => {
             if crate::config::env::resolve_automation_strict_research_quality() && strict_default {
                 AutomationQualityMode::StrictResearchV1
             } else {
                 AutomationQualityMode::Legacy
             }
-        })
+        }
+    };
+    AutomationQualityModeResolution {
+        requested,
+        effective,
+        legacy_rollback_enabled,
+    }
+}
+
+pub(crate) fn automation_quality_mode_from_metadata(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    strict_default: bool,
+) -> AutomationQualityMode {
+    automation_quality_mode_resolution_from_metadata(
+        metadata,
+        strict_default,
+        crate::config::env::resolve_automation_quality_legacy_rollback_enabled(),
+    )
+    .effective
 }
 
 pub(crate) fn automation_node_quality_mode(node: &AutomationFlowNode) -> AutomationQualityMode {
     automation_quality_mode_from_metadata(node.metadata.as_ref().and_then(Value::as_object), true)
+}
+
+pub(crate) fn automation_node_quality_mode_resolution(
+    node: &AutomationFlowNode,
+) -> AutomationQualityModeResolution {
+    automation_quality_mode_resolution_from_metadata(
+        node.metadata.as_ref().and_then(Value::as_object),
+        true,
+        crate::config::env::resolve_automation_quality_legacy_rollback_enabled(),
+    )
 }
 
 pub(crate) fn automation_node_is_strict_quality(node: &AutomationFlowNode) -> bool {
@@ -137,6 +183,7 @@ pub(crate) fn automation_node_output_enforcement(
         .as_ref()
         .map(|contract| contract.kind.trim().to_ascii_lowercase())
         .unwrap_or_else(|| "structured_json".to_string());
+    let citations_contract = contract_kind == "citations";
     let validation_profile = enforcement
         .validation_profile
         .as_deref()
@@ -152,13 +199,12 @@ pub(crate) fn automation_node_output_enforcement(
                 "artifact_only".to_string()
             } else if code_patch_contract {
                 "code_change".to_string()
-            } else if contract_kind == "citations"
-                || legacy_web_research_expected
+            } else if legacy_web_research_expected
                 || legacy_required_tools.iter().any(|tool| tool == "websearch")
             {
                 "external_research".to_string()
             } else if automation_node_is_research_finalize(node)
-                || (is_research_contract
+                || ((is_research_contract || citations_contract)
                     && matches!(
                         contract_kind.as_str(),
                         "brief" | "report_markdown" | "text_summary"
@@ -167,6 +213,7 @@ pub(crate) fn automation_node_output_enforcement(
                 "research_synthesis".to_string()
             } else if legacy_required_tools.iter().any(|tool| tool == "read")
                 || is_research_contract
+                || citations_contract
             {
                 "local_research".to_string()
             } else {
@@ -180,6 +227,9 @@ pub(crate) fn automation_node_output_enforcement(
 
     if enforcement.required_tools.is_empty() {
         enforcement.required_tools = legacy_required_tools.clone();
+        if is_local_research && !enforcement.required_tools.iter().any(|tool| tool == "glob") {
+            enforcement.required_tools.push("glob".to_string());
+        }
         if is_local_research && !enforcement.required_tools.iter().any(|tool| tool == "read") {
             enforcement.required_tools.push("read".to_string());
         }

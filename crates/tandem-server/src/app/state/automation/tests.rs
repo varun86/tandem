@@ -96,22 +96,67 @@ fn report_markdown_node() -> AutomationFlowNode {
     node
 }
 
+fn local_citations_contract_node() -> AutomationFlowNode {
+    let mut node = bare_node();
+    node.node_id = "research_sources".to_string();
+    node.objective =
+        "Inspect the local workspace and cite the most relevant project-authored sources."
+            .to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "citations".to_string(),
+        validator: None,
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "web_research_expected": false
+        }
+    }));
+    node
+}
+
 #[test]
-fn automation_quality_mode_defaults_to_strict_but_honors_legacy_metadata() {
-    let strict_mode = super::enforcement::automation_quality_mode_from_metadata(None, true);
+fn automation_quality_mode_defaults_to_strict_and_requires_rollback_for_legacy_metadata() {
+    let strict_mode =
+        super::enforcement::automation_quality_mode_resolution_from_metadata(None, true, false);
     assert_eq!(
-        strict_mode,
+        strict_mode.effective,
         super::enforcement::AutomationQualityMode::StrictResearchV1
     );
+    assert_eq!(strict_mode.requested, None);
+    assert!(!strict_mode.legacy_rollback_enabled);
 
     let legacy_metadata = serde_json::json!({
         "quality_mode": "legacy"
     });
     let legacy_object = legacy_metadata.as_object().cloned().expect("object");
-    let legacy_mode =
-        super::enforcement::automation_quality_mode_from_metadata(Some(&legacy_object), true);
+    let forced_strict = super::enforcement::automation_quality_mode_resolution_from_metadata(
+        Some(&legacy_object),
+        true,
+        false,
+    );
     assert_eq!(
-        legacy_mode,
+        forced_strict.requested,
+        Some(super::enforcement::AutomationQualityMode::Legacy)
+    );
+    assert_eq!(
+        forced_strict.effective,
+        super::enforcement::AutomationQualityMode::StrictResearchV1
+    );
+
+    let legacy_mode = super::enforcement::automation_quality_mode_resolution_from_metadata(
+        Some(&legacy_object),
+        true,
+        true,
+    );
+    assert_eq!(
+        legacy_mode.requested,
+        Some(super::enforcement::AutomationQualityMode::Legacy)
+    );
+    assert_eq!(
+        legacy_mode.effective,
         super::enforcement::AutomationQualityMode::Legacy
     );
 }
@@ -370,6 +415,53 @@ fn code_patch_contract_requires_verification_before_completion() {
 }
 
 #[test]
+fn local_citations_contract_defaults_to_local_research_not_external_research() {
+    let enforcement = automation_node_output_enforcement(&local_citations_contract_node());
+    assert_eq!(
+        enforcement.validation_profile.as_deref(),
+        Some("local_research")
+    );
+    assert!(enforcement.required_tools.iter().any(|tool| tool == "glob"));
+    assert!(enforcement.required_tools.iter().any(|tool| tool == "read"));
+    assert!(enforcement
+        .required_evidence
+        .iter()
+        .any(|value| value == "local_source_reads"));
+    assert!(enforcement
+        .prewrite_gates
+        .iter()
+        .any(|gate| gate == "workspace_inspection"));
+}
+
+#[test]
+fn auto_cleaned_marker_file_rejection_is_downgraded_when_output_is_valid() {
+    assert!(super::should_downgrade_auto_cleaned_marker_rejection(
+        Some("undeclared marker files created: .tandem_ack"),
+        true,
+        None,
+        true
+    ));
+    assert!(!super::should_downgrade_auto_cleaned_marker_rejection(
+        Some("undeclared marker files created: .tandem_ack"),
+        false,
+        None,
+        true
+    ));
+    assert!(!super::should_downgrade_auto_cleaned_marker_rejection(
+        Some("undeclared marker files created: .tandem_ack"),
+        true,
+        Some("no_concrete_reads"),
+        true
+    ));
+    assert!(!super::should_downgrade_auto_cleaned_marker_rejection(
+        Some("other rejection"),
+        true,
+        None,
+        true
+    ));
+}
+
+#[test]
 fn capability_ids_output_is_sorted_and_deduplicated() {
     let node = node_with_input_ref();
     let caps = automation_tool_capability_ids(&node, "research");
@@ -504,6 +596,446 @@ fn required_output_path_scopes_shared_artifacts_for_run() {
         automation_node_required_output_path_for_run(&node, None),
         Some(".tandem/artifacts/generate-report.md".to_string())
     );
+}
+
+#[test]
+fn session_write_materialized_output_detects_run_scoped_artifact_files() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-current-attempt-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-123";
+    let artifact_path = workspace_root.join(".tandem/runs/run-123/artifacts/report.md");
+    std::fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create artifacts dir");
+    std::fs::write(&artifact_path, "report body").expect("write artifact");
+
+    let mut session = Session::new(Some("write evidence".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": ".tandem/artifacts/report.md",
+                "content": "report body"
+            }),
+            result: Some(json!({"output": "written"})),
+            error: None,
+        }],
+    ));
+
+    assert!(session_write_materialized_output_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some(run_id),
+    ));
+
+    std::fs::remove_file(&artifact_path).expect("remove artifact");
+
+    assert!(!session_write_materialized_output_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some(run_id),
+    ));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_waits_for_late_file_visibility() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-verified-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-reconcile";
+    let output_path = ".tandem/artifacts/report.md";
+    let resolved_path = workspace_root.join(".tandem/runs/run-reconcile/artifacts/report.md");
+    std::fs::create_dir_all(
+        resolved_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create artifacts dir");
+
+    let mut session = Session::new(Some("reconcile visibility".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": output_path,
+                "content": "report body"
+            }),
+            result: Some(json!({"output": "written"})),
+            error: None,
+        }],
+    ));
+
+    let writer_root = workspace_root.clone();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        std::fs::write(
+            writer_root.join(".tandem/runs/run-reconcile/artifacts/report.md"),
+            "report body",
+        )
+        .expect("write delayed artifact");
+    });
+
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            node_id: "generate_report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Generate report".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        300,
+        25,
+    )
+    .await
+    .expect("resolve after delay");
+
+    writer.join().expect("writer thread");
+    assert_eq!(resolved, Some(resolved_path));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_times_out_when_file_never_appears() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-verified-output-timeout-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-timeout";
+    let output_path = ".tandem/artifacts/report.md";
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let session = Session::new(Some("reconcile timeout".to_string()), None);
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            node_id: "generate_report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Generate report".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("resolve timeout");
+
+    assert!(resolved.is_none());
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-session-text-json-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-session-json";
+    let output_path = ".tandem/artifacts/research-sources.json";
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let mut session = Session::new(Some("session text recovery".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::Text {
+            text: "{\n  \"sources\": [\n    {\n      \"path\": \"README.md\",\n      \"reason\": \"project overview\"\n    }\n  ],\n  \"summary\": \"Primary local sources identified.\"\n}\n{\"status\":\"completed\"}".to_string(),
+        }],
+    ));
+
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            node_id: "research_sources".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Find and record local sources".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "citations".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("recover from session text");
+
+    let expected =
+        workspace_root.join(".tandem/runs/run-session-json/artifacts/research-sources.json");
+    assert_eq!(resolved, Some(expected.clone()));
+    let written = std::fs::read_to_string(expected).expect("read recovered artifact");
+    let parsed: serde_json::Value = serde_json::from_str(&written).expect("parse recovered json");
+    assert_eq!(parsed["sources"][0]["path"], "README.md");
+    assert_eq!(parsed["summary"], "Primary local sources identified.");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn session_write_candidates_accepts_file_path_schema_with_normalized_run_scoped_paths() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-write-candidate-file-path-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let run_id = "run-123";
+    let artifact_path_with_dot_segments = workspace_root
+        .join(".tandem/runs/run-123/artifacts")
+        .join("./report.md");
+
+    let mut session = Session::new(Some("file path candidate".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "filePath": artifact_path_with_dot_segments.to_string_lossy(),
+                "body": "report body"
+            }),
+            result: Some(json!({"output":"written"})),
+            error: None,
+        }],
+    ));
+
+    let candidates = session_write_candidates_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some(run_id),
+    );
+
+    assert_eq!(candidates, vec!["report body".to_string()]);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn session_write_materialized_output_accepts_absolute_legacy_artifact_paths() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-current-attempt-output-abs-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-abs";
+    let legacy_abs_path = workspace_root
+        .join(".tandem/artifacts/report.md")
+        .to_string_lossy()
+        .to_string();
+    let run_scoped_path = workspace_root.join(".tandem/runs/run-abs/artifacts/report.md");
+    std::fs::create_dir_all(
+        run_scoped_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create run artifacts dir");
+    std::fs::write(&run_scoped_path, "report body").expect("write run-scoped artifact");
+
+    let mut session = Session::new(Some("absolute write evidence".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": legacy_abs_path,
+                "content": "report body"
+            }),
+            result: Some(json!({"output":"ok"})),
+            error: None,
+        }],
+    ));
+
+    assert!(session_write_materialized_output_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some(run_id),
+    ));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn session_write_materialized_output_accepts_file_path_schema_with_normalized_run_scoped_paths() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-current-attempt-output-file-path-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-file-path";
+    let artifact_path = workspace_root.join(".tandem/runs/run-file-path/artifacts/report.md");
+    let artifact_path_with_dot_segments = workspace_root
+        .join(".tandem/runs/run-file-path/artifacts")
+        .join("./report.md");
+    std::fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create artifacts dir");
+    std::fs::write(&artifact_path, "report body").expect("write artifact");
+
+    let mut session = Session::new(Some("file path write evidence".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "filePath": artifact_path_with_dot_segments.to_string_lossy(),
+                "content": "report body"
+            }),
+            result: Some(json!({"output":"written"})),
+            error: None,
+        }],
+    ));
+
+    assert!(session_write_materialized_output_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some(run_id),
+    ));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn session_write_candidates_supports_variant_path_and_content_keys() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-write-candidate-variants-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let mut session = Session::new(Some("candidate variants".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "output_path": ".tandem/artifacts/report.md",
+                "contents": "variant payload"
+            }),
+            result: Some(json!({"output":"ok"})),
+            error: None,
+        }],
+    ));
+
+    let candidates = session_write_candidates_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        ".tandem/artifacts/report.md",
+        Some("run-variants"),
+    );
+    assert_eq!(candidates, vec!["variant payload".to_string()]);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn resolve_automation_output_path_rejects_parent_escape_segments() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-output-path-escape-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let resolved = resolve_automation_output_path(
+        workspace_root.to_str().expect("workspace root"),
+        "../outside.md",
+    );
+    assert!(
+        resolved.is_err(),
+        "expected parent escape path to be rejected, got {resolved:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn resolve_automation_output_path_normalizes_dot_segments_inside_workspace() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-output-path-normalize-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(workspace_root.join("nested")).expect("create workspace");
+
+    let resolved = resolve_automation_output_path(
+        workspace_root.to_str().expect("workspace root"),
+        "nested/../report.md",
+    )
+    .expect("resolve normalized path");
+
+    assert_eq!(resolved, workspace_root.join("report.md"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
 }
 
 // -----------------------------------------------------------------------

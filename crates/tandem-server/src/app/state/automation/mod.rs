@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
+use std::time::Duration;
 
 pub(crate) mod assessment;
 pub(crate) mod enforcement;
@@ -8,6 +9,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod node_output;
 pub(crate) mod path_hygiene;
 pub(crate) mod rate_limit;
+pub(crate) mod receipts;
 pub(crate) mod scheduler;
 pub(crate) mod types;
 pub(crate) mod upstream;
@@ -22,6 +24,7 @@ pub(crate) use node_output::enrich_automation_node_output_for_contract;
 pub(crate) use node_output::research_required_next_tool_actions;
 use node_output::*;
 use path_hygiene::*;
+use receipts::*;
 pub use scheduler::{
     AutomationScheduler, PreexistingArtifactRegistry, QueueReason, SchedulerMetadata,
     ValidatedArtifact,
@@ -2485,10 +2488,21 @@ fn render_automation_v2_prompt_with_options(
         "Execution Policy:\n- Mode: `{}`.\n- Use only declared workflow artifact paths.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
         execution_mode
     ));
-    let quality_mode = enforcement::automation_node_quality_mode(node);
+    let quality_mode_resolution = enforcement::automation_node_quality_mode_resolution(node);
+    let quality_mode = quality_mode_resolution.effective;
+    let quality_mode_rollover_line = if quality_mode_resolution.legacy_rollback_enabled {
+        "Emergency rollback: `enabled`; metadata may opt into legacy mode for short-term recovery."
+    } else {
+        "Emergency rollback: `disabled`; legacy metadata requests are forced back to strict mode."
+    };
     sections.push(format!(
-        "Workflow Quality Mode:\n- Mode: `{}`.\n- Strict mode enforces evidence-backed synthesis and deterministic delivery bodies.\n- Legacy mode is a rollback path that relaxes the newest synthesis gates.",
-        quality_mode.stable_key()
+        "Workflow Quality Mode:\n- Mode: `{}`.\n- Requested mode: `{}`.\n- Strict mode enforces evidence-backed synthesis and deterministic delivery bodies.\n- Legacy mode is a rollback path that relaxes the newest synthesis gates.\n- {}",
+        quality_mode.stable_key(),
+        quality_mode_resolution
+            .requested
+            .unwrap_or(quality_mode)
+            .stable_key(),
+        quality_mode_rollover_line,
     ));
     if automation_node_is_code_workflow(node) {
         let task_kind =
@@ -2771,6 +2785,7 @@ fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool
             "warning_count",
             "warning_requirements",
             "unmet_requirements",
+            "validation_basis",
         ] {
             if let Some(value) = validator_summary
                 .get(key)
@@ -2894,6 +2909,46 @@ pub(crate) fn render_automation_repair_brief(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let validation_basis = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .and_then(Value::as_object);
+    let validation_basis_line = validation_basis
+        .map(|basis| {
+            let authority = basis
+                .get("authority")
+                .and_then(Value::as_str)
+                .unwrap_or("unspecified");
+            let current_attempt_output_materialized = basis
+                .get("current_attempt_output_materialized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_recorded_activity = basis
+                .get("current_attempt_has_recorded_activity")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_read = basis
+                .get("current_attempt_has_read")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_web_research = basis
+                .get("current_attempt_has_web_research")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let workspace_inspection_satisfied = basis
+                .get("workspace_inspection_satisfied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            format!(
+                "authority={}, output_materialized={}, recorded_activity={}, read={}, web_research={}, workspace_inspection={}",
+                authority,
+                current_attempt_output_materialized,
+                current_attempt_has_recorded_activity,
+                current_attempt_has_read,
+                current_attempt_has_web_research,
+                workspace_inspection_satisfied
+            )
+        })
+        .unwrap_or_else(|| "none recorded".to_string());
     let tools_offered = tool_telemetry
         .and_then(|value| value.get("requested_tools"))
         .and_then(Value::as_array)
@@ -2983,9 +3038,10 @@ pub(crate) fn render_automation_repair_brief(
     };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.",
         node.node_id,
         reason,
+        validation_basis_line,
         unmet_line,
         blocking_classification,
         next_actions_line,
@@ -3844,21 +3900,55 @@ fn resolve_automation_output_path(
     if trimmed.is_empty() {
         anyhow::bail!("required output path is empty");
     }
-    let workspace = PathBuf::from(workspace_root);
+    let workspace = PathBuf::from(
+        normalize_automation_path_text(workspace_root)
+            .unwrap_or_else(|| workspace_root.trim().to_string()),
+    );
     let candidate = PathBuf::from(trimmed);
     let resolved = if candidate.is_absolute() {
         candidate
     } else {
         workspace.join(candidate)
     };
-    if !resolved.starts_with(&workspace) {
+    let normalized_resolved = PathBuf::from(
+        normalize_automation_path_text(resolved.to_string_lossy().as_ref())
+            .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
+    );
+    if !normalized_resolved.starts_with(&workspace) {
         anyhow::bail!(
             "required output path `{}` must stay inside workspace `{}`",
             trimmed,
             workspace_root
         );
     }
-    Ok(resolved)
+    Ok(normalized_resolved)
+}
+
+fn normalize_automation_path_text(raw_path: &str) -> Option<String> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    let is_absolute = path.is_absolute();
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !is_absolute {
+                    normalized.push("..");
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    let normalized = normalized.to_string_lossy().trim().to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 fn automation_run_artifact_root(run_id: &str) -> Option<String> {
@@ -3871,11 +3961,7 @@ fn automation_run_artifact_root(run_id: &str) -> Option<String> {
 }
 
 pub(crate) fn automation_run_scoped_output_path(run_id: &str, output_path: &str) -> Option<String> {
-    let trimmed = output_path.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let normalized = trimmed.replace('\\', "/");
+    let normalized = normalize_automation_path_text(output_path)?.replace('\\', "/");
     let prefix = ".tandem/artifacts/";
     if let Some(suffix) = normalized.strip_prefix(prefix) {
         let root = automation_run_artifact_root(run_id)?;
@@ -3885,7 +3971,32 @@ pub(crate) fn automation_run_scoped_output_path(run_id: &str, output_path: &str)
             format!("{root}/{suffix}")
         });
     }
-    Some(trimmed.to_string())
+    Some(normalized)
+}
+
+fn automation_run_scoped_absolute_output_path(
+    workspace_root: &str,
+    run_id: &str,
+    output_path: &str,
+) -> Option<String> {
+    let candidate = PathBuf::from(normalize_automation_path_text(output_path)?);
+    if !candidate.is_absolute() {
+        return None;
+    }
+    let workspace = PathBuf::from(normalize_automation_path_text(workspace_root)?);
+    let relative = candidate.strip_prefix(&workspace).ok()?;
+    let relative_text =
+        normalize_automation_path_text(relative.to_string_lossy().as_ref())?.replace('\\', "/");
+    if relative_text == ".tandem/artifacts" {
+        return automation_run_artifact_root(run_id);
+    }
+    let suffix = relative_text.strip_prefix(".tandem/artifacts/")?;
+    let root = automation_run_artifact_root(run_id)?;
+    Some(if suffix.is_empty() {
+        root
+    } else {
+        format!("{root}/{suffix}")
+    })
 }
 
 fn resolve_automation_output_path_for_run(
@@ -3893,8 +4004,10 @@ fn resolve_automation_output_path_for_run(
     run_id: &str,
     output_path: &str,
 ) -> anyhow::Result<PathBuf> {
-    let scoped_output_path = automation_run_scoped_output_path(run_id, output_path)
-        .unwrap_or_else(|| output_path.trim().to_string());
+    let scoped_output_path =
+        automation_run_scoped_absolute_output_path(workspace_root, run_id, output_path)
+            .or_else(|| automation_run_scoped_output_path(run_id, output_path))
+            .unwrap_or_else(|| output_path.trim().to_string());
     resolve_automation_output_path(workspace_root, &scoped_output_path)
 }
 
@@ -4019,6 +4132,72 @@ pub(crate) fn automation_resolve_verified_output_path(
         .find(|candidate| candidate.exists() && candidate.is_file()))
 }
 
+async fn reconcile_automation_resolve_verified_output_path(
+    session: &Session,
+    workspace_root: &str,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    output_path: &str,
+    max_wait_ms: u64,
+    poll_interval_ms: u64,
+) -> anyhow::Result<Option<PathBuf>> {
+    let output_touched =
+        session_write_touched_output_for_output(session, workspace_root, output_path, Some(run_id));
+    let poll_interval_ms = poll_interval_ms.max(1);
+    let start_ms = now_ms() as u64;
+
+    loop {
+        if let Some(resolved) = automation_resolve_verified_output_path(
+            session,
+            workspace_root,
+            run_id,
+            node,
+            output_path,
+        )? {
+            return Ok(Some(resolved));
+        }
+        if let Some(recovered) =
+            recover_required_output_from_session_text(session, workspace_root, run_id, output_path)?
+        {
+            return Ok(Some(recovered));
+        }
+        if !output_touched {
+            return Ok(None);
+        }
+        let elapsed_ms = now_ms() as u64 - start_ms;
+        if elapsed_ms >= max_wait_ms {
+            return Ok(None);
+        }
+        let sleep_ms = poll_interval_ms.min(max_wait_ms.saturating_sub(elapsed_ms));
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+    }
+}
+
+fn recover_required_output_from_session_text(
+    session: &Session,
+    workspace_root: &str,
+    run_id: &str,
+    output_path: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let resolved = resolve_automation_output_path_for_run(workspace_root, run_id, output_path)?;
+    let Some(extension) = resolved.extension().and_then(|value| value.to_str()) else {
+        return Ok(None);
+    };
+    if !extension.eq_ignore_ascii_case("json") {
+        return Ok(None);
+    }
+    let payload = extract_structured_handoff_json(&extract_session_text_output(session));
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    if let Some(parent) = resolved.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let serialized = serde_json::to_string_pretty(&payload)?;
+    std::fs::write(&resolved, serialized)?;
+    Ok(Some(resolved))
+}
+
 fn is_suspicious_automation_marker_file(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
@@ -4061,6 +4240,19 @@ fn remove_suspicious_automation_marker_files(workspace_root: &str) {
         }
         let _ = std::fs::remove_file(path);
     }
+}
+
+fn should_downgrade_auto_cleaned_marker_rejection(
+    rejected_reason: Option<&str>,
+    auto_cleaned: bool,
+    semantic_block_reason: Option<&str>,
+    accepted_output_present: bool,
+) -> bool {
+    auto_cleaned
+        && semantic_block_reason.is_none()
+        && accepted_output_present
+        && rejected_reason
+            .is_some_and(|reason| reason.starts_with("undeclared marker files created:"))
 }
 
 pub(crate) fn automation_workspace_root_file_snapshot(
@@ -4519,12 +4711,8 @@ pub(crate) fn session_write_candidates_for_output(
     declared_output_path: &str,
     run_id: Option<&str>,
 ) -> Vec<String> {
-    let target_path = run_id
-        .and_then(|run_id| {
-            resolve_automation_output_path_for_run(workspace_root, run_id, declared_output_path)
-                .ok()
-        })
-        .or_else(|| resolve_automation_output_path(workspace_root, declared_output_path).ok());
+    let target_path =
+        automation_session_write_target_path(workspace_root, declared_output_path, run_id);
     let Some(target_path) = target_path else {
         return Vec::new();
     };
@@ -4545,7 +4733,7 @@ pub(crate) fn session_write_candidates_for_output(
             let Some(args) = tool_args_object(args) else {
                 continue;
             };
-            let Some(path) = args.get("path").and_then(Value::as_str).map(str::trim) else {
+            let Some(path) = automation_write_arg_path(&args) else {
                 continue;
             };
             let Ok(candidate_path) = (if let Some(run_id) = run_id {
@@ -4558,7 +4746,7 @@ pub(crate) fn session_write_candidates_for_output(
             if candidate_path != target_path {
                 continue;
             }
-            let Some(content) = args.get("content").and_then(Value::as_str) else {
+            let Some(content) = automation_write_arg_content(&args) else {
                 continue;
             };
             if !content.trim().is_empty() {
@@ -4569,18 +4757,27 @@ pub(crate) fn session_write_candidates_for_output(
     candidates
 }
 
+fn automation_session_write_target_path(
+    workspace_root: &str,
+    declared_output_path: &str,
+    run_id: Option<&str>,
+) -> Option<PathBuf> {
+    run_id
+        .and_then(|run_id| {
+            resolve_automation_output_path_for_run(workspace_root, run_id, declared_output_path)
+                .ok()
+        })
+        .or_else(|| resolve_automation_output_path(workspace_root, declared_output_path).ok())
+}
+
 pub(crate) fn session_write_touched_output_for_output(
     session: &Session,
     workspace_root: &str,
     declared_output_path: &str,
     run_id: Option<&str>,
 ) -> bool {
-    let target_path = run_id
-        .and_then(|run_id| {
-            resolve_automation_output_path_for_run(workspace_root, run_id, declared_output_path)
-                .ok()
-        })
-        .or_else(|| resolve_automation_output_path(workspace_root, declared_output_path).ok());
+    let target_path =
+        automation_session_write_target_path(workspace_root, declared_output_path, run_id);
     let Some(target_path) = target_path else {
         return false;
     };
@@ -4600,16 +4797,7 @@ pub(crate) fn session_write_touched_output_for_output(
             let Some(args) = tool_args_object(args) else {
                 continue;
             };
-            let path = args
-                .get("path")
-                .or_else(|| args.get("file_path"))
-                .or_else(|| args.get("filepath"))
-                .or_else(|| args.get("output_path"))
-                .or_else(|| args.get("target_path"))
-                .or_else(|| args.get("file"))
-                .and_then(Value::as_str)
-                .map(str::trim);
-            let Some(path) = path else {
+            let Some(path) = automation_write_arg_path(&args) else {
                 continue;
             };
             let Ok(candidate_path) = (if let Some(run_id) = run_id {
@@ -4625,6 +4813,60 @@ pub(crate) fn session_write_touched_output_for_output(
         }
     }
     false
+}
+
+pub(crate) fn session_write_materialized_output_for_output(
+    session: &Session,
+    workspace_root: &str,
+    declared_output_path: &str,
+    run_id: Option<&str>,
+) -> bool {
+    let target_path =
+        automation_session_write_target_path(workspace_root, declared_output_path, run_id);
+    let Some(target_path) = target_path else {
+        return false;
+    };
+    if !session_write_touched_output_for_output(
+        session,
+        workspace_root,
+        declared_output_path,
+        run_id,
+    ) {
+        return false;
+    }
+    std::fs::metadata(&target_path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+fn automation_verified_output_differs_from_preexisting(
+    preexisting_output: Option<&str>,
+    verified_output: &(String, String),
+) -> bool {
+    preexisting_output.is_none_or(|previous| previous != verified_output.1)
+}
+
+fn automation_write_arg_path(args: &serde_json::Map<String, Value>) -> Option<&str> {
+    args.get("path")
+        .or_else(|| args.get("filePath"))
+        .or_else(|| args.get("file_path"))
+        .or_else(|| args.get("filepath"))
+        .or_else(|| args.get("output_path"))
+        .or_else(|| args.get("target_path"))
+        .or_else(|| args.get("file"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_write_arg_content(args: &serde_json::Map<String, Value>) -> Option<&str> {
+    args.get("content")
+        .or_else(|| args.get("contents"))
+        .or_else(|| args.get("text"))
+        .or_else(|| args.get("body"))
+        .or_else(|| args.get("value"))
+        .or_else(|| args.get("data"))
+        .and_then(Value::as_str)
 }
 
 pub(crate) fn session_file_mutation_summary(session: &Session, workspace_root: &str) -> Value {
@@ -4825,8 +5067,20 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         ))
     };
     let mut semantic_block_reason = None::<String>;
+    let verified_output_materialized = verified_output.as_ref().is_some_and(|value| {
+        automation_verified_output_differs_from_preexisting(preexisting_output, value)
+    });
     let mut accepted_output = verified_output;
     let mut recovered_from_session_write = false;
+    let quality_mode_resolution = enforcement::automation_node_quality_mode_resolution(node);
+    let mut validation_basis = json!({
+        "authority": "filesystem_and_receipts",
+        "quality_mode": quality_mode_resolution.effective.stable_key(),
+        "requested_quality_mode": quality_mode_resolution
+            .requested
+            .map(|mode| mode.stable_key()),
+        "legacy_quality_rollback_enabled": quality_mode_resolution.legacy_rollback_enabled,
+    });
     let current_read_paths = session_read_paths(session, workspace_root);
     let current_discovered_relevant_paths =
         session_discovered_relevant_paths(session, workspace_root);
@@ -4913,8 +5167,6 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     if let Some((path, text)) = accepted_output.clone() {
         let session_write_candidates =
             session_write_candidates_for_output(session, workspace_root, &path, run_id);
-        let session_write_touched_required_output =
-            session_write_touched_output_for_output(session, workspace_root, &path, run_id);
         let requested_tools_for_contract = tool_telemetry
             .get("requested_tools")
             .and_then(Value::as_array)
@@ -5015,14 +5267,73 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let required_output_path = automation_node_required_output_path_for_run(node, run_id);
+        let current_attempt_output_materialized_via_filesystem =
+            required_output_path.as_ref().is_some_and(|output_path| {
+                session_write_materialized_output_for_output(
+                    session,
+                    workspace_root,
+                    output_path,
+                    run_id,
+                )
+            });
         let current_attempt_has_recorded_activity = !executed_tools_for_attempt.is_empty()
             || !session_write_candidates.is_empty()
+            || verified_output_materialized
             || (use_upstream_evidence && upstream_evidence.is_some());
         let preexisting_output_reuse_allowed =
             automation_node_allows_preexisting_output_reuse(node);
+        let current_attempt_output_materialized =
+            current_attempt_output_materialized_via_filesystem || verified_output_materialized;
+        validation_basis = json!({
+            "authority": "filesystem_and_receipts",
+            "quality_mode": quality_mode_resolution.effective.stable_key(),
+            "requested_quality_mode": quality_mode_resolution
+                .requested
+                .map(|mode| mode.stable_key()),
+            "legacy_quality_rollback_enabled": quality_mode_resolution.legacy_rollback_enabled,
+            "current_attempt_output_materialized": current_attempt_output_materialized,
+            "current_attempt_output_materialized_via_filesystem": current_attempt_output_materialized_via_filesystem,
+            "verified_output_materialized": verified_output_materialized,
+            "required_output_path": required_output_path,
+        });
+        if let Some(object) = validation_basis.as_object_mut() {
+            object.insert(
+                "session_write_candidate_count".to_string(),
+                json!(session_write_candidates.len()),
+            );
+            object.insert(
+                "session_write_touched_output".to_string(),
+                json!(session_write_touched_output_for_output(
+                    session,
+                    workspace_root,
+                    &path,
+                    run_id,
+                )),
+            );
+            object.insert(
+                "current_attempt_has_recorded_activity".to_string(),
+                json!(current_attempt_has_recorded_activity),
+            );
+            object.insert(
+                "current_attempt_has_read".to_string(),
+                json!(current_executed_has_read || !canonical_read_paths.is_empty()),
+            );
+            object.insert(
+                "current_attempt_has_web_research".to_string(),
+                json!(current_web_research_succeeded),
+            );
+            object.insert(
+                "workspace_inspection_satisfied".to_string(),
+                json!(workspace_inspection_satisfied),
+            );
+            object.insert(
+                "upstream_evidence_used".to_string(),
+                json!(use_upstream_evidence && upstream_evidence.is_some()),
+            );
+        }
         let missing_current_attempt_output_write = requires_current_attempt_output
-            && session_write_candidates.is_empty()
-            && !session_write_touched_required_output
+            && !current_attempt_output_materialized
             && !preexisting_output_reuse_allowed;
         if !missing_current_attempt_output_write && !text.trim().is_empty() {
             candidate_assessments.push(assess_artifact_candidate(
@@ -5521,6 +5832,17 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     warning_requirements.sort();
     warning_requirements.dedup();
     semantic_block_reason = semantic_block_reason_for_requirements(&unmet_requirements);
+    if should_downgrade_auto_cleaned_marker_rejection(
+        rejected_reason.as_deref(),
+        auto_cleaned,
+        semantic_block_reason.as_deref(),
+        accepted_output.is_some(),
+    ) {
+        rejected_reason = None;
+        warning_requirements.push("undeclared_marker_files_cleaned".to_string());
+        warning_requirements.sort();
+        warning_requirements.dedup();
+    }
     let (repair_attempt, repair_attempts_remaining, repair_exhausted) = infer_artifact_repair_state(
         parsed_status.as_ref(),
         repair_attempted,
@@ -5669,6 +5991,7 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         "repair_exhausted": repair_exhausted,
         "validation_outcome": validation_outcome,
         "validation_profile": validation_profile,
+        "validation_basis": validation_basis,
         "blocking_classification": blocking_classification,
         "required_next_tool_actions": required_next_tool_actions,
         "unmet_requirements": unmet_requirements,
@@ -6012,6 +6335,139 @@ pub(crate) fn summarize_automation_tool_activity(
     })
 }
 
+fn automation_attempt_receipt_event_payload(
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    attempt: u32,
+    session_id: &str,
+    tool: &str,
+    call_index: usize,
+    args: &Value,
+    result: Option<&Value>,
+    error: Option<&str>,
+) -> Value {
+    json!({
+        "automation_id": automation.automation_id,
+        "run_id": run_id,
+        "node_id": node.node_id,
+        "attempt": attempt,
+        "session_id": session_id,
+        "tool": tool,
+        "call_index": call_index,
+        "args": args,
+        "result": result.cloned().unwrap_or(Value::Null),
+        "error": error.map(str::to_string),
+    })
+}
+
+pub(crate) fn collect_automation_attempt_receipt_events(
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    attempt: u32,
+    session_id: &str,
+    session: &Session,
+    verified_output: Option<&(String, String)>,
+    required_output_path: Option<&str>,
+    artifact_validation: Option<&Value>,
+) -> Vec<AutomationAttemptReceiptEventInput> {
+    let mut events = Vec::new();
+    for (call_index, part) in session
+        .messages
+        .iter()
+        .flat_map(|message| message.parts.iter())
+        .enumerate()
+    {
+        let MessagePart::ToolInvocation {
+            tool,
+            args,
+            result,
+            error,
+        } = part
+        else {
+            continue;
+        };
+
+        let event_base = automation_attempt_receipt_event_payload(
+            automation,
+            run_id,
+            node,
+            attempt,
+            session_id,
+            tool,
+            call_index,
+            args,
+            result.as_ref(),
+            error.as_deref(),
+        );
+        events.push(AutomationAttemptReceiptEventInput {
+            event_type: "tool_invoked".to_string(),
+            payload: event_base.clone(),
+        });
+        if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+            events.push(AutomationAttemptReceiptEventInput {
+                event_type: "tool_failed".to_string(),
+                payload: event_base,
+            });
+        } else {
+            events.push(AutomationAttemptReceiptEventInput {
+                event_type: "tool_succeeded".to_string(),
+                payload: event_base,
+            });
+        }
+    }
+
+    if let Some((path, text)) = verified_output {
+        events.push(AutomationAttemptReceiptEventInput {
+            event_type: "artifact_write_success".to_string(),
+            payload: json!({
+                "automation_id": automation.automation_id,
+                "run_id": run_id,
+                "node_id": node.node_id,
+                "attempt": attempt,
+                "session_id": session_id,
+                "path": path,
+                "content_digest": crate::sha256_hex(&[text]),
+                "status": artifact_validation
+                    .and_then(|value| value.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("succeeded"),
+            }),
+        });
+    } else if let Some(path) = required_output_path {
+        events.push(AutomationAttemptReceiptEventInput {
+            event_type: "artifact_write_failed".to_string(),
+            payload: json!({
+                "automation_id": automation.automation_id,
+                "run_id": run_id,
+                "node_id": node.node_id,
+                "attempt": attempt,
+                "session_id": session_id,
+                "path": path,
+                "status": artifact_validation
+                    .and_then(|value| value.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("failed"),
+                "reason": artifact_validation
+                    .and_then(|value| value.get("semantic_block_reason"))
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        artifact_validation
+                            .and_then(|value| value.get("rejected_artifact_reason"))
+                            .and_then(Value::as_str)
+                    }),
+                "session_tool_activity": summarize_automation_tool_activity(node, session, &[])
+                    .get("tool_call_counts")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            }),
+        });
+    }
+
+    events
+}
+
 async fn load_automation_session_after_run(
     state: &AppState,
     session_id: &str,
@@ -6124,16 +6580,14 @@ pub(crate) fn collect_automation_external_action_receipts(
         else {
             continue;
         };
-        let idempotency_key = crate::sha256_hex(&[
-            "automation_v2",
-            &automation.automation_id,
+        let idempotency_key = automation_external_action_idempotency_key(
+            automation,
             run_id,
-            &node.node_id,
-            &attempt.to_string(),
+            node,
             tool,
-            &args.to_string(),
+            args,
             &call_index.to_string(),
-        ]);
+        );
         if !seen.insert(idempotency_key.clone()) {
             continue;
         }
@@ -6173,6 +6627,71 @@ pub(crate) fn collect_automation_external_action_receipts(
         });
     }
     out
+}
+
+fn automation_external_action_idempotency_key(
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    tool: &str,
+    args: &Value,
+    call_index: &str,
+) -> String {
+    crate::sha256_hex(&[
+        "automation_v2",
+        &automation.automation_id,
+        run_id,
+        &node.node_id,
+        tool,
+        &args.to_string(),
+        call_index,
+    ])
+}
+
+fn automation_attempt_uses_legacy_fallback(
+    session_text: &str,
+    artifact_validation: Option<&Value>,
+) -> bool {
+    if artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        return false;
+    }
+    let lowered = session_text
+        .chars()
+        .take(1600)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    [
+        "status: blocked",
+        "status blocked",
+        "## status blocked",
+        "blocked pending",
+        "this brief is blocked",
+        "brief is blocked",
+        "partially blocked",
+        "provisional",
+        "path-level evidence",
+        "based on filenames not content",
+        "could not be confirmed from file contents",
+        "could not safely cite exact file-derived claims",
+        "not approved",
+        "approval has not happened",
+        "publication is blocked",
+        "i’m blocked",
+        "i'm blocked",
+        "status: verify_failed",
+        "status verify_failed",
+        "verification failed",
+        "tests failed",
+        "build failed",
+        "lint failed",
+        "verify failed",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 fn automation_node_is_outbound_action(node: &AutomationFlowNode) -> bool {
@@ -6902,13 +7421,16 @@ pub(crate) async fn execute_automation_v2_node(
         .ok_or_else(|| anyhow::anyhow!("automation session `{}` missing after run", session_id))?;
     let session_text = extract_session_text_output(&session);
     let verified_output = if let Some(output_path) = required_output_path.as_deref() {
-        let resolved = automation_resolve_verified_output_path(
+        let resolved = reconcile_automation_resolve_verified_output_path(
             &session,
             &workspace_root,
             run_id,
             node,
             output_path,
-        )?
+            250,
+            25,
+        )
+        .await?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "required output `{}` was not created for node `{}`",
@@ -7015,6 +7537,151 @@ pub(crate) async fn execute_automation_v2_node(
                 .or_insert_with(|| Value::String(reason.clone()));
         }
     }
+    let (receipt_status, receipt_blocked_reason, receipt_approved) =
+        node_output::detect_automation_node_status(
+            node,
+            &session_text,
+            verified_output.as_ref(),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
+    let receipt_blocker_category = node_output::detect_automation_blocker_category(
+        node,
+        &receipt_status,
+        receipt_blocked_reason.as_deref(),
+        &tool_telemetry,
+        Some(&artifact_validation),
+    );
+    let receipt_fallback_used =
+        automation_attempt_uses_legacy_fallback(&session_text, Some(&artifact_validation));
+    let receipt_validator_summary = node_output::build_automation_validator_summary(
+        automation_output_validator_kind(node),
+        &receipt_status,
+        receipt_blocked_reason.as_deref(),
+        Some(&artifact_validation),
+    );
+    let receipt_attempt_evidence = tool_telemetry
+        .get("attempt_evidence")
+        .cloned()
+        .map(|value| {
+            node_output::augment_automation_attempt_evidence_with_validation(
+                &value,
+                Some(&artifact_validation),
+                verified_output.as_ref(),
+                artifact_validation
+                    .get("accepted_candidate_source")
+                    .and_then(Value::as_str),
+                receipt_blocker_category.as_deref(),
+                receipt_fallback_used,
+            )
+        });
+    let receipt_telemetry_summary = json!({
+        "receipt_kind": "tool_telemetry_summary",
+        "automation_id": automation.automation_id,
+        "automation_run_id": run_id,
+        "context_run_id": format!("automation-v2-{run_id}"),
+        "node_id": node.node_id,
+        "attempt": attempt,
+        "session_id": session_id,
+        "preflight": preflight.clone(),
+        "capability_resolution": capability_resolution.clone(),
+        "tool_call_counts": tool_telemetry.get("tool_call_counts").cloned().unwrap_or_else(|| json!({})),
+        "web_research_used": tool_telemetry.get("web_research_used").cloned().unwrap_or_else(|| json!(false)),
+        "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or_else(|| json!(false)),
+        "latest_web_research_failure": tool_telemetry.get("latest_web_research_failure").cloned().unwrap_or(Value::Null),
+        "email_delivery_attempted": tool_telemetry.get("email_delivery_attempted").cloned().unwrap_or_else(|| json!(false)),
+        "email_delivery_succeeded": tool_telemetry.get("email_delivery_succeeded").cloned().unwrap_or_else(|| json!(false)),
+        "latest_email_delivery_failure": tool_telemetry.get("latest_email_delivery_failure").cloned().unwrap_or(Value::Null),
+    });
+    let receipt_attempt_summary = json!({
+        "receipt_kind": "attempt_summary",
+        "automation_id": automation.automation_id,
+        "automation_run_id": run_id,
+        "context_run_id": format!("automation-v2-{run_id}"),
+        "node_id": node.node_id,
+        "attempt": attempt,
+        "session_id": session_id,
+        "status": receipt_status,
+        "approved": receipt_approved,
+        "blocked_reason": receipt_blocked_reason,
+        "blocker_category": receipt_blocker_category,
+        "fallback_used": receipt_fallback_used,
+        "attempt_evidence": receipt_attempt_evidence,
+    });
+    let receipt_validation_summary = json!({
+        "receipt_kind": "validation_summary",
+        "automation_id": automation.automation_id,
+        "automation_run_id": run_id,
+        "context_run_id": format!("automation-v2-{run_id}"),
+        "node_id": node.node_id,
+        "attempt": attempt,
+        "session_id": session_id,
+        "validator_summary": receipt_validator_summary,
+    });
+    let mut receipt_events = collect_automation_attempt_receipt_events(
+        automation,
+        run_id,
+        node,
+        attempt,
+        &session_id,
+        &session,
+        verified_output.as_ref(),
+        required_output_path.as_deref(),
+        Some(&artifact_validation),
+    );
+    receipt_events.extend(vec![
+        AutomationAttemptReceiptEventInput {
+            event_type: "attempt_summary".to_string(),
+            payload: receipt_attempt_summary,
+        },
+        AutomationAttemptReceiptEventInput {
+            event_type: "tool_telemetry_summary".to_string(),
+            payload: receipt_telemetry_summary,
+        },
+        AutomationAttemptReceiptEventInput {
+            event_type: "validation_summary".to_string(),
+            payload: receipt_validation_summary,
+        },
+    ]);
+    let receipt_root = receipts::automation_attempt_receipts_root();
+    let receipt_ledger = match append_automation_attempt_receipts(
+        &receipt_root,
+        run_id,
+        &node.node_id,
+        attempt,
+        &session_id,
+        &receipt_events,
+    )
+    .await
+    {
+        Ok(summary) => Some(serde_json::to_value(summary)?),
+        Err(error) => {
+            tracing::warn!(
+                run_id = %run_id,
+                node_id = %node.node_id,
+                attempt = attempt,
+                error = %error,
+                "failed to append automation attempt receipt ledger"
+            );
+            None
+        }
+    };
+    let receipt_timeline = receipt_ledger
+        .as_ref()
+        .and_then(|ledger| ledger.get("path").and_then(Value::as_str))
+        .map(PathBuf::from);
+    let receipt_timeline = match receipt_timeline {
+        Some(path) => receipts::read_automation_attempt_receipt_records(&path)
+            .await
+            .ok()
+            .map(|records| {
+                json!({
+                    "record_count": records.len(),
+                    "records": records,
+                })
+            }),
+        None => None,
+    };
     let external_actions = if editorial_publish_block_reason.is_some() {
         Vec::new()
     } else {
@@ -7061,6 +7728,20 @@ pub(crate) async fn execute_automation_v2_node(
     );
     if let Some(object) = output.as_object_mut() {
         object.insert("cost_provenance".to_string(), cost_provenance);
+        if let Some(receipt_timeline) = receipt_timeline.clone() {
+            object.insert("receipt_timeline".to_string(), receipt_timeline);
+        }
+        if let Some(receipt_ledger) = receipt_ledger {
+            if let Some(attempt_evidence) = object
+                .get_mut("attempt_evidence")
+                .and_then(Value::as_object_mut)
+            {
+                attempt_evidence.insert("receipt_ledger".to_string(), receipt_ledger);
+                if let Some(receipt_timeline) = receipt_timeline {
+                    attempt_evidence.insert("receipt_timeline".to_string(), receipt_timeline);
+                }
+            }
+        }
         if !external_actions.is_empty() {
             object.insert(
                 "external_actions".to_string(),

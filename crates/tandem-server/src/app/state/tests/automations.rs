@@ -1,14 +1,38 @@
 use super::*;
 use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 use tandem_types::{MessageRole, PrewriteCoverageMode, Session};
 
+use crate::app::state::automation::collect_automation_attempt_receipt_events;
 use crate::app::state::automation::node_output::{
     build_automation_attempt_evidence, build_automation_validator_summary,
     detect_automation_blocker_category, detect_automation_node_failure_kind,
     detect_automation_node_phase, detect_automation_node_status, wrap_automation_node_output,
 };
+use crate::app::state::automation::receipts::{
+    append_automation_attempt_receipt, automation_attempt_receipt_path_for_state_dir,
+    AutomationAttemptReceiptDraft, AutomationAttemptReceiptRecord,
+};
 use crate::capability_resolver;
+
+fn with_legacy_quality_rollback_enabled<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock");
+    let key = "TANDEM_AUTOMATION_QUALITY_LEGACY_ROLLBACK";
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, if enabled { "true" } else { "false" });
+    let result = f();
+    if let Some(previous) = previous {
+        std::env::set_var(key, previous);
+    } else {
+        std::env::remove_var(key);
+    }
+    result
+}
 
 fn routine_dependency_plan_package() -> tandem_plan_compiler::api::PlanPackage {
     use tandem_plan_compiler::api::{
@@ -175,6 +199,121 @@ fn routine_dependency_plan_package() -> tandem_plan_compiler::api::PlanPackage {
         context_objects: Vec::new(),
         metadata: None,
     }
+}
+
+#[tokio::test]
+async fn automation_attempt_receipt_append_uses_jsonl_path_and_skips_malformed_lines() {
+    let state_dir =
+        std::env::temp_dir().join(format!("tandem-receipt-ledger-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+
+    let run_id = "run-ledger-test";
+    let node_id = "node-alpha";
+    let expected_path = automation_attempt_receipt_path_for_state_dir(&state_dir, run_id, node_id);
+
+    if let Some(parent) = expected_path.parent() {
+        std::fs::create_dir_all(parent).expect("receipt parent");
+    }
+
+    std::fs::write(
+        &expected_path,
+        concat!(
+            "not-json\n",
+            "{\"version\":1,\"run_id\":\"run-ledger-test\",\"node_id\":\"node-alpha\",\"attempt\":1,\"session_id\":\"sess-1\",\"seq\":7,\"ts_ms\":10,\"event_type\":\"started\",\"payload\":{\"step\":\"seed\"}}\n"
+        ),
+    )
+    .expect("seed receipts");
+
+    let summary = append_automation_attempt_receipt(
+        &state_dir,
+        AutomationAttemptReceiptDraft {
+            run_id: run_id.to_string(),
+            node_id: node_id.to_string(),
+            attempt: 2,
+            session_id: "sess-2".to_string(),
+            event_type: "completed".to_string(),
+            payload: serde_json::json!({"ok": true}),
+        },
+    )
+    .await
+    .expect("append receipt");
+
+    assert_eq!(summary.path, expected_path);
+    assert_eq!(summary.seq, 8);
+    assert_eq!(summary.record_count, 2);
+
+    let raw = std::fs::read_to_string(&expected_path).expect("receipt text");
+    let mut lines = raw.lines();
+    assert_eq!(lines.next(), Some("not-json"));
+    let last_line = lines.last().expect("appended line");
+    let appended: AutomationAttemptReceiptRecord =
+        serde_json::from_str(last_line).expect("parse appended receipt");
+    assert_eq!(appended.version, 1);
+    assert_eq!(appended.run_id, run_id);
+    assert_eq!(appended.node_id, node_id);
+    assert_eq!(appended.attempt, 2);
+    assert_eq!(appended.session_id, "sess-2");
+    assert_eq!(appended.seq, 8);
+    assert_eq!(appended.event_type, "completed");
+    assert_eq!(appended.payload, serde_json::json!({"ok": true}));
+
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+#[tokio::test]
+async fn automation_attempt_receipt_collects_tool_and_artifact_events() {
+    let automation = test_phase_automation(
+        serde_json::json!([{ "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "soft" }]),
+        vec![test_automation_node("draft", Vec::new(), "phase_1", 1)],
+    );
+    let node = automation.flow.nodes[0].clone();
+    let mut session = Session::new(Some("receipt test".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "read".to_string(),
+            args: serde_json::json!({"path":"README.md"}),
+            result: Some(serde_json::json!({"ok": true})),
+            error: None,
+        }],
+    ));
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "bash".to_string(),
+            args: serde_json::json!({"cmd":"false"}),
+            result: None,
+            error: Some("exit 1".to_string()),
+        }],
+    ));
+
+    let events = collect_automation_attempt_receipt_events(
+        &automation,
+        "run-1",
+        &node,
+        2,
+        &session.id,
+        &session,
+        Some(&("out.md".to_string(), "artifact".to_string())),
+        Some("out.md"),
+        Some(&serde_json::json!({"status":"succeeded"})),
+    );
+
+    let event_types = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        event_types,
+        vec![
+            "tool_invoked",
+            "tool_succeeded",
+            "tool_invoked",
+            "tool_failed",
+            "artifact_write_success",
+        ]
+    );
 }
 #[test]
 fn automation_blocked_nodes_respects_barrier_open_phase() {
@@ -821,10 +960,11 @@ fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() 
         );
 
     assert_eq!(status, "needs_repair");
-    assert_eq!(
+    assert!(matches!(
         reason.as_deref(),
         Some("research completed without concrete file reads or required source coverage")
-    );
+            | Some("research completed without required current web research")
+    ));
     assert_eq!(approved, None);
     let summary = build_automation_validator_summary(
         crate::AutomationOutputValidatorKind::ResearchBrief,
@@ -948,10 +1088,11 @@ fn research_workflow_status_ignores_llm_blocked_when_validation_is_repairable() 
         );
 
     assert_eq!(status, "needs_repair");
-    assert_eq!(
+    assert!(matches!(
         reason.as_deref(),
         Some("research completed without concrete file reads or required source coverage")
-    );
+            | Some("research completed without required current web research")
+    ));
     assert_eq!(approved, None);
 }
 
@@ -1054,6 +1195,14 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
             "unreviewed_relevant_paths": ["docs/pricing.md", "docs/customers.md"],
             "repair_attempt": 1,
             "repair_attempts_remaining": 4,
+            "validation_basis": {
+                "authority": "filesystem_and_receipts",
+                "current_attempt_output_materialized": true,
+                "current_attempt_has_recorded_activity": true,
+                "current_attempt_has_read": false,
+                "current_attempt_has_web_research": false,
+                "workspace_inspection_satisfied": false
+            },
             "required_next_tool_actions": [
                 "Use `read` on the remaining relevant workspace files: docs/pricing.md, docs/customers.md.",
                 "Use `websearch` successfully and include the resulting sources in `Web sources reviewed`."
@@ -1067,6 +1216,8 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
     assert!(brief.contains("needs_repair"));
     assert!(brief.contains("missing_successful_web_research"));
     assert!(brief.contains("tool_available_but_not_used"));
+    assert!(brief.contains("authority=filesystem_and_receipts"));
+    assert!(brief.contains("output_materialized=true"));
     assert!(brief.contains("Required next tool actions"));
     assert!(brief.contains("Use `read` on the remaining relevant workspace files"));
     assert!(brief.contains("glob, read, websearch, write"));
@@ -3017,6 +3168,80 @@ fn report_markdown_retries_accept_html_sibling_outputs() {
 }
 
 #[test]
+fn automation_resolve_verified_output_path_accepts_file_path_schema_with_dot_segments() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-html-sibling-file-path-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = workspace_root.join(".tandem/runs/run-research/artifacts/report.md");
+    std::fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create artifact dir");
+    std::fs::write(&artifact_path, "report body").expect("write artifact");
+
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("generate-report-file-path".to_string()),
+        Some(workspace_root.to_str().expect("workspace utf8").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "filePath": artifact_path
+                    .parent()
+                    .expect("artifact path should have parent")
+                    .join("./report.md")
+                    .to_string_lossy(),
+                "content": "report body"
+            }),
+            result: Some(json!({"output":"written"})),
+            error: None,
+        }],
+    ));
+
+    let resolved = automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace utf8"),
+        "run-research",
+        &node,
+        ".tandem/artifacts/report.md",
+    )
+    .expect("resolve verified output")
+    .expect("accepted normalized output");
+
+    assert_eq!(resolved, artifact_path);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn citations_nodes_do_not_require_files_reviewed_sections_by_default() {
     let node = AutomationFlowNode {
         node_id: "research_sources".to_string(),
@@ -3308,6 +3533,178 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
             .iter()
             .all(|part| !matches!(part, tandem_types::MessagePart::ToolInvocation { .. }))
     }));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn automation_run_requeue_increments_attempt_counter() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-requeue-attempts-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("workspace");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-inline-requeue-attempts".to_string(),
+        name: "Requeue Attempt Increments".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![AutomationAgentProfile {
+            agent_id: "agent_planner".to_string(),
+            template_id: None,
+            display_name: "Planner".to_string(),
+            avatar_url: None,
+            model_policy: Some(json!({
+                "default_model": "openrouter/not-a-real-model"
+            })),
+            skills: Vec::new(),
+            tool_policy: AutomationAgentToolPolicy {
+                allowlist: vec!["*".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: AutomationFlowSpec {
+            nodes: vec![AutomationFlowNode {
+                node_id: "collect_inputs".to_string(),
+                agent_id: "agent_planner".to_string(),
+                objective: "Capture the report topic, delivery target, and formatting constraints."
+                    .to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "brief".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "inputs": {
+                        "topic": "autonomous AI agentic workflows",
+                        "delivery_email": "evan@frumu.ai",
+                        "email_format": "simple html",
+                        "attachments_allowed": false
+                    }
+                })),
+            }],
+        },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: crate::now_ms(),
+        updated_at_ms: crate::now_ms(),
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: Some(json!({
+            "context_materialization": {
+                "routines": [
+                    {
+                        "routine_id": "collect_inputs",
+                        "visible_context_objects": [],
+                        "step_context_bindings": [
+                            {
+                                "step_id": "collect_inputs",
+                                "context_reads": ["ctx:collect_inputs:mission.goal"],
+                                "context_writes": []
+                            }
+                        ]
+                    }
+                ]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let run_id = run.run_id.clone();
+
+    crate::automation_v2::executor::run_automation_v2_run(state.clone(), run).await;
+    let first = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("first run");
+    assert_eq!(
+        first.checkpoint.node_attempts.get("collect_inputs"),
+        Some(&1)
+    );
+
+    state
+        .update_automation_v2_run(&run_id, |row| {
+            row.status = AutomationRunStatus::Queued;
+            row.detail = Some("requeue collect_inputs".to_string());
+            row.resume_reason = Some("requeue collect_inputs".to_string());
+            row.stop_kind = None;
+            row.stop_reason = None;
+            row.pause_reason = None;
+            row.checkpoint.awaiting_gate = None;
+            row.checkpoint.node_outputs.remove("collect_inputs");
+            row.checkpoint
+                .completed_nodes
+                .retain(|node_id| node_id != "collect_inputs");
+            row.checkpoint
+                .blocked_nodes
+                .retain(|node_id| node_id != "collect_inputs");
+            if !row
+                .checkpoint
+                .pending_nodes
+                .iter()
+                .any(|node_id| node_id == "collect_inputs")
+            {
+                row.checkpoint
+                    .pending_nodes
+                    .push("collect_inputs".to_string());
+            }
+            if row
+                .checkpoint
+                .last_failure
+                .as_ref()
+                .is_some_and(|failure| failure.node_id == "collect_inputs")
+            {
+                row.checkpoint.last_failure = None;
+            }
+        })
+        .await
+        .expect("requeue run");
+
+    let rerun = state.get_automation_v2_run(&run_id).await.expect("rerun");
+    crate::automation_v2::executor::run_automation_v2_run(state.clone(), rerun).await;
+    let second = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("second run");
+    assert_eq!(
+        second.checkpoint.node_attempts.get("collect_inputs"),
+        Some(&2)
+    );
+    assert!(second
+        .checkpoint
+        .node_outputs
+        .contains_key("collect_inputs"));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
@@ -5259,6 +5656,10 @@ fn validator_summary_tracks_verification_and_repair_state() {
         "accepted_candidate_source": "session_write",
         "repair_attempted": true,
         "repair_succeeded": true,
+        "validation_basis": {
+            "authority": "filesystem_and_receipts",
+            "current_attempt_output_materialized": true
+        },
         "verification": {
             "verification_outcome": "passed"
         }
@@ -5281,6 +5682,14 @@ fn validator_summary_tracks_verification_and_repair_state() {
         Some("session_write")
     );
     assert_eq!(summary.verification_outcome.as_deref(), Some("passed"));
+    assert_eq!(
+        summary
+            .validation_basis
+            .as_ref()
+            .and_then(|value| value.get("authority"))
+            .and_then(Value::as_str),
+        Some("filesystem_and_receipts")
+    );
     assert!(summary.repair_attempted);
     assert!(summary.repair_succeeded);
 }
@@ -5650,112 +6059,260 @@ fn report_markdown_accepts_structured_synthesis_without_inline_citations_when_up
 }
 
 #[test]
-fn report_markdown_legacy_quality_mode_allows_generic_synthesis_as_rollback() {
-    let workspace_root = std::env::temp_dir().join(format!(
-        "tandem-report-legacy-quality-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&workspace_root).expect("create workspace");
-    let snapshot =
-        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
-    let node = AutomationFlowNode {
-        node_id: "generate_report".to_string(),
-        agent_id: "writer".to_string(),
-        objective: "Create the final report".to_string(),
-        depends_on: vec!["analyze_findings".to_string()],
-        input_refs: vec![AutomationFlowInputRef {
-            from_step_id: "analyze_findings".to_string(),
-            alias: "analysis".to_string(),
-        }],
-        output_contract: Some(AutomationFlowOutputContract {
-            kind: "report_markdown".to_string(),
-            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
-            enforcement: None,
-            schema: None,
-            summary_guidance: None,
-        }),
-        retry_policy: None,
-        timeout_ms: None,
-        stage_kind: None,
-        gate: None,
-        metadata: Some(json!({
-            "quality_mode": "legacy",
-            "builder": {
-                "output_path": "generate-report.md"
-            }
-        })),
-    };
-    let mut session = Session::new(
-        Some("legacy-quality-mode".to_string()),
-        Some(workspace_root.to_str().expect("workspace root").to_string()),
-    );
-    let generic_report = "# Strategic Summary\n\nTandem is an engineering agent for local execution.\n\n## Positioning\n\nIt connects human intent to repo changes.\n".to_string();
-    session.messages.push(tandem_types::Message::new(
-        MessageRole::Assistant,
-        vec![MessagePart::ToolInvocation {
-            tool: "write".to_string(),
-            args: json!({
-                "path": "generate-report.md",
-                "content": generic_report
-            }),
-            result: Some(json!("ok")),
-            error: None,
-        }],
-    ));
-    let upstream_evidence = AutomationUpstreamEvidence {
-        read_paths: vec![
-            ".tandem/artifacts/collect-inputs.json".to_string(),
-            ".tandem/artifacts/research-sources.json".to_string(),
-        ],
-        discovered_relevant_paths: vec![
-            ".tandem/artifacts/collect-inputs.json".to_string(),
-            ".tandem/artifacts/research-sources.json".to_string(),
-        ],
-        web_research_attempted: true,
-        web_research_succeeded: true,
-        citation_count: 3,
-        citations: vec![
-            "https://example.com/legacy-1".to_string(),
-            "https://example.com/legacy-2".to_string(),
-            "https://example.com/legacy-3".to_string(),
-        ],
-    };
-
-    let (accepted_output, artifact_validation, rejected) =
-        validate_automation_artifact_output_with_upstream(
-            &node,
-            &session,
+fn report_markdown_legacy_metadata_is_forced_to_strict_without_emergency_rollback() {
+    with_legacy_quality_rollback_enabled(false, || {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-report-forced-strict-quality-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
             workspace_root.to_str().expect("workspace root"),
-            None,
-            "Completed the report.",
-            &json!({
-                "requested_tools": ["read", "write"],
-                "executed_tools": ["read", "write"],
-                "tool_call_counts": {
-                    "read": 2,
-                    "write": 1
-                }
+        );
+        let node = AutomationFlowNode {
+            node_id: "generate_report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Create the final report".to_string(),
+            depends_on: vec!["analyze_findings".to_string()],
+            input_refs: vec![AutomationFlowInputRef {
+                from_step_id: "analyze_findings".to_string(),
+                alias: "analysis".to_string(),
+            }],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
             }),
-            None,
-            Some(("generate-report.md".to_string(), generic_report)),
-            &snapshot,
-            Some(&upstream_evidence),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "quality_mode": "legacy",
+                "builder": {
+                    "output_path": "generate-report.md"
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("legacy-quality-mode".to_string()),
+            Some(workspace_root.to_str().expect("workspace root").to_string()),
+        );
+        let generic_report = "# Summary\n\nPlaceholder update.\n".to_string();
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({
+                    "path": "generate-report.md",
+                    "content": generic_report
+                }),
+                result: Some(json!("ok")),
+                error: None,
+            }],
+        ));
+        let upstream_evidence = AutomationUpstreamEvidence {
+            read_paths: vec![
+                ".tandem/artifacts/collect-inputs.json".to_string(),
+                ".tandem/artifacts/research-sources.json".to_string(),
+            ],
+            discovered_relevant_paths: vec![
+                ".tandem/artifacts/collect-inputs.json".to_string(),
+                ".tandem/artifacts/research-sources.json".to_string(),
+            ],
+            web_research_attempted: true,
+            web_research_succeeded: true,
+            citation_count: 3,
+            citations: vec![
+                "https://example.com/legacy-1".to_string(),
+                "https://example.com/legacy-2".to_string(),
+                "https://example.com/legacy-3".to_string(),
+            ],
+        };
+
+        let (_accepted_output, artifact_validation, rejected) =
+            validate_automation_artifact_output_with_upstream(
+                &node,
+                &session,
+                workspace_root.to_str().expect("workspace root"),
+                None,
+                "Completed the report.",
+                &json!({
+                    "requested_tools": ["read", "write"],
+                    "executed_tools": ["read", "write"],
+                    "tool_call_counts": {
+                        "read": 2,
+                        "write": 1
+                    }
+                }),
+                None,
+                Some(("generate-report.md".to_string(), generic_report)),
+                &snapshot,
+                Some(&upstream_evidence),
+            );
+
+        assert!(rejected.is_some());
+        assert!(artifact_validation
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items
+                .iter()
+                .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("quality_mode"))
+                .and_then(Value::as_str),
+            Some("strict_research_v1")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("requested_quality_mode"))
+                .and_then(Value::as_str),
+            Some("legacy")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("legacy_quality_rollback_enabled"))
+                .and_then(Value::as_bool),
+            Some(false)
         );
 
-    assert!(accepted_output.is_some());
-    assert!(rejected.is_none());
-    assert!(artifact_validation
-        .get("unmet_requirements")
-        .and_then(Value::as_array)
-        .is_none_or(|items| !items
-            .iter()
-            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
-    assert!(artifact_validation
-        .get("semantic_block_reason")
-        .and_then(Value::as_str)
-        .is_none());
+        let _ = std::fs::remove_dir_all(&workspace_root);
+    });
+}
 
-    let _ = std::fs::remove_dir_all(&workspace_root);
+#[test]
+fn report_markdown_legacy_quality_mode_allows_generic_synthesis_with_emergency_rollback() {
+    with_legacy_quality_rollback_enabled(true, || {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-report-legacy-quality-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root"),
+        );
+        let node = AutomationFlowNode {
+            node_id: "generate_report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Create the final report".to_string(),
+            depends_on: vec!["analyze_findings".to_string()],
+            input_refs: vec![AutomationFlowInputRef {
+                from_step_id: "analyze_findings".to_string(),
+                alias: "analysis".to_string(),
+            }],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "quality_mode": "legacy",
+                "builder": {
+                    "output_path": "generate-report.md"
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("legacy-quality-mode".to_string()),
+            Some(workspace_root.to_str().expect("workspace root").to_string()),
+        );
+        let generic_report = "# Summary\n\nPlaceholder update.\n".to_string();
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({
+                    "path": "generate-report.md",
+                    "content": generic_report
+                }),
+                result: Some(json!("ok")),
+                error: None,
+            }],
+        ));
+        let upstream_evidence = AutomationUpstreamEvidence {
+            read_paths: vec![
+                ".tandem/artifacts/collect-inputs.json".to_string(),
+                ".tandem/artifacts/research-sources.json".to_string(),
+            ],
+            discovered_relevant_paths: vec![
+                ".tandem/artifacts/collect-inputs.json".to_string(),
+                ".tandem/artifacts/research-sources.json".to_string(),
+            ],
+            web_research_attempted: true,
+            web_research_succeeded: true,
+            citation_count: 3,
+            citations: vec![
+                "https://example.com/legacy-1".to_string(),
+                "https://example.com/legacy-2".to_string(),
+                "https://example.com/legacy-3".to_string(),
+            ],
+        };
+
+        let (accepted_output, artifact_validation, rejected) =
+            validate_automation_artifact_output_with_upstream(
+                &node,
+                &session,
+                workspace_root.to_str().expect("workspace root"),
+                None,
+                "Completed the report.",
+                &json!({
+                    "requested_tools": ["read", "write"],
+                    "executed_tools": ["read", "write"],
+                    "tool_call_counts": {
+                        "read": 2,
+                        "write": 1
+                    }
+                }),
+                None,
+                Some(("generate-report.md".to_string(), generic_report)),
+                &snapshot,
+                Some(&upstream_evidence),
+            );
+
+        assert!(accepted_output.is_some());
+        assert!(rejected.is_none());
+        assert!(artifact_validation
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .is_none_or(|items| !items
+                .iter()
+                .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("quality_mode"))
+                .and_then(Value::as_str),
+            Some("legacy")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("requested_quality_mode"))
+                .and_then(Value::as_str),
+            Some("legacy")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("validation_basis")
+                .and_then(|value| value.get("legacy_quality_rollback_enabled"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace_root);
+    });
 }
 
 #[test]
@@ -6638,7 +7195,7 @@ fn collect_automation_external_action_receipts_ignores_non_outbound_nodes() {
 }
 
 #[test]
-fn collect_automation_external_action_receipts_include_attempt_in_identity() {
+fn collect_automation_external_action_receipts_stabilize_identity_across_retries() {
     let automation = AutomationV2Spec {
         automation_id: "auto-publish-attempt-test".to_string(),
         name: "Publish Attempt Test".to_string(),
@@ -6733,8 +7290,8 @@ fn collect_automation_external_action_receipts_include_attempt_in_identity() {
 
     assert_eq!(first_attempt.len(), 1);
     assert_eq!(second_attempt.len(), 1);
-    assert_ne!(first_attempt[0].action_id, second_attempt[0].action_id);
-    assert_ne!(
+    assert_eq!(first_attempt[0].action_id, second_attempt[0].action_id);
+    assert_eq!(
         first_attempt[0].idempotency_key,
         second_attempt[0].idempotency_key
     );
@@ -7723,15 +8280,32 @@ fn artifact_validation_restores_substantive_session_write_over_short_completion_
         &snapshot,
     );
 
-    assert_eq!(
+    assert!(matches!(
         rejected.as_deref(),
         Some("research completed without concrete file reads or required source coverage")
-    );
+            | Some("research completed without required current web research")
+    ));
     assert_eq!(
         metadata
             .get("recovered_from_session_write")
             .and_then(Value::as_bool),
         Some(false)
+    );
+    assert_eq!(
+        metadata
+            .get("validation_basis")
+            .and_then(Value::as_object)
+            .and_then(|value| value.get("authority"))
+            .and_then(Value::as_str),
+        Some("filesystem_and_receipts")
+    );
+    assert_eq!(
+        metadata
+            .get("validation_basis")
+            .and_then(Value::as_object)
+            .and_then(|value| value.get("current_attempt_output_materialized"))
+            .and_then(Value::as_bool),
+        Some(true)
     );
     assert_eq!(
         accepted_output.as_ref().map(|(_, text)| text.as_str()),
@@ -7757,10 +8331,11 @@ fn artifact_validation_restores_substantive_session_write_over_short_completion_
         Some(&metadata),
     );
     assert_eq!(status, "needs_repair");
-    assert_eq!(
+    assert!(matches!(
         reason.as_deref(),
         Some("research completed without concrete file reads or required source coverage")
-    );
+            | Some("research completed without required current web research")
+    ));
     assert_eq!(approved, Some(true));
 
     let _ = std::fs::remove_dir_all(workspace_root);
@@ -8056,6 +8631,163 @@ fn generic_artifact_validation_rejects_stale_preexisting_output_without_current_
     let disk_text =
         std::fs::read_to_string(workspace_root.join("report.md")).expect("read stale output");
     assert_eq!(disk_text, stale_preexisting);
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
+fn report_markdown_validation_accepts_updated_verified_output_without_session_write_telemetry() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-updated-without-session-write-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot = automation_workspace_root_file_snapshot(
+        workspace_root.to_str().expect("workspace root string"),
+    );
+    let stale_preexisting = "# Strategic Summary\n\nOld report content.\n".to_string();
+    let updated_report = r#"
+<html>
+  <body>
+    <h1>Frumu AI Tandem: Strategic Summary</h1>
+    <p>We synthesized the upstream research into one report.</p>
+    <h3>Core Value Proposition</h3>
+    <p>Tandem is an engine-backed workflow system for local execution and agentic operations.</p>
+    <ul>
+      <li>Local workspace reads and patch-based code execution.</li>
+      <li>Current web research for externally grounded synthesis.</li>
+      <li>Explicit delivery gating for email and other side effects.</li>
+    </ul>
+    <h3>Strategic Outlook</h3>
+    <p>The positioning emphasizes deterministic execution, provenance, and operator control.</p>
+    <p>Sources reviewed: <a href=".tandem/artifacts/analyze-findings.md">analysis</a> and <a href=".tandem/artifacts/research-sources.json">research</a>.</p>
+  </body>
+</html>
+"#
+    .trim()
+    .to_string();
+    std::fs::write(
+        workspace_root.join("generate-report.md"),
+        &stale_preexisting,
+    )
+    .expect("seed stale report");
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("generate-report-updated".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "read".to_string(),
+            args: json!({"path":"analyze_findings.md"}),
+            result: Some(json!({"ok": true})),
+            error: None,
+        }],
+    ));
+    std::fs::write(workspace_root.join("generate-report.md"), &updated_report)
+        .expect("write updated report");
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({}),
+            Some(&stale_preexisting),
+            Some(("generate-report.md".to_string(), updated_report.clone())),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some(), "{artifact_validation:?}");
+    assert!(rejected.is_none(), "{artifact_validation:?}");
+    assert_eq!(
+        artifact_validation
+            .get("accepted_candidate_source")
+            .and_then(Value::as_str),
+        Some("verified_output")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        None
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("passed")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_basis")
+            .and_then(Value::as_object)
+            .and_then(|value| value.get("authority"))
+            .and_then(Value::as_str),
+        Some("filesystem_and_receipts")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_basis")
+            .and_then(Value::as_object)
+            .and_then(|value| value.get("verified_output_materialized"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 
     let _ = std::fs::remove_dir_all(workspace_root);
 }

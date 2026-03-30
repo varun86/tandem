@@ -279,6 +279,7 @@ async fn sync_workflow_automation_action_completed(
                         warning_count: 0,
                         accepted_candidate_source: Some("workflow_runtime".to_string()),
                         verification_outcome: Some("not_applicable".to_string()),
+                        validation_basis: None,
                         repair_attempted: false,
                         repair_attempt: 0,
                         repair_attempts_remaining: tandem_core::prewrite_repair_retry_max_attempts()
@@ -306,6 +307,10 @@ async fn sync_workflow_automation_action_completed(
                     blocker_category: None,
                     fallback_used: None,
                     artifact_validation: None,
+                    receipt_timeline: None,
+                    quality_mode: Some("strict_research_v1".to_string()),
+                    requested_quality_mode: None,
+                    emergency_rollback_enabled: Some(false),
                     provenance: Some(crate::AutomationNodeOutputProvenance {
                         session_id: format!("workflow-runtime-{run_id}"),
                         node_id: action_id.to_string(),
@@ -378,6 +383,7 @@ async fn sync_workflow_automation_action_failed(
                         warning_count: 0,
                         accepted_candidate_source: None,
                         verification_outcome: Some("failed".to_string()),
+                        validation_basis: None,
                         repair_attempted: false,
                         repair_attempt: 0,
                         repair_attempts_remaining: tandem_core::prewrite_repair_retry_max_attempts()
@@ -405,6 +411,10 @@ async fn sync_workflow_automation_action_failed(
                     blocker_category: Some("tool_result_unusable".to_string()),
                     fallback_used: None,
                     artifact_validation: None,
+                    receipt_timeline: None,
+                    quality_mode: Some("strict_research_v1".to_string()),
+                    requested_quality_mode: None,
+                    emergency_rollback_enabled: Some(false),
                     provenance: Some(crate::AutomationNodeOutputProvenance {
                         session_id: format!("workflow-runtime-{run_id}"),
                         node_id: action_id.to_string(),

@@ -1166,6 +1166,30 @@ impl Tool for EditTool {
 }
 
 struct GlobTool;
+
+fn normalize_recursive_wildcard_pattern(pattern: &str) -> Option<String> {
+    let mut changed = false;
+    let normalized = pattern
+        .split('/')
+        .flat_map(|component| {
+            if let Some(tail) = component.strip_prefix("**") {
+                if !tail.is_empty() {
+                    changed = true;
+                    let normalized_tail = if tail.starts_with('.') || tail.starts_with('{') {
+                        format!("*{tail}")
+                    } else {
+                        tail.to_string()
+                    };
+                    return vec!["**".to_string(), normalized_tail];
+                }
+            }
+            vec![component.to_string()]
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    changed.then_some(normalized)
+}
+
 #[async_trait]
 impl Tool for GlobTool {
     fn schema(&self) -> ToolSchema {
@@ -1197,7 +1221,23 @@ impl Tool for GlobTool {
             effective_cwd.join(pattern).to_string_lossy().to_string()
         };
         let mut files = Vec::new();
-        for path in (glob::glob(&scoped_pattern)?).flatten() {
+        let mut effective_pattern = scoped_pattern.clone();
+        let paths = match glob::glob(&scoped_pattern) {
+            Ok(paths) => paths,
+            Err(err) => {
+                if let Some(normalized) = normalize_recursive_wildcard_pattern(&scoped_pattern) {
+                    if let Ok(paths) = glob::glob(&normalized) {
+                        effective_pattern = normalized;
+                        paths
+                    } else {
+                        return Err(err.into());
+                    }
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        for path in paths.flatten() {
             if is_discovery_ignored_path(&path) {
                 continue;
             }
@@ -1213,7 +1253,13 @@ impl Tool for GlobTool {
         }
         Ok(ToolResult {
             output: files.join("\n"),
-            metadata: json!({"count": files.len(), "effective_cwd": effective_cwd, "workspace_root": workspace_root}),
+            metadata: json!({
+                "count": files.len(),
+                "effective_cwd": effective_cwd,
+                "workspace_root": workspace_root,
+                "pattern": pattern,
+                "effective_pattern": effective_pattern
+            }),
         })
     }
 }
@@ -5604,6 +5650,53 @@ mod tests {
             result.output.trim().is_empty(),
             "expected non-artifact tandem paths to stay hidden, got: {}",
             result.output
+        );
+    }
+
+    #[test]
+    fn normalize_recursive_wildcard_pattern_fixes_common_invalid_forms() {
+        assert_eq!(
+            normalize_recursive_wildcard_pattern("docs/**.md").as_deref(),
+            Some("docs/**/*.md")
+        );
+        assert_eq!(
+            normalize_recursive_wildcard_pattern("src/**README*").as_deref(),
+            Some("src/**/README*")
+        );
+        assert_eq!(
+            normalize_recursive_wildcard_pattern("**.{md,mdx,txt}").as_deref(),
+            Some("**/*.{md,mdx,txt}")
+        );
+        assert_eq!(normalize_recursive_wildcard_pattern("docs/**/*.md"), None);
+    }
+
+    #[tokio::test]
+    async fn glob_recovers_from_invalid_recursive_wildcard_syntax() {
+        let root =
+            std::env::temp_dir().join(format!("tandem-glob-recover-{}", uuid_like(now_ms_u64())));
+        let docs_dir = root.join("docs").join("guides");
+        std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+        let guide = docs_dir.join("intro.md");
+        std::fs::write(&guide, "# intro").expect("write guide");
+
+        let tool = GlobTool;
+        let result = tool
+            .execute(json!({
+                "pattern": "docs/**.md",
+                "__workspace_root": root.to_string_lossy().to_string(),
+                "__effective_cwd": root.to_string_lossy().to_string(),
+            }))
+            .await
+            .expect("glob result");
+
+        assert!(
+            result.output.contains("docs/guides/intro.md"),
+            "expected recovered glob output, got: {}",
+            result.output
+        );
+        assert_eq!(
+            result.metadata["effective_pattern"],
+            json!(format!("{}/docs/**/*.md", root.to_string_lossy()))
         );
     }
 

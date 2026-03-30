@@ -1169,6 +1169,10 @@ pub(crate) fn build_automation_validator_summary(
             other => other,
         })
         .to_string();
+    let validation_basis = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .cloned()
+        .filter(|value| !value.is_null());
     crate::AutomationValidatorSummary {
         kind: validator_kind,
         outcome,
@@ -1178,6 +1182,7 @@ pub(crate) fn build_automation_validator_summary(
         warning_count,
         accepted_candidate_source,
         verification_outcome,
+        validation_basis,
         repair_attempted,
         repair_attempt,
         repair_attempts_remaining,
@@ -1546,6 +1551,7 @@ pub(crate) fn wrap_automation_node_output(
     );
     let fallback_used =
         automation_status_used_legacy_fallback(session_text, artifact_validation.as_ref());
+    let quality_mode_resolution = enforcement::automation_node_quality_mode_resolution(node);
     let provenance = automation_node_output_provenance(
         node,
         session_id,
@@ -1647,6 +1653,12 @@ pub(crate) fn wrap_automation_node_output(
         capability_resolution,
         attempt_evidence: final_attempt_evidence,
         blocker_category,
+        receipt_timeline: None,
+        quality_mode: Some(quality_mode_resolution.effective.stable_key().to_string()),
+        requested_quality_mode: quality_mode_resolution
+            .requested
+            .map(|mode| mode.stable_key().to_string()),
+        emergency_rollback_enabled: Some(quality_mode_resolution.legacy_rollback_enabled),
         fallback_used: Some(fallback_used),
         artifact_validation,
         provenance,

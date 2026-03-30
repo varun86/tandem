@@ -579,6 +579,7 @@ fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool
             "warning_count",
             "warning_requirements",
             "unmet_requirements",
+            "validation_basis",
         ] {
             if let Some(value) = validator_summary
                 .get(key)
@@ -605,6 +606,7 @@ fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool
             "unmet_requirements",
             "semantic_block_reason",
             "rejected_artifact_reason",
+            "validation_basis",
         ] {
             if let Some(value) = artifact_validation
                 .get(key)
@@ -702,6 +704,48 @@ pub(crate) fn render_automation_repair_brief(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let validation_basis = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .and_then(Value::as_object)
+        .cloned();
+    let validation_basis_line = validation_basis
+        .as_ref()
+        .map(|basis| {
+            let authority = basis
+                .get("authority")
+                .and_then(Value::as_str)
+                .unwrap_or("unspecified");
+            let current_attempt_output_materialized = basis
+                .get("current_attempt_output_materialized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_recorded_activity = basis
+                .get("current_attempt_has_recorded_activity")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_read = basis
+                .get("current_attempt_has_read")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let current_attempt_has_web_research = basis
+                .get("current_attempt_has_web_research")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let workspace_inspection_satisfied = basis
+                .get("workspace_inspection_satisfied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            format!(
+                "authority={}, output_materialized={}, recorded_activity={}, read={}, web_research={}, workspace_inspection={}",
+                authority,
+                current_attempt_output_materialized,
+                current_attempt_has_recorded_activity,
+                current_attempt_has_read,
+                current_attempt_has_web_research,
+                workspace_inspection_satisfied
+            )
+        })
+        .unwrap_or_else(|| "none recorded".to_string());
     let tools_offered = tool_telemetry
         .and_then(|value| value.get("requested_tools"))
         .and_then(Value::as_array)
@@ -791,9 +835,10 @@ pub(crate) fn render_automation_repair_brief(
     };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.",
         node.node_id,
         reason,
+        validation_basis_line,
         unmet_line,
         blocking_classification,
         next_actions_line,

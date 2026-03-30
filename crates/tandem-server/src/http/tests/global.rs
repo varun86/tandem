@@ -2441,6 +2441,10 @@ async fn automations_v2_gate_rework_clears_downstream_outputs_and_requeues_subtr
             row.checkpoint
                 .node_outputs
                 .insert("review".to_string(), json!({"summary":"review"}));
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
         })
         .await
         .expect("updated run");
@@ -2507,6 +2511,10 @@ async fn automations_v2_run_recover_from_pause_preserves_completed_state_and_rec
             row.checkpoint
                 .node_outputs
                 .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
             row.checkpoint.awaiting_gate = Some(crate::AutomationPendingGate {
                 node_id: "approval".to_string(),
                 title: "Approval".to_string(),
@@ -2578,6 +2586,10 @@ async fn automations_v2_run_recover_from_pause_preserves_completed_state_and_rec
         recovered.checkpoint.blocked_nodes,
         vec!["approval".to_string()]
     );
+    assert_eq!(recovered.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(recovered.active_session_ids.is_empty());
+    assert!(recovered.active_instance_ids.is_empty());
+    assert!(recovered.latest_session_id.is_none());
     assert_eq!(
         recovered.resume_reason.as_deref(),
         Some("continue after operator pause")
@@ -2856,6 +2868,10 @@ async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling
             row.checkpoint
                 .node_outputs
                 .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
             row.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
                 node_id: "draft".to_string(),
                 reason: "bad draft".to_string(),
@@ -2924,6 +2940,10 @@ async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "analysis"));
+    assert_eq!(recovered.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(recovered.active_session_ids.is_empty());
+    assert!(recovered.active_instance_ids.is_empty());
+    assert!(recovered.latest_session_id.is_none());
     assert!(recovered.checkpoint.last_failure.is_none());
     let recover_event = recovered
         .checkpoint
@@ -3044,6 +3064,9 @@ async fn automations_v2_run_recover_from_pause_preserves_branched_state() {
                 .node_outputs
                 .insert("analysis".to_string(), json!({"summary":"analysis"}));
             row.checkpoint.blocked_nodes = vec!["publish".to_string()];
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
         })
         .await
         .expect("updated run");
@@ -3087,6 +3110,9 @@ async fn automations_v2_run_recover_from_pause_preserves_branched_state() {
         recovered.resume_reason.as_deref(),
         Some("continue branched mission after pause")
     );
+    assert!(recovered.active_session_ids.is_empty());
+    assert!(recovered.active_instance_ids.is_empty());
+    assert!(recovered.latest_session_id.is_none());
     let recover_event = recovered
         .checkpoint
         .lifecycle_history
@@ -3140,6 +3166,10 @@ async fn automations_v2_gate_rework_on_failed_branch_preserves_completed_sibling
                 .node_outputs
                 .insert("draft".to_string(), json!({"summary":"draft"}));
             row.checkpoint.blocked_nodes = vec!["publish".to_string()];
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
         })
         .await
         .expect("updated run");
@@ -3209,6 +3239,10 @@ async fn automations_v2_gate_rework_on_failed_branch_preserves_completed_sibling
         .iter()
         .any(|node_id| node_id == "analysis"));
     assert!(updated.checkpoint.awaiting_gate.is_none());
+    assert_eq!(updated.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(updated.active_session_ids.is_empty());
+    assert!(updated.active_instance_ids.is_empty());
+    assert!(updated.latest_session_id.is_none());
     let gate_event = updated
         .checkpoint
         .gate_history
@@ -3248,6 +3282,10 @@ async fn automations_v2_run_repair_preserves_completed_sibling_branch() {
             row.checkpoint
                 .node_outputs
                 .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
             row.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
                 node_id: "draft".to_string(),
                 reason: "draft needs prompt fix".to_string(),
@@ -3325,6 +3363,7 @@ async fn automations_v2_run_repair_preserves_completed_sibling_branch() {
     assert!(repaired.checkpoint.node_outputs.contains_key("analysis"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("publish"));
+    assert_eq!(repaired.checkpoint.node_attempts.get("draft"), Some(&2));
     assert!(repaired
         .checkpoint
         .pending_nodes
@@ -3344,6 +3383,9 @@ async fn automations_v2_run_repair_preserves_completed_sibling_branch() {
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "analysis"));
+    assert!(repaired.active_session_ids.is_empty());
+    assert!(repaired.active_instance_ids.is_empty());
+    assert!(repaired.latest_session_id.is_none());
     assert!(repaired.checkpoint.last_failure.is_none());
     let repair_event = repaired
         .checkpoint
@@ -3376,6 +3418,11 @@ async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata(
             row.status = crate::AutomationRunStatus::Failed;
             row.checkpoint.completed_nodes = vec!["draft".to_string(), "review".to_string()];
             row.checkpoint.pending_nodes = vec!["approval".to_string()];
+            row.checkpoint.node_attempts.insert("draft".to_string(), 3);
+            row.checkpoint.node_attempts.insert("review".to_string(), 2);
+            row.checkpoint
+                .node_attempts
+                .insert("approval".to_string(), 1);
             row.checkpoint
                 .node_outputs
                 .insert("draft".to_string(), json!({"summary":"draft"}));
@@ -3438,6 +3485,18 @@ async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata(
         .any(|id| id == "approval"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("review"));
+    assert_eq!(
+        repaired.checkpoint.node_attempts.get("draft").copied(),
+        Some(3)
+    );
+    assert_eq!(
+        repaired.checkpoint.node_attempts.get("review").copied(),
+        Some(2)
+    );
+    assert_eq!(
+        repaired.checkpoint.node_attempts.get("approval").copied(),
+        Some(1)
+    );
     let repair_event = repaired
         .checkpoint
         .lifecycle_history
@@ -3504,6 +3563,7 @@ async fn automations_v2_run_task_retry_resets_selected_subtree() {
             row.checkpoint
                 .node_outputs
                 .insert("review".to_string(), json!({"summary":"review"}));
+            row.checkpoint.node_attempts.insert("review".to_string(), 2);
             row.checkpoint.blocked_nodes = vec!["approval".to_string()];
         })
         .await
@@ -3571,6 +3631,7 @@ async fn automations_v2_run_task_retry_resets_selected_subtree() {
         .any(|node_id| node_id == "approval"));
     assert!(retried.checkpoint.node_outputs.contains_key("draft"));
     assert!(!retried.checkpoint.node_outputs.contains_key("review"));
+    assert_eq!(retried.checkpoint.node_attempts.get("review"), Some(&2));
     assert!(retried
         .checkpoint
         .pending_nodes
@@ -3614,6 +3675,7 @@ async fn automations_v2_run_task_requeue_resets_selected_subtree() {
             row.checkpoint
                 .node_outputs
                 .insert("review".to_string(), json!({"summary":"review"}));
+            row.checkpoint.node_attempts.insert("draft".to_string(), 2);
         })
         .await
         .expect("updated run");
@@ -3675,6 +3737,10 @@ async fn automations_v2_run_task_requeue_resets_selected_subtree() {
         .any(|node_id| node_id == "review"));
     assert!(!requeued.checkpoint.node_outputs.contains_key("draft"));
     assert!(!requeued.checkpoint.node_outputs.contains_key("review"));
+    assert_eq!(requeued.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(requeued.active_session_ids.is_empty());
+    assert!(requeued.active_instance_ids.is_empty());
+    assert!(requeued.latest_session_id.is_none());
     assert!(requeued
         .checkpoint
         .pending_nodes
@@ -3797,6 +3863,10 @@ async fn automations_v2_run_task_continue_minimally_resets_blocked_node() {
                 json!({"status":"blocked","summary":"review blocked"}),
             );
             row.checkpoint.blocked_nodes = vec!["review".to_string(), "approval".to_string()];
+            row.checkpoint.node_attempts.insert("review".to_string(), 2);
+            row.active_session_ids = vec!["session-a".to_string()];
+            row.latest_session_id = Some("session-a".to_string());
+            row.active_instance_ids = vec!["instance-a".to_string()];
         })
         .await
         .expect("updated run");
@@ -3857,6 +3927,10 @@ async fn automations_v2_run_task_continue_minimally_resets_blocked_node() {
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "review"));
+    assert_eq!(continued.checkpoint.node_attempts.get("review"), Some(&2));
+    assert!(continued.active_session_ids.is_empty());
+    assert!(continued.active_instance_ids.is_empty());
+    assert!(continued.latest_session_id.is_none());
     let continue_event = continued
         .checkpoint
         .lifecycle_history
@@ -4134,6 +4208,56 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
             .and_then(|rows| rows.first())
             .and_then(Value::as_str),
         Some("Use `read` on concrete workspace files before finalizing the brief.")
+    );
+    assert_eq!(
+        repair_guidance
+            .get("validationBasis")
+            .and_then(|value| value.get("authority"))
+            .and_then(Value::as_str),
+        Some("filesystem_and_receipts")
+    );
+    assert_eq!(
+        repair_guidance
+            .get("validationBasis")
+            .and_then(|value| value.get("current_attempt_has_recorded_activity"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        research_output
+            .get("artifact_validation")
+            .and_then(|value| value.get("validation_basis"))
+            .and_then(|value| value.get("authority"))
+            .and_then(Value::as_str),
+        Some("filesystem_and_receipts")
+    );
+    assert_eq!(
+        research_output.get("quality_mode").and_then(Value::as_str),
+        Some("strict_research_v1")
+    );
+    assert_eq!(
+        research_output
+            .get("requested_quality_mode")
+            .and_then(Value::as_str),
+        None
+    );
+    assert_eq!(
+        research_output
+            .get("emergency_rollback_enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let receipt_timeline = research_output
+        .get("receipt_timeline")
+        .and_then(Value::as_array)
+        .expect("receipt timeline");
+    assert!(receipt_timeline.len() >= 3);
+    assert_eq!(
+        receipt_timeline
+            .last()
+            .and_then(|value| value.get("event_type"))
+            .and_then(Value::as_str),
+        Some("validation_summary")
     );
     assert_eq!(
         run_payload

@@ -1705,6 +1705,29 @@ impl AppState {
         self.external_actions.read().await.get(action_id).cloned()
     }
 
+    pub async fn get_external_action_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Option<ExternalActionRecord> {
+        let normalized = idempotency_key.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        self.external_actions
+            .read()
+            .await
+            .values()
+            .find(|action| {
+                action
+                    .idempotency_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    == Some(normalized)
+            })
+            .cloned()
+    }
+
     pub async fn put_external_action(
         &self,
         action: ExternalActionRecord,
@@ -1721,7 +1744,33 @@ impl AppState {
         &self,
         action: ExternalActionRecord,
     ) -> anyhow::Result<ExternalActionRecord> {
-        let action = self.put_external_action(action).await?;
+        let action = {
+            let mut guard = self.external_actions.write().await;
+            if let Some(idempotency_key) = action
+                .idempotency_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if let Some(existing) = guard
+                    .values()
+                    .find(|existing| {
+                        existing
+                            .idempotency_key
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            == Some(idempotency_key)
+                    })
+                    .cloned()
+                {
+                    return Ok(existing);
+                }
+            }
+            guard.insert(action.action_id.clone(), action.clone());
+            action
+        };
+        self.persist_external_actions().await?;
         if let Some(run_id) = action.routine_run_id.as_deref() {
             let artifact = RoutineRunArtifact {
                 artifact_id: format!("external-action-{}", action.action_id),

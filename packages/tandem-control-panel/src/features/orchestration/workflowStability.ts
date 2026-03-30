@@ -71,6 +71,41 @@ function workflowStringArray(value: any) {
     : [];
 }
 
+function workflowReceiptTimelineEntries(value: any) {
+  const raw = Array.isArray(value?.records) ? value.records : Array.isArray(value) ? value : [];
+  return raw
+    .map((record: any, index: number) => {
+      if (!record || typeof record !== "object") return null;
+      const payload = record?.payload || {};
+      const receiptKind = String(payload?.receipt_kind || payload?.receiptKind || "").trim();
+      const status = String(payload?.status || "").trim();
+      const blockedReason = String(payload?.blocked_reason || payload?.blockedReason || "").trim();
+      const validatorReason = String(
+        payload?.validator_summary?.reason || payload?.validatorSummary?.reason || ""
+      ).trim();
+      const detail =
+        status ||
+        blockedReason ||
+        validatorReason ||
+        String(payload?.blocker_category || payload?.blockerCategory || "").trim() ||
+        String(payload?.failure_kind || payload?.failureKind || "").trim() ||
+        "receipt record";
+      return {
+        seq: Number(record?.seq || index + 1),
+        at: Number(record?.ts_ms || record?.tsMs || 0),
+        attempt: Number(record?.attempt || 0),
+        eventType: String(record?.event_type || record?.eventType || "").trim(),
+        receiptKind,
+        sessionId: String(record?.session_id || record?.sessionId || "").trim(),
+        nodeId: String(record?.node_id || record?.nodeId || "").trim(),
+        detail,
+        raw: record,
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => Number(a.seq || 0) - Number(b.seq || 0));
+}
+
 export function workflowCompletedNodeIds(run: any) {
   return checkpointStringArray(workflowCheckpoint(run), "completed_nodes", "completedNodes");
 }
@@ -592,6 +627,10 @@ export function workflowTaskInspectionDetails(task: any, output: any) {
   const artifactValidation = workflowArtifactValidation(output);
   const stability = workflowNodeStability(output);
   const validatorSummary = output?.validator_summary || output?.validatorSummary || {};
+  const attemptEvidence = output?.attempt_evidence || output?.attemptEvidence || {};
+  const receiptTimeline = workflowReceiptTimelineEntries(
+    attemptEvidence?.receipt_timeline || attemptEvidence?.receiptTimeline
+  );
   const verificationOutcome = (() => {
     const approved = output?.approved;
     if (typeof approved === "boolean") return approved ? "approved" : "not approved";
@@ -665,6 +704,31 @@ export function workflowTaskInspectionDetails(task: any, output: any) {
         task?.error_message ||
         ""
     ).trim(),
+    validationBasis:
+      artifactValidation?.validation_basis ||
+      artifactValidation?.validationBasis ||
+      output?.validation_basis ||
+      output?.validationBasis ||
+      null,
+    qualityMode: String(output?.quality_mode || output?.qualityMode || "").trim(),
+    requestedQualityMode: String(
+      output?.requested_quality_mode || output?.requestedQualityMode || ""
+    ).trim(),
+    emergencyRollbackEnabled:
+      typeof output?.emergency_rollback_enabled === "boolean"
+        ? output.emergency_rollback_enabled
+        : typeof output?.emergencyRollbackEnabled === "boolean"
+          ? output.emergencyRollbackEnabled
+          : null,
+    blockerCategory: String(
+      output?.blocker_category ||
+        output?.blockerCategory ||
+        artifactValidation?.blocking_classification ||
+        artifactValidation?.blockingClassification ||
+        ""
+    ).trim(),
+    receiptLedger: attemptEvidence?.receipt_ledger || attemptEvidence?.receiptLedger || null,
+    receiptTimeline,
     workflowClass: stability.workflowClass,
     phase: stability.phase,
     failureKind: stability.failureKind,

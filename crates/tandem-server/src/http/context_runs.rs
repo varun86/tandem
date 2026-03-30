@@ -3982,6 +3982,34 @@ fn automation_node_task_payload(node: &crate::AutomationFlowNode, output: Option
                     object.insert("blocking_classification".to_string(), json!(classification));
                 }
             }
+            if let Some(validation_basis) = output
+                .get("artifact_validation")
+                .and_then(|value| value.get("validation_basis"))
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                object.insert("validation_basis".to_string(), validation_basis);
+            }
+            if let Some(blocker_category) = output
+                .get("blocker_category")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                object.insert("blocker_category".to_string(), json!(blocker_category));
+            }
+            if let Some(receipt_timeline) = output
+                .get("receipt_timeline")
+                .or_else(|| {
+                    output
+                        .get("attempt_evidence")
+                        .and_then(|value| value.get("receipt_timeline"))
+                })
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                object.insert("receipt_timeline".to_string(), receipt_timeline);
+            }
             if let Some(repair_attempt) = output
                 .get("artifact_validation")
                 .and_then(|value| value.get("repair_attempt"))

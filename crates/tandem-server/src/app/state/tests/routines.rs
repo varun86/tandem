@@ -355,6 +355,29 @@ async fn record_external_action_appends_routine_receipt_artifact() {
         .await
         .expect("record external action");
 
+    let duplicate = state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-2".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-1".to_string()),
+            routine_run_id: Some("run-1".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: Some("idem-1".to_string()),
+            receipt: Some(json!({"issue_number": 101})),
+            error: None,
+            metadata: None,
+            created_at_ms: 11,
+            updated_at_ms: 11,
+        })
+        .await
+        .expect("record duplicate external action");
+
     let updated = state.get_routine_run("run-1").await.expect("routine run");
     assert_eq!(updated.artifacts.len(), 1);
     assert_eq!(updated.artifacts[0].kind, "external_action_receipt");
@@ -368,12 +391,438 @@ async fn record_external_action_appends_routine_receipt_artifact() {
         Some("action-1")
     );
     assert_eq!(
+        duplicate.action_id, "action-1",
+        "duplicate idempotency key should return the original action"
+    );
+    assert_eq!(state.list_external_actions(10).await.len(), 1);
+    assert_eq!(
         state
             .get_external_action("action-1")
             .await
             .and_then(|row| row.capability_id),
         Some("github.create_issue".to_string())
     );
+}
+
+#[tokio::test]
+async fn record_external_action_without_idempotency_key_keeps_current_behavior() {
+    let state = test_state_with_path(tmp_resource_file("external-action-no-idempotency"));
+    let run = RoutineRunRecord {
+        run_id: "run-2".to_string(),
+        routine_id: "routine-2".to_string(),
+        trigger_type: "manual".to_string(),
+        run_count: 1,
+        status: RoutineRunStatus::Completed,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        fired_at_ms: Some(1),
+        started_at_ms: Some(1),
+        finished_at_ms: Some(1),
+        requires_approval: false,
+        approval_reason: None,
+        denial_reason: None,
+        paused_reason: None,
+        detail: None,
+        entrypoint: "workflow.publish".to_string(),
+        args: Value::Null,
+        allowed_tools: Vec::new(),
+        output_targets: Vec::new(),
+        artifacts: Vec::new(),
+        active_session_ids: Vec::new(),
+        latest_session_id: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        estimated_cost_usd: 0.0,
+    };
+    state
+        .routine_runs
+        .write()
+        .await
+        .insert(run.run_id.clone(), run);
+
+    state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-a".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-2".to_string()),
+            routine_run_id: Some("run-2".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: None,
+            receipt: Some(json!({"issue_number": 201})),
+            error: None,
+            metadata: None,
+            created_at_ms: 20,
+            updated_at_ms: 20,
+        })
+        .await
+        .expect("record first external action");
+    state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-b".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-3".to_string()),
+            routine_run_id: Some("run-2".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: None,
+            receipt: Some(json!({"issue_number": 202})),
+            error: None,
+            metadata: None,
+            created_at_ms: 21,
+            updated_at_ms: 21,
+        })
+        .await
+        .expect("record second external action");
+
+    let updated = state.get_routine_run("run-2").await.expect("routine run");
+    assert_eq!(updated.artifacts.len(), 2);
+    assert_eq!(state.list_external_actions(10).await.len(), 2);
+}
+
+#[tokio::test]
+async fn record_external_action_dedupes_by_idempotency_key() {
+    let state = test_state_with_path(tmp_resource_file("external-action-dedupe"));
+    let run = RoutineRunRecord {
+        run_id: "run-1".to_string(),
+        routine_id: "routine-1".to_string(),
+        trigger_type: "manual".to_string(),
+        run_count: 1,
+        status: RoutineRunStatus::Completed,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        fired_at_ms: Some(1),
+        started_at_ms: Some(1),
+        finished_at_ms: Some(1),
+        requires_approval: false,
+        approval_reason: None,
+        denial_reason: None,
+        paused_reason: None,
+        detail: None,
+        entrypoint: "workflow.publish".to_string(),
+        args: Value::Null,
+        allowed_tools: Vec::new(),
+        output_targets: Vec::new(),
+        artifacts: Vec::new(),
+        active_session_ids: Vec::new(),
+        latest_session_id: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        estimated_cost_usd: 0.0,
+    };
+    state
+        .routine_runs
+        .write()
+        .await
+        .insert(run.run_id.clone(), run);
+
+    let first = state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-1".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-1".to_string()),
+            routine_run_id: Some("run-1".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: Some("idem-1".to_string()),
+            receipt: Some(json!({"issue_number": 101})),
+            error: None,
+            metadata: None,
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        })
+        .await
+        .expect("record first external action");
+    let second = state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-2".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-1".to_string()),
+            routine_run_id: Some("run-1".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: Some("idem-1".to_string()),
+            receipt: Some(json!({"issue_number": 102})),
+            error: None,
+            metadata: None,
+            created_at_ms: 20,
+            updated_at_ms: 20,
+        })
+        .await
+        .expect("dedupe external action");
+
+    assert_eq!(first.action_id, "action-1");
+    assert_eq!(second.action_id, "action-1");
+    assert_eq!(state.list_external_actions(10).await.len(), 1);
+
+    let updated = state.get_routine_run("run-1").await.expect("routine run");
+    assert_eq!(updated.artifacts.len(), 1);
+    assert_eq!(updated.artifacts[0].uri, "external-action://action-1");
+}
+
+#[tokio::test]
+async fn record_external_action_without_idempotency_key_preserves_existing_behavior() {
+    let state = test_state_with_path(tmp_resource_file("external-action-no-idem"));
+    let run = RoutineRunRecord {
+        run_id: "run-1".to_string(),
+        routine_id: "routine-1".to_string(),
+        trigger_type: "manual".to_string(),
+        run_count: 1,
+        status: RoutineRunStatus::Completed,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        fired_at_ms: Some(1),
+        started_at_ms: Some(1),
+        finished_at_ms: Some(1),
+        requires_approval: false,
+        approval_reason: None,
+        denial_reason: None,
+        paused_reason: None,
+        detail: None,
+        entrypoint: "workflow.publish".to_string(),
+        args: Value::Null,
+        allowed_tools: Vec::new(),
+        output_targets: Vec::new(),
+        artifacts: Vec::new(),
+        active_session_ids: Vec::new(),
+        latest_session_id: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        estimated_cost_usd: 0.0,
+    };
+    state
+        .routine_runs
+        .write()
+        .await
+        .insert(run.run_id.clone(), run);
+
+    state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-1".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-1".to_string()),
+            routine_run_id: Some("run-1".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: None,
+            receipt: Some(json!({"issue_number": 101})),
+            error: None,
+            metadata: None,
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        })
+        .await
+        .expect("record first external action");
+    state
+        .record_external_action(ExternalActionRecord {
+            action_id: "action-2".to_string(),
+            operation: "create_issue".to_string(),
+            status: "posted".to_string(),
+            source_kind: Some("bug_monitor".to_string()),
+            source_id: Some("draft-1".to_string()),
+            routine_run_id: Some("run-1".to_string()),
+            context_run_id: None,
+            capability_id: Some("github.create_issue".to_string()),
+            provider: Some("bug-monitor".to_string()),
+            target: Some("acme/platform".to_string()),
+            approval_state: Some("executed".to_string()),
+            idempotency_key: None,
+            receipt: Some(json!({"issue_number": 102})),
+            error: None,
+            metadata: None,
+            created_at_ms: 20,
+            updated_at_ms: 20,
+        })
+        .await
+        .expect("record second external action");
+
+    assert_eq!(state.list_external_actions(10).await.len(), 2);
+    let updated = state.get_routine_run("run-1").await.expect("routine run");
+    assert_eq!(updated.artifacts.len(), 2);
+}
+
+#[tokio::test]
+async fn record_external_action_dedupes_under_concurrent_retries() {
+    let state = test_state_with_path(tmp_resource_file("external-action-concurrent-dedupe"));
+    let run = RoutineRunRecord {
+        run_id: "run-1".to_string(),
+        routine_id: "routine-1".to_string(),
+        trigger_type: "manual".to_string(),
+        run_count: 1,
+        status: RoutineRunStatus::Completed,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        fired_at_ms: Some(1),
+        started_at_ms: Some(1),
+        finished_at_ms: Some(1),
+        requires_approval: false,
+        approval_reason: None,
+        denial_reason: None,
+        paused_reason: None,
+        detail: None,
+        entrypoint: "workflow.publish".to_string(),
+        args: Value::Null,
+        allowed_tools: Vec::new(),
+        output_targets: Vec::new(),
+        artifacts: Vec::new(),
+        active_session_ids: Vec::new(),
+        latest_session_id: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        estimated_cost_usd: 0.0,
+    };
+    state
+        .routine_runs
+        .write()
+        .await
+        .insert(run.run_id.clone(), run);
+
+    let action_a = ExternalActionRecord {
+        action_id: "action-a".to_string(),
+        operation: "create_issue".to_string(),
+        status: "posted".to_string(),
+        source_kind: Some("bug_monitor".to_string()),
+        source_id: Some("draft-1".to_string()),
+        routine_run_id: Some("run-1".to_string()),
+        context_run_id: None,
+        capability_id: Some("github.create_issue".to_string()),
+        provider: Some("bug-monitor".to_string()),
+        target: Some("acme/platform".to_string()),
+        approval_state: Some("executed".to_string()),
+        idempotency_key: Some("idem-1".to_string()),
+        receipt: Some(json!({"issue_number": 101})),
+        error: None,
+        metadata: None,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    };
+    let action_b = ExternalActionRecord {
+        action_id: "action-b".to_string(),
+        receipt: Some(json!({"issue_number": 102})),
+        created_at_ms: 20,
+        updated_at_ms: 20,
+        ..action_a.clone()
+    };
+
+    let (first, second) = tokio::join!(
+        state.record_external_action(action_a),
+        state.record_external_action(action_b)
+    );
+    let first = first.expect("first concurrent action");
+    let second = second.expect("second concurrent action");
+
+    assert_eq!(first.action_id, "action-a");
+    assert_eq!(second.action_id, "action-a");
+    assert_eq!(state.list_external_actions(10).await.len(), 1);
+    let updated = state.get_routine_run("run-1").await.expect("routine run");
+    assert_eq!(updated.artifacts.len(), 1);
+}
+
+#[tokio::test]
+async fn record_external_action_dedupes_under_retry_storm() {
+    let state = test_state_with_path(tmp_resource_file("external-action-retry-storm"));
+    let run = RoutineRunRecord {
+        run_id: "run-1".to_string(),
+        routine_id: "routine-1".to_string(),
+        trigger_type: "manual".to_string(),
+        run_count: 1,
+        status: RoutineRunStatus::Completed,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        fired_at_ms: Some(1),
+        started_at_ms: Some(1),
+        finished_at_ms: Some(1),
+        requires_approval: false,
+        approval_reason: None,
+        denial_reason: None,
+        paused_reason: None,
+        detail: None,
+        entrypoint: "workflow.publish".to_string(),
+        args: Value::Null,
+        allowed_tools: Vec::new(),
+        output_targets: Vec::new(),
+        artifacts: Vec::new(),
+        active_session_ids: Vec::new(),
+        latest_session_id: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        estimated_cost_usd: 0.0,
+    };
+    state
+        .routine_runs
+        .write()
+        .await
+        .insert(run.run_id.clone(), run);
+
+    let make_action = |action_id: &str, created_at_ms: u64| ExternalActionRecord {
+        action_id: action_id.to_string(),
+        operation: "create_issue".to_string(),
+        status: "posted".to_string(),
+        source_kind: Some("bug_monitor".to_string()),
+        source_id: Some("draft-1".to_string()),
+        routine_run_id: Some("run-1".to_string()),
+        context_run_id: None,
+        capability_id: Some("github.create_issue".to_string()),
+        provider: Some("bug-monitor".to_string()),
+        target: Some("acme/platform".to_string()),
+        approval_state: Some("executed".to_string()),
+        idempotency_key: Some("idem-storm".to_string()),
+        receipt: Some(json!({"issue_number": created_at_ms})),
+        error: None,
+        metadata: None,
+        created_at_ms,
+        updated_at_ms: created_at_ms,
+    };
+
+    let (a, b, c, d) = tokio::join!(
+        state.record_external_action(make_action("action-a", 10)),
+        state.record_external_action(make_action("action-b", 20)),
+        state.record_external_action(make_action("action-c", 30)),
+        state.record_external_action(make_action("action-d", 40)),
+    );
+
+    let a = a.expect("storm action a");
+    let b = b.expect("storm action b");
+    let c = c.expect("storm action c");
+    let d = d.expect("storm action d");
+
+    assert_eq!(a.action_id, "action-a");
+    assert_eq!(b.action_id, "action-a");
+    assert_eq!(c.action_id, "action-a");
+    assert_eq!(d.action_id, "action-a");
+    assert_eq!(state.list_external_actions(10).await.len(), 1);
+    let updated = state.get_routine_run("run-1").await.expect("routine run");
+    assert_eq!(updated.artifacts.len(), 1);
 }
 
 #[tokio::test]

@@ -457,6 +457,14 @@ pub struct AutomationNodeOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_timeline: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_quality_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emergency_rollback_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_used: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_validation: Option<Value>,
@@ -480,6 +488,8 @@ pub struct AutomationValidatorSummary {
     pub accepted_candidate_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_outcome: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_basis: Option<Value>,
     #[serde(default)]
     pub repair_attempted: bool,
     #[serde(default)]

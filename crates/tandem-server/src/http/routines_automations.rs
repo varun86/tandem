@@ -57,11 +57,16 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let validation_basis = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .cloned()
+        .filter(|value| !value.is_null());
 
     if required_next_tool_actions.is_empty()
         && validator_reason.is_none()
         && unmet_requirements.is_empty()
         && blocking_classification.is_none()
+        && validation_basis.is_none()
     {
         return None;
     }
@@ -73,6 +78,7 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         "unmetRequirements": unmet_requirements,
         "blockingClassification": blocking_classification,
         "requiredNextToolActions": required_next_tool_actions,
+        "validationBasis": validation_basis,
         "repairAttempt": artifact_validation
             .and_then(|value| value.get("repair_attempt"))
             .and_then(Value::as_u64),
@@ -907,6 +913,12 @@ pub(super) fn reason_or_default(input: Option<String>, fallback: &str) -> String
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn clear_automation_run_execution_handles(run: &mut crate::AutomationV2RunRecord) {
+    run.active_session_ids.clear();
+    run.latest_session_id = None;
+    run.active_instance_ids.clear();
 }
 
 pub(super) async fn routines_run_approve(
@@ -2850,7 +2862,6 @@ pub(super) async fn automations_v2_run_gate_decide(
                     let reset_nodes = crate::collect_automation_descendants(&automation, &roots);
                     for node_id in &reset_nodes {
                         run.checkpoint.node_outputs.remove(node_id);
-                        run.checkpoint.node_attempts.remove(node_id);
                     }
                     run.checkpoint
                         .completed_nodes
@@ -2884,6 +2895,7 @@ pub(super) async fn automations_v2_run_gate_decide(
             }
             if decision != "cancel" {
                 run.resume_reason = Some(format!("gate `{}` decision: {}", gate.node_id, decision));
+                clear_automation_run_execution_handles(run);
                 crate::refresh_automation_runtime_state(&automation, run);
             }
         })
@@ -2968,10 +2980,10 @@ pub(super) async fn automations_v2_run_recover(
             run.stop_kind = None;
             run.stop_reason = None;
             run.checkpoint.awaiting_gate = None;
+            clear_automation_run_execution_handles(run);
             if !reset_nodes.is_empty() {
                 for node_id in &reset_nodes {
                     run.checkpoint.node_outputs.remove(node_id);
-                    run.checkpoint.node_attempts.remove(node_id);
                 }
                 run.checkpoint
                     .completed_nodes
@@ -3177,9 +3189,9 @@ pub(super) async fn automations_v2_run_repair(
             run.stop_reason = None;
             run.pause_reason = None;
             run.checkpoint.awaiting_gate = None;
+            clear_automation_run_execution_handles(run);
             for reset_node_id in &reset_nodes {
                 run.checkpoint.node_outputs.remove(reset_node_id);
-                run.checkpoint.node_attempts.remove(reset_node_id);
             }
             run.checkpoint
                 .completed_nodes
@@ -3336,9 +3348,9 @@ async fn automation_v2_reset_task_subtree(
             run.stop_reason = None;
             run.pause_reason = None;
             run.checkpoint.awaiting_gate = None;
+            clear_automation_run_execution_handles(run);
             for reset_node_id in &reset_nodes {
                 run.checkpoint.node_outputs.remove(reset_node_id);
-                run.checkpoint.node_attempts.remove(reset_node_id);
             }
             run.checkpoint
                 .completed_nodes
@@ -3645,8 +3657,8 @@ pub(super) async fn automations_v2_run_task_continue(
             run.stop_reason = None;
             run.pause_reason = None;
             run.checkpoint.awaiting_gate = None;
+            clear_automation_run_execution_handles(run);
             run.checkpoint.node_outputs.remove(&node_id);
-            run.checkpoint.node_attempts.remove(&node_id);
             run.checkpoint
                 .completed_nodes
                 .retain(|completed_id| completed_id != &node_id);

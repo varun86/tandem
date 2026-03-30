@@ -4926,6 +4926,14 @@ function MyAutomations({
     () => workflowTaskInspectionDetails(selectedBoardTask, selectedBoardTaskOutput),
     [selectedBoardTask, selectedBoardTaskOutput]
   );
+  const selectedBoardTaskValidationBasis = selectedBoardTaskInspection.validationBasis;
+  const selectedBoardTaskQualityMode = selectedBoardTaskInspection.qualityMode;
+  const selectedBoardTaskRequestedQualityMode = selectedBoardTaskInspection.requestedQualityMode;
+  const selectedBoardTaskEmergencyRollbackEnabled =
+    selectedBoardTaskInspection.emergencyRollbackEnabled;
+  const selectedBoardTaskBlockerCategory = selectedBoardTaskInspection.blockerCategory;
+  const selectedBoardTaskReceiptLedger = selectedBoardTaskInspection.receiptLedger;
+  const selectedBoardTaskReceiptTimeline = selectedBoardTaskInspection.receiptTimeline;
   const selectedBoardTaskTouchedFiles = selectedBoardTaskInspection.touchedFiles;
   const selectedBoardTaskUndeclaredFiles = selectedBoardTaskInspection.undeclaredFiles;
   const selectedBoardTaskResearchReadPaths = selectedBoardTaskInspection.researchReadPaths;
@@ -5343,6 +5351,16 @@ function MyAutomations({
     setSessionEvents([]);
     setSessionLogPinnedToBottom(true);
   }, [selectedRunId, selectedContextRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      onSelectRunId("");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onSelectRunId, selectedRunId]);
 
   const prevAutoSelectRunId = useRef("");
   useEffect(() => {
@@ -6572,6 +6590,44 @@ function MyAutomations({
                                     </div>
                                   </div>
                                   <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">quality mode</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskQualityMode || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">rollback</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskEmergencyRollbackEnabled === null
+                                        ? "n/a"
+                                        : selectedBoardTaskEmergencyRollbackEnabled
+                                          ? "enabled"
+                                          : "disabled"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">blocker category</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskBlockerCategory || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 sm:col-span-2">
+                                    <div className="tcp-subtle">validation basis</div>
+                                    <div className="mt-1 whitespace-pre-wrap break-words font-medium text-slate-100">
+                                      {selectedBoardTaskValidationBasis
+                                        ? formatJson(selectedBoardTaskValidationBasis)
+                                        : "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 sm:col-span-2">
+                                    <div className="tcp-subtle">receipt ledger</div>
+                                    <div className="mt-1 whitespace-pre-wrap break-words font-medium text-slate-100">
+                                      {selectedBoardTaskReceiptLedger
+                                        ? formatJson(selectedBoardTaskReceiptLedger)
+                                        : "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
                                     <div className="tcp-subtle">artifact candidates</div>
                                     <div className="mt-1 font-medium text-slate-100">
                                       {selectedBoardTaskArtifactCandidates.length}
@@ -6623,6 +6679,58 @@ function MyAutomations({
                                           <div className="mt-1 tcp-subtle">
                                             {Number(candidate?.length || 0)} chars
                                           </div>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                ) : null}
+                                {selectedBoardTaskReceiptTimeline.length ? (
+                                  <div className="mt-3 grid gap-2">
+                                    <div className="tcp-subtle">receipt timeline</div>
+                                    {selectedBoardTaskReceiptTimeline.map(
+                                      (receipt: any, index: number) => (
+                                        <div
+                                          key={`${String(receipt?.seq || index)}:${String(
+                                            receipt?.eventType || receipt?.event_type || ""
+                                          )}`}
+                                          className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
+                                        >
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="tcp-badge-info">
+                                              seq {String(receipt?.seq || index + 1)}
+                                            </span>
+                                            {String(receipt?.eventType || "").trim() ? (
+                                              <span className="tcp-badge-info">
+                                                {String(receipt.eventType).trim()}
+                                              </span>
+                                            ) : null}
+                                            {String(receipt?.receiptKind || "").trim() ? (
+                                              <span className="tcp-badge-info">
+                                                {String(receipt.receiptKind).trim()}
+                                              </span>
+                                            ) : null}
+                                            {String(receipt?.attempt || "").trim() ? (
+                                              <span className="tcp-badge-info">
+                                                attempt {String(receipt.attempt).trim()}
+                                              </span>
+                                            ) : null}
+                                            {Number(receipt?.at || 0) > 0 ? (
+                                              <span className="tcp-subtle text-[11px]">
+                                                {formatTimestampLabel(receipt.at)}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                          <div className="mt-1 text-slate-300">
+                                            {String(receipt?.detail || "").trim() || "receipt"}
+                                          </div>
+                                          <details className="mt-2">
+                                            <summary className="cursor-pointer text-xs text-slate-400">
+                                              raw record
+                                            </summary>
+                                            <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                              {formatJson(receipt?.raw || receipt)}
+                                            </pre>
+                                          </details>
                                         </div>
                                       )
                                     )}
@@ -7419,6 +7527,20 @@ function MyAutomations({
                                     ).trim() || "n/a"}
                                   </div>
                                   <div>
+                                    blocker category: {selectedBoardTaskBlockerCategory || "none"}
+                                  </div>
+                                  <div>
+                                    validation basis:{" "}
+                                    {selectedBoardTaskValidationBasis
+                                      ? String(
+                                          selectedBoardTaskValidationBasis?.authority ||
+                                            selectedBoardTaskValidationBasis?.mode ||
+                                            selectedBoardTaskValidationBasis?.status ||
+                                            ""
+                                        ).trim() || "present"
+                                      : "none"}
+                                  </div>
+                                  <div>
                                     touched files:{" "}
                                     {selectedBoardTaskTouchedFiles.length
                                       ? selectedBoardTaskTouchedFiles.join(", ")
@@ -7431,6 +7553,77 @@ function MyAutomations({
                                         ""
                                     ).trim() || "n/a"}
                                   </div>
+                                </div>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-700/60 bg-black/10 p-2">
+                                    <div className="tcp-subtle">requested quality mode</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskRequestedQualityMode || "none"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-700/60 bg-black/10 p-2">
+                                    <div className="tcp-subtle">emergency rollback</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskEmergencyRollbackEnabled === null
+                                        ? "n/a"
+                                        : selectedBoardTaskEmergencyRollbackEnabled
+                                          ? "enabled"
+                                          : "disabled"}
+                                    </div>
+                                  </div>
+                                </div>
+                                {selectedBoardTaskValidationBasis ? (
+                                  <details className="mt-2 rounded-md border border-slate-700/60 bg-black/10 p-2">
+                                    <summary className="cursor-pointer text-[11px] text-slate-400">
+                                      Validation basis
+                                    </summary>
+                                    <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
+                                      {formatJson(selectedBoardTaskValidationBasis)}
+                                    </pre>
+                                  </details>
+                                ) : null}
+                                <div className="mt-3">
+                                  <div className="tcp-subtle mb-1">receipt timeline</div>
+                                  {selectedBoardTaskReceiptTimeline.length ? (
+                                    <div className="grid max-h-56 gap-1 overflow-auto pr-1">
+                                      {selectedBoardTaskReceiptTimeline
+                                        .slice(-12)
+                                        .map((entry: any, index: number) => (
+                                          <details
+                                            key={`${String(entry?.seq || index)}:${String(
+                                              entry?.eventType || entry?.event_type || "receipt"
+                                            )}`}
+                                            className="rounded-md border border-slate-700/60 bg-slate-950/20 px-2 py-1.5"
+                                          >
+                                            <summary className="cursor-pointer list-none">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="text-[11px] font-medium text-slate-200">
+                                                  {String(
+                                                    entry?.eventType ||
+                                                      entry?.event_type ||
+                                                      entry?.receiptKind ||
+                                                      "receipt"
+                                                  )}
+                                                </span>
+                                                <span className="tcp-subtle text-[10px]">
+                                                  seq {String(entry?.seq || index + 1)}
+                                                </span>
+                                              </div>
+                                              <div className="tcp-subtle mt-0.5 text-[11px]">
+                                                {String(
+                                                  entry?.detail || entry?.summary || ""
+                                                ).trim() || "No summary available."}
+                                              </div>
+                                            </summary>
+                                            <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[10px]">
+                                              {formatJson(entry?.raw || entry)}
+                                            </pre>
+                                          </details>
+                                        ))}
+                                    </div>
+                                  ) : (
+                                    <div className="tcp-subtle text-xs">none</div>
+                                  )}
                                 </div>
                               </div>
                             ) : null}
