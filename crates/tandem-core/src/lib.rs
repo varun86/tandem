@@ -5,6 +5,7 @@ pub mod engine_api_token;
 pub mod engine_loop;
 pub mod event_bus;
 pub mod hooks;
+mod message_part_reducer;
 pub mod permission_defaults;
 pub mod permissions;
 pub mod plugins;

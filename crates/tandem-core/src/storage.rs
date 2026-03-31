@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use tandem_types::{Message, MessagePart, MessageRole, Session};
 
+use crate::message_part_reducer::reduce_message_parts;
 use crate::{
     derive_session_title_from_prompt, normalize_workspace_path, title_needs_repair,
     workspace_project_id,
@@ -196,189 +197,6 @@ fn compact_session_metadata(
     });
 
     stats
-}
-
-fn merge_message_part(message: &mut Message, part: MessagePart) {
-    match part {
-        MessagePart::ToolInvocation {
-            tool,
-            args,
-            result,
-            error,
-        } => {
-            let args_are_empty = tool_args_are_empty(&args);
-            if result.is_none() && error.is_none() {
-                if let Some(existing) = message.parts.iter_mut().rev().find(|existing| {
-                    matches!(
-                        existing,
-                        MessagePart::ToolInvocation {
-                            tool: existing_tool,
-                            result: None,
-                            error: None,
-                            ..
-                        } if existing_tool == &tool
-                    )
-                }) {
-                    if let MessagePart::ToolInvocation {
-                        args: existing_args,
-                        ..
-                    } = existing
-                    {
-                        if should_replace_tool_args(existing_args, &args) || existing_args == &args
-                        {
-                            *existing_args = args;
-                        }
-                        return;
-                    }
-                }
-            }
-            if result.is_some() || error.is_some() {
-                if let Some(existing) = message.parts.iter_mut().rev().find(|existing| {
-                    matches!(
-                        existing,
-                        MessagePart::ToolInvocation {
-                            tool: existing_tool,
-                            result: None,
-                            error: None,
-                            ..
-                        } if existing_tool == &tool
-                    )
-                }) {
-                    if let MessagePart::ToolInvocation {
-                        args: existing_args,
-                        result: existing_result,
-                        error: existing_error,
-                        ..
-                    } = existing
-                    {
-                        if should_replace_tool_args(existing_args, &args) {
-                            if tool == "write" && args_are_empty {
-                                tracing::info!(
-                                    tool = %tool,
-                                    "merging write result/error into existing tool part with empty args"
-                                );
-                            }
-                            *existing_args = args.clone();
-                        }
-                        *existing_result = result;
-                        *existing_error = error;
-                        return;
-                    }
-                }
-            }
-            message.parts.push(MessagePart::ToolInvocation {
-                tool,
-                args,
-                result,
-                error,
-            });
-        }
-        other => message.parts.push(other),
-    }
-}
-
-fn tool_args_are_empty(args: &Value) -> bool {
-    match args {
-        Value::Null => true,
-        Value::Object(values) => values.is_empty(),
-        Value::Array(values) => values.is_empty(),
-        Value::String(value) => value.trim().is_empty(),
-        _ => false,
-    }
-}
-
-fn tool_args_have_more_structure(existing: &Value, incoming: &Value) -> bool {
-    match (existing, incoming) {
-        (Value::String(current), Value::Object(values)) => {
-            !current.trim().is_empty() && !values.is_empty()
-        }
-        (Value::Object(current), Value::Object(next)) => {
-            next.len() > current.len()
-                && current
-                    .iter()
-                    .all(|(key, value)| next.get(key) == Some(value))
-        }
-        _ => false,
-    }
-}
-
-fn object_has_non_empty_string_field(obj: &serde_json::Map<String, Value>, key: &str) -> bool {
-    obj.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .map(|value| !value.is_empty())
-        .unwrap_or(false)
-}
-
-fn incoming_object_adds_terminal_args(existing: &Value, incoming: &Value) -> bool {
-    let (Some(existing_obj), Some(incoming_obj)) = (existing.as_object(), incoming.as_object())
-    else {
-        return false;
-    };
-
-    // Prefer the incoming object when it adds concrete execution terminals that
-    // validators and downstream tooling depend on.
-    let terminals = ["path", "content", "query", "url", "pattern", "old", "new"];
-    terminals.iter().any(|key| {
-        object_has_non_empty_string_field(incoming_obj, key)
-            && !object_has_non_empty_string_field(existing_obj, key)
-    })
-}
-
-fn incoming_object_adds_execution_context(existing: &Value, incoming: &Value) -> bool {
-    let (Some(existing_obj), Some(incoming_obj)) = (existing.as_object(), incoming.as_object())
-    else {
-        return false;
-    };
-
-    let context_keys = ["__workspace_root", "__effective_cwd", "__session_id"];
-    let incoming_has_context = context_keys
-        .iter()
-        .any(|key| incoming_obj.contains_key(*key));
-    if !incoming_has_context {
-        return false;
-    }
-    let existing_has_context = context_keys
-        .iter()
-        .any(|key| existing_obj.contains_key(*key));
-    incoming_has_context && !existing_has_context
-}
-
-fn tool_args_object_looks_malformed(args: &Value) -> bool {
-    let Some(obj) = args.as_object() else {
-        return false;
-    };
-    if obj.is_empty() {
-        return false;
-    }
-    obj.keys().all(|key| {
-        !key.chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            || key.contains('{')
-            || key.contains('}')
-            || key.contains('"')
-            || key.contains('\'')
-    })
-}
-
-fn should_replace_tool_args(existing: &Value, incoming: &Value) -> bool {
-    if tool_args_are_empty(incoming) {
-        return tool_args_are_empty(existing);
-    }
-    if incoming_object_adds_execution_context(existing, incoming) {
-        return true;
-    }
-    if incoming_object_adds_terminal_args(existing, incoming) {
-        return true;
-    }
-    if tool_args_object_looks_malformed(existing) && !tool_args_object_looks_malformed(incoming) {
-        return true;
-    }
-    if tool_args_are_empty(existing) {
-        return true;
-    }
-    tool_args_have_more_structure(existing, incoming)
 }
 
 impl Storage {
@@ -669,7 +487,7 @@ impl Storage {
                 .find(|message| matches!(message.role, MessageRole::User))
                 .context("message not found for append_message_part")?
         };
-        merge_message_part(message, part);
+        reduce_message_parts(&mut message.parts, part);
         session.time.updated = Utc::now();
         drop(sessions);
         self.flush().await

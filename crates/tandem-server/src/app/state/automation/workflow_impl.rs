@@ -382,7 +382,7 @@ fn migrate_split_research_studio_metadata(metadata: &mut Value) {
     studio_obj.remove("node_layout");
 }
 
-pub(super) fn migrate_bundled_studio_research_split_automation(
+pub(crate) fn migrate_bundled_studio_research_split_automation(
     automation: &mut AutomationV2Spec,
 ) -> bool {
     let Some(template_id) = studio_template_id(automation) else {
@@ -407,7 +407,7 @@ pub(super) fn migrate_bundled_studio_research_split_automation(
             migrate_split_research_studio_metadata(metadata);
         }
         return false;
-    };
+    }
     let Some(final_node_index) = automation
         .flow
         .nodes

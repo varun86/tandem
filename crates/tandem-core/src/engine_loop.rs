@@ -19,11 +19,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
 mod loop_guards;
+mod prewrite_gate;
 
 #[cfg(test)]
 use loop_guards::parse_budget_override;
 use loop_guards::{
     duplicate_signature_limit_for, tool_budget_for, websearch_duplicate_signature_limit,
+};
+use prewrite_gate::{
+    describe_unmet_prewrite_requirements_for_prompt, evaluate_prewrite_gate, PrewriteProgress,
 };
 
 use crate::tool_router::{
@@ -625,28 +629,24 @@ impl EngineLoop {
                             .any(|pattern| tool_name_matches_policy(pattern, &tool))
                     });
                 }
-                let prewrite_satisfied = prewrite_requirements_satisfied(
+                let prewrite_gate = evaluate_prewrite_gate(
+                    requested_write_required,
                     &requested_prewrite_requirements,
-                    productive_workspace_inspection_total > 0,
-                    productive_concrete_read_total > 0,
-                    productive_web_research_total > 0,
-                    successful_web_research_total > 0,
+                    PrewriteProgress {
+                        productive_write_tool_calls_total,
+                        productive_workspace_inspection_total,
+                        productive_concrete_read_total,
+                        productive_web_research_total,
+                        successful_web_research_total,
+                        required_write_retry_count,
+                        unmet_prewrite_repair_retry_count,
+                        prewrite_gate_waived,
+                    },
                 );
-                let prewrite_gate_write = should_gate_write_until_prewrite_satisfied(
-                    requested_prewrite_requirements.repair_on_unmet_requirements,
-                    productive_write_tool_calls_total,
-                    prewrite_satisfied,
-                ) && !prewrite_gate_waived;
-                let force_write_only_retry = requested_write_required
-                    && required_write_retry_count > 0
-                    && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
-                    && !prewrite_gate_write
-                    && (!requested_prewrite_requirements.repair_on_unmet_requirements
-                        || prewrite_gate_waived);
-                let allow_repair_tools = requested_write_required
-                    && unmet_prewrite_repair_retry_count > 0
-                    && !prewrite_satisfied
-                    && !prewrite_gate_waived;
+                let _prewrite_satisfied = prewrite_gate.prewrite_satisfied;
+                let prewrite_gate_write = prewrite_gate.gate_write;
+                let force_write_only_retry = prewrite_gate.force_write_only_retry;
+                let allow_repair_tools = prewrite_gate.allow_repair_tools;
                 if prewrite_gate_write {
                     tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
                 }
@@ -656,13 +656,7 @@ impl EngineLoop {
                     tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
                 }
                 if allow_repair_tools {
-                    let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
-                        &requested_prewrite_requirements,
-                        productive_workspace_inspection_total > 0,
-                        productive_concrete_read_total > 0,
-                        productive_web_research_total > 0,
-                        successful_web_research_total > 0,
-                    );
+                    let unmet_prewrite_codes = prewrite_gate.unmet_codes.clone();
                     let repair_tools = tool_schemas
                         .iter()
                         .filter(|schema| {
@@ -1482,20 +1476,22 @@ impl EngineLoop {
                             ));
                             break;
                         }
-                        let prewrite_satisfied = prewrite_requirements_satisfied(
+                        let prewrite_gate = evaluate_prewrite_gate(
+                            requested_write_required,
                             &requested_prewrite_requirements,
-                            productive_workspace_inspection_total > 0,
-                            productive_concrete_read_total > 0,
-                            productive_web_research_total > 0,
-                            successful_web_research_total > 0,
+                            PrewriteProgress {
+                                productive_write_tool_calls_total,
+                                productive_workspace_inspection_total,
+                                productive_concrete_read_total,
+                                productive_web_research_total,
+                                successful_web_research_total,
+                                required_write_retry_count,
+                                unmet_prewrite_repair_retry_count,
+                                prewrite_gate_waived,
+                            },
                         );
-                        let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
-                            &requested_prewrite_requirements,
-                            productive_workspace_inspection_total > 0,
-                            productive_concrete_read_total > 0,
-                            productive_web_research_total > 0,
-                            successful_web_research_total > 0,
-                        );
+                        let prewrite_satisfied = prewrite_gate.prewrite_satisfied;
+                        let unmet_prewrite_codes = prewrite_gate.unmet_codes.clone();
                         if requested_write_required
                             && productive_tool_calls_total > 0
                             && productive_write_tool_calls_total == 0
@@ -1663,20 +1659,22 @@ impl EngineLoop {
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
                         if executed_productive_tool {
-                            let prewrite_satisfied = prewrite_requirements_satisfied(
+                            let prewrite_gate = evaluate_prewrite_gate(
+                                requested_write_required,
                                 &requested_prewrite_requirements,
-                                productive_workspace_inspection_total > 0,
-                                productive_concrete_read_total > 0,
-                                productive_web_research_total > 0,
-                                successful_web_research_total > 0,
+                                PrewriteProgress {
+                                    productive_write_tool_calls_total,
+                                    productive_workspace_inspection_total,
+                                    productive_concrete_read_total,
+                                    productive_web_research_total,
+                                    successful_web_research_total,
+                                    required_write_retry_count,
+                                    unmet_prewrite_repair_retry_count,
+                                    prewrite_gate_waived,
+                                },
                             );
-                            let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
-                                &requested_prewrite_requirements,
-                                productive_workspace_inspection_total > 0,
-                                productive_concrete_read_total > 0,
-                                productive_web_research_total > 0,
-                                successful_web_research_total > 0,
-                            );
+                            let prewrite_satisfied = prewrite_gate.prewrite_satisfied;
+                            let unmet_prewrite_codes = prewrite_gate.unmet_codes.clone();
                             if requested_write_required
                                 && productive_write_tool_calls_total > 0
                                 && requested_prewrite_requirements.repair_on_unmet_requirements
@@ -1881,20 +1879,28 @@ impl EngineLoop {
                         ));
                         continue;
                     }
+                    let prewrite_gate = evaluate_prewrite_gate(
+                        requested_write_required,
+                        &requested_prewrite_requirements,
+                        PrewriteProgress {
+                            productive_write_tool_calls_total,
+                            productive_workspace_inspection_total,
+                            productive_concrete_read_total,
+                            productive_web_research_total,
+                            successful_web_research_total,
+                            required_write_retry_count,
+                            unmet_prewrite_repair_retry_count,
+                            prewrite_gate_waived,
+                        },
+                    );
                     if should_start_prewrite_repair_before_first_write(
                         requested_prewrite_requirements.repair_on_unmet_requirements,
                         productive_write_tool_calls_total,
-                        prewrite_satisfied,
+                        prewrite_gate.prewrite_satisfied,
                         code_workflow_requested,
                     ) && !prewrite_gate_waived
                     {
-                        let unmet_prewrite_codes = collect_unmet_prewrite_requirement_codes(
-                            &requested_prewrite_requirements,
-                            productive_workspace_inspection_total > 0,
-                            productive_concrete_read_total > 0,
-                            productive_web_research_total > 0,
-                            successful_web_research_total > 0,
-                        );
+                        let unmet_prewrite_codes = prewrite_gate.unmet_codes.clone();
                         if unmet_prewrite_repair_retry_count < prewrite_repair_retry_max_attempts()
                         {
                             unmet_prewrite_repair_retry_count += 1;
@@ -2023,13 +2029,21 @@ impl EngineLoop {
                 && requested_write_required
                 && productive_write_tool_calls_total > 0
             {
-                let final_prewrite_satisfied = prewrite_requirements_satisfied(
+                let final_prewrite_satisfied = evaluate_prewrite_gate(
+                    requested_write_required,
                     &requested_prewrite_requirements,
-                    productive_workspace_inspection_total > 0,
-                    productive_concrete_read_total > 0,
-                    productive_web_research_total > 0,
-                    successful_web_research_total > 0,
-                );
+                    PrewriteProgress {
+                        productive_write_tool_calls_total,
+                        productive_workspace_inspection_total,
+                        productive_concrete_read_total,
+                        productive_web_research_total,
+                        successful_web_research_total,
+                        required_write_retry_count,
+                        unmet_prewrite_repair_retry_count,
+                        prewrite_gate_waived,
+                    },
+                )
+                .prewrite_satisfied;
                 completion = synthesize_artifact_write_completion_from_tool_state(
                     &text,
                     final_prewrite_satisfied,
@@ -3291,14 +3305,6 @@ fn is_workspace_write_tool(tool_name: &str) -> bool {
     )
 }
 
-fn should_gate_write_until_prewrite_satisfied(
-    repair_on_unmet_requirements: bool,
-    productive_write_tool_calls_total: usize,
-    prewrite_satisfied: bool,
-) -> bool {
-    repair_on_unmet_requirements && productive_write_tool_calls_total == 0 && !prewrite_satisfied
-}
-
 fn should_start_prewrite_repair_before_first_write(
     repair_on_unmet_requirements: bool,
     productive_write_tool_calls_total: usize,
@@ -3932,7 +3938,7 @@ fn build_write_required_retry_context(
         previous_reason,
         latest_user_text,
     );
-    let unmet = describe_unmet_prewrite_requirements(
+    let unmet = describe_unmet_prewrite_requirements_for_prompt(
         prewrite_requirements,
         workspace_inspection_satisfied,
         concrete_read_satisfied,
@@ -3978,7 +3984,7 @@ fn build_prewrite_repair_retry_context(
         previous_reason,
         latest_user_text,
     );
-    let unmet = describe_unmet_prewrite_requirements(
+    let unmet = describe_unmet_prewrite_requirements_for_prompt(
         prewrite_requirements,
         workspace_inspection_satisfied,
         concrete_read_satisfied,
@@ -4076,7 +4082,7 @@ fn build_empty_completion_retry_context(
     let mut prompt = String::from(
         "You already used tools in this session, but returned no final output. Do not stop now.",
     );
-    let unmet = describe_unmet_prewrite_requirements(
+    let unmet = describe_unmet_prewrite_requirements_for_prompt(
         prewrite_requirements,
         workspace_inspection_satisfied,
         concrete_read_satisfied,
@@ -4141,42 +4147,6 @@ fn should_generate_post_tool_final_narrative(
     !matches!(requested_tool_mode, ToolMode::Required) || productive_tool_calls_total > 0
 }
 
-fn prewrite_requirements_satisfied(
-    requirements: &PrewriteRequirements,
-    workspace_inspection_satisfied: bool,
-    concrete_read_satisfied: bool,
-    web_research_satisfied: bool,
-    successful_web_research_satisfied: bool,
-) -> bool {
-    (!requirements.workspace_inspection_required || workspace_inspection_satisfied)
-        && (!requirements.web_research_required || web_research_satisfied)
-        && (!requirements.concrete_read_required || concrete_read_satisfied)
-        && (!requirements.successful_web_research_required || successful_web_research_satisfied)
-}
-
-fn describe_unmet_prewrite_requirements(
-    requirements: &PrewriteRequirements,
-    workspace_inspection_satisfied: bool,
-    concrete_read_satisfied: bool,
-    web_research_satisfied: bool,
-    successful_web_research_satisfied: bool,
-) -> Vec<&'static str> {
-    let mut unmet = Vec::new();
-    if requirements.workspace_inspection_required && !workspace_inspection_satisfied {
-        unmet.push("inspect the workspace with `glob`/`read` before writing");
-    }
-    if requirements.concrete_read_required && !concrete_read_satisfied {
-        unmet.push("use `read` on the concrete files you cite before finalizing");
-    }
-    if requirements.web_research_required && !web_research_satisfied {
-        unmet.push("use `websearch` before finalizing the file");
-    }
-    if requirements.successful_web_research_required && !successful_web_research_satisfied {
-        unmet.push("obtain at least one successful web research result instead of only timed-out or empty searches");
-    }
-    unmet
-}
-
 fn is_workspace_inspection_tool(tool_name: &str) -> bool {
     matches!(
         normalize_tool_name(tool_name).as_str(),
@@ -4216,34 +4186,6 @@ fn invalid_tool_args_retry_max_attempts() -> usize {
 
 pub fn prewrite_repair_retry_max_attempts() -> usize {
     5
-}
-
-fn collect_unmet_prewrite_requirement_codes(
-    requirements: &PrewriteRequirements,
-    workspace_inspection_satisfied: bool,
-    concrete_read_satisfied: bool,
-    web_research_satisfied: bool,
-    successful_web_research_satisfied: bool,
-) -> Vec<&'static str> {
-    let mut unmet = Vec::new();
-    if requirements.workspace_inspection_required && !workspace_inspection_satisfied {
-        unmet.push("workspace_inspection_required");
-    }
-    if requirements.concrete_read_required && !concrete_read_satisfied {
-        unmet.push("concrete_read_required");
-    }
-    if requirements.web_research_required && !web_research_satisfied {
-        unmet.push("web_research_required");
-    }
-    if requirements.successful_web_research_required && !successful_web_research_satisfied {
-        unmet.push("successful_web_research_required");
-    }
-    if !matches!(requirements.coverage_mode, PrewriteCoverageMode::None)
-        && (!workspace_inspection_satisfied || !concrete_read_satisfied)
-    {
-        unmet.push("coverage_mode");
-    }
-    unmet
 }
 
 fn build_invalid_tool_args_retry_context_from_outputs(
@@ -8698,10 +8640,28 @@ Call: todowrite(task_id=3, status="in_progress")
 
     #[test]
     fn proactive_write_gate_applies_only_before_prewrite_is_satisfied() {
-        assert!(should_gate_write_until_prewrite_satisfied(true, 0, false));
-        assert!(!should_gate_write_until_prewrite_satisfied(true, 1, false));
-        assert!(!should_gate_write_until_prewrite_satisfied(true, 0, true));
-        assert!(!should_gate_write_until_prewrite_satisfied(false, 0, false));
+        let decision = evaluate_prewrite_gate(
+            true,
+            &PrewriteRequirements {
+                workspace_inspection_required: true,
+                web_research_required: false,
+                concrete_read_required: true,
+                successful_web_research_required: false,
+                repair_on_unmet_requirements: true,
+                coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+            },
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 0,
+                unmet_prewrite_repair_retry_count: 0,
+                prewrite_gate_waived: false,
+            },
+        );
+        assert!(decision.gate_write);
     }
 
     #[test]
@@ -9267,78 +9227,150 @@ Required output target:
 
     #[test]
     fn prewrite_gate_waived_disables_prewrite_gate_write() {
-        let repair_on_unmet = true;
-        let productive_write = 0;
-        let prewrite_satisfied = false;
-        let gate = should_gate_write_until_prewrite_satisfied(
-            repair_on_unmet,
-            productive_write,
-            prewrite_satisfied,
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: false,
+            concrete_read_required: true,
+            successful_web_research_required: false,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let before = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 0,
+                unmet_prewrite_repair_retry_count: 0,
+                prewrite_gate_waived: false,
+            },
         );
-        assert!(gate, "gate should be active before waiver");
-        let waived = true;
-        let gate_after = gate && !waived;
-        assert!(!gate_after, "gate should be off after waiver");
+        assert!(before.gate_write, "gate should be active before waiver");
+        let after = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 0,
+                unmet_prewrite_repair_retry_count: 0,
+                prewrite_gate_waived: true,
+            },
+        );
+        assert!(!after.gate_write, "gate should be off after waiver");
     }
 
     #[test]
     fn prewrite_gate_waived_disables_allow_repair_tools() {
-        let requested_write_required = true;
-        let unmet_prewrite_repair_retry_count = 5usize;
-        let prewrite_satisfied = false;
-        let prewrite_gate_waived = false;
-        let allow_repair = requested_write_required
-            && unmet_prewrite_repair_retry_count > 0
-            && !prewrite_satisfied
-            && !prewrite_gate_waived;
-        assert!(allow_repair, "repair tools should be active before waiver");
-        let prewrite_gate_waived = true;
-        let allow_repair_after = requested_write_required
-            && unmet_prewrite_repair_retry_count > 0
-            && !prewrite_satisfied
-            && !prewrite_gate_waived;
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: true,
+            concrete_read_required: true,
+            successful_web_research_required: true,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let before = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 0,
+                unmet_prewrite_repair_retry_count: 1,
+                prewrite_gate_waived: false,
+            },
+        );
         assert!(
-            !allow_repair_after,
+            before.allow_repair_tools,
+            "repair tools should be active before waiver"
+        );
+        let after = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 0,
+                unmet_prewrite_repair_retry_count: 1,
+                prewrite_gate_waived: true,
+            },
+        );
+        assert!(
+            !after.allow_repair_tools,
             "repair tools should be disabled after waiver"
         );
     }
 
     #[test]
     fn force_write_only_enabled_after_prewrite_waiver() {
-        let requested_write_required = true;
-        let required_write_retry_count = 1usize;
-        let productive_write_tool_calls_total = 0usize;
-        let prewrite_satisfied = false;
-        let prewrite_gate_write = false;
-        let repair_on_unmet_requirements = true;
-        let prewrite_gate_waived = true;
-        let force_write_only = requested_write_required
-            && required_write_retry_count > 0
-            && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
-            && !prewrite_gate_write
-            && (!repair_on_unmet_requirements || prewrite_gate_waived);
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: true,
+            concrete_read_required: true,
+            successful_web_research_required: true,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let decision = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 1,
+                unmet_prewrite_repair_retry_count: 1,
+                prewrite_gate_waived: true,
+            },
+        );
         assert!(
-            force_write_only,
+            decision.force_write_only_retry,
             "force_write_only should be active after prewrite waiver + write retry"
         );
     }
 
     #[test]
     fn force_write_only_disabled_before_prewrite_waiver() {
-        let requested_write_required = true;
-        let required_write_retry_count = 1usize;
-        let productive_write_tool_calls_total = 0usize;
-        let prewrite_satisfied = false;
-        let prewrite_gate_write = false;
-        let repair_on_unmet_requirements = true;
-        let prewrite_gate_waived = false;
-        let force_write_only = requested_write_required
-            && required_write_retry_count > 0
-            && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
-            && !prewrite_gate_write
-            && (!repair_on_unmet_requirements || prewrite_gate_waived);
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: true,
+            concrete_read_required: true,
+            successful_web_research_required: true,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let decision = evaluate_prewrite_gate(
+            true,
+            &requirements,
+            PrewriteProgress {
+                productive_write_tool_calls_total: 0,
+                productive_workspace_inspection_total: 0,
+                productive_concrete_read_total: 0,
+                productive_web_research_total: 0,
+                successful_web_research_total: 0,
+                required_write_retry_count: 1,
+                unmet_prewrite_repair_retry_count: 1,
+                prewrite_gate_waived: false,
+            },
+        );
         assert!(
-            !force_write_only,
+            !decision.force_write_only_retry,
             "force_write_only should be disabled before waiver for prewrite nodes"
         );
     }
