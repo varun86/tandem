@@ -2646,6 +2646,283 @@ fn automation_node_allows_preexisting_output_reuse(node: &AutomationFlowNode) ->
         .unwrap_or(false)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutomationArtifactPublishScope {
+    Workspace,
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutomationArtifactPublishMode {
+    SnapshotReplace,
+    AppendJsonl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutomationArtifactPublishSpec {
+    scope: AutomationArtifactPublishScope,
+    path: String,
+    mode: AutomationArtifactPublishMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutomationVerifiedOutputResolution {
+    path: PathBuf,
+    legacy_workspace_artifact_promoted_from: Option<PathBuf>,
+}
+
+fn automation_node_publish_spec(
+    node: &AutomationFlowNode,
+) -> Option<AutomationArtifactPublishSpec> {
+    let publish = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("publish"))
+        .and_then(Value::as_object)?;
+    let scope = match publish
+        .get("scope")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "workspace" => AutomationArtifactPublishScope::Workspace,
+        "global" => AutomationArtifactPublishScope::Global,
+        _ => return None,
+    };
+    let path = publish
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let mode = match publish
+        .get("mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("snapshot_replace")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "snapshot_replace" => AutomationArtifactPublishMode::SnapshotReplace,
+        "append_jsonl" => AutomationArtifactPublishMode::AppendJsonl,
+        _ => return None,
+    };
+    Some(AutomationArtifactPublishSpec { scope, path, mode })
+}
+
+fn automation_output_path_uses_legacy_workspace_artifact_contract(
+    workspace_root: &str,
+    output_path: &str,
+) -> bool {
+    let normalized = normalize_automation_path_text(output_path)
+        .unwrap_or_else(|| output_path.trim().to_string())
+        .replace('\\', "/");
+    if normalized == ".tandem/artifacts" || normalized.starts_with(".tandem/artifacts/") {
+        return true;
+    }
+    let Ok(resolved) = resolve_automation_output_path(workspace_root, output_path) else {
+        return false;
+    };
+    let workspace = PathBuf::from(
+        normalize_automation_path_text(workspace_root)
+            .unwrap_or_else(|| workspace_root.trim().to_string()),
+    );
+    let Ok(relative) = resolved.strip_prefix(&workspace) else {
+        return false;
+    };
+    let relative = normalize_automation_path_text(relative.to_string_lossy().as_ref())
+        .unwrap_or_default()
+        .replace('\\', "/");
+    relative == ".tandem/artifacts" || relative.starts_with(".tandem/artifacts/")
+}
+
+fn maybe_promote_legacy_workspace_artifact_for_run(
+    session: &Session,
+    workspace_root: &str,
+    run_id: &str,
+    output_path: &str,
+) -> anyhow::Result<Option<AutomationVerifiedOutputResolution>> {
+    if !automation_output_path_uses_legacy_workspace_artifact_contract(workspace_root, output_path)
+    {
+        return Ok(None);
+    }
+    if !session_write_touched_output_for_output(session, workspace_root, output_path, None) {
+        return Ok(None);
+    }
+
+    let legacy_path = resolve_automation_output_path(workspace_root, output_path)?;
+    let run_scoped_path =
+        resolve_automation_output_path_for_run(workspace_root, run_id, output_path)?;
+    if legacy_path == run_scoped_path {
+        return Ok(None);
+    }
+    if run_scoped_path.exists() && run_scoped_path.is_file() {
+        return Ok(Some(AutomationVerifiedOutputResolution {
+            path: run_scoped_path,
+            legacy_workspace_artifact_promoted_from: None,
+        }));
+    }
+    if !legacy_path.exists() || !legacy_path.is_file() {
+        return Ok(None);
+    }
+    if let Some(parent) = run_scoped_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&legacy_path, &run_scoped_path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to promote legacy workspace artifact `{}` into run-scoped artifact `{}`: {}",
+            legacy_path.display(),
+            run_scoped_path.display(),
+            error
+        )
+    })?;
+    Ok(Some(AutomationVerifiedOutputResolution {
+        path: run_scoped_path,
+        legacy_workspace_artifact_promoted_from: Some(legacy_path),
+    }))
+}
+
+fn resolve_automation_published_output_path(
+    workspace_root: &str,
+    spec: &AutomationArtifactPublishSpec,
+) -> anyhow::Result<PathBuf> {
+    match spec.scope {
+        AutomationArtifactPublishScope::Workspace => {
+            resolve_automation_output_path(workspace_root, &spec.path)
+        }
+        AutomationArtifactPublishScope::Global => {
+            let trimmed = spec.path.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("global publication path is empty");
+            }
+            let relative = PathBuf::from(trimmed);
+            if relative.is_absolute() {
+                anyhow::bail!(
+                    "global publication path `{}` must be relative to the Tandem publication root",
+                    trimmed
+                );
+            }
+            let base = config::paths::resolve_automation_published_artifacts_dir();
+            let candidate = base.join(relative);
+            let normalized = PathBuf::from(
+                normalize_automation_path_text(candidate.to_string_lossy().as_ref())
+                    .unwrap_or_else(|| candidate.to_string_lossy().to_string()),
+            );
+            if !normalized.starts_with(&base) {
+                anyhow::bail!(
+                    "global publication path `{}` must stay inside `{}`",
+                    trimmed,
+                    base.display()
+                );
+            }
+            Ok(normalized)
+        }
+    }
+}
+
+fn display_automation_published_output_path(
+    workspace_root: &str,
+    resolved: &PathBuf,
+    spec: &AutomationArtifactPublishSpec,
+) -> String {
+    match spec.scope {
+        AutomationArtifactPublishScope::Workspace => resolved
+            .strip_prefix(workspace_root)
+            .ok()
+            .and_then(|value| value.to_str().map(str::to_string))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| spec.path.clone()),
+        AutomationArtifactPublishScope::Global => resolved.to_string_lossy().to_string(),
+    }
+}
+
+fn publish_automation_verified_output(
+    workspace_root: &str,
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    verified_output: &(String, String),
+    spec: &AutomationArtifactPublishSpec,
+) -> anyhow::Result<Value> {
+    let source_path = resolve_automation_output_path(workspace_root, &verified_output.0)?;
+    let destination = resolve_automation_published_output_path(workspace_root, spec)?;
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut appended_records = None;
+    match spec.mode {
+        AutomationArtifactPublishMode::SnapshotReplace => {
+            std::fs::copy(&source_path, &destination).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to publish validated run artifact `{}` to `{}`: {}",
+                    source_path.display(),
+                    destination.display(),
+                    error
+                )
+            })?;
+        }
+        AutomationArtifactPublishMode::AppendJsonl => {
+            use std::io::Write;
+
+            let content = std::fs::read_to_string(&source_path).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to read validated run artifact `{}` before publication: {}",
+                    source_path.display(),
+                    error
+                )
+            })?;
+            let appended_record = json!({
+                "automation_id": automation.automation_id,
+                "run_id": run_id,
+                "node_id": node.node_id,
+                "source_artifact_path": verified_output.0,
+                "published_at_ms": now_ms(),
+                "content": serde_json::from_str::<Value>(&content).unwrap_or_else(|_| Value::String(content.clone())),
+            });
+            let line = serde_json::to_string(&appended_record)?;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&destination)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "failed to open publication target `{}` for append_jsonl: {}",
+                        destination.display(),
+                        error
+                    )
+                })?;
+            writeln!(file, "{line}").map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to append published run artifact to `{}`: {}",
+                    destination.display(),
+                    error
+                )
+            })?;
+            appended_records = Some(1);
+        }
+    }
+
+    Ok(json!({
+        "scope": match spec.scope {
+            AutomationArtifactPublishScope::Workspace => "workspace",
+            AutomationArtifactPublishScope::Global => "global",
+        },
+        "mode": match spec.mode {
+            AutomationArtifactPublishMode::SnapshotReplace => "snapshot_replace",
+            AutomationArtifactPublishMode::AppendJsonl => "append_jsonl",
+        },
+        "path": display_automation_published_output_path(workspace_root, &destination, spec),
+        "source_artifact_path": verified_output.0,
+        "appended_records": appended_records,
+    }))
+}
+
 fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
     enforcement_requires_external_sources(&automation_node_output_enforcement(node))
 }
@@ -2930,7 +3207,7 @@ async fn reconcile_automation_resolve_verified_output_path(
     output_path: &str,
     max_wait_ms: u64,
     poll_interval_ms: u64,
-) -> anyhow::Result<Option<PathBuf>> {
+) -> anyhow::Result<Option<AutomationVerifiedOutputResolution>> {
     let output_touched =
         session_write_touched_output_for_output(session, workspace_root, output_path, Some(run_id));
     let poll_interval_ms = poll_interval_ms.max(1);
@@ -2944,12 +3221,26 @@ async fn reconcile_automation_resolve_verified_output_path(
             node,
             output_path,
         )? {
-            return Ok(Some(resolved));
+            return Ok(Some(AutomationVerifiedOutputResolution {
+                path: resolved,
+                legacy_workspace_artifact_promoted_from: None,
+            }));
+        }
+        if let Some(promoted) = maybe_promote_legacy_workspace_artifact_for_run(
+            session,
+            workspace_root,
+            run_id,
+            output_path,
+        )? {
+            return Ok(Some(promoted));
         }
         if let Some(recovered) =
             recover_required_output_from_session_text(session, workspace_root, run_id, output_path)?
         {
-            return Ok(Some(recovered));
+            return Ok(Some(AutomationVerifiedOutputResolution {
+                path: recovered,
+                legacy_workspace_artifact_promoted_from: None,
+            }));
         }
         if !output_touched {
             return Ok(None);
@@ -5171,6 +5462,7 @@ pub(crate) fn collect_automation_attempt_receipt_events(
     session_id: &str,
     session: &Session,
     verified_output: Option<&(String, String)>,
+    verified_output_resolution: Option<&AutomationVerifiedOutputResolution>,
     required_output_path: Option<&str>,
     artifact_validation: Option<&Value>,
 ) -> Vec<AutomationAttemptReceiptEventInput> {
@@ -5218,6 +5510,26 @@ pub(crate) fn collect_automation_attempt_receipt_events(
                 payload: event_base,
             });
         }
+    }
+
+    if let Some(promoted_from) = verified_output_resolution
+        .and_then(|resolution| resolution.legacy_workspace_artifact_promoted_from.as_ref())
+    {
+        let promoted_to = verified_output_resolution
+            .map(|resolution| resolution.path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        events.push(AutomationAttemptReceiptEventInput {
+            event_type: "legacy_workspace_artifact_promoted".to_string(),
+            payload: json!({
+                "automation_id": automation.automation_id,
+                "run_id": run_id,
+                "node_id": node.node_id,
+                "attempt": attempt,
+                "session_id": session_id,
+                "promoted_from_path": promoted_from.to_string_lossy().to_string(),
+                "promoted_to_path": promoted_to,
+            }),
+        });
     }
 
     if let Some((path, text)) = verified_output {
@@ -6218,7 +6530,7 @@ pub(crate) async fn execute_automation_v2_node(
         .ok_or_else(|| anyhow::anyhow!("automation session `{}` missing after run", session_id))?;
     let session_text = extract_session_text_output(&session);
     let verified_output = if let Some(output_path) = required_output_path.as_deref() {
-        let resolved = reconcile_automation_resolve_verified_output_path(
+        let resolution = reconcile_automation_resolve_verified_output_path(
             &session,
             &workspace_root,
             run_id,
@@ -6235,6 +6547,7 @@ pub(crate) async fn execute_automation_v2_node(
                 node.node_id
             )
         })?;
+        let resolved = resolution.path.clone();
         if !resolved.is_file() {
             anyhow::bail!(
                 "required output `{}` for node `{}` is not a file",
@@ -6256,12 +6569,15 @@ pub(crate) async fn execute_automation_v2_node(
             .and_then(|value| value.to_str().map(str::to_string))
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| output_path.to_string());
-        Some((display_path, file_text))
+        Some((display_path, file_text, resolution))
     } else {
         None
     };
     let tool_telemetry = summarize_automation_tool_activity(node, &session, &requested_tools);
     let mut tool_telemetry = tool_telemetry;
+    let verified_output_for_evidence = verified_output
+        .as_ref()
+        .map(|(path, text, _)| (path.clone(), text.clone()));
     let base_attempt_evidence = node_output::build_automation_attempt_evidence(
         node,
         attempt,
@@ -6271,7 +6587,7 @@ pub(crate) async fn execute_automation_v2_node(
         &tool_telemetry,
         &preflight,
         &capability_resolution,
-        verified_output.as_ref(),
+        verified_output_for_evidence.as_ref(),
     );
     if let Some(object) = tool_telemetry.as_object_mut() {
         object.insert("preflight".to_string(), preflight.clone());
@@ -6298,6 +6614,10 @@ pub(crate) async fn execute_automation_v2_node(
     } else {
         None
     };
+    let verified_output_resolution = verified_output
+        .as_ref()
+        .map(|(_, _, resolution)| resolution.clone());
+    let verified_output = verified_output.map(|(path, text, _)| (path, text));
     let (verified_output, mut artifact_validation, artifact_rejected_reason) =
         validate_automation_artifact_output_with_upstream(
             node,
@@ -6312,6 +6632,25 @@ pub(crate) async fn execute_automation_v2_node(
             upstream_evidence.as_ref(),
         );
     let _ = artifact_rejected_reason;
+    if let Some(promoted_from) = verified_output_resolution
+        .as_ref()
+        .and_then(|resolution| resolution.legacy_workspace_artifact_promoted_from.as_ref())
+    {
+        if let Some(object) = artifact_validation.as_object_mut() {
+            object.insert(
+                "legacy_workspace_artifact_promoted".to_string(),
+                json!(true),
+            );
+            object.insert(
+                "legacy_workspace_artifact_promoted_from".to_string(),
+                json!(promoted_from.to_string_lossy().to_string()),
+            );
+            object
+                .entry("accepted_candidate_source".to_string())
+                .or_insert_with(|| json!("legacy_workspace_artifact_promoted"));
+        }
+    }
+
     let editorial_publish_block_reason = state
         .get_automation_v2_run(run_id)
         .await
@@ -6332,6 +6671,43 @@ pub(crate) async fn execute_automation_v2_node(
             object
                 .entry("semantic_block_reason".to_string())
                 .or_insert_with(|| Value::String(reason.clone()));
+        }
+    }
+    let artifact_publication = if artifact_validation
+        .get("semantic_block_reason")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        if let (Some(spec), Some(verified_output)) =
+            (automation_node_publish_spec(node), verified_output.as_ref())
+        {
+            Some(
+                publish_automation_verified_output(
+                    &workspace_root,
+                    automation,
+                    run_id,
+                    node,
+                    verified_output,
+                    &spec,
+                )
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "durable publication failed for node `{}` after validating `{}`: {}",
+                        node.node_id,
+                        verified_output.0,
+                        error
+                    )
+                })?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(publication) = artifact_publication.clone() {
+        if let Some(object) = artifact_validation.as_object_mut() {
+            object.insert("artifact_publication".to_string(), publication);
         }
     }
     let (receipt_status, receipt_blocked_reason, receipt_approved) =
@@ -6423,6 +6799,7 @@ pub(crate) async fn execute_automation_v2_node(
         &session_id,
         &session,
         verified_output.as_ref(),
+        verified_output_resolution.as_ref(),
         required_output_path.as_deref(),
         Some(&artifact_validation),
     );
@@ -6525,6 +6902,9 @@ pub(crate) async fn execute_automation_v2_node(
     );
     if let Some(object) = output.as_object_mut() {
         object.insert("cost_provenance".to_string(), cost_provenance);
+        if let Some(publication) = artifact_publication {
+            object.insert("artifact_publication".to_string(), publication);
+        }
         if let Some(receipt_timeline) = receipt_timeline.clone() {
             object.insert("receipt_timeline".to_string(), receipt_timeline);
         }

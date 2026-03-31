@@ -62,6 +62,10 @@ pub(crate) fn resolve_automation_attempt_receipts_dir() -> PathBuf {
     resolve_canonical_data_file_path("automation_attempt_receipts")
 }
 
+pub(crate) fn resolve_automation_published_artifacts_dir() -> PathBuf {
+    resolve_canonical_data_file_path("automation_published_artifacts")
+}
+
 pub(crate) fn resolve_canonical_data_file_path(file_name: &str) -> PathBuf {
     if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = root.trim();

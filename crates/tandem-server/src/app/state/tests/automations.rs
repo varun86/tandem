@@ -307,6 +307,7 @@ async fn automation_attempt_receipt_collects_tool_and_artifact_events() {
         &session.id,
         &session,
         Some(&("out.md".to_string(), "artifact".to_string())),
+        None,
         Some("out.md"),
         Some(&serde_json::json!({"status":"succeeded"})),
     );
@@ -1240,17 +1241,16 @@ fn collect_inputs_prompt_requires_reading_before_writing() {
         None,
     );
 
-    let expected_output_path = crate::app::state::automation::automation_run_scoped_output_path(
-        "run-collect-inputs",
-        ".tandem/artifacts/collect-inputs.json",
-    )
-    .expect("scoped output path");
-    assert!(prompt.contains("Collect Inputs Contract:"));
-    assert!(prompt.contains("do not stop after discovery"));
-    assert!(prompt.contains(&format!(
-        "Write the grounded result to `{}`",
-        expected_output_path
-    )));
+    let expected_output_path =
+        crate::app::state::automation::automation_node_required_output_path_for_run(
+            &node,
+            Some("run-collect-inputs"),
+        )
+        .expect("scoped output path");
+    assert!(prompt.contains("Required Run Artifact:"));
+    assert!(prompt.contains("Use `glob` to discover candidate paths"));
+    assert!(prompt.contains("`read` only for concrete file paths"));
+    assert!(prompt.contains(&expected_output_path));
 }
 
 #[test]

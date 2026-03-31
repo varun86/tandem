@@ -761,7 +761,7 @@ async fn reconcile_verified_output_path_waits_for_late_file_visibility() {
     .expect("resolve after delay");
 
     writer.join().expect("writer thread");
-    assert_eq!(resolved, Some(resolved_path));
+    assert_eq!(resolved.map(|value| value.path), Some(resolved_path));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
@@ -870,11 +870,470 @@ async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text
 
     let expected =
         workspace_root.join(".tandem/runs/run-session-json/artifacts/research-sources.json");
-    assert_eq!(resolved, Some(expected.clone()));
+    assert_eq!(resolved.map(|value| value.path), Some(expected.clone()));
     let written = std::fs::read_to_string(expected).expect("read recovered artifact");
     let parsed: serde_json::Value = serde_json::from_str(&written).expect("parse recovered json");
     assert_eq!(parsed["sources"][0]["path"], "README.md");
     assert_eq!(parsed["summary"], "Primary local sources identified.");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_promotes_legacy_workspace_artifact_into_run_scope() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-legacy-promotion-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-legacy-promotion";
+    let output_path = ".tandem/artifacts/research-sources.json";
+    let legacy_path = workspace_root.join(output_path);
+    std::fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
+        .expect("create legacy parent");
+    std::fs::write(&legacy_path, "{\n  \"status\": \"completed\"\n}")
+        .expect("write legacy artifact");
+
+    let mut session = Session::new(Some("legacy promotion".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": output_path,
+                "content": "{\n  \"status\": \"completed\"\n}"
+            }),
+            result: Some(json!({"output": "written"})),
+            error: None,
+        }],
+    ));
+
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            node_id: "research_sources".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Find and record sources".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "citations".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("promote legacy artifact")
+    .expect("resolution");
+
+    let expected =
+        workspace_root.join(".tandem/runs/run-legacy-promotion/artifacts/research-sources.json");
+    assert_eq!(resolved.path, expected);
+    assert_eq!(
+        resolved.legacy_workspace_artifact_promoted_from,
+        Some(legacy_path.clone())
+    );
+    let promoted = std::fs::read_to_string(&resolved.path).expect("read promoted artifact");
+    assert!(promoted.contains("\"status\": \"completed\""));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_does_not_promote_unrelated_workspace_file() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-no-unrelated-promotion-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-no-promotion";
+    let output_path = ".tandem/artifacts/research-sources.json";
+    let unrelated_path = workspace_root.join(".tandem/knowledge/research-sources.json");
+    std::fs::create_dir_all(unrelated_path.parent().expect("unrelated parent"))
+        .expect("create unrelated parent");
+    std::fs::write(&unrelated_path, "{\n  \"status\": \"completed\"\n}")
+        .expect("write unrelated file");
+
+    let mut session = Session::new(Some("unrelated write".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": ".tandem/knowledge/research-sources.json",
+                "content": "{\n  \"status\": \"completed\"\n}"
+            }),
+            result: Some(json!({"output": "written"})),
+            error: None,
+        }],
+    ));
+
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            node_id: "research_sources".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Find and record sources".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "citations".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("resolve unrelated file");
+
+    assert!(resolved.is_none());
+    assert!(!workspace_root
+        .join(".tandem/runs/run-no-promotion/artifacts/research-sources.json")
+        .exists());
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn publish_verified_output_snapshot_replace_copies_into_workspace_target() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-publish-workspace-{}", uuid::Uuid::new_v4()));
+    let run_artifact = workspace_root.join(".tandem/runs/run-publish/artifacts/report.md");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "# Report\n").expect("write run artifact");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-publish".to_string(),
+        name: "Publish".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "generate_report".to_string();
+
+    let result = super::publish_automation_verified_output(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-publish",
+        &node,
+        &(
+            ".tandem/runs/run-publish/artifacts/report.md".to_string(),
+            "# Report\n".to_string(),
+        ),
+        &super::AutomationArtifactPublishSpec {
+            scope: super::AutomationArtifactPublishScope::Workspace,
+            path: ".tandem/knowledge/report-latest.md".to_string(),
+            mode: super::AutomationArtifactPublishMode::SnapshotReplace,
+        },
+    )
+    .expect("publish to workspace");
+
+    let published = workspace_root.join(".tandem/knowledge/report-latest.md");
+    assert_eq!(
+        std::fs::read_to_string(&published).expect("read published"),
+        "# Report\n"
+    );
+    assert_eq!(result["scope"], "workspace");
+    assert_eq!(result["mode"], "snapshot_replace");
+    assert_eq!(result["path"], ".tandem/knowledge/report-latest.md");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn publish_verified_output_snapshot_replace_copies_into_global_target() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-publish-global-workspace-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_artifact = workspace_root.join(".tandem/runs/run-publish-global/artifacts/report.md");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "# Global Report\n").expect("write run artifact");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-global-publish".to_string(),
+        name: "Publish Global".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "generate_report".to_string();
+    let relative_global_path = format!("test-{}/report.md", uuid::Uuid::new_v4());
+
+    let result = super::publish_automation_verified_output(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-publish-global",
+        &node,
+        &(
+            ".tandem/runs/run-publish-global/artifacts/report.md".to_string(),
+            "# Global Report\n".to_string(),
+        ),
+        &super::AutomationArtifactPublishSpec {
+            scope: super::AutomationArtifactPublishScope::Global,
+            path: relative_global_path.clone(),
+            mode: super::AutomationArtifactPublishMode::SnapshotReplace,
+        },
+    )
+    .expect("publish to global");
+
+    let published_root = crate::config::paths::resolve_automation_published_artifacts_dir();
+    let published = published_root.join(&relative_global_path);
+    assert_eq!(
+        std::fs::read_to_string(&published).expect("read published"),
+        "# Global Report\n"
+    );
+    assert_eq!(result["scope"], "global");
+    assert_eq!(result["mode"], "snapshot_replace");
+    assert_eq!(
+        result["path"],
+        json!(published.to_string_lossy().to_string())
+    );
+
+    let _ = std::fs::remove_file(&published);
+    if let Some(parent) = published.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn publish_verified_output_append_jsonl_appends_records() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-publish-append-jsonl-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_artifact = workspace_root.join(".tandem/runs/run-append/artifacts/research.json");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "{\n  \"sources\": [\"README.md\"]\n}")
+        .expect("write run artifact");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-append".to_string(),
+        name: "Append".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "research_sources".to_string();
+    let publish_path = ".tandem/knowledge/research-history.jsonl";
+
+    super::publish_automation_verified_output(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-append",
+        &node,
+        &(
+            ".tandem/runs/run-append/artifacts/research.json".to_string(),
+            "{\n  \"sources\": [\"README.md\"]\n}".to_string(),
+        ),
+        &super::AutomationArtifactPublishSpec {
+            scope: super::AutomationArtifactPublishScope::Workspace,
+            path: publish_path.to_string(),
+            mode: super::AutomationArtifactPublishMode::AppendJsonl,
+        },
+    )
+    .expect("first append");
+    super::publish_automation_verified_output(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-append-2",
+        &node,
+        &(
+            ".tandem/runs/run-append/artifacts/research.json".to_string(),
+            "{\n  \"sources\": [\"README.md\"]\n}".to_string(),
+        ),
+        &super::AutomationArtifactPublishSpec {
+            scope: super::AutomationArtifactPublishScope::Workspace,
+            path: publish_path.to_string(),
+            mode: super::AutomationArtifactPublishMode::AppendJsonl,
+        },
+    )
+    .expect("second append");
+
+    let published = workspace_root.join(publish_path);
+    let lines = std::fs::read_to_string(&published)
+        .expect("read appended file")
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    let first: Value = serde_json::from_str(&lines[0]).expect("parse first");
+    let second: Value = serde_json::from_str(&lines[1]).expect("parse second");
+    assert_eq!(first["run_id"], "run-append");
+    assert_eq!(second["run_id"], "run-append-2");
+    assert_eq!(first["content"]["sources"][0], "README.md");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn publish_verified_output_rejects_workspace_target_outside_workspace() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-publish-invalid-workspace-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_artifact = workspace_root.join(".tandem/runs/run-invalid/artifacts/report.md");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "# Report\n").expect("write run artifact");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-invalid-publish".to_string(),
+        name: "Invalid Publish".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = bare_node();
+
+    let error = super::publish_automation_verified_output(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-invalid",
+        &node,
+        &(
+            ".tandem/runs/run-invalid/artifacts/report.md".to_string(),
+            "# Report\n".to_string(),
+        ),
+        &super::AutomationArtifactPublishSpec {
+            scope: super::AutomationArtifactPublishScope::Workspace,
+            path: "../outside/report.md".to_string(),
+            mode: super::AutomationArtifactPublishMode::SnapshotReplace,
+        },
+    )
+    .expect_err("workspace publish should fail");
+
+    assert!(error.to_string().contains("must stay inside workspace"));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
