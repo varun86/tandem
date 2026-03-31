@@ -75,13 +75,16 @@ interface AutomationWizardConfig {
   goalExamples: string[];
 }
 
-const AUTOMATION_WIZARD_SOURCES = import.meta.glob("../../pages/automation-wizard.yaml", {
+const AUTOMATION_WIZARD_SOURCES = import.meta.glob("../../../pages/automation-wizard.yaml", {
   eager: true,
   query: "?raw",
   import: "default",
 }) as Record<string, string>;
 
 function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
+  if (!String(source || "").trim()) {
+    throw new Error("Automation wizard config file could not be loaded.");
+  }
   const parsed = YAML.parse(source) as unknown;
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Invalid automation wizard config: expected a YAML object.");
@@ -131,9 +134,11 @@ function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
   };
 }
 
-const AUTOMATION_WIZARD_CONFIG = parseAutomationWizardConfig(
-  Object.values(AUTOMATION_WIZARD_SOURCES)[0] || ""
+const AUTOMATION_WIZARD_SOURCE = Object.values(AUTOMATION_WIZARD_SOURCES).find(
+  (value): value is string => typeof value === "string" && value.trim().length > 0
 );
+
+export const AUTOMATION_WIZARD_CONFIG = parseAutomationWizardConfig(AUTOMATION_WIZARD_SOURCE || "");
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 
 function createDefaultWizardState(
