@@ -47,6 +47,22 @@ function parseRgb(color: string): { r: number; g: number; b: number } | null {
   return null;
 }
 
+function dismissSplashScreen() {
+  const splash = document.getElementById("splash-screen");
+  if (!splash) return;
+
+  splash.classList.add("hidden");
+
+  const matrixInterval = (window as any).__matrixInterval;
+  if (matrixInterval) {
+    window.clearInterval(matrixInterval);
+  }
+
+  // Remove the splash after the fade so a delayed React mount cannot strand
+  // the user on the unlock screen.
+  window.setTimeout(() => splash.remove(), 500);
+}
+
 function applySplashTheme() {
   const themeId = (localStorage.getItem("tandem.themeId") as ThemeId | null) ?? DEFAULT_THEME_ID;
   const theme = getThemeById(themeId);
@@ -267,6 +283,7 @@ async function submitPin() {
 
       await invoke("create_vault", { pin: currentPin });
       (window as any).__vaultUnlocked = true;
+      dismissSplashScreen();
     } else {
       // Unlock existing vault
       loadingText.innerHTML = 'Unlocking vault<span class="loading-dots"></span>';
@@ -275,6 +292,7 @@ async function submitPin() {
 
       await invoke("unlock_vault", { pin: currentPin });
       (window as any).__vaultUnlocked = true;
+      dismissSplashScreen();
     }
 
     // Success! The React app will handle the rest
@@ -367,6 +385,7 @@ async function checkVaultStatus() {
     } else if (status === "unlocked") {
       // Already unlocked (shouldn't happen normally)
       (window as any).__vaultUnlocked = true;
+      dismissSplashScreen();
     }
   } catch (error: any) {
     console.error("[Vault] Failed to check status:", error);

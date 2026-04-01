@@ -760,12 +760,15 @@ function App() {
     };
   }, [refreshAppState]);
 
-  // Hide splash screen once vault is unlocked and app state is loaded
+  // Hide the splash once the vault is unlocked.
+  // We do not wait for the rest of app bootstrap here because provider/catalog
+  // loading can be slow or transiently unavailable, and that should not trap
+  // the user on the lock screen.
   useEffect(() => {
-    if (!loading && vaultUnlocked) {
+    if (vaultUnlocked) {
       hideSplashScreen();
     }
-  }, [loading, vaultUnlocked]);
+  }, [vaultUnlocked]);
 
   // Load sessions and projects when sidecar is ready
   const loadHistory = useCallback(async () => {

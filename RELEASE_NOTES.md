@@ -12,6 +12,10 @@ This is the canonical release-notes file used by release tooling.
   - Added explicit execution-kind markers plus mission coder handoff summaries so mission and workflow nodes can distinguish coder-run work from governance-only steps.
   - Added regressions that preserve lane, phase, milestone, and launch metadata across the mission preview and task-routing boundaries.
 
+- **Desktop startup splash resilience**
+  - Fixed the unlock splash so it dismisses immediately after a successful vault unlock instead of waiting on later provider discovery.
+  - Stopped sidecar startup from silently rewriting selected-provider/default-provider state on boot, which reduces startup regressions caused by stale or slow provider config.
+
 ## v0.4.17 (Released 2026-04-01)
 
 - **Automation Modularization & Scaling**

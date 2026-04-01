@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added explicit execution-kind markers and mission coder handoff summaries so mission/workflow nodes can distinguish coder-run work from governance steps.
   - Added regressions that preserve lane, phase, milestone, and launch metadata across mission preview and task-routing boundaries.
 
+### Fixed
+
+- **Desktop startup splash resilience**:
+  - Made the unlock splash dismiss immediately after a successful vault unlock so slow or transient provider discovery cannot strand the app on the startup screen.
+  - Stopped boot-time sidecar startup from silently rewriting the selected provider/default-provider state, reducing startup regressions caused by stale or slow provider config.
+
 ## [0.4.17] - 2026-04-01
 
 ### Added

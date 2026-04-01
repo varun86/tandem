@@ -2640,15 +2640,6 @@ impl SidecarManager {
             env_vars.contains_key("ANTHROPIC_API_KEY"),
             env_vars.contains_key("OPENAI_API_KEY")
         );
-        let has_openrouter_key = env_vars
-            .get("OPENROUTER_API_KEY")
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false);
-        let has_openai_key = env_vars
-            .get("OPENAI_API_KEY")
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false);
-
         // Build the command
         let mut cmd = Command::new(sidecar_path);
 
@@ -2716,45 +2707,9 @@ impl SidecarManager {
                 let models = serde_json::Value::Object(models_map);
 
                 if let Err(e) = crate::tandem_config::update_config_at(&config_path, |cfg| {
-                    // Keep sidecar defaults aligned with actual key availability to avoid
-                    // silent fallback to OpenAI defaults when only OpenRouter auth is present.
-                    if has_openrouter_key && !has_openai_key {
-                        if let Some(root) = cfg.as_object_mut() {
-                            let should_set_default = match root
-                                .get("default_provider")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.trim().to_lowercase())
-                            {
-                                Some(current) => current.is_empty() || current == "openai",
-                                None => true,
-                            };
-                            if should_set_default {
-                                root.insert(
-                                    "default_provider".to_string(),
-                                    serde_json::Value::String("openrouter".to_string()),
-                                );
-                            }
-
-                            let providers =
-                                root.entry("providers".to_string()).or_insert_with(|| {
-                                    serde_json::Value::Object(serde_json::Map::new())
-                                });
-                            if let Some(providers_obj) = providers.as_object_mut() {
-                                let openrouter = providers_obj
-                                    .entry("openrouter".to_string())
-                                    .or_insert_with(|| {
-                                        serde_json::Value::Object(serde_json::Map::new())
-                                    });
-                                if let Some(openrouter_obj) = openrouter.as_object_mut() {
-                                    openrouter_obj.entry("url".to_string()).or_insert_with(|| {
-                                        serde_json::Value::String(
-                                            "https://openrouter.ai/api/v1".to_string(),
-                                        )
-                                    });
-                                }
-                            }
-                        }
-                    }
+                    // Keep the sidecar config in sync with local Ollama models, but do not
+                    // silently rewrite the user's selected provider/default provider on startup.
+                    // Provider choice should stay driven by saved app state and explicit settings.
                     crate::tandem_config::set_provider_ollama_models(cfg, models);
                     Ok(())
                 }) {
