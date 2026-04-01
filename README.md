@@ -2,7 +2,7 @@
   <img src=".github/assets/logo.png" alt="Tandem Logo" width="500">
   
   <p>
-    <a href="https://tandem.frumu.ai/"><img src="https://img.shields.io/website?url=https%3A%2F%2Ftandem.frumu.ai%2F&label=tandem.frumu.ai&logo=firefox&style=for-the-badge" alt="Website"></a>
+    <a href="https://tandem.ac/"><img src="https://img.shields.io/website?url=https%3A%2F%2Ftandem.ac%2F&label=tandem.ac&logo=firefox&style=for-the-badge" alt="Website"></a>
     <a href="https://github.com/frumu-ai/tandem/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/frumu-ai/tandem/ci.yml?branch=main&label=CI&style=for-the-badge" alt="CI"></a>
     <a href="https://github.com/frumu-ai/tandem/actions/workflows/publish-registries.yml"><img src="https://img.shields.io/github/actions/workflow/status/frumu-ai/tandem/publish-registries.yml?branch=main&label=Publish%20Registries&style=for-the-badge" alt="Registry Publish"></a>
     <a href="https://github.com/frumu-ai/tandem/releases"><img src="https://img.shields.io/github/v/release/frumu-ai/tandem?label=release&style=for-the-badge" alt="Latest Release"></a>
@@ -31,13 +31,13 @@ It provides durable coordination primitives, including blackboards, workboards, 
 
 `Durable State → Workboards → Agent Swarm → Artifacts`
 
-**→ [Download desktop app](https://tandem.frumu.ai/) · [Deploy on a VPS (5 min)](examples/agent-quickstart/) · [Read the docs](https://tandem.docs.frumu.ai/)**
+**→ [Download desktop app](https://tandem.ac/) · [Deploy on a VPS (5 min)](examples/agent-quickstart/) · [Read the docs](https://docs.tandem.ac/)**
 
 ## 30-second quickstart
 
 ### Desktop
 
-1. Download and launch Tandem: [tandem.frumu.ai](https://tandem.frumu.ai/)
+1. Download and launch Tandem: [tandem.ac](https://tandem.ac/)
 2. Open **Settings** and add a provider API key.
 3. Select a workspace folder.
 4. Start with a task prompt and choose **Immediate** or **Plan Mode**.
@@ -254,7 +254,7 @@ TANDEM_SEARCH_BACKEND=auto
 TANDEM_BRAVE_SEARCH_API_KEY=...
 TANDEM_EXA_API_KEY=...
 TANDEM_SEARXNG_URL=http://127.0.0.1:8080
-TANDEM_SEARCH_URL=https://search.tandem.frumu.ai
+TANDEM_SEARCH_URL=https://search.tandem.ac
 ```
 
 If Brave is rate-limited and Exa is configured, `auto` can continue with Exa instead of immediately surfacing search as unavailable.
@@ -283,7 +283,7 @@ For the full threat model and reporting process, see [SECURITY.md](SECURITY.md).
 - Engine runtime + CLI reference: [docs/ENGINE_CLI.md](docs/ENGINE_CLI.md)
 - Desktop/runtime communication contract: [docs/ENGINE_COMMUNICATION.md](docs/ENGINE_COMMUNICATION.md)
 - Engine testing and smoke checks: [docs/ENGINE_TESTING.md](docs/ENGINE_TESTING.md)
-- Docs portal: [tandem.docs.frumu.ai](https://tandem.docs.frumu.ai/)
+- Docs portal: [docs.tandem.ac](https://docs.tandem.ac/)
 
 Advanced MCP behavior (including OAuth/auth-required flows and retries) is documented in [docs/ENGINE_CLI.md](docs/ENGINE_CLI.md).
 

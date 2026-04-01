@@ -1,6 +1,6 @@
 # tandem-client
 
-Python client for the [Tandem](https://tandem.frumu.ai/) autonomous agent engine HTTP + SSE API.
+Python client for the [Tandem](https://tandem.ac/) autonomous agent engine HTTP + SSE API.
 
 ## Install
 

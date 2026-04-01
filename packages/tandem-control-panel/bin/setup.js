@@ -192,7 +192,7 @@ const ACA_BASE_URL = String(process.env.ACA_BASE_URL || "")
 const CONTROL_PANEL_CONFIG_FILE = String(process.env.TANDEM_CONTROL_PANEL_CONFIG_FILE || "").trim();
 const CONTROL_PANEL_MODE = String(process.env.TANDEM_CONTROL_PANEL_MODE || "auto").trim();
 const DEFAULT_TANDEM_SEARCH_URL = (
-  process.env.TANDEM_SEARCH_URL || "https://search.tandem.frumu.ai"
+  process.env.TANDEM_SEARCH_URL || "https://search.tandem.ac"
 ).replace(/\/+$/, "");
 const SWARM_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-runs.json");
 const SWARM_HIDDEN_RUNS_PATH = resolve(

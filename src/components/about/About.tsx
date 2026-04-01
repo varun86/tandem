@@ -110,7 +110,7 @@ export function About() {
 
             <div className="mt-auto pt-6">
               <button
-                onClick={() => handleOpenExternal("https://tandem.frumu.ai/docs/")}
+                onClick={() => handleOpenExternal("https://docs.tandem.ac/")}
                 className="flex w-full items-center justify-center gap-3 rounded-lg bg-primary/20 px-6 py-3 text-primary transition-all hover:bg-primary/30 hover:shadow-[0_0_12px_rgba(59,130,246,0.45)]"
               >
                 <span className="font-medium tracking-wide">

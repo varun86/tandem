@@ -19,7 +19,7 @@
     "url": "git+https://github.com/frumu-ai/tandem.git",
     "directory": "packages/create-tandem-panel"
   },
-  "homepage": "https://tandem.frumu.ai",
+  "homepage": "https://tandem.ac",
   "author": "Frumu Ltd",
   "license": "MIT OR Apache-2.0",
   "publishConfig": {

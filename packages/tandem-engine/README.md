@@ -152,5 +152,5 @@ Common provider keys:
 
 ## Documentation
 
-- Project docs: https://tandem.frumu.ai/docs
+- Project docs: https://tandem.ac/docs
 - GitHub releases: https://github.com/frumu-ai/tandem/releases

@@ -7,7 +7,7 @@ Use Learn as the source of truth for click-through tutorials.
 
 ## Learn Hub
 
-- [Open Tandem Learn](https://tandem.frumu.ai/learn)
+- [Open Tandem Learn](https://tandem.ac/learn)
 
 ## Recommended Path
 
@@ -20,4 +20,4 @@ Use Learn as the source of truth for click-through tutorials.
 Learn currently hosts 14 interactive pages.
 For the complete list, use the Learn hub:
 
-- [tandem.frumu.ai/learn](https://tandem.frumu.ai/learn)
+- [tandem.ac/learn](https://tandem.ac/learn)

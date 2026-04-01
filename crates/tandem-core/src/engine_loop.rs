@@ -7774,13 +7774,13 @@ Call: todowrite(task_id=3, status="in_progress")
         let normalized = normalize_tool_args(
             "webfetch",
             json!({}),
-            "Please fetch `https://tandem.frumu.ai/docs/` in markdown mode",
+            "Please fetch `https://docs.tandem.ac/` in markdown mode",
             "",
         );
         assert!(!normalized.missing_terminal);
         assert_eq!(
             normalized.args.get("url").and_then(|v| v.as_str()),
-            Some("https://tandem.frumu.ai/docs/")
+            Some("https://docs.tandem.ac/")
         );
         assert_eq!(normalized.args_source, "inferred_from_user");
         assert_eq!(normalized.args_integrity, "recovered");

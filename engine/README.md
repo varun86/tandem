@@ -59,7 +59,7 @@ It re-ingests only when the embedded corpus hash changes.
 Use `TANDEM_DISABLE_DEFAULT_KNOWLEDGE=1` to disable this behavior.
 
 Canonical docs URLs attached to seeded chunks use:
-`https://tandem.docs.frumu.ai/`
+`https://docs.tandem.ac/`
 
 Regenerate the embedded bundle after docs changes:
 
@@ -96,5 +96,5 @@ cargo package -p tandem-ai
 
 ## Documentation
 
-- Project docs: https://tandem.frumu.ai/docs
+- Project docs: https://docs.tandem.ac/
 - GitHub releases: https://github.com/frumu-ai/tandem/releases

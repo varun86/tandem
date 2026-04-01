@@ -6,15 +6,11 @@ on:
   pull_request:
     branches: [main, feat/engine]
   workflow_dispatch:
-    inputs:
-      deploy_docs_preview:
-        description: "Deploy docs to GitHub Pages from this branch"
-        required: false
-        default: false
-        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
+  DOCS_SITE_URL: https://docs.tandem.ac/
+  DOCS_BASE_PATH: /
 
 permissions:
   contents: read
@@ -316,8 +312,8 @@ jobs:
       - name: Build docs
         working-directory: guide
         env:
-          DOCS_SITE_URL: https://tandem.docs.frumu.ai/
-          DOCS_BASE_PATH: /
+          DOCS_SITE_URL: ${{ env.DOCS_SITE_URL }}
+          DOCS_BASE_PATH: ${{ env.DOCS_BASE_PATH }}
         run: pnpm build
 
       - name: Type check docs
@@ -326,9 +322,7 @@ jobs:
 
   docs:
     name: Deploy Docs
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_docs_preview == 'true')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     needs: [lint-frontend, docs-validate]
     permissions:
@@ -368,8 +362,8 @@ jobs:
       - name: Build docs
         working-directory: guide
         env:
-          DOCS_SITE_URL: https://tandem.docs.frumu.ai/
-          DOCS_BASE_PATH: /
+          DOCS_SITE_URL: ${{ env.DOCS_SITE_URL }}
+          DOCS_BASE_PATH: ${{ env.DOCS_BASE_PATH }}
         run: pnpm build
 
       - name: Upload Pages artifact

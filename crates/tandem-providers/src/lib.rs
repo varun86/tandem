@@ -1131,7 +1131,7 @@ impl Provider for OpenAICompatibleProvider {
             }));
             if self.id == "openrouter" {
                 req = req
-                    .header("HTTP-Referer", "https://tandem.frumu.ai")
+                    .header("HTTP-Referer", "https://tandem.ac")
                     .header("X-Title", protocol_title_header());
             }
             if let Some(api_key) = &self.api_key {
@@ -1276,7 +1276,7 @@ impl Provider for OpenAICompatibleProvider {
             let mut req = self.client.post(url.clone()).json(&body);
             if self.id == "openrouter" {
                 req = req
-                    .header("HTTP-Referer", "https://tandem.frumu.ai")
+                    .header("HTTP-Referer", "https://tandem.ac")
                     .header("X-Title", protocol_title_header());
             }
             if let Some(api_key) = &self.api_key {

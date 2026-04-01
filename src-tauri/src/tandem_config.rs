@@ -180,7 +180,7 @@ pub fn ensure_schema(cfg: &mut Value) {
         return;
     };
     match obj.get("$schema") {
-        Some(Value::String(current)) if current.trim() == "https://tandem.frumu.ai/config.json" => {
+        Some(Value::String(current)) if current.trim() == "https://tandem.ac/config.json" => {
             obj.insert(
                 "$schema".to_string(),
                 Value::String("./config.schema.json".to_string()),

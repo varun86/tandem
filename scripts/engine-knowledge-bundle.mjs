@@ -4,7 +4,7 @@ import path from "node:path";
 
 export const GENERATOR_VERSION = "1";
 export const SCHEMA_VERSION = 1;
-export const DOCS_SITE_BASE_URL = "https://tandem.docs.frumu.ai/";
+export const DOCS_SITE_BASE_URL = "https://docs.tandem.ac/";
 export const SOURCE_ROOT = path.join("guide", "src", "content", "docs");
 export const BUNDLE_PATH = path.join("engine", "resources", "default_knowledge_bundle.json");
 export const MANIFEST_PATH = path.join("engine", "resources", "default_knowledge_manifest.json");

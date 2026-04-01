@@ -4454,15 +4454,15 @@ impl App {
                 // Open docs in default browser
                 #[cfg(target_os = "windows")]
                 let _ = std::process::Command::new("cmd")
-                    .args(["/C", "start", "https://tandem.docs.frumu.ai/"])
+                    .args(["/C", "start", "https://docs.tandem.ac/"])
                     .spawn();
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("open")
-                    .arg("https://tandem.docs.frumu.ai/")
+                    .arg("https://docs.tandem.ac/")
                     .spawn();
                 #[cfg(target_os = "linux")]
                 let _ = std::process::Command::new("xdg-open")
-                    .arg("https://tandem.docs.frumu.ai/")
+                    .arg("https://docs.tandem.ac/")
                     .spawn();
             }
             Action::CopyLastAssistant => {

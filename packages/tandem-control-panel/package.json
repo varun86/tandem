@@ -39,7 +39,7 @@
     "type": "git",
     "url": "git+https://github.com/frumu-ai/tandem.git"
   },
-  "homepage": "https://tandem.frumu.ai",
+  "homepage": "https://tandem.ac",
   "author": "Frumu Ltd",
   "dependencies": {
     "@fullcalendar/core": "6.1.20",

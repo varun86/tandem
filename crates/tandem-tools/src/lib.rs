@@ -475,7 +475,7 @@ fn search_backend_timeout_ms() -> u64 {
 }
 
 fn search_backend_from_tandem_env(timeout_ms: u64, allow_default_url: bool) -> SearchBackend {
-    const DEFAULT_TANDEM_SEARCH_URL: &str = "https://search.tandem.frumu.ai";
+    const DEFAULT_TANDEM_SEARCH_URL: &str = "https://search.tandem.ac";
     let base_url = std::env::var("TANDEM_SEARCH_URL")
         .ok()
         .map(|value| value.trim().trim_end_matches('/').to_string())
@@ -5231,13 +5231,13 @@ mod tests {
     fn search_backend_defaults_to_tandem_when_search_url_configured() {
         let _guard = search_env_lock().lock().expect("env lock");
         clear_search_env();
-        std::env::set_var("TANDEM_SEARCH_URL", "https://search.tandem.frumu.ai");
+        std::env::set_var("TANDEM_SEARCH_URL", "https://search.tandem.ac");
 
         let backend = SearchBackend::from_env();
 
         match backend {
             SearchBackend::Tandem { base_url, .. } => {
-                assert_eq!(base_url, "https://search.tandem.frumu.ai");
+                assert_eq!(base_url, "https://search.tandem.ac");
             }
             other => panic!("expected tandem backend, got {other:?}"),
         }
@@ -5386,7 +5386,7 @@ mod tests {
         let results = normalize_searxng_results(
             &[json!({
                 "title": "Tandem Docs",
-                "url": "https://tandem.docs.frumu.ai/",
+                "url": "https://docs.tandem.ac/",
                 "content": "Official documentation for Tandem.",
                 "engine": "duckduckgo"
             })],
@@ -5395,7 +5395,7 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Tandem Docs");
-        assert_eq!(results[0].url, "https://tandem.docs.frumu.ai/");
+        assert_eq!(results[0].url, "https://docs.tandem.ac/");
         assert_eq!(results[0].snippet, "Official documentation for Tandem.");
         assert_eq!(results[0].source, "searxng:duckduckgo");
     }

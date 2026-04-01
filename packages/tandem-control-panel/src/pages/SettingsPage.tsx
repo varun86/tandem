@@ -2696,7 +2696,7 @@ export function SettingsPage({
                           </span>
                           <input
                             className="tcp-input"
-                            placeholder="https://search.tandem.frumu.ai"
+                            placeholder="https://search.tandem.ac"
                             value={searchTandemUrl}
                             onInput={(e) =>
                               setSearchTandemUrl((e.target as HTMLInputElement).value)

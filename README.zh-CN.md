@@ -2,7 +2,7 @@
   <img src=".github/assets/logo.png" alt="Tandem Logo" width="500">
   
   <p>
-    <a href="https://tandem.frumu.ai/"><img src="https://img.shields.io/website?url=https%3A%2F%2Ftandem.frumu.ai%2F&label=tandem.frumu.ai&logo=firefox&style=for-the-badge" alt="Website"></a>
+    <a href="https://tandem.ac/"><img src="https://img.shields.io/website?url=https%3A%2F%2Ftandem.ac%2F&label=tandem.ac&logo=firefox&style=for-the-badge" alt="Website"></a>
     <a href="https://github.com/frumu-ai/tandem/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/frumu-ai/tandem/ci.yml?branch=main&label=CI&style=for-the-badge" alt="CI"></a>
     <a href="https://github.com/frumu-ai/tandem/actions/workflows/publish-registries.yml"><img src="https://img.shields.io/github/actions/workflow/status/frumu-ai/tandem/publish-registries.yml?branch=main&label=Publish%20Registries&style=for-the-badge" alt="Registry Publish"></a>
     <a href="https://github.com/frumu-ai/tandem/releases"><img src="https://img.shields.io/github/v/release/frumu-ai/tandem?label=release&style=for-the-badge" alt="Latest Release"></a>
@@ -90,7 +90,7 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
             print(event.properties.get("delta", ""), end="", flush=True)
 ```
 
-**→ [下载桌面版](https://tandem.frumu.ai/) · [5 分钟部署到 VPS](examples/agent-quickstart/) · [阅读文档](https://tandem.docs.frumu.ai/)**
+**→ [下载桌面版](https://tandem.ac/) · [5 分钟部署到 VPS](examples/agent-quickstart/) · [阅读文档](https://docs.tandem.ac/)**
 
 <div align="center">
   <img src=".github/assets/app.png" alt="Tandem AI Workspace" width="90%">

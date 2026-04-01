@@ -1,6 +1,6 @@
 # @frumu/tandem-client
 
-TypeScript / Node.js client for the [Tandem](https://tandem.frumu.ai/) autonomous agent engine HTTP + SSE API.
+TypeScript / Node.js client for the [Tandem](https://tandem.ac/) autonomous agent engine HTTP + SSE API.
 
 ## Install
 

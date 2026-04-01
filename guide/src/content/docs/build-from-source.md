@@ -63,16 +63,16 @@ From `guide/`:
 
 ```bash
 pnpm install
-DOCS_SITE_URL=https://tandem.docs.frumu.ai/ DOCS_BASE_PATH=/ pnpm build
+DOCS_SITE_URL=https://docs.tandem.ac/ DOCS_BASE_PATH=/ pnpm build
 ```
 
 Notes:
 
-- Root-hosted docs (`https://tandem.docs.frumu.ai/`) should use `DOCS_BASE_PATH=/`.
-- Reverse-proxy docs at subpath (`https://tandem.frumu.ai/docs/`) should use:
+- Root-hosted docs (`https://docs.tandem.ac/`) should use `DOCS_BASE_PATH=/`.
+- Reverse-proxy docs at a subpath on another host should use:
 
 ```bash
-DOCS_SITE_URL=https://tandem.frumu.ai/ DOCS_BASE_PATH=/docs/ pnpm build
+DOCS_SITE_URL=https://example.com/ DOCS_BASE_PATH=/docs/ pnpm build
 ```
 
 - Whatever base path you build with, your proxy/static host must serve both:

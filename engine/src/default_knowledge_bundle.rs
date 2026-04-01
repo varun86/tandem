@@ -112,7 +112,7 @@ mod tests {
     use super::*;
 
     fn docs_url_for_relative_path(relative_path: &str) -> String {
-        let base = "https://tandem.docs.frumu.ai/";
+        let base = "https://docs.tandem.ac/";
         let mut slug = relative_path.replace('\\', "/");
         if let Some(stripped) = slug.strip_suffix(".md") {
             slug = stripped.to_string();
@@ -141,15 +141,15 @@ mod tests {
     fn docs_url_mapping_expected_shapes() {
         assert_eq!(
             docs_url_for_relative_path("index.md"),
-            "https://tandem.docs.frumu.ai/"
+            "https://docs.tandem.ac/"
         );
         assert_eq!(
             docs_url_for_relative_path("reference/index.md"),
-            "https://tandem.docs.frumu.ai/reference"
+            "https://docs.tandem.ac/reference"
         );
         assert_eq!(
             docs_url_for_relative_path("desktop/overview.md"),
-            "https://tandem.docs.frumu.ai/desktop/overview"
+            "https://docs.tandem.ac/desktop/overview"
         );
     }
 

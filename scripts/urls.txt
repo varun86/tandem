@@ -1,7 +1,7 @@
 https://frumu.ai/
-https://tandem.frumu.ai/
-https://tandem.frumu.ai/learn
-https://tandem.frumu.ai/sitemap.xml
+https://tandem.ac/
+https://tandem.ac/learn
+https://tandem.ac/sitemap.xml
 https://www.rust-lang.org/
 https://doc.rust-lang.org/book/
 https://doc.rust-lang.org/std/

@@ -121,7 +121,7 @@ const MEMORY_EXAMPLES: &str = r#"Examples:
 
 const DEFAULT_KNOWLEDGE_SOURCE_PREFIX: &str = "guide_docs:";
 const DEFAULT_KNOWLEDGE_STATE_FILE: &str = "default_knowledge_state.json";
-const DEFAULT_KNOWLEDGE_DOCS_SITE_BASE_URL: &str = "https://tandem.docs.frumu.ai/";
+const DEFAULT_KNOWLEDGE_DOCS_SITE_BASE_URL: &str = "https://docs.tandem.ac/";
 
 #[derive(Parser, Debug)]
 #[command(name = "tandem-engine")]

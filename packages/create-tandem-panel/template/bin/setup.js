@@ -175,7 +175,7 @@ const ENGINE_URL = (
   process.env.TANDEM_ENGINE_URL || `http://${ENGINE_HOST}:${ENGINE_PORT}`
 ).replace(/\/+$/, "");
 const DEFAULT_TANDEM_SEARCH_URL = (
-  process.env.TANDEM_SEARCH_URL || "https://search.tandem.frumu.ai"
+  process.env.TANDEM_SEARCH_URL || "https://search.tandem.ac"
 ).replace(/\/+$/, "");
 const SWARM_RUNS_PATH = resolve(homedir(), ".tandem", "control-panel", "swarm-runs.json");
 const SWARM_HIDDEN_RUNS_PATH = resolve(

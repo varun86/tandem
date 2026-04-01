@@ -55,5 +55,5 @@ cargo package -p tandem-tui
 
 ## Documentation
 
-- Project docs: https://tandem.frumu.ai/docs
+- Project docs: https://docs.tandem.ac/
 - GitHub releases: https://github.com/frumu-ai/tandem/releases

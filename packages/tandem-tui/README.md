@@ -70,5 +70,5 @@ On first run, the setup wizard walks you through selecting a provider, entering 
 
 ## Documentation
 
-- TUI guide and reference: https://tandem.frumu.ai/docs
+- TUI guide and reference: https://tandem.ac/docs
 - GitHub releases: https://github.com/frumu-ai/tandem/releases

@@ -2000,7 +2000,7 @@ export function Settings({
                     <div className="grid gap-4 md:grid-cols-2">
                       <Input
                         label="Tandem search URL"
-                        placeholder="https://search.tandem.frumu.ai"
+                        placeholder="https://search.tandem.ac"
                         value={searchSettingsState.tandem_url ?? ""}
                         onChange={(e) =>
                           setSearchSettingsState((prev) =>
