@@ -15,9 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mission/workflow handoff hardening**:
   - Added explicit execution-kind markers and mission coder handoff summaries so mission/workflow nodes can distinguish coder-run work from governance steps.
   - Added regressions that preserve lane, phase, milestone, and launch metadata across mission preview and task-routing boundaries.
-- **ACA task-first orchestration alignment**:
-  - Added a Tandem SDK helper for task-intake preview plus GitHub Project context propagation so ACA can keep task-first intake and preserve project name and column metadata.
-  - Updated internal planning and kanban docs to keep the external orchestration boundary explicit and avoid moving the coding loop into mission/workflow ownership.
 
 ## [0.4.17] - 2026-03-28
 
