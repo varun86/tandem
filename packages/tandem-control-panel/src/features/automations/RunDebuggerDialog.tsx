@@ -265,7 +265,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
           <div className="grid min-h-full content-start gap-3">
             <WorkflowRunSummaryPanel runSummaryRows={runSummaryRows} />
             {isWorkflowRun ? (
-              <div className="tcp-list-item overflow-visible">
+              <div className="tcp-list-item">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="font-medium">Workflow Board</div>

@@ -63,15 +63,18 @@ function TaskCard({
       : "";
   return (
     <div
-      className={`cursor-pointer rounded-lg border p-2 ${taskCardClass(
+      className={`min-w-0 overflow-hidden cursor-pointer rounded-lg border p-2 ${taskCardClass(
         task.state,
         isCurrent,
         Boolean(isSelected)
       )}`}
       onClick={() => onTaskSelect?.(task)}
     >
-      <div className="mb-1 flex items-start justify-between gap-2">
-        <div className="line-clamp-6 text-xs font-medium leading-snug" title={task.title}>
+      <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
+        <div
+          className="min-w-0 line-clamp-6 break-words text-xs font-medium leading-snug"
+          title={task.title}
+        >
           {task.title}
         </div>
         <span className={`${statusClass(task.state)} inline-flex shrink-0 items-center gap-1`}>
@@ -80,10 +83,10 @@ function TaskCard({
         </span>
       </div>
       {task.description ? (
-        <div className="tcp-subtle line-clamp-2 text-xs">{task.description}</div>
+        <div className="tcp-subtle line-clamp-2 break-words text-xs">{task.description}</div>
       ) : null}
       {task.assigned_role || task.gate ? (
-        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-300">
+        <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
           {task.assigned_role ? (
             <span className="rounded border border-cyan-600/50 bg-cyan-950/30 px-1.5 py-0.5">
               role: {task.assigned_role}
@@ -97,7 +100,7 @@ function TaskCard({
         </div>
       ) : null}
       {workflowSummary && workflowSummary.runs > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-300">
+        <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
           <span className="rounded border border-indigo-600/50 bg-indigo-950/30 px-1.5 py-0.5">
             workflow runs: {workflowSummary.runs}
           </span>
@@ -110,11 +113,13 @@ function TaskCard({
       ) : null}
       {error ? (
         <div
-          className={`mt-1 text-xs ${
+          className={`mt-1 min-w-0 text-xs ${
             task.state === "blocked" ? "text-emerald-200/90" : "text-rose-300"
           }`}
         >
-          <div className={expanded ? "whitespace-pre-wrap break-words" : "line-clamp-2"}>
+          <div
+            className={expanded ? "whitespace-pre-wrap break-words" : "line-clamp-2 break-words"}
+          >
             {error}
           </div>
           {error.length > 130 ? (
@@ -127,7 +132,7 @@ function TaskCard({
           ) : null}
         </div>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-1">
+      <div className="mt-2 flex min-w-0 flex-wrap gap-1">
         {task.dependencies.slice(0, 2).map((dep) => (
           <span
             key={dep}
