@@ -29,7 +29,7 @@ This is the canonical release-notes file used by release tooling.
   - Improved transcript differentiation for tool-focused system messages and governance/operator-action-required messages with clearer badges.
   - Improved generic command/tool output rendering with stable head/tail truncation so transcript history stays readable during long runs.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, concise summaries, and focused next steps.
-  - Continued moving low-risk slash commands out of `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, and the routine-management command family.
+  - Continued moving low-risk slash commands out of `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
 
 - **Installed desktop startup black-screen after vault unlock**
   - Added a timeout to installed-build sidecar release discovery so a stalled GitHub metadata lookup cannot hold the Tauri app on a black screen after passcode unlock.

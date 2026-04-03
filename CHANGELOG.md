@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved long command/tool result rendering with stable head/tail truncation so operators can see both the opening context and the final output without flooding narrow terminals.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, status summaries, and focused next steps.
   - Continued landing new TUI behavior in modular UI and activity files rather than growing `app.rs`, matching the current maintainability plan.
-  - Continued extracting low-risk slash commands from `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, and the routine-management command family.
+  - Continued extracting low-risk slash commands from `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
 
 ### Fixed
 
