@@ -33,6 +33,14 @@ This is the canonical release-notes file used by release tooling.
   - Moved Create-tab catalog loading to the background/on-demand path so Calendar, My Automations, and Live Tasks render sooner.
   - Replaced per-automation run-history fan-out with a single bulk runs request and fixed Windows absolute-path validation for automation workspace roots.
 
+- **Desktop automation MCP and provider/model selection**
+  - Updated automation setup to merge configured global and project MCP servers with runtime MCP status so connected configured servers appear in the Allowed MCP Servers picker.
+  - Added fallback provider/model catalog loading from configured providers and discovered models so workflow and planner selectors can populate even when the runtime provider catalog is empty or late.
+
+- **Desktop settings provider model search**
+  - Expanded free-form provider model suggestions to merge live catalog results, current values, curated fallbacks, and discovered Ollama models.
+  - Added native typeahead suggestion backing so typing a model name in settings surfaces the fuller provider model list expected from the control-panel experience.
+
 ## v0.4.19 (Released 2026-04-02)
 
 - **Production desktop black-screen startup regression**

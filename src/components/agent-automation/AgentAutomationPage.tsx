@@ -57,15 +57,21 @@ import {
   automationsV2RunsAll,
   automationsV2Update,
   getSessionMessages,
+  getProvidersConfig,
   listProvidersFromSidecar,
+  listModels,
   mcpListServers,
   onSidecarEventV2,
+  opencodeListMcpServers,
   routinesList,
   toolIds,
   type AutomationV2RunRecord,
   type AutomationV2Spec,
   type McpServerRecord,
+  type ModelInfo,
+  type OpencodeMcpServerEntry,
   type ProviderInfo,
+  type ProvidersConfig,
   type RoutineSpec,
   type SessionMessage,
   type UserProject,
@@ -178,6 +184,152 @@ async function withFallback<T>(operation: Promise<T>, fallback: T, timeoutMs = 8
       window.setTimeout(() => resolve(fallback), timeoutMs);
     }),
   ]);
+}
+
+function normalizeProviderId(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "opencode") return "opencode_zen";
+  if (trimmed === "llama.cpp") return "llama_cpp";
+  return trimmed;
+}
+
+function getProviderConfigById(
+  providersConfig: ProvidersConfig | null,
+  providerId: string
+): { enabled?: boolean; has_key?: boolean; default?: boolean } | null {
+  if (!providersConfig) return null;
+  switch (providerId) {
+    case "openrouter":
+      return providersConfig.openrouter;
+    case "opencode_zen":
+      return providersConfig.opencode_zen;
+    case "anthropic":
+      return providersConfig.anthropic;
+    case "openai":
+      return providersConfig.openai;
+    case "llama_cpp":
+      return providersConfig.llama_cpp;
+    case "ollama":
+      return providersConfig.ollama;
+    case "poe":
+      return providersConfig.poe;
+    default:
+      return null;
+  }
+}
+
+function buildFallbackProviderCatalog(
+  modelRows: ModelInfo[],
+  providersConfig: ProvidersConfig | null
+): ProviderInfo[] {
+  const groupedModels = new Map<string, Set<string>>();
+  for (const row of modelRows) {
+    const providerId = normalizeProviderId(row.provider || "");
+    const modelId = String(row.id || row.name || "").trim();
+    if (!providerId || !modelId) continue;
+    const current = groupedModels.get(providerId) ?? new Set<string>();
+    current.add(modelId);
+    groupedModels.set(providerId, current);
+  }
+
+  const providerIds = new Set<string>(groupedModels.keys());
+  if (providersConfig?.selected_model?.provider_id) {
+    providerIds.add(normalizeProviderId(providersConfig.selected_model.provider_id));
+  }
+  for (const providerId of [
+    "openrouter",
+    "opencode_zen",
+    "anthropic",
+    "openai",
+    "llama_cpp",
+    "ollama",
+    "poe",
+  ]) {
+    const config = getProviderConfigById(providersConfig, providerId);
+    if (config?.enabled || config?.has_key || config?.default) {
+      providerIds.add(providerId);
+    }
+  }
+
+  return Array.from(providerIds)
+    .filter(Boolean)
+    .map((providerId) => {
+      const config = getProviderConfigById(providersConfig, providerId);
+      return {
+        id: providerId,
+        name: providerId,
+        models: Array.from(groupedModels.get(providerId) ?? []).sort((a, b) => a.localeCompare(b)),
+        configured: Boolean(config?.enabled || config?.has_key || config?.default),
+      };
+    })
+    .filter((provider) => provider.configured || provider.models.length > 0)
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.configured)) - Number(Boolean(a.configured)) || a.id.localeCompare(b.id)
+    );
+}
+
+function getConfiguredMcpTransport(config: Record<string, unknown>) {
+  const type = String(config?.type || "").trim();
+  if (type) return type;
+  if (typeof config?.url === "string") return "remote";
+  if (Array.isArray((config as { command?: unknown }).command)) return "local";
+  return "configured";
+}
+
+function buildConfiguredMcpServerCatalog(
+  runtimeRows: McpServerRecord[],
+  configuredRows: OpencodeMcpServerEntry[]
+): McpServerRecord[] {
+  const runtimeByName = new Map(runtimeRows.map((row) => [row.name, row] as const));
+  const configuredByName = new Map<string, OpencodeMcpServerEntry>();
+  for (const row of configuredRows) {
+    const name = String(row.name || "").trim();
+    if (!name) continue;
+    configuredByName.set(name, row);
+  }
+
+  const merged: McpServerRecord[] = Array.from(configuredByName.values()).map((row) => {
+    const runtime = runtimeByName.get(row.name);
+    return {
+      name: row.name,
+      transport: getConfiguredMcpTransport(row.config),
+      enabled:
+        typeof row.config?.enabled === "boolean"
+          ? Boolean(row.config.enabled)
+          : (runtime?.enabled ?? true),
+      connected: runtime?.connected ?? false,
+      pid: runtime?.pid,
+      last_error: runtime?.last_error,
+      headers: runtime?.headers ?? {},
+      tool_cache: runtime?.tool_cache ?? [],
+      tools_fetched_at_ms: runtime?.tools_fetched_at_ms,
+    };
+  });
+
+  for (const runtime of runtimeRows) {
+    if (!configuredByName.has(runtime.name)) {
+      merged.push({
+        name: runtime.name,
+        transport: runtime.transport,
+        enabled: runtime.enabled,
+        connected: runtime.connected,
+        pid: runtime.pid,
+        last_error: runtime.last_error,
+        headers: runtime.headers,
+        tool_cache: runtime.tool_cache,
+        tools_fetched_at_ms: runtime.tools_fetched_at_ms,
+      });
+    }
+  }
+
+  return merged.sort(
+    (a, b) =>
+      Number(Boolean(b.connected)) - Number(Boolean(a.connected)) ||
+      Number(Boolean(b.enabled)) - Number(Boolean(a.enabled)) ||
+      a.name.localeCompare(b.name)
+  );
 }
 
 function validateModelInput(provider: string, model: string) {
@@ -936,8 +1088,26 @@ export function AgentAutomationPage({
     setCatalogLoading(true);
     try {
       const [providerRows, mcpRows, toolRows] = await Promise.all([
-        withFallback(listProvidersFromSidecar(), [] as ProviderInfo[]),
-        withFallback(mcpListServers(), [] as McpServerRecord[]),
+        (async () => {
+          const runtimeProviders = await withFallback(
+            listProvidersFromSidecar(),
+            [] as ProviderInfo[]
+          );
+          if (runtimeProviders.length > 0) return runtimeProviders;
+          const [modelRows, providersConfig] = await Promise.all([
+            withFallback(listModels(), [] as ModelInfo[]),
+            withFallback(getProvidersConfig(), null as ProvidersConfig | null),
+          ]);
+          return buildFallbackProviderCatalog(modelRows, providersConfig);
+        })(),
+        (async () => {
+          const [runtimeRows, globalRows, projectRows] = await Promise.all([
+            withFallback(mcpListServers(), [] as McpServerRecord[]),
+            withFallback(opencodeListMcpServers("global"), [] as OpencodeMcpServerEntry[]),
+            withFallback(opencodeListMcpServers("project"), [] as OpencodeMcpServerEntry[]),
+          ]);
+          return buildConfiguredMcpServerCatalog(runtimeRows, [...globalRows, ...projectRows]);
+        })(),
         withFallback(toolIds(), [] as string[]),
       ]);
       setProviders(providerRows);

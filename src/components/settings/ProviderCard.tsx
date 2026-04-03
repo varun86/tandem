@@ -88,6 +88,18 @@ const TEXT_INPUT_PROVIDERS = [
   "opencode_zen",
 ];
 
+function mergeUniqueModelValues(values: string[], currentValue: string) {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const raw of [currentValue, ...values]) {
+    const value = String(raw || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    merged.push(value);
+  }
+  return merged;
+}
+
 interface ProviderCardProps {
   id: ApiKeyType;
   name: string;
@@ -145,7 +157,6 @@ export function ProviderCard({
   const staticModels: ModelOption[] = PROVIDER_MODELS[id] || [];
   const catalogModels = [...new Set(catalogModelIds.map((m) => m.trim()).filter(Boolean))];
   const curatedSuggestions = SUGGESTED_MODELS[id] || [];
-  const preferCuratedSuggestions = id === "anthropic" || id === "openai";
   const availableModels: ModelOption[] =
     catalogModels.length > 0
       ? catalogModels.map((modelId) => ({
@@ -154,15 +165,17 @@ export function ProviderCard({
         }))
       : staticModels;
 
-  // Use discovered models for Ollama suggestions, otherwise fallback to static ones
-  const suggestions =
-    id === "ollama" && discoveredModels.length > 0
-      ? discoveredModels.map((m) => m.id)
-      : preferCuratedSuggestions
-        ? [...new Set([...curatedSuggestions, ...catalogModels])]
-        : catalogModels.length > 0
-          ? catalogModels
-          : curatedSuggestions;
+  const allSuggestionValues = mergeUniqueModelValues(
+    [
+      ...(id === "ollama" ? discoveredModels.map((entry) => entry.id) : []),
+      ...catalogModels,
+      ...availableModels.map((entry) => entry.id),
+      ...curatedSuggestions,
+      ...staticModels.map((entry) => entry.id),
+    ],
+    modelInput
+  );
+  const suggestionListId = `${id}-model-suggestions`;
   const modelInputPlaceholder =
     id === "openrouter"
       ? t("providerCard.placeholders.modelOpenRouter", { ns: "settings" })
@@ -179,7 +192,7 @@ export function ProviderCard({
   const requiresApiKey = id !== "ollama" && id !== "llama_cpp";
 
   // Filter suggestions based on input
-  const filteredSuggestions = suggestions.filter((s) =>
+  const filteredSuggestions = allSuggestionValues.filter((s) =>
     s.toLowerCase().includes(modelInput.toLowerCase())
   );
 
@@ -358,6 +371,8 @@ export function ProviderCard({
                   <div className="relative">
                     <Input
                       type="text"
+                      list={suggestionListId}
+                      autoComplete="off"
                       placeholder={modelInputPlaceholder}
                       value={modelInput}
                       onChange={(e) => {
@@ -376,6 +391,11 @@ export function ProviderCard({
                         }
                       }}
                     />
+                    <datalist id={suggestionListId}>
+                      {allSuggestionValues.map((value) => (
+                        <option key={value} value={value} />
+                      ))}
+                    </datalist>
                     {modelInput !== model && modelInput.trim() && (
                       <Button
                         size="sm"
@@ -400,7 +420,8 @@ export function ProviderCard({
                           className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg"
                         >
                           <p className="px-3 py-1.5 text-xs text-text-subtle border-b border-border">
-                            {t("providerCard.suggestions", { ns: "settings" })}
+                            {t("providerCard.suggestions", { ns: "settings" })} (
+                            {filteredSuggestions.length})
                           </p>
                           {filteredSuggestions.map((s) => (
                             <button

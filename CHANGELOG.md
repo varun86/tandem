@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reworked the automation page so the main load path waits only for automation overview data while provider, MCP, and tool catalogs load in the background or on demand for the Create tab.
   - Replaced per-automation run-history fan-out with a single bulk runs request, reducing refresh work for Calendar, My Automations, and Live Tasks.
   - Fixed workspace-root validation to accept Windows absolute paths in desktop automation flows instead of treating only Unix-style paths as valid.
+- **Desktop automation MCP and model selection gaps**:
+  - Merged configured global/project MCP servers with runtime MCP status so automation setup now shows connected configured servers even when runtime registration is delayed or incomplete.
+  - Added provider/model catalog fallback loading from configured providers and discovered models so workflow and planner model selectors are no longer stuck on engine defaults when the runtime provider list is empty.
+- **Desktop settings provider model lookup**:
+  - Expanded provider model suggestions to merge live catalog entries, current values, curated fallbacks, and discovered Ollama models so typing in settings surfaces the fuller model list expected from the control panel flow.
+  - Added native input suggestion backing for free-form provider model fields so large provider catalogs can be searched directly while preserving the existing inline picker behavior.
 
 ## [0.4.19] - 2026-04-02
 
