@@ -12,7 +12,7 @@ function unique(values) {
 }
 
 const toolsSource = read("crates/tandem-tools/src/lib.rs");
-const tuiSource = read("crates/tandem-tui/src/app.rs");
+const tuiSource = read("crates/tandem-tui/src/command_catalog.rs");
 const engineSource = read("engine/src/main.rs");
 
 const toolsDoc = read("guide/src/content/docs/reference/tools.md");
@@ -27,7 +27,9 @@ const commandHelpBlock = tuiSource.match(
   /pub const COMMAND_HELP:[\s\S]*?=\s*&\[(?<block>[\s\S]*?)\];/,
 );
 if (!commandHelpBlock?.groups?.block) {
-  console.error("Could not parse COMMAND_HELP from crates/tandem-tui/src/app.rs");
+  console.error(
+    "Could not parse COMMAND_HELP from crates/tandem-tui/src/command_catalog.rs",
+  );
   process.exit(1);
 }
 const slashCommands = unique(

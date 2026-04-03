@@ -275,6 +275,30 @@ Switch current chat to an existing session.
 /use 1aa70178-...
 ```
 
+### `/recent`
+
+List recently used slash commands and show replay helpers.
+
+```text
+/recent
+```
+
+### `/recent run <index>`
+
+Replay a previously used slash command by its 1-based index.
+
+```text
+/recent run 1
+```
+
+### `/recent clear`
+
+Clear stored recent slash-command history.
+
+```text
+/recent clear
+```
+
 ### `/title <new title...>`
 
 Rename current session.
