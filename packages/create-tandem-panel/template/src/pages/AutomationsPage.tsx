@@ -90,13 +90,20 @@ interface WizardState {
 interface ProviderOption {
   id: string;
   models: string[];
+  configured?: boolean;
 }
 
 interface McpServerOption {
   name: string;
   connected: boolean;
   enabled: boolean;
+  scope?: "global" | "project" | "runtime";
 }
+
+type ConfiguredMcpServerEntry = {
+  name: string;
+  config?: Record<string, any> | null;
+};
 
 interface WorkflowEditDraft {
   automationId: string;
@@ -282,6 +289,28 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
   return [];
+}
+
+function getTauriInvoke():
+  | ((command: string, args?: Record<string, unknown>) => Promise<any>)
+  | null {
+  const tauriWindow = window as any;
+  const invoke =
+    tauriWindow?.__TAURI__?.core?.invoke || tauriWindow?.__TAURI_INTERNALS__?.invoke || null;
+  return typeof invoke === "function" ? invoke : null;
+}
+
+async function listConfiguredMcpServers(
+  scope: "global" | "project"
+): Promise<ConfiguredMcpServerEntry[]> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return [];
+  try {
+    const rows = await invoke("opencode_list_mcp_servers", { scope });
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
 }
 
 function toSchedulePayload(wizard: WizardState) {
@@ -1684,12 +1713,21 @@ function Step3Mode({
             <select
               className="tcp-input text-sm"
               value={providerId}
-              onInput={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
+              onInput={(e) => {
+                const provider = (e.target as HTMLSelectElement).value;
+                const nextModels =
+                  providerOptions.find((option) => option.id === provider)?.models || [];
+                onProviderChange(provider);
+                if (provider && !nextModels.includes(modelId)) {
+                  onModelChange(nextModels[0] || "");
+                }
+              }}
             >
               <option value="">Use workspace default</option>
               {providerOptions.map((provider) => (
                 <option key={provider.id} value={provider.id}>
                   {provider.id}
+                  {provider.configured === false ? " (not configured)" : ""}
                 </option>
               ))}
             </select>
@@ -1726,12 +1764,21 @@ function Step3Mode({
               <select
                 className="tcp-input text-sm"
                 value={plannerProviderId}
-                onInput={(e) => onPlannerProviderChange((e.target as HTMLSelectElement).value)}
+                onInput={(e) => {
+                  const provider = (e.target as HTMLSelectElement).value;
+                  const nextModels =
+                    providerOptions.find((option) => option.id === provider)?.models || [];
+                  onPlannerProviderChange(provider);
+                  if (provider && !nextModels.includes(plannerModelId)) {
+                    onPlannerModelChange(nextModels[0] || "");
+                  }
+                }}
               >
                 <option value="">Disabled</option>
                 {providerOptions.map((provider) => (
                   <option key={`planner-${provider.id}`} value={provider.id}>
                     {provider.id}
+                    {provider.configured === false ? " (not configured)" : ""}
                   </option>
                 ))}
               </select>
@@ -1832,7 +1879,12 @@ function Step3Mode({
                   className={`tcp-btn h-7 px-2 text-xs ${isSelected ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
                   onClick={() => onToggleMcpServer(server.name)}
                 >
-                  {server.name} {server.connected ? "• connected" : "• disconnected"}
+                  {server.name} {server.connected ? "• connected" : "• configured"}
+                  {server.scope === "global"
+                    ? " • global"
+                    : server.scope === "project"
+                      ? " • project"
+                      : ""}
                 </button>
               );
             })}
@@ -2439,6 +2491,16 @@ function CreateWizard({
     queryFn: () => client.mcp.list().catch(() => ({})),
     refetchInterval: 12000,
   });
+  const configuredGlobalMcpQuery = useQuery({
+    queryKey: ["desktop", "config", "mcp", "global"],
+    queryFn: () => listConfiguredMcpServers("global"),
+    refetchInterval: 12000,
+  });
+  const configuredProjectMcpQuery = useQuery({
+    queryKey: ["desktop", "config", "mcp", "project"],
+    queryFn: () => listConfiguredMcpServers("project"),
+    refetchInterval: 12000,
+  });
 
   const healthQuery = useQuery({
     queryKey: ["global", "health"],
@@ -2458,19 +2520,71 @@ function CreateWizard({
     const rows = Array.isArray(providersCatalogQuery.data?.all)
       ? providersCatalogQuery.data.all
       : [];
-    return rows
+    const configProviders =
+      ((providersConfigQuery.data as any)?.providers as Record<string, any> | undefined) || {};
+    const mapped = rows
       .map((provider: any) => ({
         id: String(provider?.id || "").trim(),
         models: Object.keys(provider?.models || {}),
+        configured: !!configProviders[String(provider?.id || "").trim()],
       }))
       .filter((provider: ProviderOption) => !!provider.id)
       .sort((a: ProviderOption, b: ProviderOption) => a.id.localeCompare(b.id));
-  }, [providersCatalogQuery.data]);
+    Object.entries(configProviders).forEach(([providerId, value]) => {
+      const cleanId = String(providerId || "").trim();
+      if (!cleanId || mapped.some((provider) => provider.id === cleanId)) return;
+      mapped.push({
+        id: cleanId,
+        models: [
+          String((value as any)?.default_model || (value as any)?.defaultModel || "").trim(),
+        ].filter(Boolean),
+        configured: true,
+      });
+    });
+    if (defaultProvider && !mapped.some((provider) => provider.id === defaultProvider)) {
+      mapped.unshift({
+        id: defaultProvider,
+        models: defaultModel ? [defaultModel] : [],
+        configured: true,
+      });
+    }
+    return mapped.sort((a: ProviderOption, b: ProviderOption) => a.id.localeCompare(b.id));
+  }, [defaultModel, defaultProvider, providersCatalogQuery.data, providersConfigQuery.data]);
 
-  const mcpServers = useMemo(
-    () => normalizeMcpServers(mcpServersQuery.data),
-    [mcpServersQuery.data]
-  );
+  const mcpServers = useMemo(() => {
+    const runtimeServers = normalizeMcpServers(mcpServersQuery.data);
+    const byName = new Map<string, McpServerOption>();
+    runtimeServers.forEach((server) => {
+      byName.set(server.name, { ...server, scope: "runtime" });
+    });
+
+    const mergeConfigured = (rows: ConfiguredMcpServerEntry[], scope: "global" | "project") => {
+      rows.forEach((row) => {
+        const name = String(row?.name || "").trim();
+        if (!name) return;
+        const config =
+          row?.config && typeof row.config === "object" ? (row.config as Record<string, any>) : {};
+        const existing = byName.get(name);
+        byName.set(name, {
+          name,
+          connected: existing?.connected || false,
+          enabled: config.enabled !== false && existing?.enabled !== false,
+          scope: existing?.scope === "runtime" ? existing.scope : scope,
+        });
+      });
+    };
+
+    mergeConfigured(
+      Array.isArray(configuredGlobalMcpQuery.data) ? configuredGlobalMcpQuery.data : [],
+      "global"
+    );
+    mergeConfigured(
+      Array.isArray(configuredProjectMcpQuery.data) ? configuredProjectMcpQuery.data : [],
+      "project"
+    );
+
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [configuredGlobalMcpQuery.data, configuredProjectMcpQuery.data, mcpServersQuery.data]);
   const workspaceDirectories = Array.isArray(workspaceBrowserQuery.data?.directories)
     ? workspaceBrowserQuery.data.directories
     : [];
@@ -7735,8 +7849,8 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
                     Builder Mode
                   </div>
                   <div className="tcp-subtle text-xs">
-                    Keep the simple wizard for quick automations, or switch to the advanced swarm
-                    builder for orchestrated mission planning.
+                    Keep the simple wizard for quick automations, or switch to the mission builder
+                    for orchestrated mission planning.
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -7762,7 +7876,7 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
                       }`}
                       onClick={() => setCreateMode("advanced")}
                     >
-                      Advanced Swarm Builder
+                      Mission Builder
                     </button>
                   </div>
                 </div>

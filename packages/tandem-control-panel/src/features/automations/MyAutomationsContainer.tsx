@@ -919,12 +919,46 @@ export function MyAutomationsContainer({
   );
   const workflowRuns = toArray(workflowRunsQuery.data, "runs");
   const runs = useMemo(() => {
+    const automationNamesById = new Map<string, string>();
+    for (const automation of automations) {
+      const automationId = String(
+        automation?.automation_id || automation?.routine_id || automation?.id || ""
+      ).trim();
+      const automationName = String(automation?.name || automation?.title || "").trim();
+      if (automationId && automationName && !automationNamesById.has(automationId)) {
+        automationNamesById.set(automationId, automationName);
+      }
+    }
+    for (const automation of automationsV2) {
+      const automationId = String(
+        automation?.automation_id || automation?.automationId || automation?.id || ""
+      ).trim();
+      const automationName = String(automation?.name || automation?.title || "").trim();
+      if (automationId && automationName && !automationNamesById.has(automationId)) {
+        automationNamesById.set(automationId, automationName);
+      }
+    }
     const all = [...legacyRuns, ...workflowRuns];
     const byId = new Map<string, any>();
     for (const run of all) {
       const runId = String(run?.run_id || run?.runId || run?.id || "").trim();
       if (!runId) continue;
-      if (!byId.has(runId)) byId.set(runId, run);
+      if (byId.has(runId)) continue;
+      const automationId = String(run?.automation_id || run?.routine_id || "").trim();
+      const automationName =
+        String(run?.automation_name || run?.automationName || "").trim() ||
+        automationNamesById.get(automationId) ||
+        "";
+      byId.set(
+        runId,
+        automationName
+          ? {
+              ...run,
+              automation_name: automationName,
+              automationName,
+            }
+          : run
+      );
     }
     return Array.from(byId.values()).sort((a: any, b: any) => {
       const aAt = normalizeTimestamp(
@@ -935,7 +969,7 @@ export function MyAutomationsContainer({
       );
       return bAt - aAt;
     });
-  }, [legacyRuns, normalizeTimestamp, workflowRuns]);
+  }, [automations, automationsV2, legacyRuns, normalizeTimestamp, workflowRuns]);
   const packs = toArray(packsQuery.data, "packs");
   const activeRuns = runs.filter((run: any) => isActiveRunStatus(workflowDerivedRunStatus(run)));
   const workflowQueueCounts = useMemo(() => {

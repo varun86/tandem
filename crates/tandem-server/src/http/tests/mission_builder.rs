@@ -55,6 +55,129 @@ fn sample_blueprint() -> Value {
 }
 
 #[tokio::test]
+async fn mission_builder_generate_draft_returns_generated_blueprint_and_schedule() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let response = json!({
+        "blueprint": {
+            "mission_id": "",
+            "title": "Weekly release mission",
+            "goal": "Prepare a weekly release readiness package",
+            "success_criteria": ["Includes risks", "Includes owner and date"],
+            "shared_context": "Audience is engineering leadership.",
+            "workspace_root": "/tmp/ignored-by-server",
+            "workstreams": [
+                {
+                    "workstream_id": "collect",
+                    "title": "Collect release inputs",
+                    "objective": "Collect status, blockers, and dependencies",
+                    "role": "analyst",
+                    "prompt": "Gather current release inputs and summarize them.",
+                    "depends_on": [],
+                    "input_refs": [],
+                    "output_contract": { "kind": "report_markdown" }
+                },
+                {
+                    "workstream_id": "review",
+                    "title": "Review release risk",
+                    "objective": "Review the release packet and flag risks",
+                    "role": "reviewer",
+                    "prompt": "Review the release packet and highlight actionable risks.",
+                    "depends_on": ["collect"],
+                    "input_refs": [{ "from_step_id": "collect", "alias": "release_packet" }],
+                    "output_contract": { "kind": "report_markdown" }
+                },
+                {
+                    "workstream_id": "publish",
+                    "title": "Publish readiness packet",
+                    "objective": "Publish the final release readiness update",
+                    "role": "operator",
+                    "prompt": "Publish the approved release readiness packet.",
+                    "depends_on": ["review"],
+                    "input_refs": [{ "from_step_id": "review", "alias": "risk_review" }],
+                    "output_contract": { "kind": "report_markdown" }
+                }
+            ],
+            "review_stages": []
+        },
+        "suggested_schedule": {
+            "type": "cron",
+            "cron_expression": "0 9 * * 1",
+            "timezone": "UTC"
+        },
+        "generation_warnings": ["verify the release audience before publishing"]
+    });
+
+    let previous = std::env::var("TANDEM_MISSION_BUILDER_TEST_GENERATE_RESPONSE").ok();
+    std::env::set_var(
+        "TANDEM_MISSION_BUILDER_TEST_GENERATE_RESPONSE",
+        response.to_string(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mission-builder/generate-draft")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "intent": "Every Monday prepare a release readiness packet for leadership.",
+                        "workspace_root": "/tmp/mission-workspace"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    if let Some(previous) = previous {
+        std::env::set_var("TANDEM_MISSION_BUILDER_TEST_GENERATE_RESPONSE", previous);
+    } else {
+        std::env::remove_var("TANDEM_MISSION_BUILDER_TEST_GENERATE_RESPONSE");
+    }
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload
+            .get("blueprint")
+            .and_then(|row| row.get("workspace_root"))
+            .and_then(Value::as_str),
+        Some("/tmp/mission-workspace")
+    );
+    assert_eq!(
+        payload
+            .get("blueprint")
+            .and_then(|row| row.get("mission_id"))
+            .and_then(Value::as_str)
+            .map(|value| value.starts_with("mission_")),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .get("suggested_schedule")
+            .and_then(|row| row.get("type"))
+            .and_then(Value::as_str),
+        Some("cron")
+    );
+    assert_eq!(
+        payload
+            .get("validation")
+            .and_then(Value::as_array)
+            .map(|rows| rows.is_empty()),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .get("generation_warnings")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+}
+
+#[tokio::test]
 async fn mission_builder_preview_returns_compiled_automation() {
     let state = test_state().await;
     let app = app_router(state);

@@ -224,6 +224,35 @@ function scheduleToPayload(kind: ScheduleKind, intervalSeconds: string, cron: st
   return { type: "manual", timezone: "UTC", misfire_policy: misfirePolicy };
 }
 
+function schedulePayloadToEditor(schedule: any): {
+  scheduleKind: ScheduleKind;
+  intervalSeconds: string;
+  cronExpression: string;
+} {
+  const type = String(schedule?.type || "")
+    .trim()
+    .toLowerCase();
+  if (type === "cron") {
+    return {
+      scheduleKind: "cron",
+      intervalSeconds: "3600",
+      cronExpression: String(schedule?.cron_expression || "").trim(),
+    };
+  }
+  if (type === "interval") {
+    const seconds = Math.max(
+      1,
+      Number.parseInt(String(schedule?.interval_seconds || "3600"), 10) || 3600
+    );
+    return {
+      scheduleKind: "interval",
+      intervalSeconds: String(seconds),
+      cronExpression: "",
+    };
+  }
+  return { scheduleKind: "manual", intervalSeconds: "3600", cronExpression: "" };
+}
+
 function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
   return {
     mission_id: `mission_${randomToken()}`,
@@ -425,17 +454,20 @@ function ToggleChip({
   label,
   icon,
   onClick,
+  disabled = false,
 }: {
   active: boolean;
   label: string;
   icon?: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
-      className={`tcp-btn h-8 px-3 text-xs ${active ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+      className={`tcp-btn h-8 px-3 text-xs ${active ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""} ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
       onClick={onClick}
       type="button"
+      disabled={disabled}
     >
       <span className="inline-flex items-center gap-2">
         {icon ? <i data-lucide={icon}></i> : null}
@@ -618,9 +650,12 @@ export function AdvancedMissionBuilderPanel({
   const [cronExpression, setCronExpression] = useState("");
   const [runAfterCreate, setRunAfterCreate] = useState(true);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState<"" | "preview" | "apply">("");
+  const [busy, setBusy] = useState<"" | "generate" | "preview" | "apply">("");
   const [preview, setPreview] = useState<any>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
+  const [missionIntent, setMissionIntent] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const [generationWarnings, setGenerationWarnings] = useState<string[]>([]);
   const [blueprint, setBlueprint] = useState<MissionBlueprint>(defaultBlueprint(""));
   const [teamModel, setTeamModel] = useState<ModelDraft>({
     provider: defaultProvider,
@@ -703,7 +738,11 @@ export function AdvancedMissionBuilderPanel({
       setBlueprint(defaultBlueprint(root));
       setPreview(null);
       setError("");
+      setActiveTab("mission");
       setRunAfterCreate(true);
+      setMissionIntent("");
+      setDraftReady(false);
+      setGenerationWarnings([]);
       setScheduleKind("manual");
       setIntervalSeconds("3600");
       setCronExpression("");
@@ -717,6 +756,9 @@ export function AdvancedMissionBuilderPanel({
     const saved = extractMissionBlueprint(editingAutomation, root);
     if (!saved) return;
     setBlueprint(saved);
+    setMissionIntent(String(saved.goal || "").trim());
+    setDraftReady(true);
+    setGenerationWarnings([]);
     setTeamModel(fromModelPolicy(saved.team.default_model_policy));
     const nextWorkstreamModels: Record<string, ModelDraft> = {};
     for (const workstream of saved.workstreams) {
@@ -822,6 +864,7 @@ export function AdvancedMissionBuilderPanel({
     );
   }, [workspaceBrowserSearch, workspaceDirectories]);
   const workspaceRootError = validateWorkspaceRootInput(blueprint.workspace_root || workspaceRoot);
+  const canEditMissionDetails = draftReady || !!editingAutomation;
 
   useEffect(() => {
     try {
@@ -862,6 +905,7 @@ export function AdvancedMissionBuilderPanel({
   const missionAuthoringPrompt = useMemo(
     () =>
       buildIntentToMissionBlueprintPrompt({
+        humanIntent: missionIntent,
         missionTitle: effectiveBlueprint.title,
         missionGoal: effectiveBlueprint.goal,
         sharedContext: effectiveBlueprint.shared_context || "",
@@ -878,6 +922,7 @@ export function AdvancedMissionBuilderPanel({
       effectiveBlueprint.success_criteria,
       effectiveBlueprint.title,
       effectiveBlueprint.workspace_root,
+      missionIntent,
       workspaceRoot,
       selectedIntentPreset?.label,
       scheduleKind,
@@ -977,6 +1022,9 @@ export function AdvancedMissionBuilderPanel({
     setError("");
     setActiveTab("mission");
     setSelectedIntentPresetId(presetRecord.id);
+    setMissionIntent(presetRecord.description);
+    setDraftReady(true);
+    setGenerationWarnings([]);
     applyScheduleDefaults(presetRecord.schedule_defaults);
     setTeamModel({ provider: defaultProvider, model: defaultModel });
     setWorkstreamModels({});
@@ -1006,6 +1054,9 @@ export function AdvancedMissionBuilderPanel({
         workspaceRoot,
     };
     setBlueprint(next);
+    setDraftReady(true);
+    setMissionIntent(String(next.goal || "").trim());
+    setGenerationWarnings([]);
     applyScheduleDefaults(parsed.scheduleDefaults);
     setPreview(null);
     setError("");
@@ -1018,6 +1069,64 @@ export function AdvancedMissionBuilderPanel({
       toast("ok", "Mission authoring prompt copied.");
     } catch {
       toast("warn", "Unable to copy automatically. The prompt is still shown below.");
+    }
+  }
+
+  async function generateMissionDraft() {
+    const intent = String(missionIntent || "").trim();
+    const root = String(blueprint.workspace_root || workspaceRoot || "").trim();
+    if (!intent) {
+      const message = "Mission intent is required.";
+      setError(message);
+      toast("err", message);
+      return;
+    }
+    const workspaceError = validateWorkspaceRootInput(root);
+    if (workspaceError) {
+      setError(workspaceError);
+      toast("err", workspaceError);
+      return;
+    }
+    setBusy("generate");
+    setError("");
+    try {
+      const response = await api("/api/engine/mission-builder/generate-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          intent,
+          workspace_root: root,
+          archetype_id: selectedIntentPresetId || undefined,
+          creator_id: "control-panel",
+        }),
+      });
+      const nextBlueprint = {
+        ...defaultBlueprint(root),
+        ...(response?.blueprint || {}),
+        workspace_root: root,
+      } as MissionBlueprint;
+      const nextSchedule = schedulePayloadToEditor(response?.suggested_schedule);
+      setBlueprint(nextBlueprint);
+      setScheduleKind(nextSchedule.scheduleKind);
+      setIntervalSeconds(nextSchedule.intervalSeconds);
+      setCronExpression(nextSchedule.cronExpression);
+      setDraftReady(true);
+      setGenerationWarnings(
+        Array.isArray(response?.generation_warnings)
+          ? response.generation_warnings.map((row: any) => String(row || "").trim()).filter(Boolean)
+          : []
+      );
+      setPreview(null);
+      setActiveTab("mission");
+      toast("ok", "Mission draft generated.");
+    } catch (generationError) {
+      const message =
+        generationError instanceof Error
+          ? generationError.message
+          : String(generationError || "Unable to generate mission draft.");
+      setError(message);
+      toast("err", message);
+    } finally {
+      setBusy("");
     }
   }
 
@@ -1119,6 +1228,9 @@ export function AdvancedMissionBuilderPanel({
         onShowAutomations();
       }
       setBlueprint(defaultBlueprint(workspaceRoot));
+      setMissionIntent("");
+      setDraftReady(false);
+      setGenerationWarnings([]);
       setPreview(null);
       setRunAfterCreate(true);
     } catch (applyError) {
@@ -1141,8 +1253,8 @@ export function AdvancedMissionBuilderPanel({
           Mission Builder
         </div>
         <div className="tcp-subtle text-xs">
-          Build one coordinated swarm mission with shared context, per-lane roles, explicit
-          handoffs, and a compiled preview before launch.
+          Describe what you want to accomplish, let Tandem generate the mission setup, then review
+          and tweak the details before launch.
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className="tcp-btn h-8 px-3 text-xs" onClick={() => setShowGuide(true)}>
@@ -1176,7 +1288,15 @@ export function AdvancedMissionBuilderPanel({
               active={activeTab === tab}
               label={tab === "workstreams" ? "workstreams" : tab}
               icon={icon}
-              onClick={() => setActiveTab(tab)}
+              disabled={tab !== "mission" && !canEditMissionDetails}
+              onClick={() => {
+                if (tab !== "mission" && !canEditMissionDetails) {
+                  toast("warn", "Generate or import a mission draft first.");
+                  setActiveTab("mission");
+                  return;
+                }
+                setActiveTab(tab);
+              }}
             />
           ))}
         </div>
@@ -1190,7 +1310,7 @@ export function AdvancedMissionBuilderPanel({
 
       {editingAutomation ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-          Editing advanced mission:{" "}
+          Editing mission:{" "}
           <strong>
             {String(editingAutomation?.name || editingAutomation?.automation_id || "")}
           </strong>
@@ -1203,11 +1323,11 @@ export function AdvancedMissionBuilderPanel({
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <div className="text-lg font-semibold text-slate-100">
-                  How the Advanced Swarm Builder Works
+                  How Mission Builder Works
                 </div>
                 <div className="tcp-subtle mt-1 text-sm">
-                  Think of this as a mission compiler: one shared goal, many scoped workstreams,
-                  explicit handoffs, and optional review gates.
+                  Start with a human mission intent, let Tandem generate the mission draft, then
+                  refine the details, handoffs, and review gates before launch.
                 </div>
               </div>
               <button className="tcp-btn h-9 px-3 text-sm" onClick={() => setShowGuide(false)}>
@@ -1344,14 +1464,122 @@ export function AdvancedMissionBuilderPanel({
       {activeTab === "mission" ? (
         <Section
           title="Mission"
-          subtitle="Global brief, success criteria, and schedule."
+          subtitle="Start with intent, then review the generated mission details."
           icon="clipboard-list"
         >
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
-            <div className="mb-2 text-sm font-semibold text-slate-100">Intent to blueprint</div>
+            <div className="mb-2 text-sm font-semibold text-slate-100">Mission intent</div>
             <div className="tcp-subtle text-xs">
-              Use an archetype, generate a strong authoring prompt for another LLM, or paste a
-              generated YAML blueprint draft back into the builder.
+              Describe what you want to accomplish and Tandem will generate the mission goal, shared
+              context, success criteria, workstreams, reviews, and schedule draft.
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <LabeledTextArea
+                label="Mission intent"
+                value={missionIntent}
+                onInput={setMissionIntent}
+                rows={8}
+                placeholder="Describe the outcome, audience, constraints, timing, and any recurring rhythm you want the mission to handle."
+              />
+              <div className="grid gap-3">
+                <label className="block text-sm">
+                  <div className="mb-1 font-medium text-slate-200">Archetype hint</div>
+                  <select
+                    value={selectedIntentPresetId}
+                    onInput={(event) =>
+                      setSelectedIntentPresetId((event.target as HTMLSelectElement).value)
+                    }
+                    className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
+                  >
+                    <option value="">None</option>
+                    {STARTER_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <WorkspaceDirectoryPicker
+                  value={blueprint.workspace_root}
+                  error={workspaceRootError}
+                  open={workspaceBrowserOpen}
+                  browseDir={workspaceBrowserDir}
+                  search={workspaceBrowserSearch}
+                  parentDir={workspaceParentDir}
+                  currentDir={workspaceCurrentBrowseDir}
+                  directories={filteredWorkspaceDirectories}
+                  onOpen={() => {
+                    const seed = String(blueprint.workspace_root || workspaceRoot || "/").trim();
+                    setWorkspaceBrowserDir(seed || "/");
+                    setWorkspaceBrowserSearch("");
+                    setWorkspaceBrowserOpen(true);
+                  }}
+                  onClose={() => {
+                    setWorkspaceBrowserOpen(false);
+                    setWorkspaceBrowserSearch("");
+                  }}
+                  onClear={() => updateBlueprint({ workspace_root: "" })}
+                  onSearchChange={setWorkspaceBrowserSearch}
+                  onBrowseParent={() => {
+                    if (!workspaceParentDir) return;
+                    setWorkspaceBrowserDir(workspaceParentDir);
+                  }}
+                  onBrowseDirectory={(path) => setWorkspaceBrowserDir(path)}
+                  onSelectDirectory={() => {
+                    if (!workspaceCurrentBrowseDir) return;
+                    updateBlueprint({ workspace_root: workspaceCurrentBrowseDir });
+                    setWorkspaceBrowserOpen(false);
+                    setWorkspaceBrowserSearch("");
+                    toast("ok", `Workspace selected: ${workspaceCurrentBrowseDir}`);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                className="tcp-btn-primary h-10 px-3 text-sm"
+                type="button"
+                onClick={() => void generateMissionDraft()}
+                disabled={busy === "generate"}
+              >
+                <i data-lucide={busy === "generate" ? "loader-circle" : "sparkles"}></i>
+                {busy === "generate" ? "Generating..." : "Generate mission draft"}
+              </button>
+              <button
+                className="tcp-btn h-10 px-3 text-sm"
+                type="button"
+                onClick={() => {
+                  if (selectedIntentPresetId) applyStarterPreset(selectedIntentPresetId);
+                }}
+                disabled={!selectedIntentPresetId}
+              >
+                <i data-lucide="sparkles"></i>
+                Load example draft
+              </button>
+            </div>
+            {selectedIntentPreset ? (
+              <div className="tcp-subtle mt-2 text-xs">{selectedIntentPreset.description}</div>
+            ) : null}
+            <div className="mt-3 grid gap-1 text-xs text-slate-300">
+              {knowledgeGuardrails.map((item) => (
+                <div key={item}>{item}</div>
+              ))}
+            </div>
+          </div>
+          {generationWarnings.length ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+              {generationWarnings.map((warning, index) => (
+                <div key={`${warning}-${index}`}>{warning}</div>
+              ))}
+            </div>
+          ) : null}
+          <div className="rounded-xl border border-slate-700/50 bg-slate-950/40 p-3">
+            <div className="mb-2 text-sm font-semibold text-slate-100">
+              Advanced import / authoring
+            </div>
+            <div className="tcp-subtle text-xs">
+              Power users can still copy an LLM authoring prompt or paste a generated YAML or JSON
+              draft directly into Mission Builder.
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <label className="block text-sm">
@@ -1375,17 +1603,6 @@ export function AdvancedMissionBuilderPanel({
                 <button
                   className="tcp-btn h-10 px-3 text-sm"
                   type="button"
-                  onClick={() => {
-                    if (selectedIntentPresetId) applyStarterPreset(selectedIntentPresetId);
-                  }}
-                  disabled={!selectedIntentPresetId}
-                >
-                  <i data-lucide="sparkles"></i>
-                  Apply archetype
-                </button>
-                <button
-                  className="tcp-btn h-10 px-3 text-sm"
-                  type="button"
                   onClick={copyMissionPrompt}
                 >
                   <i data-lucide="copy"></i>
@@ -1398,7 +1615,7 @@ export function AdvancedMissionBuilderPanel({
             ) : null}
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
               <LabeledTextArea
-                label="Generated authoring prompt"
+                label="LLM authoring prompt"
                 value={missionAuthoringPrompt}
                 onInput={() => {}}
                 rows={14}
@@ -1423,126 +1640,90 @@ export function AdvancedMissionBuilderPanel({
                 Import draft
               </button>
             </div>
-            <div className="mt-3 grid gap-1 text-xs text-slate-300">
-              {knowledgeGuardrails.map((item) => (
-                <div key={item}>{item}</div>
-              ))}
-            </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <LabeledInput
-              label="Mission title"
-              value={blueprint.title}
-              onInput={(value) => updateBlueprint({ title: value })}
-            />
-            <LabeledInput
-              label="Mission ID"
-              value={blueprint.mission_id}
-              onInput={(value) => updateBlueprint({ mission_id: value })}
-            />
-          </div>
-          <InlineHint>
-            Use a short title a human operator would recognize later in the automation list.
-          </InlineHint>
-          <WorkspaceDirectoryPicker
-            value={blueprint.workspace_root}
-            error={workspaceRootError}
-            open={workspaceBrowserOpen}
-            browseDir={workspaceBrowserDir}
-            search={workspaceBrowserSearch}
-            parentDir={workspaceParentDir}
-            currentDir={workspaceCurrentBrowseDir}
-            directories={filteredWorkspaceDirectories}
-            onOpen={() => {
-              const seed = String(blueprint.workspace_root || workspaceRoot || "/").trim();
-              setWorkspaceBrowserDir(seed || "/");
-              setWorkspaceBrowserSearch("");
-              setWorkspaceBrowserOpen(true);
-            }}
-            onClose={() => {
-              setWorkspaceBrowserOpen(false);
-              setWorkspaceBrowserSearch("");
-            }}
-            onClear={() => updateBlueprint({ workspace_root: "" })}
-            onSearchChange={setWorkspaceBrowserSearch}
-            onBrowseParent={() => {
-              if (!workspaceParentDir) return;
-              setWorkspaceBrowserDir(workspaceParentDir);
-            }}
-            onBrowseDirectory={(path) => setWorkspaceBrowserDir(path)}
-            onSelectDirectory={() => {
-              if (!workspaceCurrentBrowseDir) return;
-              updateBlueprint({ workspace_root: workspaceCurrentBrowseDir });
-              setWorkspaceBrowserOpen(false);
-              setWorkspaceBrowserSearch("");
-              toast("ok", `Workspace selected: ${workspaceCurrentBrowseDir}`);
-            }}
-          />
-          <InlineHint>
-            This is the shared working directory the mission can use for files and artifacts.
-          </InlineHint>
-          {workspaceRootError ? (
-            <div className="text-xs text-red-300">{workspaceRootError}</div>
-          ) : null}
-          <LabeledTextArea
-            label="Mission goal"
-            value={blueprint.goal}
-            onInput={(value) => updateBlueprint({ goal: value })}
-            placeholder="Describe the shared objective all participants are working toward."
-          />
-          <InlineHint>
-            Write the one shared outcome for the whole swarm, not a list of steps.
-          </InlineHint>
-          <LabeledTextArea
-            label="Shared context"
-            value={blueprint.shared_context || ""}
-            onInput={(value) => updateBlueprint({ shared_context: value })}
-            placeholder="Shared constraints, references, context, and operator guidance."
-          />
-          <InlineHint>
-            Put the facts every lane should inherit here: audience, constraints, tone, deadlines,
-            approved sources, and things to avoid.
-          </InlineHint>
-          <LabeledInput
-            label="Success criteria"
-            value={blueprint.success_criteria.join(", ")}
-            onInput={(value) => updateBlueprint({ success_criteria: splitCsv(value) })}
-            placeholder="comma-separated"
-          />
-          <InlineHint>
-            These should be measurable checks like “brief includes 5 competitors” or “plan contains
-            owner, timeline, and risks”.
-          </InlineHint>
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">
-              <div className="mb-1 font-medium text-slate-200">Schedule</div>
-              <select
-                value={scheduleKind}
-                onInput={(event) =>
-                  setScheduleKind((event.target as HTMLSelectElement).value as ScheduleKind)
-                }
-                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-              >
-                <option value="manual">Manual</option>
-                <option value="interval">Interval</option>
-                <option value="cron">Cron</option>
-              </select>
-            </label>
-            {scheduleKind === "interval" ? (
-              <LabeledInput
-                label="Interval seconds"
-                value={intervalSeconds}
-                onInput={setIntervalSeconds}
+          {canEditMissionDetails ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <LabeledInput
+                  label="Mission title"
+                  value={blueprint.title}
+                  onInput={(value) => updateBlueprint({ title: value })}
+                />
+                <LabeledInput
+                  label="Mission ID"
+                  value={blueprint.mission_id}
+                  onInput={(value) => updateBlueprint({ mission_id: value })}
+                />
+              </div>
+              <InlineHint>
+                Use a short title a human operator would recognize later in the automation list.
+              </InlineHint>
+              {workspaceRootError ? (
+                <div className="text-xs text-red-300">{workspaceRootError}</div>
+              ) : null}
+              <LabeledTextArea
+                label="Mission goal"
+                value={blueprint.goal}
+                onInput={(value) => updateBlueprint({ goal: value })}
+                placeholder="Describe the shared objective all participants are working toward."
               />
-            ) : null}
-            {scheduleKind === "cron" ? (
-              <LabeledInput
-                label="Cron expression"
-                value={cronExpression}
-                onInput={setCronExpression}
+              <InlineHint>
+                Write the one shared outcome for the whole mission, not a list of steps.
+              </InlineHint>
+              <LabeledTextArea
+                label="Shared context"
+                value={blueprint.shared_context || ""}
+                onInput={(value) => updateBlueprint({ shared_context: value })}
+                placeholder="Shared constraints, references, context, and operator guidance."
               />
-            ) : null}
-          </div>
+              <InlineHint>
+                Put the facts every lane should inherit here: audience, constraints, tone,
+                deadlines, approved sources, and things to avoid.
+              </InlineHint>
+              <LabeledInput
+                label="Success criteria"
+                value={blueprint.success_criteria.join(", ")}
+                onInput={(value) => updateBlueprint({ success_criteria: splitCsv(value) })}
+                placeholder="comma-separated"
+              />
+              <InlineHint>
+                These should be measurable checks like “brief includes 5 competitors” or “plan
+                contains owner, timeline, and risks”.
+              </InlineHint>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="block text-sm">
+                  <div className="mb-1 font-medium text-slate-200">Schedule</div>
+                  <select
+                    value={scheduleKind}
+                    onInput={(event) =>
+                      setScheduleKind((event.target as HTMLSelectElement).value as ScheduleKind)
+                    }
+                    className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="interval">Interval</option>
+                    <option value="cron">Cron</option>
+                  </select>
+                </label>
+                {scheduleKind === "interval" ? (
+                  <LabeledInput
+                    label="Interval seconds"
+                    value={intervalSeconds}
+                    onInput={setIntervalSeconds}
+                  />
+                ) : null}
+                {scheduleKind === "cron" ? (
+                  <LabeledInput
+                    label="Cron expression"
+                    value={cronExpression}
+                    onInput={setCronExpression}
+                  />
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <EmptyState text="Generate or import a mission draft to review and tweak the mission details." />
+          )}
         </Section>
       ) : null}
 

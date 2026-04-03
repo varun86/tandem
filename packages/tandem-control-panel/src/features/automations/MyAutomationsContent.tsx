@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AutomationCalendar } from "./AutomationCalendar";
 import {
   DeleteAutomationDialog,
@@ -8,6 +9,11 @@ import { RunDebuggerDialog } from "./RunDebuggerDialog";
 import { EmptyState } from "../../pages/ui";
 
 export function MyAutomationsContent({ state, actions, helpers }: any) {
+  const [runningSectionsOpen, setRunningSectionsOpen] = useState({
+    active: false,
+    issues: false,
+    history: false,
+  });
   const {
     rootRef,
     viewMode,
@@ -171,6 +177,12 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     sessionLabel,
     formatTimestampLabel,
   } = helpers;
+
+  const toggleRunningSection = (section: "active" | "issues" | "history") =>
+    setRunningSectionsOpen((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
 
   return (
     <div ref={rootRef} className="grid gap-4">
@@ -472,13 +484,23 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
       ) : null}
 
       {viewMode === "running" ? (
-        activeRuns.length > 0 ? (
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-2">
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className="tcp-list-item text-left"
+            onClick={() => toggleRunningSection("active")}
+            aria-expanded={runningSectionsOpen.active}
+          >
+            <div className="flex items-start justify-between gap-3">
               <div className="grid gap-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Active Running Tasks
-                </p>
+                <div className="flex items-center gap-2">
+                  <i
+                    data-lucide={runningSectionsOpen.active ? "chevron-down" : "chevron-right"}
+                  ></i>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Active Running Tasks
+                  </p>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="tcp-badge-warn">{workflowQueueCounts.active} active</span>
                   <span className="tcp-badge-info">
@@ -494,24 +516,246 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                   ) : null}
                 </div>
               </div>
+              <span className="tcp-subtle text-xs">
+                {runningSectionsOpen.active ? "Collapse" : "Expand"}
+              </span>
             </div>
-            {activeRuns.slice(0, 14).map((run: any, index: number) => {
-              const runId = String(run?.run_id || run?.id || index).trim();
-              const activeRunStatus = workflowStatusDisplay(run);
-              const startedAt =
-                run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs;
-              const runStatusDetail = workflowStatusSubtleDetail(run);
-              return (
-                <div key={runId || index} className="tcp-list-item">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="grid gap-0.5">
-                      <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                      <span className="tcp-subtle text-xs">
-                        {runId || "unknown run"} · running for {runTimeLabel(run)}
-                      </span>
-                      {formatRunDateTime(startedAt) ? (
+          </button>
+          {runningSectionsOpen.active ? (
+            activeRuns.length > 0 ? (
+              activeRuns.slice(0, 14).map((run: any, index: number) => {
+                const runId = String(run?.run_id || run?.id || index).trim();
+                const activeRunStatus = workflowStatusDisplay(run);
+                const startedAt =
+                  run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs;
+                const runStatusDetail = workflowStatusSubtleDetail(run);
+                return (
+                  <div key={runId || index} className="tcp-list-item">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="grid gap-0.5">
+                        <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
                         <span className="tcp-subtle text-xs">
-                          Started: {formatRunDateTime(startedAt)}
+                          {runId || "unknown run"} · running for {runTimeLabel(run)}
+                        </span>
+                        {formatRunDateTime(startedAt) ? (
+                          <span className="tcp-subtle text-xs">
+                            Started: {formatRunDateTime(startedAt)}
+                          </span>
+                        ) : null}
+                        {runObjectiveText(run) ? (
+                          <span className="text-xs text-slate-400">
+                            {shortText(runObjectiveText(run), 160)}
+                          </span>
+                        ) : null}
+                        {runStatusDetail ? (
+                          <span className="tcp-subtle text-xs">{runStatusDetail}</span>
+                        ) : null}
+                      </div>
+                      <span className={statusColor(activeRunStatus)}>
+                        {activeRunStatus || "unknown"}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() => onSelectRunId(runId)}
+                      >
+                        <i data-lucide="bug"></i>
+                        Inspect
+                      </button>
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() =>
+                          runActionMutation.mutate({
+                            action: "pause",
+                            runId,
+                            family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
+                          })
+                        }
+                        disabled={!runId || runActionMutation.isPending}
+                      >
+                        <i data-lucide="pause"></i>
+                        Pause
+                      </button>
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() =>
+                          runActionMutation.mutate({
+                            action: "resume",
+                            runId,
+                            family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
+                          })
+                        }
+                        disabled={!runId || runActionMutation.isPending}
+                      >
+                        <i data-lucide="play"></i>
+                        Resume
+                      </button>
+                      {runId.startsWith("automation-v2-run-") ? (
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() =>
+                            runActionMutation.mutate({
+                              action: "cancel",
+                              runId,
+                              family: "v2",
+                              reason: "cancelled from active runs panel",
+                            })
+                          }
+                          disabled={!runId || runActionMutation.isPending}
+                        >
+                          <i data-lucide="square"></i>
+                          Cancel
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="tcp-list-item">
+                <div className="font-medium">Active Running Tasks</div>
+                <div className="tcp-subtle mt-1 text-xs">
+                  No active runs right now. Start a run to inspect live task execution.
+                </div>
+              </div>
+            )
+          ) : null}
+        </div>
+      ) : null}
+
+      {viewMode === "running" && failedRuns.length > 0 ? (
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className="tcp-list-item text-left"
+            onClick={() => toggleRunningSection("issues")}
+            aria-expanded={runningSectionsOpen.issues}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <i data-lucide={runningSectionsOpen.issues ? "chevron-down" : "chevron-right"}></i>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Recently Blocked Or Failed Runs
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="tcp-badge-err">{failedRuns.length} issues</span>
+                <span className="tcp-subtle text-xs">
+                  {runningSectionsOpen.issues ? "Collapse" : "Expand"}
+                </span>
+              </div>
+            </div>
+          </button>
+          {runningSectionsOpen.issues
+            ? failedRuns.slice(0, 10).map((run: any, index: number) => {
+                const runId = String(run?.run_id || run?.id || index).trim();
+                const failedRunStatus = workflowStatusDisplay(run);
+                const runStatusDetail = workflowStatusSubtleDetail(run);
+                return (
+                  <div key={`failed-${runId || index}`} className="tcp-list-item">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="grid gap-0.5">
+                        <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
+                        <span className="tcp-subtle text-xs">{runId || "unknown run"}</span>
+                        {formatRunDateTime(
+                          run?.finished_at_ms ||
+                            run?.finishedAtMs ||
+                            run?.updated_at_ms ||
+                            run?.updatedAtMs
+                        ) ? (
+                          <span className="tcp-subtle text-xs">
+                            Finished:{" "}
+                            {formatRunDateTime(
+                              run?.finished_at_ms ||
+                                run?.finishedAtMs ||
+                                run?.updated_at_ms ||
+                                run?.updatedAtMs
+                            )}
+                          </span>
+                        ) : null}
+                        {runObjectiveText(run) ? (
+                          <span className="text-xs text-slate-400">
+                            {shortText(runObjectiveText(run), 160)}
+                          </span>
+                        ) : null}
+                        {runStatusDetail ? (
+                          <span className="tcp-subtle text-xs">{runStatusDetail}</span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={statusColor(failedRunStatus)}>
+                          {failedRunStatus || "failed"}
+                        </span>
+                        <button
+                          className="tcp-btn h-7 px-2 text-xs"
+                          onClick={() => onSelectRunId(runId)}
+                        >
+                          <i data-lucide="bug"></i>
+                          Inspect
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            : null}
+        </div>
+      ) : null}
+
+      {runs.length > 0 && viewMode === "running" ? (
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className="tcp-list-item text-left"
+            onClick={() => toggleRunningSection("history")}
+            aria-expanded={runningSectionsOpen.history}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <i data-lucide={runningSectionsOpen.history ? "chevron-down" : "chevron-right"}></i>
+                <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
+                  {viewMode === "running" ? "Run Log Explorer" : "Recent Runs"}
+                </p>
+              </div>
+              <span className="tcp-subtle text-xs">
+                {runs.length} runs · {runningSectionsOpen.history ? "Collapse" : "Expand"}
+              </span>
+            </div>
+          </button>
+          {runningSectionsOpen.history
+            ? runs.slice(0, 12).map((run: any, index: number) => (
+                <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
+                    <span className={statusColor(workflowStatusDisplay(run))}>
+                      {workflowStatusDisplay(run) || "unknown"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <div className="grid gap-0.5">
+                      <span className="tcp-subtle text-xs">
+                        {String(run?.run_id || run?.id || "")}
+                      </span>
+                      {formatRunDateTime(
+                        run?.started_at_ms ||
+                          run?.startedAtMs ||
+                          run?.created_at_ms ||
+                          run?.createdAtMs
+                      ) ? (
+                        <span className="tcp-subtle text-xs">
+                          Started:{" "}
+                          {formatRunDateTime(
+                            run?.started_at_ms ||
+                              run?.startedAtMs ||
+                              run?.created_at_ms ||
+                              run?.createdAtMs
+                          )}
+                        </span>
+                      ) : null}
+                      {run?.finished_at_ms || run?.finishedAtMs ? (
+                        <span className="tcp-subtle text-xs">
+                          Finished: {formatRunDateTime(run?.finished_at_ms || run?.finishedAtMs)}
                         </span>
                       ) : null}
                       {runObjectiveText(run) ? (
@@ -519,200 +763,26 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                           {shortText(runObjectiveText(run), 160)}
                         </span>
                       ) : null}
-                      {runStatusDetail ? (
-                        <span className="tcp-subtle text-xs">{runStatusDetail}</span>
+                      {workflowStatusSubtleDetail(run) ? (
+                        <span className="tcp-subtle text-xs">
+                          {workflowStatusSubtleDetail(run)}
+                        </span>
                       ) : null}
                     </div>
-                    <span className={statusColor(activeRunStatus)}>
-                      {activeRunStatus || "unknown"}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => onSelectRunId(runId)}
+                      onClick={() => {
+                        onSelectRunId(String(run?.run_id || run?.id || "").trim());
+                        onOpenRunningView();
+                      }}
                     >
-                      <i data-lucide="bug"></i>
-                      Inspect
-                    </button>
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() =>
-                        runActionMutation.mutate({
-                          action: "pause",
-                          runId,
-                          family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
-                        })
-                      }
-                      disabled={!runId || runActionMutation.isPending}
-                    >
-                      <i data-lucide="pause"></i>
-                      Pause
-                    </button>
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() =>
-                        runActionMutation.mutate({
-                          action: "resume",
-                          runId,
-                          family: runId.startsWith("automation-v2-run-") ? "v2" : "legacy",
-                        })
-                      }
-                      disabled={!runId || runActionMutation.isPending}
-                    >
-                      <i data-lucide="play"></i>
-                      Resume
-                    </button>
-                    {runId.startsWith("automation-v2-run-") ? (
-                      <button
-                        className="tcp-btn h-7 px-2 text-xs"
-                        onClick={() =>
-                          runActionMutation.mutate({
-                            action: "cancel",
-                            runId,
-                            family: "v2",
-                            reason: "cancelled from active runs panel",
-                          })
-                        }
-                        disabled={!runId || runActionMutation.isPending}
-                      >
-                        <i data-lucide="square"></i>
-                        Cancel
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="tcp-list-item">
-            <div className="font-medium">Active Running Tasks</div>
-            <div className="tcp-subtle mt-1 text-xs">
-              No active runs right now. Start a run to inspect live task execution.
-            </div>
-          </div>
-        )
-      ) : null}
-
-      {viewMode === "running" && failedRuns.length > 0 ? (
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Recently Blocked Or Failed Runs
-            </p>
-            <span className="tcp-badge-err">{failedRuns.length} issues</span>
-          </div>
-          {failedRuns.slice(0, 10).map((run: any, index: number) => {
-            const runId = String(run?.run_id || run?.id || index).trim();
-            const failedRunStatus = workflowStatusDisplay(run);
-            const runStatusDetail = workflowStatusSubtleDetail(run);
-            return (
-              <div key={`failed-${runId || index}`} className="tcp-list-item">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="grid gap-0.5">
-                    <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                    <span className="tcp-subtle text-xs">{runId || "unknown run"}</span>
-                    {formatRunDateTime(
-                      run?.finished_at_ms ||
-                        run?.finishedAtMs ||
-                        run?.updated_at_ms ||
-                        run?.updatedAtMs
-                    ) ? (
-                      <span className="tcp-subtle text-xs">
-                        Finished:{" "}
-                        {formatRunDateTime(
-                          run?.finished_at_ms ||
-                            run?.finishedAtMs ||
-                            run?.updated_at_ms ||
-                            run?.updatedAtMs
-                        )}
-                      </span>
-                    ) : null}
-                    {runObjectiveText(run) ? (
-                      <span className="text-xs text-slate-400">
-                        {shortText(runObjectiveText(run), 160)}
-                      </span>
-                    ) : null}
-                    {runStatusDetail ? (
-                      <span className="tcp-subtle text-xs">{runStatusDetail}</span>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={statusColor(failedRunStatus)}>
-                      {failedRunStatus || "failed"}
-                    </span>
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => onSelectRunId(runId)}
-                    >
-                      <i data-lucide="bug"></i>
-                      Inspect
+                      <i data-lucide="info"></i>
+                      {viewMode === "running" ? "Logs" : "Details"}
                     </button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {runs.length > 0 && viewMode === "running" ? (
-        <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            {viewMode === "running" ? "Run Log Explorer" : "Recent Runs"}
-          </p>
-          {runs.slice(0, 12).map((run: any, index: number) => (
-            <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                <span className={statusColor(workflowStatusDisplay(run))}>
-                  {workflowStatusDisplay(run) || "unknown"}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <div className="grid gap-0.5">
-                  <span className="tcp-subtle text-xs">{String(run?.run_id || run?.id || "")}</span>
-                  {formatRunDateTime(
-                    run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs
-                  ) ? (
-                    <span className="tcp-subtle text-xs">
-                      Started:{" "}
-                      {formatRunDateTime(
-                        run?.started_at_ms ||
-                          run?.startedAtMs ||
-                          run?.created_at_ms ||
-                          run?.createdAtMs
-                      )}
-                    </span>
-                  ) : null}
-                  {run?.finished_at_ms || run?.finishedAtMs ? (
-                    <span className="tcp-subtle text-xs">
-                      Finished: {formatRunDateTime(run?.finished_at_ms || run?.finishedAtMs)}
-                    </span>
-                  ) : null}
-                  {runObjectiveText(run) ? (
-                    <span className="text-xs text-slate-400">
-                      {shortText(runObjectiveText(run), 160)}
-                    </span>
-                  ) : null}
-                  {workflowStatusSubtleDetail(run) ? (
-                    <span className="tcp-subtle text-xs">{workflowStatusSubtleDetail(run)}</span>
-                  ) : null}
-                </div>
-                <button
-                  className="tcp-btn h-7 px-2 text-xs"
-                  onClick={() => {
-                    onSelectRunId(String(run?.run_id || run?.id || "").trim());
-                    onOpenRunningView();
-                  }}
-                >
-                  <i data-lucide="info"></i>
-                  {viewMode === "running" ? "Logs" : "Details"}
-                </button>
-              </div>
-            </div>
-          ))}
+              ))
+            : null}
         </div>
       ) : null}
 

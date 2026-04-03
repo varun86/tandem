@@ -1101,8 +1101,8 @@ export function AdvancedMissionBuilderPanel({
           Mission Builder
         </div>
         <div className="tcp-subtle text-xs">
-          Build one coordinated swarm mission with shared context, per-lane roles, explicit
-          handoffs, and a compiled preview before launch.
+          Build one coordinated mission with shared context, per-lane roles, explicit handoffs, and
+          a compiled preview before launch.
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className="tcp-btn h-8 px-3 text-xs" onClick={() => setShowGuide(true)}>
@@ -1163,7 +1163,7 @@ export function AdvancedMissionBuilderPanel({
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <div className="text-lg font-semibold text-slate-100">
-                  How the Advanced Swarm Builder Works
+                  How Mission Builder Works
                 </div>
                 <div className="tcp-subtle mt-1 text-sm">
                   Think of this as a mission compiler: one shared goal, many scoped workstreams,

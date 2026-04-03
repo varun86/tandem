@@ -34,6 +34,7 @@ function scheduleHint(
 }
 
 export function buildIntentToMissionBlueprintPrompt(input: {
+  humanIntent?: string;
   missionTitle: string;
   missionGoal: string;
   sharedContext: string;
@@ -44,6 +45,7 @@ export function buildIntentToMissionBlueprintPrompt(input: {
   intervalSeconds: string;
   cronExpression: string;
 }) {
+  const humanIntent = safeString(input.humanIntent);
   const missionTitle = safeString(input.missionTitle);
   const missionGoal = safeString(input.missionGoal);
   const sharedContext = safeString(input.sharedContext);
@@ -86,6 +88,7 @@ export function buildIntentToMissionBlueprintPrompt(input: {
     "- Do not force a review or approval stage after every workstream; place them only where promotion, external action, or downstream trust requires it.",
     "",
     "Human intent:",
+    humanIntent ? `- Raw mission intent: ${humanIntent}` : "",
     missionTitle
       ? `- Mission title hint: ${missionTitle}`
       : "- Mission title hint: derive a concise operator-friendly title.",

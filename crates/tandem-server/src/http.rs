@@ -64,6 +64,7 @@ mod global;
 pub(crate) mod mcp;
 mod middleware;
 mod mission_builder;
+mod mission_builder_host;
 mod mission_builder_runtime;
 mod missions_teams;
 mod optimizations;

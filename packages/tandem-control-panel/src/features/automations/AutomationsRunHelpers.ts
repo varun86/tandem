@@ -146,11 +146,40 @@ export function runObjectiveText(run: any) {
     .trim();
 }
 
+function looksLikeOpaqueRunLabel(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (
+    /^automation-v2(?:-run)?-[0-9a-f]{8,}(?:-[0-9a-f]{4,}){1,}$/i.test(text) ||
+    /^run-[0-9a-f]{8,}(?:-[0-9a-f]{4,}){1,}$/i.test(text)
+  ) {
+    return true;
+  }
+  if (/^[0-9a-f]{8,}(?:-[0-9a-f]{4,}){2,}$/i.test(text)) return true;
+  return false;
+}
+
 export function runDisplayTitle(run: any) {
-  const explicitName = String(run?.name || "").trim();
-  if (explicitName) return explicitName;
+  const labelCandidates = [
+    run?.display_title,
+    run?.displayTitle,
+    run?.automation_name,
+    run?.automationName,
+    run?.automation_title,
+    run?.automationTitle,
+    run?.mission_snapshot?.title,
+    run?.mission?.title,
+    run?.title,
+    run?.name,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const readableLabel = labelCandidates.find((value) => !looksLikeOpaqueRunLabel(value));
+  if (readableLabel) return readableLabel;
   const objective = runObjectiveText(run);
   if (objective) return shortText(objective, 96);
+  const opaqueLabel = labelCandidates[0];
+  if (opaqueLabel) return opaqueLabel;
   const automationId = String(run?.automation_id || run?.routine_id || "").trim();
   if (automationId) return automationId;
   return "Run";

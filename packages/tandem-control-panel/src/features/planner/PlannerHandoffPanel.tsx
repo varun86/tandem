@@ -180,7 +180,7 @@ export function PlannerHandoffPanel({
             Create automation draft
           </button>
           <button type="button" className="tcp-btn" onClick={() => navigate("studio")}>
-            Open in advanced mission builder
+            Open in mission builder
           </button>
           <button type="button" className="tcp-btn" onClick={seedCodingBundle}>
             Publish coding task bundle

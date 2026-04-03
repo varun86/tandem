@@ -93,8 +93,8 @@ export function AutomationsPageTabs({
                     Builder Mode
                   </div>
                   <div className="tcp-subtle text-xs">
-                    Keep the simple wizard for quick automations, or switch to the advanced swarm
-                    builder for orchestrated mission planning.
+                    Keep the simple wizard for quick automations, or switch to Mission Builder for
+                    generated multi-step missions you can tune before launch.
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -120,7 +120,7 @@ export function AutomationsPageTabs({
                       }`}
                       onClick={() => setCreateMode("advanced")}
                     >
-                      Advanced Swarm Builder
+                      Mission Builder
                     </button>
                   </div>
                 </div>
