@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::tool_capabilities::{
     canonical_tool_name, tool_schema_matches_profile, ToolCapabilityProfile,
 };
+use crate::tool_policy::tool_name_matches_policy;
 use tandem_types::ToolSchema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,7 +237,10 @@ pub fn select_tool_subset(
 
     for schema in available {
         let norm = normalize_tool_name(&schema.name);
-        let explicitly_allowed = !request_allowlist.is_empty() && request_allowlist.contains(&norm);
+        let explicitly_allowed = !request_allowlist.is_empty()
+            && request_allowlist
+                .iter()
+                .any(|pattern| tool_name_matches_policy(pattern, &norm));
         if !request_allowlist.is_empty() && !explicitly_allowed {
             continue;
         }
@@ -378,6 +382,23 @@ mod tests {
         );
         assert_eq!(selected.len(), 1);
         assert_eq!(normalize_tool_name(&selected[0].name), "read");
+    }
+
+    #[test]
+    fn allowlist_patterns_can_select_mcp_tools_in_first_pass() {
+        let mut allowlist = HashSet::new();
+        allowlist.insert("mcp.arcade.*".to_string());
+        let selected = select_tool_subset(
+            vec![schema("mcp.arcade.gmail_create"), schema("read")],
+            ToolIntent::Knowledge,
+            &allowlist,
+            false,
+        );
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            normalize_tool_name(&selected[0].name),
+            "mcp.arcade.gmail_create"
+        );
     }
 
     #[test]
