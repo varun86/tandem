@@ -59,6 +59,35 @@ pub(crate) fn automation_node_research_stage(node: &AutomationFlowNode) -> Optio
     legacy_defaults::automation_node_research_stage(node)
 }
 
+pub(crate) async fn resolve_automation_agent_template(
+    state: &AppState,
+    workspace_root: &str,
+    template_id: &str,
+) -> anyhow::Result<Option<tandem_orchestrator::AgentTemplate>> {
+    let template_id = template_id.trim();
+    if template_id.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(template) = state
+        .agent_teams
+        .get_template_for_workspace(workspace_root, template_id)
+        .await?
+    {
+        return Ok(Some(template));
+    }
+
+    let global_workspace_root = state.workspace_index.snapshot().await.root;
+    if global_workspace_root == workspace_root {
+        return Ok(None);
+    }
+
+    state
+        .agent_teams
+        .get_template_for_workspace(&global_workspace_root, template_id)
+        .await
+}
+
 use serde_json::{json, Value};
 use tandem_core::resolve_shared_paths;
 use tandem_memory::MemoryManager;
@@ -2274,7 +2303,8 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
     }
 }
 
-fn resolve_automation_agent_model(
+pub(crate) async fn resolve_automation_agent_model(
+    state: &AppState,
     agent: &AutomationAgentProfile,
     template: Option<&tandem_orchestrator::AgentTemplate>,
 ) -> Option<ModelSpec> {
@@ -2286,9 +2316,29 @@ fn resolve_automation_agent_model(
     {
         return Some(model);
     }
-    template
+    if let Some(model) = template
         .and_then(|value| value.default_model.as_ref())
         .and_then(crate::app::routines::parse_model_spec)
+    {
+        return Some(model);
+    }
+
+    let providers = state.providers.list().await;
+    let effective_config = state.config.get_effective_value().await;
+    if let Some(config_default) =
+        crate::app::state::default_model_spec_from_effective_config(&effective_config)
+            .filter(|spec| crate::app::routines::provider_catalog_has_model(&providers, spec))
+    {
+        return Some(config_default);
+    }
+
+    providers.into_iter().find_map(|provider| {
+        let model = provider.models.first()?;
+        Some(ModelSpec {
+            provider_id: provider.id,
+            model_id: model.id.clone(),
+        })
+    })
 }
 
 pub(crate) fn automation_node_inline_artifact_payload(node: &AutomationFlowNode) -> Option<Value> {
@@ -6267,9 +6317,7 @@ pub(crate) async fn execute_automation_v2_node(
         if template_id.is_empty() {
             None
         } else {
-            state
-                .agent_teams
-                .get_template_for_workspace(&workspace_root, template_id)
+            resolve_automation_agent_template(state, &workspace_root, template_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("agent template `{}` not found", template_id))
                 .map(Some)?
@@ -6356,7 +6404,7 @@ pub(crate) async fn execute_automation_v2_node(
         .set_session_auto_approve_permissions(&session_id, true)
         .await;
 
-    let model = resolve_automation_agent_model(agent, template.as_ref());
+    let model = resolve_automation_agent_model(state, agent, template.as_ref()).await;
     let preexisting_output = required_output_path
         .as_deref()
         .and_then(|output_path| {

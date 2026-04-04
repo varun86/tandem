@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Input } from "@/components/ui";
+import { detectBrowserTimezone } from "@/components/agent-automation/timezone";
 import {
   agentTeamListTemplates,
   automationsV2Update,
@@ -931,9 +932,10 @@ export function AdvancedMissionBuilder({
     setBusyKey("preview");
     setError(null);
     try {
+      const timezone = detectBrowserTimezone();
       const response = await missionBuilderPreview({
         blueprint: effectiveBlueprint,
-        schedule: { type: "manual", timezone: "UTC", misfire_policy: "run_once" },
+        schedule: { type: "manual", timezone, misfire_policy: "run_once" },
       });
       setPreview(response);
     } catch (compileError) {
@@ -947,6 +949,7 @@ export function AdvancedMissionBuilder({
     setBusyKey("apply");
     setError(null);
     try {
+      const timezone = detectBrowserTimezone();
       if (editingAutomation?.automation_id) {
         const compiled = await missionBuilderPreview({
           blueprint: effectiveBlueprint,
@@ -974,7 +977,7 @@ export function AdvancedMissionBuilder({
       const response = await missionBuilderApply({
         blueprint: effectiveBlueprint,
         creator_id: "desktop",
-        schedule: { type: "manual", timezone: "UTC", misfire_policy: "run_once" },
+        schedule: { type: "manual", timezone, misfire_policy: "run_once" },
       });
       const automationId = String(response.automation?.automation_id || "").trim();
       await onRefreshAutomations();

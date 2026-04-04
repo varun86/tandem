@@ -320,7 +320,13 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
                     }
                 },
                 "participant_template_ids": ["frontend-ui"],
-                "report_path_template": "docs/standups/{{date}}.md"
+                "report_path_template": "docs/standups/{{date}}.md",
+                "model_policy": {
+                    "default_model": {
+                        "provider_id": "anthropic",
+                        "model_id": "claude-sonnet-4"
+                    }
+                }
             })
             .to_string(),
         ))
@@ -391,6 +397,28 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
             .and_then(Value::as_str),
         Some("frontend-ui")
     );
+    assert_eq!(
+        automation
+            .get("agents")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|value| value.get("model_policy"))
+            .and_then(|value| value.get("default_model"))
+            .and_then(|value| value.get("provider_id"))
+            .and_then(Value::as_str),
+        Some("anthropic")
+    );
+    assert_eq!(
+        automation
+            .get("agents")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|value| value.get("model_policy"))
+            .and_then(|value| value.get("default_model"))
+            .and_then(|value| value.get("model_id"))
+            .and_then(Value::as_str),
+        Some("claude-sonnet-4")
+    );
     assert!(automation
         .get("flow")
         .and_then(|value| value.get("nodes"))
@@ -409,6 +437,76 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
         .is_some_and(|rows| rows
             .iter()
             .any(|value| value.as_str() == Some("memory_store"))));
+}
+
+#[tokio::test]
+async fn agent_standup_compose_uses_global_saved_agents_across_workspaces() {
+    let state = test_state().await;
+    let default_workspace_root =
+        tandem_core::normalize_workspace_path(&state.workspace_index.snapshot().await.root)
+            .expect("normalized workspace root");
+    state
+        .agent_teams
+        .upsert_template(
+            &default_workspace_root,
+            tandem_orchestrator::AgentTemplate {
+                template_id: "shared-copywriter".to_string(),
+                display_name: Some("Shared Copywriter".to_string()),
+                avatar_url: None,
+                role: tandem_orchestrator::AgentRole::Worker,
+                system_prompt: Some("You own messaging and release notes.".to_string()),
+                default_model: None,
+                skills: Vec::new(),
+                default_budget: tandem_orchestrator::BudgetLimit::default(),
+                capabilities: tandem_orchestrator::CapabilitySpec::default(),
+            },
+        )
+        .await
+        .expect("template upsert");
+
+    let alternate_workspace =
+        std::env::temp_dir().join(format!("tandem-standup-global-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&alternate_workspace).expect("create alternate workspace");
+    let alternate_workspace_root = tandem_core::normalize_workspace_path(
+        alternate_workspace
+            .to_str()
+            .expect("alternate workspace root"),
+    )
+    .expect("normalized alternate workspace root");
+
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/agent-standup/compose")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "Shared Agent Standup",
+                "workspace_root": alternate_workspace_root,
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": {
+                        "type": "run_once"
+                    }
+                },
+                "participant_template_ids": ["shared-copywriter"],
+                "report_path_template": "docs/standups/{{date}}.md"
+            })
+            .to_string(),
+        ))
+        .expect("compose request");
+    let resp = app.clone().oneshot(req).await.expect("compose response");
+    let status = resp.status();
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("compose body");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "compose response body: {}",
+        String::from_utf8_lossy(&body)
+    );
 }
 
 #[tokio::test]

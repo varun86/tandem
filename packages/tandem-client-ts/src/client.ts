@@ -3208,14 +3208,23 @@ class AgentTeams {
   constructor(private req: TandemClient["_request"]) {}
 
   /** List available agent team templates. */
-  async listTemplates(): Promise<AgentTeamTemplatesResponse> {
-    return this.req<AgentTeamTemplatesResponse>("/agent-team/templates");
+  async listTemplates(options?: { workspaceRoot?: string }): Promise<AgentTeamTemplatesResponse> {
+    const params = new URLSearchParams();
+    const workspaceRoot = String(options?.workspaceRoot || "").trim();
+    if (workspaceRoot) params.set("workspaceRoot", workspaceRoot);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return this.req<AgentTeamTemplatesResponse>(`/agent-team/templates${qs}`);
   }
 
   async createTemplate(
-    input: AgentTeamTemplateCreateInput
+    input: AgentTeamTemplateCreateInput,
+    options?: { workspaceRoot?: string }
   ): Promise<{ ok?: boolean; template?: JsonObject }> {
-    return this.req<{ ok?: boolean; template?: JsonObject }>("/agent-team/templates", {
+    const params = new URLSearchParams();
+    const workspaceRoot = String(options?.workspaceRoot || "").trim();
+    if (workspaceRoot) params.set("workspaceRoot", workspaceRoot);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return this.req<{ ok?: boolean; template?: JsonObject }>(`/agent-team/templates${qs}`, {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -3223,17 +3232,29 @@ class AgentTeams {
 
   async updateTemplate(
     id: string,
-    patch: AgentTeamTemplatePatchInput
+    patch: AgentTeamTemplatePatchInput,
+    options?: { workspaceRoot?: string }
   ): Promise<{ ok?: boolean; template?: JsonObject }> {
+    const params = new URLSearchParams();
+    const workspaceRoot = String(options?.workspaceRoot || "").trim();
+    if (workspaceRoot) params.set("workspaceRoot", workspaceRoot);
+    const qs = params.toString() ? `?${params.toString()}` : "";
     return this.req<{ ok?: boolean; template?: JsonObject }>(
-      `/agent-team/templates/${encodeURIComponent(id)}`,
+      `/agent-team/templates/${encodeURIComponent(id)}${qs}`,
       { method: "PATCH", body: JSON.stringify(patch) }
     );
   }
 
-  async deleteTemplate(id: string): Promise<{ ok?: boolean; deleted?: boolean }> {
+  async deleteTemplate(
+    id: string,
+    options?: { workspaceRoot?: string }
+  ): Promise<{ ok?: boolean; deleted?: boolean }> {
+    const params = new URLSearchParams();
+    const workspaceRoot = String(options?.workspaceRoot || "").trim();
+    if (workspaceRoot) params.set("workspaceRoot", workspaceRoot);
+    const qs = params.toString() ? `?${params.toString()}` : "";
     return this.req<{ ok?: boolean; deleted?: boolean }>(
-      `/agent-team/templates/${encodeURIComponent(id)}`,
+      `/agent-team/templates/${encodeURIComponent(id)}${qs}`,
       { method: "DELETE" }
     );
   }
@@ -3248,6 +3269,7 @@ class AgentTeams {
         schedule: input.schedule,
         participant_template_ids: input.participantTemplateIds,
         report_path_template: input.reportPathTemplate,
+        model_policy: input.modelPolicy,
       }),
     });
   }

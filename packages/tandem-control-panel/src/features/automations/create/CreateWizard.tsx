@@ -6,6 +6,7 @@ import { Step1Goal } from "./Step1Goal";
 import { Step2Schedule } from "./Step2Schedule";
 import { Step3Mode } from "./Step3Mode";
 import { Step4Review } from "./Step4Review";
+import { detectBrowserTimezone, isValidTimezone } from "../timezone";
 import { buildDefaultKnowledgeOperatorPreferences } from "../../planner/plannerShared";
 
 type ExecutionMode = "single" | "team" | "swarm";
@@ -23,6 +24,7 @@ interface SchedulePreset {
 interface WizardState {
   goal: string;
   workspaceRoot: string;
+  timezone: string;
   schedulePreset: string;
   scheduleKind: "manual" | "cron" | "interval";
   cron: string;
@@ -145,7 +147,8 @@ const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 function createDefaultWizardState(
   defaultProvider: string,
   defaultModel: string,
-  workspaceRoot = ""
+  workspaceRoot = "",
+  timezone = detectBrowserTimezone()
 ): WizardState {
   const defaultPreset = AUTOMATION_WIZARD_CONFIG.schedulePresets.find(
     (preset) => preset.label === AUTOMATION_WIZARD_CONFIG.defaults.schedulePreset
@@ -163,6 +166,7 @@ function createDefaultWizardState(
   return {
     goal: "",
     workspaceRoot,
+    timezone: String(timezone || "").trim() || detectBrowserTimezone(),
     schedulePreset: AUTOMATION_WIZARD_CONFIG.defaults.schedulePreset,
     scheduleKind: defaultSchedule.scheduleKind,
     cron: defaultSchedule.cron,
@@ -218,22 +222,25 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
 }
 
 function toSchedulePayload(wizard: WizardState) {
-  if (wizard.scheduleKind === "manual") return { type: "manual" };
+  const timezone = String(wizard.timezone || "").trim() || "UTC";
+  if (wizard.scheduleKind === "manual") return { type: "manual", timezone };
   if (wizard.scheduleKind === "interval") {
     return {
       interval_seconds: {
         seconds: Math.max(1, Number.parseInt(String(wizard.intervalSeconds || "3600"), 10) || 3600),
       },
+      timezone,
     };
   }
   const customCron = String(wizard.cron || "").trim();
-  if (customCron) return { cron: { expression: customCron } };
+  if (customCron) return { cron: { expression: customCron }, timezone };
   const preset = AUTOMATION_WIZARD_CONFIG.schedulePresets.find(
     (p) => p.label === wizard.schedulePreset
   );
-  if (preset?.intervalSeconds) return { interval_seconds: { seconds: preset.intervalSeconds } };
-  if (preset?.cron) return { cron: { expression: preset.cron } };
-  return { type: "manual" };
+  if (preset?.intervalSeconds)
+    return { interval_seconds: { seconds: preset.intervalSeconds }, timezone };
+  if (preset?.cron) return { cron: { expression: preset.cron }, timezone };
+  return { type: "manual", timezone };
 }
 
 function validateWorkspaceRootInput(raw: string) {
@@ -673,15 +680,20 @@ export function CreateWizard({
     wizard.plannerModelId
   );
   const roleModelsError = validateRoleModelsJsonInput(wizard.roleModelsJson);
+  const timezoneError =
+    String(wizard.timezone || "").trim().length > 0 && !isValidTimezone(wizard.timezone)
+      ? "Timezone must be a valid IANA timezone like Europe/Berlin."
+      : "";
   const canAdvance =
     step === 1
       ? wizard.goal.trim().length > 8
       : step === 2
-        ? wizard.scheduleKind === "manual" ||
-          (wizard.scheduleKind === "cron" && !!wizard.cron.trim()) ||
-          (wizard.scheduleKind === "interval" &&
-            (Number.parseInt(String(wizard.intervalSeconds || "0"), 10) || 0) > 0) ||
-          !!wizard.schedulePreset
+        ? (wizard.scheduleKind === "manual" ||
+            (wizard.scheduleKind === "cron" && !!wizard.cron.trim()) ||
+            (wizard.scheduleKind === "interval" &&
+              (Number.parseInt(String(wizard.intervalSeconds || "0"), 10) || 0) > 0) ||
+            !!wizard.schedulePreset) &&
+          !timezoneError
         : step === 3
           ? !!wizard.mode && !workspaceRootError && !plannerModelError && !roleModelsError
           : true;
@@ -838,6 +850,8 @@ export function CreateWizard({
                 cronExpression: wizard.cron,
                 intervalSeconds: wizard.intervalSeconds,
               }}
+              timezone={wizard.timezone}
+              timezoneError={timezoneError}
               onScheduleChange={(value) =>
                 setWizard((s) => ({
                   ...s,
@@ -847,6 +861,7 @@ export function CreateWizard({
                   intervalSeconds: value.intervalSeconds,
                 }))
               }
+              onTimezoneChange={(value) => setWizard((s) => ({ ...s, timezone: value }))}
             />
           ) : step === 3 ? (
             <Step3Mode

@@ -22,12 +22,20 @@ This is the canonical release-notes file used by release tooling.
   - Added compile-time/runtime validation and regressions for revoked contexts, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays explicit and isolated.
   - Swept the shared-context UI copy to use Shared Workflow Context terminology consistently instead of the older pack wording.
 
+- **Timezone-aware automation scheduling**
+  - Added reusable timezone helpers and timezone pickers to both the control panel and desktop automation flows so new and edited schedules can reflect the operator's local timezone instead of silently defaulting to UTC.
+  - Added timezone review details to automation previews so operators can verify the final schedule context before saving.
+
 - **Tandem TUI mission-command modularization**
   - Moved the remaining higher-risk slash commands out of `app.rs` into `app/commands.rs`, including mission list/create/get/event flows, quick mission approval helpers, agent-team summary views, local bindings, agent-team approval reply helpers, preset index lookups, agent compose/summary/fork flows, automation preset summary/save flows, and agent-pane creation/switching/fanout orchestration commands.
   - Updated the TUI modularization kanban so the higher-risk slash-command extraction track is now complete and `TUI-201` is closed.
 - **Tandem TUI plan-helper modularization**
   - Moved question-draft parsing, task-payload normalization, plan fingerprint/preview generation, plan-feedback markdown rendering, assistant-text extraction, reconstructed-task replay, and context-todo sync helpers out of `app.rs` into `app/plan_helpers.rs`.
   - Rewired both `app.rs` and `app/commands.rs` to consume the new helper module without changing plan-mode approval or task-sync behavior.
+
+- **Agent team template library and standup composition**
+  - Standardized agent-team template access around the global saved-agent workspace so standups can be composed from saved personalities even when the automation target workspace differs from the workspace where those templates were created.
+  - Extended the standup compose client/server contract to carry an explicit `model_policy` onto every generated standup agent.
 
 - **Workflow MCP discovery and connector-backed research**
   - Made workflow generation and execution explicitly surface MCP discovery when a prompt or node objective names connector-backed sources such as Reddit, GitHub issues, Slack, or Jira.
@@ -38,6 +46,11 @@ This is the canonical release-notes file used by release tooling.
 - **Channel MCP permission refresh**
   - Reapplied the channel permission template whenever a Telegram, Discord, or Slack session is reused so `mcp_list` and other `mcp*` tools no longer get stuck behind stale session permissions after a restart.
   - Allowed session PATCH updates to refresh permission rules and added regression coverage so channel sessions can recover MCP discovery without manually recreating the session.
+
+- **Agent standup startup reliability and explicit model selection**
+  - Fixed automation-run startup so workflows that do not actually materialize runtime context can start and complete without being rejected for a missing runtime-context partition.
+  - Fixed standup execution to resolve participant templates from the global saved-agent library when the composed automation runs in another workspace.
+  - Added an explicit provider/model selector to the Agent Standup builder and now stamp that choice onto every standup participant plus the coordinator, preventing `MODEL_SELECTION_REQUIRED` failures in explicit-model environments.
 
 ## v0.4.20 (Released 2026-04-03)
 

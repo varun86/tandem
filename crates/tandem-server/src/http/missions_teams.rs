@@ -97,6 +97,16 @@ pub(super) struct AgentTeamTemplateCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct AgentTeamTemplatesQuery {
+    #[serde(rename = "workspaceRoot", alias = "workspace_root")]
+    pub workspace_root: Option<String>,
+}
+
+async fn global_template_workspace_root(state: &AppState) -> String {
+    state.workspace_index.snapshot().await.root
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct AgentTeamTemplatePatchInput {
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
@@ -116,6 +126,8 @@ pub(super) struct StandupComposeInput {
     pub participant_template_ids: Vec<String>,
     #[serde(default)]
     pub report_path_template: Option<String>,
+    #[serde(default)]
+    pub model_policy: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -504,8 +516,9 @@ async fn run_orchestrator_runtime_cancellations(
 
 pub(super) async fn agent_team_templates(
     State(state): State<AppState>,
+    Query(_query): Query<AgentTeamTemplatesQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let workspace_root = state.workspace_index.snapshot().await.root;
+    let workspace_root = global_template_workspace_root(&state).await;
     state
         .agent_teams
         .ensure_loaded_for_workspace(&workspace_root)
@@ -530,6 +543,7 @@ pub(super) async fn agent_team_templates(
 
 pub(super) async fn agent_team_template_create(
     State(state): State<AppState>,
+    Query(_query): Query<AgentTeamTemplatesQuery>,
     Json(input): Json<AgentTeamTemplateCreateInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if input.template.template_id.trim().is_empty() {
@@ -542,7 +556,7 @@ pub(super) async fn agent_team_template_create(
             })),
         ));
     }
-    let workspace_root = state.workspace_index.snapshot().await.root;
+    let workspace_root = global_template_workspace_root(&state).await;
     let template = state
         .agent_teams
         .upsert_template(&workspace_root, input.template)
@@ -565,9 +579,25 @@ pub(super) async fn agent_team_template_create(
 
 pub(super) async fn agent_team_template_patch(
     State(state): State<AppState>,
+    Query(_query): Query<AgentTeamTemplatesQuery>,
     Path(id): Path<String>,
     Json(input): Json<AgentTeamTemplatePatchInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let workspace_root = global_template_workspace_root(&state).await;
+    state
+        .agent_teams
+        .ensure_loaded_for_workspace(&workspace_root)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "ok": false,
+                    "code": "TEMPLATE_LOAD_FAILED",
+                    "error": error.to_string(),
+                })),
+            )
+        })?;
     let existing = state
         .agent_teams
         .list_templates()
@@ -611,7 +641,6 @@ pub(super) async fn agent_team_template_patch(
         updated.capabilities = capabilities;
     }
 
-    let workspace_root = state.workspace_index.snapshot().await.root;
     let template = state
         .agent_teams
         .upsert_template(&workspace_root, updated)
@@ -634,9 +663,10 @@ pub(super) async fn agent_team_template_patch(
 
 pub(super) async fn agent_team_template_delete(
     State(state): State<AppState>,
+    Query(_query): Query<AgentTeamTemplatesQuery>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let workspace_root = state.workspace_index.snapshot().await.root;
+    let workspace_root = global_template_workspace_root(&state).await;
     let deleted = state
         .agent_teams
         .delete_template(&workspace_root, &id)
@@ -695,6 +725,20 @@ pub(super) async fn compose_standup(
                 })),
             )
         })?;
+    if let Some(model_policy) = input.model_policy.as_ref() {
+        crate::http::routines_automations::validate_model_policy(model_policy).map_err(
+            |detail| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "ok": false,
+                        "code": "INVALID_MODEL_POLICY",
+                        "error": detail,
+                    })),
+                )
+            },
+        )?;
+    }
     let report_path_template = validate_standup_report_path(
         input
             .report_path_template
@@ -711,9 +755,10 @@ pub(super) async fn compose_standup(
             })),
         )
     })?;
+    let template_workspace_root = global_template_workspace_root(&state).await;
     state
         .agent_teams
-        .ensure_loaded_for_workspace(&workspace_root)
+        .ensure_loaded_for_workspace(&template_workspace_root)
         .await
         .map_err(|error| {
             (
@@ -765,6 +810,7 @@ pub(super) async fn compose_standup(
 
     let automation_id = format!("standup-{}", Uuid::new_v4());
     let schedule_timezone = input.schedule.timezone.clone();
+    let standup_model_policy = input.model_policy.clone();
     let mut agents = Vec::new();
     let mut nodes = Vec::new();
     let mut participant_node_ids = Vec::new();
@@ -798,7 +844,7 @@ pub(super) async fn compose_standup(
                 .clone()
                 .unwrap_or_else(|| template.template_id.clone()),
             avatar_url: template.avatar_url.clone(),
-            model_policy: None,
+            model_policy: standup_model_policy.clone(),
             skills: template
                 .skills
                 .iter()
@@ -855,7 +901,7 @@ pub(super) async fn compose_standup(
         template_id: None,
         display_name: "Standup Coordinator".to_string(),
         avatar_url: None,
-        model_policy: None,
+        model_policy: standup_model_policy.clone(),
         skills: Vec::new(),
         tool_policy: crate::AutomationAgentToolPolicy {
             allowlist: vec![

@@ -409,6 +409,15 @@ impl AutomationV2Spec {
         Some(AutomationRuntimeContextMaterialization { routines })
     }
 
+    pub fn requires_runtime_context(&self) -> bool {
+        self.runtime_context_materialization().is_some()
+            || self.approved_plan_materialization().is_some()
+            || !crate::http::context_packs::shared_context_pack_ids_from_metadata(
+                self.metadata.as_ref(),
+            )
+            .is_empty()
+    }
+
     pub fn plan_scope_snapshot_materialization(&self) -> Option<PlanScopeSnapshot> {
         self.metadata
             .as_ref()

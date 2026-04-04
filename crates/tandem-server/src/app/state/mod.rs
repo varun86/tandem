@@ -4796,6 +4796,10 @@ impl AppState {
             }
             (run.automation_snapshot.clone(), run.status.clone())
         };
+        let runtime_context_required = automation_snapshot
+            .as_ref()
+            .map(crate::automation_v2::types::AutomationV2Spec::requires_runtime_context)
+            .unwrap_or(false);
         let runtime_context = match automation_snapshot.as_ref() {
             Some(automation) => self
                 .automation_v2_effective_runtime_context(
@@ -4809,7 +4813,7 @@ impl AppState {
                 .flatten(),
             None => None,
         };
-        if runtime_context.is_none() {
+        if runtime_context_required && runtime_context.is_none() {
             let mut guard = self.automation_v2_runs.write().await;
             let run = guard.get_mut(run_id)?;
             if run.status != AutomationRunStatus::Queued {

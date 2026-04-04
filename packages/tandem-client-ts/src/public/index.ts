@@ -1397,6 +1397,7 @@ export interface AgentStandupComposeInput {
   schedule: JsonObject;
   participantTemplateIds: string[];
   reportPathTemplate?: string;
+  modelPolicy?: JsonObject;
 }
 
 export interface AgentStandupComposeResponse {

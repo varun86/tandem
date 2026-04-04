@@ -205,16 +205,6 @@ pub async fn run_automation_v2_run(
     run: crate::automation_v2::types::AutomationV2RunRecord,
 ) {
     let run_id = run.run_id.clone();
-    let Some(_runtime_context) = run.runtime_context.as_ref() else {
-        let detail = "runtime context partition missing for automation run".to_string();
-        let _ = state
-            .update_automation_v2_run(&run.run_id, |row| {
-                row.status = AutomationRunStatus::Failed;
-                row.detail = Some(detail.clone());
-            })
-            .await;
-        return;
-    };
     let automation = state
         .get_automation_v2(&run.automation_id)
         .await
@@ -228,6 +218,16 @@ pub async fn run_automation_v2_run(
             .await;
         return;
     };
+    if automation.requires_runtime_context() && run.runtime_context.as_ref().is_none() {
+        let detail = "runtime context partition missing for automation run".to_string();
+        let _ = state
+            .update_automation_v2_run(&run.run_id, |row| {
+                row.status = AutomationRunStatus::Failed;
+                row.detail = Some(detail.clone());
+            })
+            .await;
+        return;
+    }
     if let Some(detail) = automation_activation_validation_failure(&automation) {
         let _ = state
             .update_automation_v2_run(&run.run_id, |row| {

@@ -1964,6 +1964,175 @@ async fn automation_run_requires_stored_runtime_context_partition_at_startup() {
 }
 
 #[tokio::test]
+async fn automation_run_without_runtime_context_requirement_can_start_and_complete() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-automation-no-runtime-context-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("workspace");
+
+    let automation = AutomationV2Spec {
+        automation_id: "auto-no-runtime-context-test".to_string(),
+        name: "No Runtime Context Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    assert!(run.runtime_context.is_none());
+
+    let claimed = state
+        .claim_specific_automation_v2_run(&run.run_id)
+        .await
+        .expect("claim run");
+    assert!(claimed.runtime_context.is_none());
+
+    crate::automation_v2::executor::run_automation_v2_run(state.clone(), claimed).await;
+
+    let persisted = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Completed);
+    assert_eq!(
+        persisted.detail.as_deref(),
+        Some("automation run completed")
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn automation_agent_templates_fall_back_to_global_workspace_library() {
+    let state = ready_test_state().await;
+    let global_workspace_root = state.workspace_index.snapshot().await.root;
+    state
+        .agent_teams
+        .upsert_template(
+            &global_workspace_root,
+            tandem_orchestrator::AgentTemplate {
+                template_id: "shared-copywriter".to_string(),
+                display_name: Some("Shared Copywriter".to_string()),
+                avatar_url: None,
+                role: tandem_orchestrator::AgentRole::Worker,
+                system_prompt: Some("You own messaging and release notes.".to_string()),
+                default_model: None,
+                skills: Vec::new(),
+                default_budget: tandem_orchestrator::BudgetLimit::default(),
+                capabilities: tandem_orchestrator::CapabilitySpec::default(),
+            },
+        )
+        .await
+        .expect("template upsert");
+
+    let alternate_workspace = std::env::temp_dir().join(format!(
+        "tandem-automation-template-fallback-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&alternate_workspace).expect("alternate workspace");
+    let alternate_workspace_root = alternate_workspace.to_string_lossy().to_string();
+
+    let resolved = crate::app::state::automation::resolve_automation_agent_template(
+        &state,
+        &alternate_workspace_root,
+        "shared-copywriter",
+    )
+    .await
+    .expect("resolve template")
+    .expect("fallback template");
+
+    assert_eq!(resolved.template_id, "shared-copywriter");
+    assert_eq!(resolved.display_name.as_deref(), Some("Shared Copywriter"));
+
+    let _ = std::fs::remove_dir_all(&alternate_workspace);
+}
+
+#[tokio::test]
+async fn automation_agent_model_falls_back_to_effective_config_default() {
+    let state = ready_test_state().await;
+    state
+        .config
+        .patch_project(json!({
+            "default_provider": "openai",
+            "providers": {
+                "openai": {
+                    "default_model": "gpt-5-mini"
+                }
+            }
+        }))
+        .await
+        .expect("patch config");
+
+    let agent = AutomationAgentProfile {
+        agent_id: "agent".to_string(),
+        template_id: Some("shared-copywriter".to_string()),
+        display_name: "Agent".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+    let template = tandem_orchestrator::AgentTemplate {
+        template_id: "shared-copywriter".to_string(),
+        display_name: Some("Shared Copywriter".to_string()),
+        avatar_url: None,
+        role: tandem_orchestrator::AgentRole::Worker,
+        system_prompt: Some("You own messaging and release notes.".to_string()),
+        default_model: None,
+        skills: Vec::new(),
+        default_budget: tandem_orchestrator::BudgetLimit::default(),
+        capabilities: tandem_orchestrator::CapabilitySpec::default(),
+    };
+
+    let resolved = crate::app::state::automation::resolve_automation_agent_model(
+        &state,
+        &agent,
+        Some(&template),
+    )
+    .await
+    .expect("resolved model");
+
+    assert_eq!(resolved.provider_id, "openai");
+    assert_eq!(resolved.model_id, "gpt-5-mini");
+}
+
+#[tokio::test]
 async fn automation_run_rejects_invalid_activation_validation_snapshot() {
     let automation = AutomationV2Spec {
         automation_id: "auto-activation-validation-test".to_string(),

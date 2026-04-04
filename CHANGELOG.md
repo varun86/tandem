@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added compile-time/runtime validation and regressions for revoked contexts, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays scoped and explicit.
   - Swept the shared-context UI copy to use Shared Workflow Context terminology consistently instead of the older pack wording.
 
+- **Timezone-aware automation scheduling**:
+  - Added reusable timezone helpers and timezone input fields to the control panel and desktop automation surfaces so schedule creation and editing can use the operator's local timezone instead of assuming UTC.
+  - Added timezone visibility to workflow review surfaces so operators can confirm the final schedule context before saving or launching an automation.
+
 ### Changed
 
 - **Tandem TUI modular slash-command extraction**:
@@ -35,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tandem TUI plan-helper extraction**:
   - Moved question-draft parsing, task-payload normalization, plan fingerprint/preview generation, plan-feedback markdown rendering, assistant-text extraction, reconstructed-task replay, and context-todo sync helpers out of `app.rs` into `app/plan_helpers.rs`.
   - Rewired `app.rs` and `app/commands.rs` to use the new helper module while preserving existing plan-mode and approval-flow behavior.
+- **Agent team template library and standup composition**:
+  - Standardized agent-team template reads and writes around the global saved-agent workspace so standup composition can reuse saved personalities across workspaces instead of only within the active project root.
+  - Extended the standup compose contract and client bindings to carry an explicit `model_policy` onto generated participant and coordinator agents.
 
 ### Fixed
 
@@ -47,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Channel MCP permission refresh**:
   - Reapplied the channel permission template whenever a Telegram, Discord, or Slack session is reused so `mcp_list` and other `mcp*` tools no longer get stuck behind stale session permissions after a restart.
   - Allowed session PATCH updates to refresh permission rules and added regression coverage so channel sessions can recover MCP discovery without manually recreating the session.
+
+- **Agent standup runtime startup and model selection**:
+  - Fixed automation run startup so workflows that do not actually materialize runtime context are no longer failed up front for a missing runtime-context partition.
+  - Fixed standup execution to resolve saved-agent templates from the global template library when the composed automation runs in a different workspace.
+  - Fixed standup composition in explicit-model environments by adding a required provider/model picker in the control panel and stamping that selection directly onto every generated standup agent.
 
 ## [0.4.20] - 2026-04-03
 

@@ -1,4 +1,5 @@
 import { ScheduleBuilder } from "../ScheduleBuilder";
+import { TimezoneField } from "../TimezoneField";
 
 type SchedulePreset = {
   label: string;
@@ -20,6 +21,9 @@ type Step2ScheduleProps = {
   onSelect: (preset: SchedulePreset) => void;
   scheduleValue: ScheduleValue;
   onScheduleChange: (value: ScheduleValue) => void;
+  timezone: string;
+  timezoneError?: string;
+  onTimezoneChange: (value: string) => void;
 };
 
 export function Step2Schedule({
@@ -28,6 +32,9 @@ export function Step2Schedule({
   onSelect,
   scheduleValue,
   onScheduleChange,
+  timezone,
+  timezoneError,
+  onTimezoneChange,
 }: Step2ScheduleProps) {
   return (
     <div className="grid gap-3">
@@ -55,6 +62,12 @@ export function Step2Schedule({
         ))}
       </div>
       <ScheduleBuilder value={scheduleValue} onChange={onScheduleChange} />
+      <TimezoneField
+        value={timezone}
+        onChange={onTimezoneChange}
+        error={timezoneError}
+        hint="Use the timezone that matches when this automation should fire."
+      />
     </div>
   );
 }

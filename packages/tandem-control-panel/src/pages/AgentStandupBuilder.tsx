@@ -1,7 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../lib/api";
 import { renderIcons } from "../app/icons.js";
 import { EmptyState } from "./ui";
+import { ProviderModelSelector } from "../components/ProviderModelSelector";
+import { ScheduleBuilder } from "../features/automations/ScheduleBuilder";
+import type { ScheduleValue } from "../features/automations/scheduleBuilder";
+import { TimezoneField } from "../features/automations/TimezoneField";
+import { isValidTimezone } from "../features/automations/timezone";
+
+type ProviderOption = {
+  id: string;
+  models: string[];
+  configured?: boolean;
+};
+
+type ModelDraft = {
+  provider: string;
+  model: string;
+};
 
 type StandupTemplateOption = {
   templateId: string;
@@ -10,20 +27,7 @@ type StandupTemplateOption = {
   modelLabel: string;
 };
 
-const SCHEDULE_PRESETS = [
-  { label: "Every X hours", intervalSeconds: 3600 },
-  { label: "Every morning", cron: "0 9 * * *" },
-  { label: "Every evening", cron: "0 18 * * *" },
-  { label: "Daily at midnight", cron: "0 0 * * *" },
-  { label: "Weekly Monday", cron: "0 9 * * 1" },
-  { label: "Manual only", cron: "" },
-] as const;
-
-function toArray(input: any, key: string) {
-  if (Array.isArray(input)) return input;
-  if (Array.isArray(input?.[key])) return input[key];
-  return [];
-}
+const RUN_ONCE_MISFIRE_POLICY = { type: "run_once" as const };
 
 function validateWorkspaceRootInput(raw: string) {
   const value = String(raw || "").trim();
@@ -49,82 +53,178 @@ function formatAutomationV2ScheduleLabel(schedule: any) {
   return "manual";
 }
 
-function standupScheduleToAutomationSchedule(selectedPreset: string, customCron: string) {
-  const trimmedCron = String(customCron || "").trim();
-  if (trimmedCron) {
-    return { type: "cron", cron_expression: trimmedCron, timezone: "UTC" };
+function standupScheduleToAutomationSchedule(scheduleValue: ScheduleValue, timezone: string) {
+  const effectiveTimezone = String(timezone || "").trim() || "UTC";
+  if (scheduleValue.scheduleKind === "interval") {
+    return {
+      type: "interval",
+      interval_seconds: Math.max(
+        1,
+        Number.parseInt(String(scheduleValue.intervalSeconds || "3600"), 10) || 3600
+      ),
+      timezone: effectiveTimezone,
+      misfire_policy: RUN_ONCE_MISFIRE_POLICY,
+    };
   }
-  const preset = SCHEDULE_PRESETS.find((row) => row.label === selectedPreset);
-  if (preset && "intervalSeconds" in preset) {
-    return { type: "interval", interval_seconds: preset.intervalSeconds };
+  if (scheduleValue.scheduleKind === "cron") {
+    return {
+      type: "cron",
+      cron_expression: String(scheduleValue.cronExpression || "").trim() || "0 9 * * *",
+      timezone: effectiveTimezone,
+      misfire_policy: RUN_ONCE_MISFIRE_POLICY,
+    };
   }
-  if (preset && "cron" in preset && preset.cron) {
-    return { type: "cron", cron_expression: preset.cron, timezone: "UTC" };
-  }
-  return { type: "manual" };
+  return { type: "manual", timezone: effectiveTimezone, misfire_policy: RUN_ONCE_MISFIRE_POLICY };
 }
 
-function normalizeStandupTemplateOption(row: any): StandupTemplateOption | null {
-  const templateId = String(row?.template_id || row?.templateID || row?.id || "").trim();
-  if (!templateId) return null;
-  const displayName = String(row?.display_name || row?.displayName || row?.name || "").trim();
-  const role = String(row?.role || "worker").trim() || "worker";
-  const defaultModel = row?.default_model || row?.defaultModel || {};
-  const provider = String(defaultModel?.provider_id || defaultModel?.providerId || "").trim();
-  const modelId = String(defaultModel?.model_id || defaultModel?.modelId || "").trim();
+function buildStandupModelPolicy(draft: ModelDraft) {
+  const provider = String(draft.provider || "").trim();
+  const model = String(draft.model || "").trim();
+  if (!provider || !model) return null;
   return {
-    templateId,
-    displayName: displayName || templateId,
-    role,
-    modelLabel: provider && modelId ? `${provider}/${modelId}` : "",
+    default_model: {
+      provider_id: provider,
+      model_id: model,
+    },
   };
+}
+
+function resolveDefaultStandupModel(
+  providerOptions: ProviderOption[],
+  providersConfig: any
+): ModelDraft {
+  const configuredProvider = String(providersConfig?.default || "").trim();
+  const provider = configuredProvider || providerOptions[0]?.id || "";
+  if (!provider) return { provider: "", model: "" };
+  const models = providerOptions.find((entry) => entry.id === provider)?.models || [];
+  const model = String(
+    providersConfig?.providers?.[provider]?.default_model || models[0] || ""
+  ).trim();
+  return { provider, model };
 }
 
 export function AgentStandupBuilder({
   client,
   toast,
+  workspaceRoot,
+  onWorkspaceRootChange,
+  defaultWorkspaceRoot,
+  templates,
+  timezone,
+  onTimezoneChange,
 }: {
   client: any;
   toast: (kind: "ok" | "info" | "warn" | "err", text: string) => void;
+  workspaceRoot: string;
+  onWorkspaceRootChange: (value: string) => void;
+  defaultWorkspaceRoot: string;
+  templates: StandupTemplateOption[];
+  timezone: string;
+  onTimezoneChange: (value: string) => void;
 }) {
   const queryClient = useQueryClient();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [name, setName] = useState("Daily Engineering Standup");
-  const [workspaceRoot, setWorkspaceRoot] = useState("");
-  const [schedulePreset, setSchedulePreset] = useState("Every morning");
-  const [customCron, setCustomCron] = useState("");
+  const [workspaceBrowserOpen, setWorkspaceBrowserOpen] = useState(false);
+  const [workspaceBrowserDir, setWorkspaceBrowserDir] = useState("");
+  const [workspaceBrowserSearch, setWorkspaceBrowserSearch] = useState("");
+  const [scheduleValue, setScheduleValue] = useState<ScheduleValue>({
+    scheduleKind: "cron",
+    cronExpression: "0 9 * * *",
+    intervalSeconds: "3600",
+  });
   const [reportPathTemplate, setReportPathTemplate] = useState("docs/standups/{{date}}.md");
   const [participantTemplateIds, setParticipantTemplateIds] = useState<string[]>([]);
+  const [modelDraft, setModelDraft] = useState<ModelDraft>({ provider: "", model: "" });
   const [preview, setPreview] = useState<any>(null);
-
-  const templatesQuery = useQuery({
-    queryKey: ["teams", "standup", "templates"],
+  const initializedModelRef = useRef(false);
+  const providersCatalogQuery = useQuery({
+    queryKey: ["providers", "catalog"],
     queryFn: () =>
-      client?.agentTeams?.listTemplates?.().catch(() => ({ templates: [] })) ??
-      Promise.resolve({ templates: [] }),
-    refetchInterval: 12000,
+      client?.providers?.catalog?.().catch(() => ({ all: [] })) ?? Promise.resolve({ all: [] }),
+    refetchInterval: 60000,
   });
-  const healthQuery = useQuery({
-    queryKey: ["teams", "standup", "health"],
-    queryFn: () => client?.health?.().catch(() => ({})) ?? Promise.resolve({}),
-    refetchInterval: 30000,
+  const providersConfigQuery = useQuery({
+    queryKey: ["providers", "config"],
+    queryFn: () => client?.providers?.config?.().catch(() => ({})) ?? Promise.resolve({}),
+    refetchInterval: 60000,
   });
+  const workspaceBrowserQuery = useQuery({
+    queryKey: ["teams", "standup", "workspace-browser", workspaceBrowserDir],
+    enabled: workspaceBrowserOpen && !!workspaceBrowserDir,
+    queryFn: () =>
+      api(`/api/orchestrator/workspaces/list?dir=${encodeURIComponent(workspaceBrowserDir)}`, {
+        method: "GET",
+      }),
+    refetchInterval: workspaceBrowserOpen ? 15000 : false,
+  });
+
+  const workspaceDirectories = Array.isArray((workspaceBrowserQuery.data as any)?.directories)
+    ? (workspaceBrowserQuery.data as any).directories
+    : [];
+  const workspaceParentDir = String((workspaceBrowserQuery.data as any)?.parent || "").trim();
+  const workspaceCurrentBrowseDir = String(
+    (workspaceBrowserQuery.data as any)?.dir || workspaceBrowserDir || ""
+  ).trim();
+  const workspaceSearchQuery = String(workspaceBrowserSearch || "")
+    .trim()
+    .toLowerCase();
+  const filteredWorkspaceDirectories = useMemo(() => {
+    if (!workspaceSearchQuery) return workspaceDirectories;
+    return workspaceDirectories.filter((entry: any) => {
+      const name = String(entry?.name || entry?.path || "")
+        .trim()
+        .toLowerCase();
+      return name.includes(workspaceSearchQuery);
+    });
+  }, [workspaceDirectories, workspaceSearchQuery]);
+  const timezoneError =
+    String(timezone || "").trim().length > 0 && !isValidTimezone(timezone)
+      ? "Timezone must be a valid IANA timezone like Europe/Berlin."
+      : "";
+  const providerOptions = useMemo<ProviderOption[]>(() => {
+    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
+      ? (providersCatalogQuery.data as any).all
+      : [];
+    const configuredProviders = ((providersConfigQuery.data as any)?.providers || {}) as Record<
+      string,
+      any
+    >;
+    return rows
+      .map((provider: any) => ({
+        id: String(provider?.id || "").trim(),
+        models: Object.keys(provider?.models || {}),
+        configured: Object.prototype.hasOwnProperty.call(
+          configuredProviders,
+          String(provider?.id || "").trim()
+        ),
+      }))
+      .filter((provider: ProviderOption) => !!provider.id)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }, [providersCatalogQuery.data, providersConfigQuery.data]);
+  const defaultStandupModel = useMemo(
+    () => resolveDefaultStandupModel(providerOptions, providersConfigQuery.data),
+    [providerOptions, providersConfigQuery.data]
+  );
+  const standupModelPolicy = useMemo(() => buildStandupModelPolicy(modelDraft), [modelDraft]);
+  const standupModelLabel = standupModelPolicy
+    ? `${String(modelDraft.provider || "").trim()}/${String(modelDraft.model || "").trim()}`
+    : "not selected";
 
   useEffect(() => {
-    const defaultWorkspaceRoot = String(
-      (healthQuery.data as any)?.workspaceRoot || (healthQuery.data as any)?.workspace_root || ""
-    ).trim();
-    if (!defaultWorkspaceRoot) return;
-    setWorkspaceRoot((current) => current || defaultWorkspaceRoot);
-  }, [healthQuery.data]);
+    const allowed = new Set(templates.map((template) => template.templateId));
+    setParticipantTemplateIds((current) => {
+      const next = current.filter((templateId) => allowed.has(templateId));
+      return next.length === current.length ? current : next;
+    });
+  }, [templates]);
 
-  const templates = useMemo(
-    () =>
-      toArray(templatesQuery.data, "templates")
-        .map(normalizeStandupTemplateOption)
-        .filter((row): row is StandupTemplateOption => !!row),
-    [templatesQuery.data]
-  );
+  useEffect(() => {
+    if (initializedModelRef.current) return;
+    if (!defaultStandupModel.provider || !defaultStandupModel.model) return;
+    setModelDraft(defaultStandupModel);
+    initializedModelRef.current = true;
+  }, [defaultStandupModel]);
 
   const composeMutation = useMutation({
     mutationFn: async () => {
@@ -133,15 +233,20 @@ export function AgentStandupBuilder({
       if (!trimmedName) throw new Error("Standup name is required.");
       const workspaceError = validateWorkspaceRootInput(trimmedWorkspaceRoot);
       if (workspaceError) throw new Error(workspaceError);
+      if (timezoneError) throw new Error(timezoneError);
       if (!participantTemplateIds.length) {
         throw new Error("Select at least one participant template.");
+      }
+      if (!standupModelPolicy) {
+        throw new Error("Choose a provider and model for this standup.");
       }
       const response = await client?.agentTeams?.composeStandup?.({
         name: trimmedName,
         workspaceRoot: trimmedWorkspaceRoot,
-        schedule: standupScheduleToAutomationSchedule(schedulePreset, customCron),
+        schedule: standupScheduleToAutomationSchedule(scheduleValue, timezone),
         participantTemplateIds,
         reportPathTemplate: String(reportPathTemplate || "").trim() || undefined,
+        modelPolicy: standupModelPolicy,
       });
       return response || null;
     },
@@ -172,11 +277,17 @@ export function AgentStandupBuilder({
   }, [
     name,
     workspaceRoot,
-    schedulePreset,
-    customCron,
+    timezone,
+    scheduleValue.scheduleKind,
+    scheduleValue.cronExpression,
+    scheduleValue.intervalSeconds,
     reportPathTemplate,
     participantTemplateIds.join(","),
+    modelDraft.provider,
+    modelDraft.model,
     templates.length,
+    workspaceBrowserOpen,
+    workspaceBrowserSearch,
     composeMutation.isPending,
     createMutation.isPending,
     !!preview,
@@ -210,29 +321,75 @@ export function AgentStandupBuilder({
           value={name}
           onInput={(event) => setName((event.target as HTMLInputElement).value)}
         />
-        <input
-          className="tcp-input"
-          placeholder="/absolute/workspace/root"
-          value={workspaceRoot}
-          onInput={(event) => setWorkspaceRoot((event.target as HTMLInputElement).value)}
+        <div className="grid gap-2 md:grid-cols-[auto_1fr_auto]">
+          <button
+            className="tcp-btn h-10 px-3"
+            type="button"
+            onClick={() => {
+              const seed = String(workspaceRoot || defaultWorkspaceRoot || "/").trim();
+              setWorkspaceBrowserDir(seed || "/");
+              setWorkspaceBrowserSearch("");
+              setWorkspaceBrowserOpen(true);
+            }}
+          >
+            <i data-lucide="folder-open"></i>
+            Browse
+          </button>
+          <input
+            className={`tcp-input ${validateWorkspaceRootInput(workspaceRoot) ? "border-red-500/60 text-red-100" : ""}`}
+            placeholder="No local directory selected. Use Browse."
+            value={workspaceRoot}
+            readOnly
+          />
+          <button
+            className="tcp-btn h-10 px-3"
+            type="button"
+            onClick={() => onWorkspaceRootChange("")}
+            disabled={!workspaceRoot}
+          >
+            <i data-lucide="x"></i>
+            Clear
+          </button>
+        </div>
+        <div className="md:col-span-2">
+          <TimezoneField
+            value={timezone}
+            onChange={onTimezoneChange}
+            error={timezoneError}
+            label="Timezone"
+            hint="Use the timezone that matches the standup's local morning or evening."
+          />
+        </div>
+        <div className="md:col-span-2">
+          <ScheduleBuilder value={scheduleValue} onChange={setScheduleValue} />
+        </div>
+      </div>
+
+      <div className="grid gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/40 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
+              Model
+            </div>
+            <div className="mt-1 text-sm text-slate-300">
+              Pick the explicit model every standup participant and the coordinator should use.
+            </div>
+          </div>
+          <span className="tcp-badge-info">{standupModelLabel}</span>
+        </div>
+        <ProviderModelSelector
+          providerLabel="Provider"
+          modelLabel="Model"
+          draft={modelDraft}
+          providers={providerOptions}
+          onChange={setModelDraft}
+          inheritLabel="Select provider"
+          disabled={composeMutation.isPending || createMutation.isPending}
         />
-        <select
-          className="tcp-input"
-          value={schedulePreset}
-          onInput={(event) => setSchedulePreset((event.target as HTMLSelectElement).value)}
-        >
-          {SCHEDULE_PRESETS.map((preset) => (
-            <option key={preset.label} value={preset.label}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-        <input
-          className="tcp-input font-mono text-sm"
-          placeholder="Custom cron (optional)"
-          value={customCron}
-          onInput={(event) => setCustomCron((event.target as HTMLInputElement).value)}
-        />
+        <div className="text-xs text-slate-400">
+          This is prefilled from the workspace default when available, then stored directly on the
+          generated standup agents so the run does not depend on implicit model resolution.
+        </div>
       </div>
 
       <input
@@ -318,6 +475,16 @@ export function AgentStandupBuilder({
           </div>
           <div className="grid gap-2 text-xs text-slate-300">
             <div>schedule: {formatAutomationV2ScheduleLabel(preview?.schedule)}</div>
+            <div>timezone: {String(preview?.schedule?.timezone || timezone || "UTC")}</div>
+            <div>
+              model:{" "}
+              {String(
+                preview?.agents?.[0]?.model_policy?.default_model?.provider_id &&
+                  preview?.agents?.[0]?.model_policy?.default_model?.model_id
+                  ? `${preview.agents[0].model_policy.default_model.provider_id}/${preview.agents[0].model_policy.default_model.model_id}`
+                  : standupModelLabel
+              )}
+            </div>
             <div>
               report:{" "}
               {String(preview?.metadata?.standup?.report_path_template || reportPathTemplate)}
@@ -328,6 +495,101 @@ export function AgentStandupBuilder({
                 (
                   preview?.metadata?.standup?.participant_template_ids || participantTemplateIds
                 ).join(", ")
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {workspaceBrowserOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="tcp-confirm-backdrop"
+            aria-label="Close workspace directory dialog"
+            onClick={() => {
+              setWorkspaceBrowserOpen(false);
+              setWorkspaceBrowserSearch("");
+            }}
+          />
+          <div className="tcp-confirm-dialog max-w-2xl">
+            <h3 className="tcp-confirm-title">Select Workspace Folder</h3>
+            <p className="tcp-confirm-message">
+              Current: {workspaceCurrentBrowseDir || workspaceBrowserDir || "n/a"}
+            </p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button
+                className="tcp-btn"
+                type="button"
+                onClick={() => {
+                  if (!workspaceParentDir) return;
+                  setWorkspaceBrowserDir(workspaceParentDir);
+                }}
+                disabled={!workspaceParentDir}
+              >
+                <i data-lucide="arrow-left-to-line"></i>
+                Up
+              </button>
+              <button
+                className="tcp-btn-primary"
+                type="button"
+                onClick={() => {
+                  if (!workspaceCurrentBrowseDir) return;
+                  onWorkspaceRootChange(workspaceCurrentBrowseDir);
+                  setWorkspaceBrowserOpen(false);
+                  setWorkspaceBrowserSearch("");
+                  toast("ok", `Workspace selected: ${workspaceCurrentBrowseDir}`);
+                }}
+                disabled={!workspaceCurrentBrowseDir}
+              >
+                <i data-lucide="badge-check"></i>
+                Select This Folder
+              </button>
+              <button
+                className="tcp-btn"
+                type="button"
+                onClick={() => {
+                  setWorkspaceBrowserOpen(false);
+                  setWorkspaceBrowserSearch("");
+                }}
+              >
+                <i data-lucide="x"></i>
+                Close
+              </button>
+            </div>
+            <div className="mb-2">
+              <input
+                className="tcp-input"
+                placeholder="Type to filter folders..."
+                value={workspaceBrowserSearch}
+                onInput={(event) =>
+                  setWorkspaceBrowserSearch((event.target as HTMLInputElement).value)
+                }
+              />
+            </div>
+            <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
+              {filteredWorkspaceDirectories.length ? (
+                filteredWorkspaceDirectories.map((entry: any) => (
+                  <button
+                    key={String(entry?.path || entry?.name)}
+                    className="tcp-list-item mb-1 w-full text-left"
+                    type="button"
+                    onClick={() => setWorkspaceBrowserDir(String(entry?.path || ""))}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <i data-lucide="folder-open"></i>
+                      <span>{String(entry?.name || entry?.path || "")}</span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <EmptyState
+                  text={
+                    workspaceBrowserSearch.trim()
+                      ? "No folders match your search."
+                      : "No subdirectories in this folder."
+                  }
+                />
               )}
             </div>
           </div>

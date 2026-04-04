@@ -30,6 +30,7 @@ import {
 } from "@/components/coder/shared/coderRunUtils";
 import { AdvancedMissionBuilder } from "@/components/agent-automation/AdvancedMissionBuilder";
 import { ScheduleBuilder } from "@/components/agent-automation/GuidedScheduleBuilder";
+import { TimezoneField } from "@/components/agent-automation/TimezoneField";
 import {
   buildWorkflowCalendarOccurrences,
   formatAutomationV2ScheduleLabel,
@@ -40,6 +41,7 @@ import {
   type ScheduleKind,
   type ScheduleValue,
 } from "@/components/agent-automation/scheduleBuilder";
+import { detectBrowserTimezone, isValidTimezone } from "@/components/agent-automation/timezone";
 import {
   automationsV2Delete,
   automationsV2Get,
@@ -91,6 +93,7 @@ type ExecutionMode = "team" | "swarm";
 interface WizardState {
   prompt: string;
   workspaceRoot: string;
+  timezone: string;
   scheduleKind: ScheduleKind;
   intervalSeconds: string;
   cronExpression: string;
@@ -109,6 +112,7 @@ interface WorkflowEditDraft {
   name: string;
   description: string;
   workspaceRoot: string;
+  timezone: string;
   scheduleKind: ScheduleKind;
   intervalSeconds: string;
   cronExpression: string;
@@ -147,6 +151,8 @@ function buildDefaultWizard(
   return {
     prompt: String(current?.prompt || "").trim(),
     workspaceRoot: String(current?.workspaceRoot || activeProject?.path || "").trim(),
+    timezone:
+      String(current?.timezone || detectBrowserTimezone()).trim() || detectBrowserTimezone(),
     scheduleKind: current?.scheduleKind ?? "interval",
     intervalSeconds: String(current?.intervalSeconds || "86400"),
     cronExpression: String(current?.cronExpression || ""),
@@ -359,14 +365,15 @@ function formatDateTime(raw: unknown) {
 function workflowEditToSchedule(
   draft: WorkflowEditDraft | WizardState
 ): AutomationV2Spec["schedule"] {
+  const timezone = String(draft.timezone || "").trim() || detectBrowserTimezone();
   if (draft.scheduleKind === "manual") {
-    return { type: "manual", timezone: "UTC", misfire_policy: "run_once" };
+    return { type: "manual", timezone, misfire_policy: "run_once" };
   }
   if (draft.scheduleKind === "cron") {
     return {
       type: "cron",
       cron_expression: String(draft.cronExpression || "").trim(),
-      timezone: "UTC",
+      timezone,
       misfire_policy: "run_once",
     };
   }
@@ -376,7 +383,7 @@ function workflowEditToSchedule(
       1,
       Number.parseInt(String(draft.intervalSeconds || "3600"), 10) || 3600
     ),
-    timezone: "UTC",
+    timezone,
     misfire_policy: "run_once",
   };
 }
@@ -502,6 +509,7 @@ function scheduleToEditor(schedule: AutomationV2Spec["schedule"]) {
           : ("interval" as const),
     cronExpression,
     intervalSeconds,
+    timezone: String(schedule?.timezone || "UTC").trim() || "UTC",
   };
 }
 
@@ -528,6 +536,7 @@ function workflowAutomationToEditDraft(automation: AutomationV2Spec): WorkflowEd
     scheduleKind: schedule.scheduleKind,
     intervalSeconds: schedule.intervalSeconds,
     cronExpression: schedule.cronExpression,
+    timezone: schedule.timezone,
     executionMode: maxParallelRaw > 1 ? "swarm" : "team",
     maxParallelAgents: String(maxParallelRaw > 0 ? maxParallelRaw : 1),
     modelProvider: String(prefs.model_provider || "").trim(),
@@ -1078,11 +1087,21 @@ export function AgentAutomationPage({
   );
 
   const wizardWorkspaceError = validateWorkspaceRootInput(wizard.workspaceRoot);
+  const timezoneError =
+    String(wizard.timezone || "").trim().length > 0 && !isValidTimezone(wizard.timezone)
+      ? "Timezone must be a valid IANA timezone like Europe/Berlin."
+      : "";
   const wizardModelError = validateModelInput(wizard.modelProvider, wizard.modelId);
   const wizardPlannerModelError = validatePlannerModelInput(
     wizard.plannerModelProvider,
     wizard.plannerModelId
   );
+  const editDraftTimezoneError =
+    editDraft &&
+    String(editDraft.timezone || "").trim().length > 0 &&
+    !isValidTimezone(editDraft.timezone)
+      ? "Timezone must be a valid IANA timezone like Europe/Berlin."
+      : "";
 
   const loadCatalog = async () => {
     setCatalogLoading(true);
@@ -1432,6 +1451,10 @@ export function AgentAutomationPage({
       setError(workspaceError || modelError || plannerError);
       return;
     }
+    if (editDraftTimezoneError) {
+      setError(editDraftTimezoneError);
+      return;
+    }
     setBusyKey(`save:${editDraft.automationId}`);
     setError(null);
     try {
@@ -1533,7 +1556,7 @@ export function AgentAutomationPage({
         schedule: {
           type: "cron",
           cron_expression: nextCron,
-          timezone: "UTC",
+          timezone: String(automation?.schedule?.timezone || "UTC").trim() || "UTC",
           misfire_policy: "run_once",
         },
       });
@@ -1694,11 +1717,11 @@ export function AgentAutomationPage({
     wizardStep === 1
       ? wizard.prompt.trim().length >= 8
       : wizardStep === 2
-        ? wizard.scheduleKind === "manual"
-          ? true
-          : wizard.scheduleKind === "cron"
-            ? wizard.cronExpression.trim().length > 0
-            : Number.parseInt(String(wizard.intervalSeconds || "0"), 10) > 0
+        ? (wizard.scheduleKind === "manual"
+            ? true
+            : wizard.scheduleKind === "cron"
+              ? wizard.cronExpression.trim().length > 0
+              : Number.parseInt(String(wizard.intervalSeconds || "0"), 10) > 0) && !timezoneError
         : wizardStep === 3
           ? !wizardWorkspaceError && !wizardModelError && !wizardPlannerModelError
           : true;
@@ -2059,6 +2082,12 @@ export function AgentAutomationPage({
                         cronExpression: wizard.cronExpression,
                       }}
                       onChange={updateWizardSchedule}
+                    />
+                    <TimezoneField
+                      value={wizard.timezone}
+                      onChange={(value) => updateWizard({ timezone: value })}
+                      error={timezoneError || undefined}
+                      hint="Use the timezone that matches when this automation should run."
                     />
                   </div>
                 ) : null}
@@ -3742,6 +3771,14 @@ export function AgentAutomationPage({
                     cronExpression: editDraft.cronExpression,
                   }}
                   onChange={updateEditDraftSchedule}
+                />
+                <TimezoneField
+                  value={editDraft.timezone}
+                  onChange={(value) =>
+                    setEditDraft((current) => (current ? { ...current, timezone: value } : current))
+                  }
+                  error={editDraftTimezoneError || undefined}
+                  hint="Use the timezone that matches the original schedule."
                 />
               </div>
               <div className="space-y-3">

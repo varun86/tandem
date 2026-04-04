@@ -6,6 +6,7 @@ import { PageCard, EmptyState } from "./ui";
 import { useCapabilities } from "../features/system/queries.ts";
 import type { AppPageProps } from "./pageTypes";
 import agentCatalog from "../generated/agent-catalog.json";
+import { detectBrowserTimezone } from "../features/automations/timezone";
 
 type AgentCatalogCategory = {
   id: string;
@@ -151,9 +152,25 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("all");
   const [catalogStatus, setCatalogStatus] = useState("");
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
+  const [timezone, setTimezone] = useState(() => detectBrowserTimezone());
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const caps = useCapabilities();
   const agentTeamsAvailable = caps.data?.agent_teams === true;
+  const healthQuery = useQuery({
+    queryKey: ["teams", "health"],
+    queryFn: () => client?.health?.().catch(() => ({})) ?? Promise.resolve({}),
+    refetchInterval: 30000,
+  });
+  const defaultWorkspaceRoot = String(
+    (healthQuery.data as any)?.workspaceRoot || (healthQuery.data as any)?.workspace_root || ""
+  ).trim();
+  const effectiveWorkspaceRoot = String(workspaceRoot || defaultWorkspaceRoot || "").trim();
+
+  useEffect(() => {
+    if (!defaultWorkspaceRoot) return;
+    setWorkspaceRoot((current) => current || defaultWorkspaceRoot);
+  }, [defaultWorkspaceRoot]);
 
   const templatesQuery = useQuery({
     queryKey: ["teams", "templates"],
@@ -377,7 +394,24 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
           title="Agent Standup"
           subtitle="Compose scheduled standups from the same saved agents you manage here"
         >
-          <AgentStandupBuilder client={client} toast={toast} />
+          <AgentStandupBuilder
+            client={client}
+            toast={toast}
+            workspaceRoot={effectiveWorkspaceRoot}
+            onWorkspaceRootChange={setWorkspaceRoot}
+            defaultWorkspaceRoot={defaultWorkspaceRoot}
+            timezone={timezone}
+            onTimezoneChange={setTimezone}
+            templates={templates.map((template) => ({
+              templateId: template.templateId,
+              displayName: template.displayName || template.templateId,
+              role: template.role,
+              modelLabel:
+                template.modelProvider && template.modelId
+                  ? `${template.modelProvider}/${template.modelId}`
+                  : "",
+            }))}
+          />
         </PageCard>
       )}
 

@@ -36,6 +36,7 @@ type Step4ReviewProps = {
     scheduleKind: "manual" | "cron" | "interval";
     cron: string;
     intervalSeconds: string;
+    timezone: string;
     mode: ExecutionMode;
     maxAgents: string;
     modelProvider: string;
@@ -100,6 +101,9 @@ export function Step4Review({
     cronExpression: wizard.cron,
     intervalSeconds: wizard.intervalSeconds,
   });
+  const effectiveTimezone = String(
+    planPreview?.schedule?.timezone || planPreview?.timezone || wizard.timezone || "UTC"
+  ).trim();
   const planOperatorPreferences =
     planPreview && typeof planPreview === "object"
       ? planPreview.operator_preferences || planPreview.operatorPreferences || {}
@@ -215,6 +219,10 @@ export function Step4Review({
           <div className="grid gap-1">
             <span className="text-xs uppercase tracking-wide text-slate-500">Schedule</span>
             <span className="text-sm font-medium text-slate-200">{effectiveSchedule}</span>
+          </div>
+          <div className="grid gap-1">
+            <span className="text-xs uppercase tracking-wide text-slate-500">Timezone</span>
+            <span className="text-sm font-medium text-slate-200">{effectiveTimezone || "UTC"}</span>
           </div>
           <div className="grid gap-1">
             <span className="text-xs uppercase tracking-wide text-slate-500">Execution Mode</span>
