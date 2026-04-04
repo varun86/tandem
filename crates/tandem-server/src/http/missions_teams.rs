@@ -251,8 +251,32 @@ fn validate_standup_report_path(raw: &str) -> Result<String, &'static str> {
 
 fn standup_participant_objective(template_name: &str) -> String {
     format!(
-        "You are preparing your daily standup update for {template_name}. Review relevant workspace context and use `memory_search` for prior conversations and history. `memory_search` defaults to the current session, current workspace/project, and global Tandem memory, so use it directly unless you need to narrow scope. Use `glob` to enumerate files and directories, `grep` to find relevant text, and `read` only on concrete files. Return valid JSON with keys `yesterday`, `today`, and `blockers`. Keep each field concise and evidence-based. If evidence is unavailable, say so plainly instead of guessing."
+        "You are preparing your daily standup update for {template_name}. Base the update on workspace files and Tandem memory for this project. Review relevant workspace context and use `memory_search` for prior conversations and history. `memory_search` defaults to the current session, current workspace/project, and global Tandem memory, so use it directly unless you need to narrow scope. Use `glob` to enumerate files and directories, `grep` to find relevant text, and `read` only on concrete files. Do not treat missing web research or missing connector results as a blocker for this standup unless the workspace evidence itself explicitly says external research is required. If current external findings are unavailable, still complete the standup from local evidence and mention that limitation plainly instead of blocking. Return valid JSON with keys `yesterday`, `today`, and `blockers`. Keep each field concise and evidence-based. If evidence is unavailable, say so plainly instead of guessing."
     )
+}
+
+fn standup_participant_enforcement() -> crate::AutomationOutputEnforcement {
+    crate::AutomationOutputEnforcement {
+        validation_profile: Some("local_research".to_string()),
+        required_tools: vec!["read".to_string()],
+        required_evidence: vec!["local_source_reads".to_string()],
+        required_sections: Vec::new(),
+        prewrite_gates: vec![
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ],
+        retry_on_missing: vec![
+            "local_source_reads".to_string(),
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ],
+        terminal_on: vec![
+            "tool_unavailable".to_string(),
+            "repair_budget_exhausted".to_string(),
+        ],
+        repair_budget: Some(3),
+        session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+    }
 }
 
 fn standup_synthesis_objective(report_path_template: &str) -> String {
@@ -882,7 +906,7 @@ pub(super) async fn compose_standup(
             output_contract: Some(crate::AutomationFlowOutputContract {
                 kind: "structured_json".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
-                enforcement: None,
+                enforcement: Some(standup_participant_enforcement()),
                 schema: None,
                 summary_guidance: None,
             }),

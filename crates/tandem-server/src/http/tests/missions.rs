@@ -382,6 +382,22 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
         Some("structured_json")
     );
     assert_eq!(
+        nodes[0]
+            .get("output_contract")
+            .and_then(|value| value.get("enforcement"))
+            .and_then(|value| value.get("validation_profile"))
+            .and_then(Value::as_str),
+        Some("local_research")
+    );
+    assert!(nodes[0]
+        .get("output_contract")
+        .and_then(|value| value.get("enforcement"))
+        .and_then(|value| value.get("required_evidence"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows
+            .iter()
+            .any(|value| value.as_str() == Some("local_source_reads"))));
+    assert_eq!(
         nodes[1]
             .get("output_contract")
             .and_then(|value| value.get("validator"))
