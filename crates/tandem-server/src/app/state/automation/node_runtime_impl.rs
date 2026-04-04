@@ -830,6 +830,23 @@ pub(crate) fn automation_node_required_tools(node: &AutomationFlowNode) -> Vec<S
     automation_node_output_enforcement(node).required_tools
 }
 
+pub(crate) fn automation_node_should_surface_mcp_discovery(
+    node: &AutomationFlowNode,
+    allowed_mcp_servers: &[String],
+) -> bool {
+    let connector_hint_text = [
+        node.objective.as_str(),
+        automation_node_builder_metadata(node, "prompt")
+            .as_deref()
+            .unwrap_or_default(),
+    ]
+    .join("\n");
+    tandem_plan_compiler::api::workflow_plan_should_surface_mcp_discovery(
+        &connector_hint_text,
+        allowed_mcp_servers,
+    )
+}
+
 pub(crate) fn automation_node_execution_policy(
     node: &AutomationFlowNode,
     workspace_root: &str,

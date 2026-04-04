@@ -2227,6 +2227,8 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
         Some("structured handoff was not returned in the final response".to_string())
     } else if has_unmet("workspace_inspection_required") {
         Some("structured handoff completed without required workspace inspection".to_string())
+    } else if has_unmet("mcp_discovery_missing") {
+        Some("connector-backed work completed without discovering available MCP tools".to_string())
     } else if has_unmet("missing_successful_web_research") {
         Some("research completed without required current web research".to_string())
     } else if has_unmet("no_concrete_reads") || has_unmet("concrete_read_required") {
@@ -4150,6 +4152,10 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                     .iter()
                     .any(|value| value.as_str() == Some("websearch"))
             });
+        let executed_has_mcp_list = tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("mcp_list")));
         let current_executed_has_read = tool_telemetry
             .get("executed_tools")
             .and_then(Value::as_array)
@@ -4181,12 +4187,30 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         let web_research_succeeded = current_web_research_succeeded
             || (use_upstream_evidence
                 && upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded));
+        let connector_discovery_text = [
+            node.objective.as_str(),
+            node.metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("builder"))
+                .and_then(Value::as_object)
+                .and_then(|builder| builder.get("prompt"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ]
+        .join("\n");
+        let connector_discovery_required =
+            tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
+                &connector_discovery_text,
+            );
         let workspace_inspection_satisfied = tool_telemetry
             .get("workspace_inspection_used")
             .and_then(Value::as_bool)
             .unwrap_or(false)
             || executed_has_read
             || (use_upstream_evidence && !discovered_relevant_paths.is_empty());
+        if connector_discovery_required && !executed_has_mcp_list {
+            unmet_requirements.push("mcp_discovery_missing".to_string());
+        }
         let prewrite_requirements =
             automation_node_prewrite_requirements(node, &requested_tools_for_contract);
         let session_text_recovery_requires_prewrite =
@@ -4775,6 +4799,9 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         let requested_has_websearch = requested_tools
             .iter()
             .any(|value| value.as_str() == Some("websearch"));
+        let executed_has_mcp_list = executed_tools
+            .iter()
+            .any(|value| value.as_str() == Some("mcp_list"));
         let executed_has_read = executed_tools
             .iter()
             .any(|value| value.as_str() == Some("read"));
@@ -4793,6 +4820,21 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             .unwrap_or(false)
             || executed_has_read
             || !current_discovered_relevant_paths.is_empty();
+        let connector_discovery_text = [
+            node.objective.as_str(),
+            node.metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("builder"))
+                .and_then(Value::as_object)
+                .and_then(|builder| builder.get("prompt"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ]
+        .join("\n");
+        let connector_discovery_required =
+            tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
+                &connector_discovery_text,
+            );
         let requires_read = enforcement.required_tools.iter().any(|tool| tool == "read");
         let requires_websearch = enforcement
             .required_tools
@@ -4827,6 +4869,9 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         }
         if (requires_websearch || requires_successful_web_research) && !web_research_succeeded {
             unmet_requirements.push("missing_successful_web_research".to_string());
+        }
+        if connector_discovery_required && !executed_has_mcp_list {
+            unmet_requirements.push("mcp_discovery_missing".to_string());
         }
         unmet_requirements.sort();
         unmet_requirements.dedup();

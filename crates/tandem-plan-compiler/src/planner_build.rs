@@ -16,7 +16,7 @@ use crate::workflow_plan::{
     normalize_and_validate_planner_plan, normalize_operator_preferences, normalize_prompt,
     normalize_string_list, plan_save_options, plan_title, planner_diagnostics,
     planner_llm_provider_unconfigured_hint, planner_model_spec, schedule_from_value, truncate_text,
-    PlannerPlanMode, PlannerPlanNormalizationContext,
+    workflow_plan_should_surface_mcp_discovery, PlannerPlanMode, PlannerPlanNormalizationContext,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -504,6 +504,16 @@ fn build_llm_workflow_creation_prompt<M: serde::Serialize>(
     capability_summary: &Value,
 ) -> String {
     let common_sections = workflow_plan_common_sections();
+    let mcp_discovery_required =
+        workflow_plan_should_surface_mcp_discovery(prompt, allowed_mcp_servers);
+    let mcp_guidance = if mcp_discovery_required {
+        format!(
+            "MCP discovery:\n- Use the planner capability summary and runtime MCP inventory before inventing tools or falling back to generic web search.\n- Call `mcp_list` when you need to confirm which MCP tools are available.\n- If the request names connector-backed sources such as Reddit, GitHub issues, Slack, or Jira, plan MCP-backed steps when a relevant server is available.\n- If the request depends on a connector-backed source but no relevant MCP path is available, return a clarifier instead of guessing.\n- Allowed MCP servers: {}\n",
+            serde_json::to_string_pretty(&allowed_mcp_servers).unwrap_or_else(|_| "[]".to_string())
+        )
+    } else {
+        String::new()
+    };
     format!(
         concat!(
             "You are creating a Tandem automation workflow plan.\n",
@@ -516,6 +526,7 @@ fn build_llm_workflow_creation_prompt<M: serde::Serialize>(
             "- explicit_schedule: {}\n",
             "- allowed_mcp_servers: {}\n",
             "- operator_preferences: {}\n",
+            "{}",
             "Planner capability summary and runtime MCP inventory (use this instead of inventing tools or hidden capabilities):\n{}\n",
             "Delivery rule:\n",
             "- plan email delivery only when the capability summary shows email_send or email_draft\n",
@@ -533,6 +544,7 @@ fn build_llm_workflow_creation_prompt<M: serde::Serialize>(
         serde_json::to_string_pretty(&explicit_schedule).unwrap_or_else(|_| "null".to_string()),
         serde_json::to_string_pretty(&allowed_mcp_servers).unwrap_or_else(|_| "[]".to_string()),
         serde_json::to_string_pretty(&operator_preferences).unwrap_or_else(|_| "null".to_string()),
+        mcp_guidance,
         serde_json::to_string_pretty(capability_summary).unwrap_or_else(|_| "{}".to_string()),
         prompt.trim(),
         normalized_prompt,
@@ -643,5 +655,25 @@ mod tests {
             .get("can_export_pack")
             .and_then(Value::as_bool)
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn build_workflow_plan_prompt_surfaces_mcp_discovery_guidance() {
+        let prompt = build_llm_workflow_creation_prompt::<Value>(
+            "Create a workflow about Reddit research",
+            "Create a workflow about Reddit research",
+            None,
+            "unit_test",
+            "/tmp/workspace",
+            &["github".to_string()],
+            None,
+            &json!({
+                "runtime": {"mcp_inventory": []}
+            }),
+        );
+
+        assert!(prompt.contains("MCP discovery:"));
+        assert!(prompt.contains("Call `mcp_list`"));
+        assert!(prompt.contains("Allowed MCP servers"));
     }
 }

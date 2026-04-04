@@ -7,7 +7,8 @@ This is the canonical release-notes file used by release tooling.
 - **Shared Workflow Context / Context Packs**
   - Added persisted context-pack records plus publish/list/get/bind/revoke/supersede routes so approved workflow context can be published once and reused later with explicit bindings.
   - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound packs participate in automation runtime materialization instead of sitting only as metadata.
-  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, and project-key list filtering so the reuse path stays scoped and explicit.
+  - Added a Scope Inspector pack details drawer with provenance, freshness, manifest summaries, and bind history so operators can inspect packs before reuse.
+  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays explicit and isolated.
 
 - **Tandem TUI mission-command modularization**
   - Moved the remaining higher-risk slash commands out of `app.rs` into `app/commands.rs`, including mission list/create/get/event flows, quick mission approval helpers, agent-team summary views, local bindings, agent-team approval reply helpers, preset index lookups, agent compose/summary/fork flows, automation preset summary/save flows, and agent-pane creation/switching/fanout orchestration commands.
@@ -15,6 +16,12 @@ This is the canonical release-notes file used by release tooling.
 - **Tandem TUI plan-helper modularization**
   - Moved question-draft parsing, task-payload normalization, plan fingerprint/preview generation, plan-feedback markdown rendering, assistant-text extraction, reconstructed-task replay, and context-todo sync helpers out of `app.rs` into `app/plan_helpers.rs`.
   - Rewired both `app.rs` and `app/commands.rs` to consume the new helper module without changing plan-mode approval or task-sync behavior.
+
+- **Workflow MCP discovery and connector-backed research**
+  - Made workflow generation and execution explicitly surface MCP discovery when a prompt or node objective names connector-backed sources such as Reddit, GitHub issues, Slack, or Jira.
+  - Added prompt guidance to call `mcp_list` before choosing connector-backed tools or falling back to generic web search, while keeping the injected MCP context compact instead of dumping the full registry into every prompt.
+  - Added validation coverage so connector-backed work that never discovers available MCP tools is blocked instead of completing with guessed answers.
+  - Added regression tests for planner prompt generation, runtime prompt rendering, and connector-backed intent detection.
 
 ## v0.4.20 (Released 2026-04-03)
 

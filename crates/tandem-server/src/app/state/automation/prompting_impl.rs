@@ -295,6 +295,27 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
         ));
     }
+    let connector_discovery_text = {
+        let local_prompt = node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(Value::as_object)
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        format!("{}\n{}", node.objective, local_prompt)
+    };
+    if tandem_plan_compiler::api::workflow_plan_should_surface_mcp_discovery(
+        &connector_discovery_text,
+        &agent.mcp_policy.allowed_servers,
+    ) {
+        sections.push(format!(
+            "MCP Discovery:\n- MCP-backed work may be relevant for this node.\n- Allowed MCP servers: {}.\n- Call `mcp_list` before choosing connector-backed tools or falling back to generic web search.\n- Prefer MCP-backed tools for source-specific systems when the connector exists.\n- If the objective depends on a connector-backed source and no relevant MCP tool is available, block or clarify instead of guessing.",
+            serde_json::to_string_pretty(&agent.mcp_policy.allowed_servers)
+                .unwrap_or_else(|_| "[]".to_string())
+        ));
+    }
     if let Some(inputs) = node
         .metadata
         .as_ref()

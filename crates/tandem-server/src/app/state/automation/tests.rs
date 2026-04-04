@@ -1,3 +1,4 @@
+use super::node_runtime_impl::automation_node_should_surface_mcp_discovery;
 use super::*;
 use crate::automation_v2::types::{AutomationFlowInputRef, AutomationFlowNode};
 use serde_json::json;
@@ -181,6 +182,25 @@ fn knowledge_task_family_groups_equivalent_code_workflows() {
 fn knowledge_task_family_uses_workflow_class_for_research_briefs() {
     let research = research_brief_node();
     assert_eq!(automation_node_knowledge_task_family(&research), "research");
+}
+
+#[test]
+fn connector_backed_intent_surfaces_mcp_discovery() {
+    let mut node = bare_node();
+    node.objective = "Research Reddit threads about AI assistants.".to_string();
+
+    assert!(automation_node_should_surface_mcp_discovery(
+        &node,
+        &Vec::new()
+    ));
+    assert!(automation_node_should_surface_mcp_discovery(
+        &bare_node(),
+        &vec!["github".to_string()]
+    ));
+    assert!(!automation_node_should_surface_mcp_discovery(
+        &bare_node(),
+        &Vec::new()
+    ));
 }
 
 #[test]

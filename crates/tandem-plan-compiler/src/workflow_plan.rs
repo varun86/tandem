@@ -399,6 +399,46 @@ pub fn infer_explicit_output_targets(prompt: &str) -> Vec<String> {
     targets
 }
 
+pub fn workflow_plan_mentions_connector_backed_sources(prompt: &str) -> bool {
+    let lowered = prompt.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return false;
+    }
+    [
+        "mcp",
+        "reddit",
+        "github issue",
+        "github issues",
+        "slack",
+        "jira",
+        "linear",
+        "notion",
+        "confluence",
+        "zendesk",
+        "salesforce",
+        "airtable",
+        "google drive",
+        "google docs",
+        "google sheets",
+        "gmail",
+        "outlook",
+        "sharepoint",
+        "dropbox",
+        "discord",
+        "intercom",
+        "figma",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+pub fn workflow_plan_should_surface_mcp_discovery(
+    prompt: &str,
+    allowed_mcp_servers: &[String],
+) -> bool {
+    !allowed_mcp_servers.is_empty() || workflow_plan_mentions_connector_backed_sources(prompt)
+}
+
 pub fn plan_max_parallel_agents(operator_preferences: Option<&Value>) -> u32 {
     operator_preferences
         .and_then(|prefs| prefs.get("max_parallel_agents"))
@@ -1585,5 +1625,21 @@ Here is the planner response:
         let targets = infer_explicit_output_targets(prompt);
 
         assert_eq!(targets, vec!["./notes/final.md".to_string()]);
+    }
+
+    #[test]
+    fn workflow_plan_should_surface_mcp_discovery_for_connector_backed_sources() {
+        assert!(workflow_plan_should_surface_mcp_discovery(
+            "Research Reddit threads about AI assistants.",
+            &[]
+        ));
+        assert!(workflow_plan_should_surface_mcp_discovery(
+            "Write the workflow plan.",
+            &["github".to_string()]
+        ));
+        assert!(!workflow_plan_should_surface_mcp_discovery(
+            "Summarize the local workspace docs.",
+            &[]
+        ));
     }
 }

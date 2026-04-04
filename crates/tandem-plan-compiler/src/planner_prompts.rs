@@ -22,6 +22,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations|brief|review|review_summary|approval_gate|code_patch\",\"validator\":\"structured_json|generic_artifact|research_brief|review_decision|code_patch\"}}\n",
             "- use `code_patch` for code-editing steps that should be judged by patch/apply/test behavior rather than a prose summary\n",
             "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
+            "- when the request names connector-backed sources or `allowed_mcp_servers` is non-empty, plan MCP-backed steps instead of inventing hidden capabilities or defaulting to generic web search\n",
             "{}",
         ),
         allowed_step_ids,
@@ -35,6 +36,7 @@ fn workflow_plan_teaching_library_sections() -> String {
         "- explain: summarize the plan, why the steps exist, and what output each produces\n",
         "- objections: call out missing inputs, unsafe assumptions, or missing connectors\n",
         "- proof points: cite evidence sources, validation checks, or artifacts that will prove success\n",
+        "- connector-backed work: prefer the selected MCP inventory for source-specific systems such as Reddit, GitHub issues, Slack, or Jira, and clarify when no relevant connector is available\n",
         "- code changes: prefer `code_patch` plus an inspect -> patch -> apply -> test -> repair loop, and reserve `write` for brand-new files\n",
     )
     .to_string()
@@ -50,6 +52,7 @@ mod tests {
         assert!(sections.contains("Teaching library:"));
         assert!(sections.contains("explain: summarize the plan"));
         assert!(sections.contains("proof points"));
+        assert!(sections.contains("connector-backed work"));
         assert!(sections.contains("code_patch"));
         assert!(sections.contains("inspect -> patch -> apply -> test -> repair"));
         assert!(sections.contains("reserve `write` for brand-new files"));
