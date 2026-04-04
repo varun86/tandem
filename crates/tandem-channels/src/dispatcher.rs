@@ -284,10 +284,11 @@ async fn save_tool_preferences(map: &HashMap<String, ChannelToolPreferences>) {
 async fn load_channel_tool_preferences(channel: &str, scope_id: &str) -> ChannelToolPreferences {
     let map = load_tool_preferences().await;
     let scoped_key = format!("{}:{}", channel, scope_id);
-    if let Some(prefs) = map.get(&scoped_key) {
-        return prefs.clone();
-    }
-    map.get(channel).cloned().unwrap_or_default()
+    let channel_prefs = map.get(channel).cloned().unwrap_or_default();
+    let Some(scoped_prefs) = map.get(&scoped_key).cloned() else {
+        return channel_prefs;
+    };
+    merge_channel_tool_preferences(channel_prefs, scoped_prefs)
 }
 
 async fn save_channel_tool_preferences(
@@ -1974,7 +1975,7 @@ fn build_channel_tool_allowlist(
         && tool_prefs.disabled_tools.is_empty()
         && tool_prefs.enabled_mcp_servers.is_empty()
     {
-        return None;
+        return Some(vec!["*".to_string()]);
     }
 
     let all_builtin = [
@@ -1997,6 +1998,17 @@ fn build_channel_tool_allowlist(
         "memory_store",
         "memory_list",
         "mcp_list",
+        "browser_status",
+        "browser_open",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_wait",
+        "browser_extract",
+        "browser_screenshot",
+        "browser_close",
         "skill",
         "task",
         "question",
@@ -2040,6 +2052,35 @@ fn build_channel_tool_allowlist(
         return None;
     }
     Some(result)
+}
+
+fn merge_channel_tool_preferences(
+    base: ChannelToolPreferences,
+    scoped: ChannelToolPreferences,
+) -> ChannelToolPreferences {
+    ChannelToolPreferences {
+        enabled_tools: merge_unique_strings(base.enabled_tools, scoped.enabled_tools),
+        disabled_tools: merge_unique_strings(base.disabled_tools, scoped.disabled_tools),
+        enabled_mcp_servers: merge_unique_strings(
+            base.enabled_mcp_servers,
+            scoped.enabled_mcp_servers,
+        ),
+    }
+}
+
+fn merge_unique_strings(mut base: Vec<String>, overlay: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut merged = Vec::new();
+
+    for value in base.drain(..).chain(overlay.into_iter()) {
+        let value = value.trim().to_string();
+        if value.is_empty() || !seen.insert(value.clone()) {
+            continue;
+        }
+        merged.push(value);
+    }
+
+    merged
 }
 
 fn mcp_namespace_segment(raw: &str) -> String {
@@ -6855,6 +6896,41 @@ mod tests {
         assert!(result.iter().any(|tool| tool == "read"));
     }
 
+    #[test]
+    fn channel_tool_allowlist_includes_browser_tools_for_operator_channels() {
+        let prefs = ChannelToolPreferences {
+            disabled_tools: vec!["read".to_string()],
+            ..Default::default()
+        };
+
+        let result = build_channel_tool_allowlist(None, &prefs, ChannelSecurityProfile::Operator)
+            .expect("channel allowlist");
+
+        for tool in [
+            "browser_status",
+            "browser_open",
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_press",
+            "browser_wait",
+            "browser_extract",
+            "browser_screenshot",
+            "browser_close",
+        ] {
+            assert!(result.iter().any(|entry| entry == tool));
+        }
+    }
+
+    #[test]
+    fn channel_tool_allowlist_defaults_to_wildcard_for_operator_channels() {
+        let prefs = ChannelToolPreferences::default();
+        let result = build_channel_tool_allowlist(None, &prefs, ChannelSecurityProfile::Operator)
+            .expect("channel allowlist");
+        assert_eq!(result, vec!["*".to_string()]);
+    }
+
     #[tokio::test]
     async fn channel_tool_preferences_fall_back_to_channel_defaults_for_scoped_sessions() {
         let _guard = DispatcherEnvGuard::new(&["TANDEM_STATE_DIR"]);
@@ -6874,6 +6950,35 @@ mod tests {
         save_tool_preferences(&map).await;
 
         let prefs = load_channel_tool_preferences("telegram", "chat:123").await;
+        assert_eq!(prefs.enabled_mcp_servers, vec!["composio-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scoped_tool_preferences_inherit_channel_defaults_when_empty() {
+        let _guard = DispatcherEnvGuard::new(&["TANDEM_STATE_DIR"]);
+        let state_dir =
+            std::env::temp_dir().join(format!("tandem-channel-prefs-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        _guard.set("TANDEM_STATE_DIR", state_dir.display().to_string());
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "telegram".to_string(),
+            ChannelToolPreferences {
+                enabled_tools: vec!["read".to_string()],
+                disabled_tools: vec!["grep".to_string()],
+                enabled_mcp_servers: vec!["composio-1".to_string()],
+            },
+        );
+        map.insert(
+            "telegram:chat:123".to_string(),
+            ChannelToolPreferences::default(),
+        );
+        save_tool_preferences(&map).await;
+
+        let prefs = load_channel_tool_preferences("telegram", "chat:123").await;
+        assert_eq!(prefs.enabled_tools, vec!["read".to_string()]);
+        assert_eq!(prefs.disabled_tools, vec!["grep".to_string()]);
         assert_eq!(prefs.enabled_mcp_servers, vec!["composio-1".to_string()]);
     }
 
