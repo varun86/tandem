@@ -162,6 +162,15 @@ The important thing is not the exact labels. It is that each stage has:
 - one clear downstream consumer
 - one inspectable output
 
+### Smart Heartbeat Monitor Pattern
+
+If your mission or workflow is meant to check something constantly on a schedule, avoid having a single stage that checks and performs the work. Instead, prompt for a separation:
+
+1. **Triage Gate**: An `assess` stage using a fast, cheap model that checks if there is any work to do, producing a structured output indicating `has_work: false`.
+2. **Execution Gate**: A downstream stage that actually performs the logic, conditioned on the triage gate.
+
+Tandem will naturally recognize `has_work: false` and cleanly skip downstream execution, saving massive amounts of compute and tokens during empty polling cycles.
+
 ## Project knowledge and reuse
 
 Generated missions and workflows should now start from **project-scoped promoted knowledge** by default.

@@ -119,6 +119,18 @@ This is the best fit for:
 - intake -> plan -> execute -> verify -> review
 - collect -> consolidate -> update state -> notify
 
+### “I want to check for work on a schedule (Smart Heartbeats)”
+
+Use:
+
+- workflow plans or direct V2 automations
+
+This is the best fit for avoiding high-token polling. Tandem uses a triage-first DAG pattern where:
+
+- A cheap `assess` node uses a fast model to survey the environment.
+- If it determines there is no work (`has_work: false`), downstream nodes are safely skipped.
+- This saves significantly on execution costs and time for recurring checking operations.
+
 ## Control panel path
 
 ### Workflow-plan path
