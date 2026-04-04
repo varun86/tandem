@@ -153,7 +153,7 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
   const [catalogStatus, setCatalogStatus] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const caps = useCapabilities();
-  const acaAvailable = caps.data?.aca_integration === true;
+  const agentTeamsAvailable = caps.data?.agent_teams === true;
 
   const templatesQuery = useQuery({
     queryKey: ["teams", "templates"],
@@ -372,7 +372,7 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
 
   return (
     <div ref={rootRef} className="grid gap-4">
-      {acaAvailable && (
+      {agentTeamsAvailable && (
         <PageCard
           title="Agent Standup"
           subtitle="Compose scheduled standups from the same saved agents you manage here"

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Smart Heartbeat Monitor Automations**:
+  - Added a monitor-pattern compiler prompt and a native Control Panel triage-first DAG pattern to replace high-token polling with cheap `has_work: false` gating.
+  - Added `metadata.triage_gate: true` support and transitive `triage_skipped` propagation to the automation runtime so skipped nodes bypass execution and finish cleanly.
+  - Refactored `agent_standup_compose` into a broader composition factory that also supports `compose_monitor` creation.
+  - Added "Smart scheduling" detection and UX hints in the control panel to guide operators toward monitor-style automations when their input describes background checking tasks.
+  - Added the `assess` step type to allowed planner IDs.
+
 - **Shared Workflow Context**:
   - Added persisted context records plus publish/list/get/bind/revoke/supersede routes so approved shared workflow context can be published once and reused later with explicit bindings.
   - Added project allowlist visibility for Shared Workflow Context so explicit cross-project reuse can be opt-in instead of implied by default.

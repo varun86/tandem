@@ -109,13 +109,82 @@ pub(super) struct AgentTeamTemplatePatchInput {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct AgentStandupComposeInput {
+pub(super) struct StandupComposeInput {
     pub name: String,
     pub workspace_root: String,
     pub schedule: crate::AutomationV2Schedule,
     pub participant_template_ids: Vec<String>,
     #[serde(default)]
     pub report_path_template: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MonitorComposeInput {
+    pub name: String,
+    pub workspace_root: String,
+    pub schedule: crate::AutomationV2Schedule,
+    /// What the triage agent should check for (e.g. "urgent unread emails").
+    pub triage_objective: String,
+    /// MCP server names the triage agent is allowed to use.
+    #[serde(default)]
+    pub triage_mcp_servers: Vec<String>,
+    /// What to do when the triage finds work.
+    pub work_objective: String,
+    /// Optional agent template for the work agent.
+    #[serde(default)]
+    pub work_agent_template_id: Option<String>,
+    /// Optional model policy override for the triage agent.
+    /// Defaults to the workspace default (cheapest available).
+    #[serde(default)]
+    pub triage_model_policy: Option<Value>,
+}
+
+/// Generic descriptor used by all `compose_*` handlers to build an `AutomationV2Spec`.
+pub(super) struct ComposedAutomationDescriptor {
+    pub automation_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub workspace_root: String,
+    pub schedule: crate::AutomationV2Schedule,
+    pub agents: Vec<crate::AutomationAgentProfile>,
+    pub nodes: Vec<crate::AutomationFlowNode>,
+    pub max_parallel_agents: u32,
+    pub output_targets: Vec<String>,
+    pub creator_id: String,
+    pub metadata: Option<Value>,
+}
+
+/// Shared factory: turns a `ComposedAutomationDescriptor` into an `AutomationV2Spec`.
+/// All `compose_*` handlers should use this instead of duplicating the boilerplate.
+pub(super) fn build_composed_automation(
+    desc: ComposedAutomationDescriptor,
+) -> crate::AutomationV2Spec {
+    let now = crate::now_ms();
+    crate::AutomationV2Spec {
+        automation_id: desc.automation_id,
+        name: desc.name,
+        description: desc.description,
+        status: crate::AutomationV2Status::Draft,
+        schedule: desc.schedule,
+        knowledge: KnowledgeBinding::default(),
+        agents: desc.agents,
+        flow: crate::AutomationFlowSpec { nodes: desc.nodes },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(desc.max_parallel_agents.clamp(1, 16)),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: desc.output_targets,
+        created_at_ms: now,
+        updated_at_ms: now,
+        creator_id: desc.creator_id,
+        workspace_root: Some(desc.workspace_root),
+        metadata: desc.metadata,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    }
 }
 
 pub(super) fn mission_event_id(event: &MissionEvent) -> &str {
@@ -600,9 +669,9 @@ pub(super) async fn agent_team_template_delete(
     })))
 }
 
-pub(super) async fn agent_standup_compose(
-    State(state): State<AppState>,
-    Json(input): Json<AgentStandupComposeInput>,
+pub(super) async fn compose_standup(
+    State(_state): State<AppState>,
+    Json(input): Json<StandupComposeInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let name = input.name.trim();
     if name.is_empty() {
@@ -694,7 +763,6 @@ pub(super) async fn agent_standup_compose(
         participants.push(template);
     }
 
-    let now = crate::now_ms();
     let automation_id = format!("standup-{}", Uuid::new_v4());
     let schedule_timezone = input.schedule.timezone.clone();
     let mut agents = Vec::new();
@@ -830,27 +898,17 @@ pub(super) async fn agent_standup_compose(
         metadata: None,
     });
 
-    let automation = crate::AutomationV2Spec {
+    let automation = build_composed_automation(ComposedAutomationDescriptor {
         automation_id,
         name: name.to_string(),
         description: Some("Agent standup automation".to_string()),
-        status: crate::AutomationV2Status::Draft,
+        workspace_root: workspace_root.clone(),
         schedule: input.schedule,
-        knowledge: KnowledgeBinding::default(),
         agents,
-        flow: crate::AutomationFlowSpec { nodes },
-        execution: crate::AutomationExecutionPolicy {
-            max_parallel_agents: Some(participant_node_ids.len().clamp(1, 16) as u32),
-            max_total_runtime_ms: None,
-            max_total_tool_calls: None,
-            max_total_tokens: None,
-            max_total_cost_usd: None,
-        },
+        nodes,
+        max_parallel_agents: participant_node_ids.len().clamp(1, 16) as u32,
         output_targets: vec![report_path_template.clone()],
-        created_at_ms: now,
-        updated_at_ms: now,
         creator_id: "agent_standup".to_string(),
-        workspace_root: Some(workspace_root.clone()),
         metadata: Some(json!({
             "feature": "agent_standup",
             "standup": {
@@ -859,9 +917,189 @@ pub(super) async fn agent_standup_compose(
                 "timezone": schedule_timezone,
             },
         })),
-        next_fire_at_ms: None,
-        last_fired_at_ms: None,
+    });
+
+    Ok(Json(json!({
+        "ok": true,
+        "automation": automation,
+    })))
+}
+
+pub(super) async fn compose_monitor(
+    State(_state): State<AppState>,
+    Json(input): Json<MonitorComposeInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "INVALID_MONITOR_NAME",
+                "error": "name is required",
+            })),
+        ));
+    }
+    let triage_objective = input.triage_objective.trim();
+    if triage_objective.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "INVALID_TRIAGE_OBJECTIVE",
+                "error": "triage_objective is required",
+            })),
+        ));
+    }
+    let work_objective = input.work_objective.trim();
+    if work_objective.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "INVALID_WORK_OBJECTIVE",
+                "error": "work_objective is required",
+            })),
+        ));
+    }
+    let workspace_root =
+        crate::normalize_absolute_workspace_root(&input.workspace_root).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "ok": false,
+                    "code": "INVALID_WORKSPACE_ROOT",
+                    "error": error,
+                })),
+            )
+        })?;
+
+    let automation_id = format!("monitor-{}", uuid::Uuid::new_v4());
+
+    // ── Triage agent ──────────────────────────────────────────────────────────
+    // Uses the cheapest/default model via triage_model_policy (or workspace default).
+    let triage_agent_id = "monitor-triage".to_string();
+    let triage_node_id = "monitor_triage".to_string();
+
+    let triage_prompt = format!(
+        "{triage_objective}\n\n\
+        Use available MCP tools to check the data sources.\n\
+        Respond ONLY with valid JSON matching this schema:\n\
+        {{\"has_work\": true/false, \"summary\": \"...\", \"items\": [...]}}"
+    );
+
+    let triage_agent = crate::AutomationAgentProfile {
+        agent_id: triage_agent_id.clone(),
+        template_id: None,
+        display_name: "Monitor Triage".to_string(),
+        avatar_url: None,
+        // triage_model_policy is set by the caller; None falls back to workspace default.
+        model_policy: input.triage_model_policy.clone(),
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            // Triage only needs to call MCP tools — no workspace writes.
+            allowlist: Vec::new(),
+            denylist: vec!["write".to_string()],
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: input.triage_mcp_servers.clone(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
     };
+
+    let triage_node = crate::AutomationFlowNode {
+        node_id: triage_node_id.clone(),
+        agent_id: triage_agent_id,
+        objective: triage_prompt,
+        knowledge: KnowledgeBinding::default(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(crate::AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some(
+                "Return {\"has_work\": bool, \"summary\": string, \"items\": array}".to_string(),
+            ),
+        }),
+        retry_policy: Some(json!({ "max_attempts": 2 })),
+        timeout_ms: None,
+        stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+        gate: None,
+        // triage_gate: true signals the executor to skip downstream nodes when
+        // the output contains has_work: false.
+        metadata: Some(json!({ "triage_gate": true })),
+    };
+
+    // ── Work agent ────────────────────────────────────────────────────────────
+    let work_agent_id = "monitor-worker".to_string();
+    let work_node_id = "monitor_work".to_string();
+
+    let work_agent = crate::AutomationAgentProfile {
+        agent_id: work_agent_id.clone(),
+        template_id: input.work_agent_template_id.clone(),
+        display_name: "Monitor Worker".to_string(),
+        avatar_url: None,
+        model_policy: None, // uses workspace default (full model)
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            // Worker can access all MCP servers the user has allowed.
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let work_node = crate::AutomationFlowNode {
+        node_id: work_node_id.clone(),
+        agent_id: work_agent_id,
+        objective: work_objective.to_string(),
+        knowledge: KnowledgeBinding::default(),
+        depends_on: vec![triage_node_id.clone()],
+        input_refs: vec![crate::AutomationFlowInputRef {
+            from_step_id: triage_node_id.clone(),
+            alias: "triage".to_string(),
+        }],
+        output_contract: Some(crate::AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: Some(json!({ "max_attempts": 2 })),
+        timeout_ms: None,
+        stage_kind: Some(crate::AutomationNodeStageKind::Orchestrator),
+        gate: None,
+        metadata: None,
+    };
+
+    let automation = build_composed_automation(ComposedAutomationDescriptor {
+        automation_id,
+        name: name.to_string(),
+        description: Some(format!("Monitor: {triage_objective}")),
+        workspace_root,
+        schedule: input.schedule,
+        agents: vec![triage_agent, work_agent],
+        nodes: vec![triage_node, work_node],
+        max_parallel_agents: 1,
+        output_targets: Vec::new(),
+        creator_id: "compose_monitor".to_string(),
+        metadata: Some(json!({
+            "feature": "monitor",
+            "monitor": {
+                "triage_objective": triage_objective,
+                "work_objective": work_objective,
+                "triage_mcp_servers": input.triage_mcp_servers,
+            },
+        })),
+    });
 
     Ok(Json(json!({
         "ok": true,

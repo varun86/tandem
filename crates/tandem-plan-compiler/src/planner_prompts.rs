@@ -38,6 +38,12 @@ fn workflow_plan_teaching_library_sections() -> String {
         "- proof points: cite evidence sources, validation checks, or artifacts that will prove success\n",
         "- connector-backed work: prefer the selected MCP inventory for source-specific systems such as Reddit, GitHub issues, Slack, or Jira, and clarify when no relevant connector is available\n",
         "- code changes: prefer `code_patch` plus an inspect -> patch -> apply -> test -> repair loop, and reserve `write` for brand-new files\n",
+        "- monitor-pattern plans: when the user describes a recurring awareness task (checking email, watching for changes, monitoring a data source, scanning for new items), generate a triage-first plan\n",
+        "  - first step must be an `assess` step that uses MCP tools to check the data source and outputs structured JSON: {\"has_work\": true/false, \"summary\": \"...\", \"items\": [...]}\n",
+        "  - set metadata.triage_gate: true on the assess step so the engine skips downstream nodes when has_work is false\n",
+        "  - subsequent steps depend on the assess step and can be as complex as needed; do not limit the plan to two steps\n",
+        "  - the assess step should use a cheap model: set metadata.builder.triage_model: true\n",
+        "  - do not add a triage step for non-recurring or non-awareness tasks\n",
     )
     .to_string()
 }
@@ -56,5 +62,8 @@ mod tests {
         assert!(sections.contains("code_patch"));
         assert!(sections.contains("inspect -> patch -> apply -> test -> repair"));
         assert!(sections.contains("reserve `write` for brand-new files"));
+        assert!(sections.contains("monitor-pattern plans"));
+        assert!(sections.contains("assess"));
+        assert!(sections.contains("triage_gate"));
     }
 }

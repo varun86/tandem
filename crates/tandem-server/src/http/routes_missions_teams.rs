@@ -18,7 +18,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/agent-team/templates/{id}",
             patch(agent_team_template_patch).delete(agent_team_template_delete),
         )
-        .route("/agent-standup/compose", post(agent_standup_compose))
+        .route("/automations/compose/standup", post(compose_standup))
+        .route("/automations/compose/monitor", post(compose_monitor))
+        // Legacy alias — kept for backwards compat.
+        .route("/agent-standup/compose", post(compose_standup))
         .route("/agent-team/instances", get(agent_team_instances))
         .route("/agent-team/missions", get(agent_team_missions))
         .route("/agent-team/approvals", get(agent_team_approvals))

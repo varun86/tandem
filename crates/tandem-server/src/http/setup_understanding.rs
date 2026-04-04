@@ -409,6 +409,29 @@ fn is_informational_only(input: &str) -> bool {
         || trimmed.starts_with("explain ")
 }
 
+fn is_comparison_or_evaluation_request(input: &str) -> bool {
+    contains_any(
+        input,
+        &[
+            "compare",
+            "compared",
+            "comparison",
+            "versus",
+            " vs ",
+            "difference",
+            "better",
+            "best",
+            "rank",
+            "recommend",
+            "which is better",
+            "how does",
+            "how do they compare",
+            "what's the difference",
+            "what is the difference",
+        ],
+    )
+}
+
 fn is_broad_setup_request(input: &str) -> bool {
     (contains_any(
         input,
@@ -455,6 +478,10 @@ fn score_provider_setup(input: &str, state: &ProviderSetupState) -> IntentScore 
     let models = matched_aliases(input, MODEL_ALIASES);
     let has_setup = contains_any(input, SETUP_VERBS);
     let has_provider_words = contains_any(input, &["provider", "model", "api key"]);
+
+    if !has_setup && is_comparison_or_evaluation_request(input) {
+        return score;
+    }
 
     if has_setup {
         score.score += 2;

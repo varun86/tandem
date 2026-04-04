@@ -1025,6 +1025,7 @@ where
 }
 
 pub const ALLOWED_WORKFLOW_STEP_IDS: &[&str] = &[
+    "assess",
     "collect_inputs",
     "research_sources",
     "extract_pain_points",
@@ -1039,6 +1040,17 @@ pub const ALLOWED_WORKFLOW_STEP_IDS: &[&str] = &[
 
 fn allowed_workflow_step_ids() -> std::collections::HashSet<&'static str> {
     ALLOWED_WORKFLOW_STEP_IDS.iter().copied().collect()
+}
+
+/// Returns `true` when a step ID or kind indicates a triage / awareness check.
+/// The compiler uses this to apply triage-gate metadata automatically.
+pub fn workflow_step_is_triage(step_id: &str, kind: &str) -> bool {
+    let lowered_id = step_id.trim().to_ascii_lowercase();
+    let lowered_kind = kind.trim().to_ascii_lowercase();
+    lowered_id.contains("assess")
+        || lowered_id.contains("triage")
+        || lowered_kind.contains("assess")
+        || lowered_kind.contains("triage")
 }
 
 fn normalize_workflow_step_id(raw: &str) -> String {

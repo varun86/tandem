@@ -144,6 +144,21 @@ export function Step1Goal(props: Step1GoalProps) {
     [selectedAgentId]
   );
 
+  const isMonitorGoal = useMemo(() => {
+    const lower = value.toLowerCase();
+    return [
+      "monitor",
+      "watch for",
+      "watch our",
+      "check for",
+      "check my",
+      "scan for",
+      "scan our",
+      "alert me",
+      "alert me when",
+    ].some((kw) => lower.includes(kw));
+  }, [value]);
+
   return (
     <div className="grid gap-4">
       <p className="text-sm text-slate-400">
@@ -156,6 +171,16 @@ export function Step1Goal(props: Step1GoalProps) {
         onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
         autoFocus
       />
+      {isMonitorGoal ? (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
+          <span className="mt-0.5 shrink-0 text-base leading-none">⚡</span>
+          <span>
+            <strong className="text-blue-100">Smart scheduling</strong> — Tandem will use a
+            lightweight model to check if there's new work before running the full automation. No
+            tokens wasted when there's nothing new.
+          </span>
+        </div>
+      ) : null}
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
           <p className="text-xs text-slate-500">Search agents from catalog:</p>

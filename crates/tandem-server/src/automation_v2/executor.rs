@@ -55,6 +55,55 @@ fn blocked_failure_kind(kind: &str) -> bool {
     )
 }
 
+/// Returns `true` when a node should be skipped entirely because an upstream
+/// node that is marked as a triage gate found no work.
+///
+/// The triage node signals this by having `metadata.triage_gate == true` in
+/// the automation spec, and outputting `{"content": {"has_work": false}}`.
+/// When skipped, downstream nodes are also unconditionally skipped via the
+/// same check (`should_skip_due_to_triage_gate` is called for every pending
+/// node each loop iteration after the triage output lands).
+fn should_skip_due_to_triage_gate(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    node_outputs: &std::collections::HashMap<String, serde_json::Value>,
+    flow_nodes: &[crate::automation_v2::types::AutomationFlowNode],
+) -> bool {
+    for dep_id in &node.depends_on {
+        // Only apply the skip when the dependency is itself a triage gate node.
+        let dep_is_triage = flow_nodes
+            .iter()
+            .find(|n| &n.node_id == dep_id)
+            .and_then(|n| n.metadata.as_ref())
+            .and_then(|m| m.get("triage_gate"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if !dep_is_triage {
+            // Propagate: if the *dependency* was itself skipped due to triage,
+            // its skip output also carries triage_skipped:true so this node
+            // picks it up in the next iteration.
+            let dep_triage_skipped = node_outputs
+                .get(dep_id)
+                .and_then(|o| o.get("triage_skipped"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if dep_triage_skipped {
+                return true;
+            }
+            continue;
+        }
+        let has_work = node_outputs
+            .get(dep_id)
+            .and_then(|o| o.get("content"))
+            .and_then(|c| c.get("has_work"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true); // default: proceed (don't skip) if field is absent
+        if !has_work {
+            return true;
+        }
+    }
+    false
+}
+
 fn automation_activation_validation_failure(
     automation: &crate::automation_v2::types::AutomationV2Spec,
 ) -> Option<String> {
@@ -316,6 +365,7 @@ pub async fn run_automation_v2_run(
             .cloned()
             .collect::<std::collections::HashSet<_>>();
         let pending = latest.checkpoint.pending_nodes.clone();
+        let mut triage_skipped_node_ids: Vec<String> = Vec::new();
         let mut runnable = pending
             .iter()
             .filter_map(|node_id| {
@@ -334,13 +384,53 @@ pub async fn run_automation_v2_run(
                 if attempts >= max_attempts {
                     return None;
                 }
-                if node.depends_on.iter().all(|dep| completed.contains(dep)) {
-                    Some(node.clone())
-                } else {
-                    None
+                // Dependency check: all deps must be completed.
+                if !node.depends_on.iter().all(|dep| completed.contains(dep)) {
+                    return None;
                 }
+                // Triage gate: skip if an upstream triage node found no work.
+                if should_skip_due_to_triage_gate(
+                    node,
+                    &latest.checkpoint.node_outputs,
+                    &automation.flow.nodes,
+                ) {
+                    triage_skipped_node_ids.push(node_id.clone());
+                    return None;
+                }
+                Some(node.clone())
             })
             .collect::<Vec<_>>();
+        // Apply triage skips before proceeding to phase/routine filtering.
+        if !triage_skipped_node_ids.is_empty() {
+            let _ = state
+                .update_automation_v2_run(&run_id, |row| {
+                    for node_id in &triage_skipped_node_ids {
+                        row.checkpoint.pending_nodes.retain(|id| id != node_id);
+                        if !row.checkpoint.completed_nodes.iter().any(|id| id == node_id) {
+                            row.checkpoint.completed_nodes.push(node_id.clone());
+                        }
+                        row.checkpoint.node_outputs.insert(
+                            node_id.clone(),
+                            json!({
+                                "status": "skipped",
+                                "summary": "Skipped: upstream triage found no work.",
+                                "triage_skipped": true,
+                                "contract_kind": "text_summary",
+                            }),
+                        );
+                        crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
+                            row,
+                            "node_skipped_no_work",
+                            Some(format!("node `{node_id}` skipped: upstream triage found no work")),
+                            None,
+                            Some(json!({ "node_id": node_id, "triage_skipped": true })),
+                        );
+                    }
+                })
+                .await;
+            // Re-enter the loop so newly-depending nodes can be evaluated for skip.
+            continue;
+        }
         runnable = crate::app::state::automation_filter_runnable_by_open_phase(
             &automation,
             &latest,

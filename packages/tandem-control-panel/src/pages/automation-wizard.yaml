@@ -13,6 +13,11 @@ goalExamples:
   - Summarize my calendar each Sunday and plan the upcoming week
   - Watch for price changes on competitor products and alert me
   - Generate a weekly report from our Notion workspace
+  - Monitor my inbox for urgent emails and draft responses immediately
+  - Watch for new pull requests every hour and summarize what changed
+  - Scan Slack channels for unanswered questions and draft replies
+  - Check for new mentions of our product on Reddit and alert me
+  - Watch our repo for new issues tagged 'bug' and triage them automatically
 schedulePresets:
   - label: Every X hours
     desc: Set a 1, 2, 4, 6, or other hour interval for monitoring & alerts
