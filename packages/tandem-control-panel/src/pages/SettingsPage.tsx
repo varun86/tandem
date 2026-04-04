@@ -633,6 +633,58 @@ function parseAllowedUsers(input: string) {
   return users.length ? users : ["*"];
 }
 
+function normalizeChannelAllowedUsers(input: string[] | string | null | undefined) {
+  const rawValues = Array.isArray(input) ? input : String(input || "").split(",");
+  const users = rawValues.map((row) => String(row || "").trim()).filter(Boolean);
+  return users.length ? Array.from(new Set(users)) : ["*"];
+}
+
+function sameChannelAllowedUsers(
+  left: string[] | string | null | undefined,
+  right: string[] | string | null | undefined
+) {
+  const a = normalizeChannelAllowedUsers(left).slice().sort();
+  const b = normalizeChannelAllowedUsers(right).slice().sort();
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function channelConfigHasSavedSettings(
+  channel: string,
+  config: ChannelConfigRow | null | undefined
+) {
+  const row = config && typeof config === "object" ? config : {};
+  const allowedUsers = normalizeChannelAllowedUsers(row.allowed_users);
+  return (
+    !!row.has_token ||
+    allowedUsers.some((user) => user !== "*") ||
+    !!row.mention_only ||
+    !!String(row.guild_id || "").trim() ||
+    !!String(row.channel_id || "").trim() ||
+    String(row.style_profile || "default").trim() !== "default" ||
+    String(row.security_profile || "operator").trim() !== "operator"
+  );
+}
+
+function channelDraftMatchesConfig(
+  channel: string,
+  draft: ChannelDraft,
+  config: ChannelConfigRow | null | undefined
+) {
+  const savedDraft = normalizeChannelDraft(channel, config);
+  return (
+    !String(draft.botToken || "").trim() &&
+    sameChannelAllowedUsers(draft.allowedUsers, savedDraft.allowedUsers) &&
+    !!draft.mentionOnly === !!savedDraft.mentionOnly &&
+    String(draft.guildId || "").trim() === String(savedDraft.guildId || "").trim() &&
+    String(draft.channelId || "").trim() === String(savedDraft.channelId || "").trim() &&
+    String(draft.styleProfile || "default").trim() ===
+      String(savedDraft.styleProfile || "default").trim() &&
+    String(draft.securityProfile || "operator").trim() ===
+      String(savedDraft.securityProfile || "operator").trim()
+  );
+}
+
 function providerCatalogBadge(provider: any, modelCount: number) {
   const source = String(provider?.catalog_source || "")
     .trim()
@@ -710,6 +762,16 @@ export function SettingsPage({
   const [customProviderApiKey, setCustomProviderApiKey] = useState("");
   const [customProviderMakeDefault, setCustomProviderMakeDefault] = useState(true);
   const [channelDrafts, setChannelDrafts] = useState<Record<string, ChannelDraft>>({});
+  const channelDraftsHydratedRef = useRef<Record<string, boolean>>({
+    telegram: false,
+    discord: false,
+    slack: false,
+  });
+  const [channelToolScopeOpen, setChannelToolScopeOpen] = useState<Record<string, boolean>>({
+    telegram: false,
+    discord: false,
+    slack: false,
+  });
   const [channelVerifyResult, setChannelVerifyResult] = useState<Record<string, any>>({});
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpName, setMcpName] = useState("");
@@ -1442,6 +1504,7 @@ export function SettingsPage({
     onSuccess: async (_, channel) => {
       toast("ok", `Removed ${channel} channel settings.`);
       setChannelVerifyResult((prev) => ({ ...prev, [channel]: null }));
+      channelDraftsHydratedRef.current[channel] = false;
       setChannelDrafts((prev) => ({
         ...prev,
         [channel]: normalizeChannelDraft(channel, null),
@@ -1732,10 +1795,14 @@ export function SettingsPage({
       channelsConfigQuery.data && typeof channelsConfigQuery.data === "object"
         ? (channelsConfigQuery.data as Record<string, ChannelConfigRow>)
         : {};
+    if (!channelsConfigQuery.data || typeof channelsConfigQuery.data !== "object") return;
     setChannelDrafts((prev) => {
       const next = { ...prev };
       for (const channel of channelNames) {
-        if (!next[channel]) next[channel] = normalizeChannelDraft(channel, config[channel]);
+        if (!next[channel]) {
+          next[channel] = normalizeChannelDraft(channel, config[channel]);
+          channelDraftsHydratedRef.current[channel] = true;
+        }
       }
       return next;
     });
@@ -3157,11 +3224,12 @@ export function SettingsPage({
                         )?.[channel] || defaultChannelToolPreferences()
                       );
                       const publicDemo = draft.securityProfile === "public_demo";
-                      const hasSavedConfig =
-                        !!config?.has_token ||
-                        !!(Array.isArray(config?.allowed_users) && config.allowed_users.length) ||
-                        !!String(config?.guild_id || "").trim() ||
-                        !!String(config?.channel_id || "").trim();
+                      const hasSavedConfig = channelConfigHasSavedSettings(channel, config);
+                      const channelSettingsDirty = !channelDraftMatchesConfig(
+                        channel,
+                        draft,
+                        config
+                      );
 
                       return (
                         <div key={channel} className="tcp-list-item grid gap-3">
@@ -3196,7 +3264,7 @@ export function SettingsPage({
                               type="password"
                               placeholder={
                                 config.has_token
-                                  ? String(config.token_masked || "********")
+                                  ? String(config.token_masked || "****")
                                   : `Paste ${channel} bot token`
                               }
                               value={draft.botToken}
@@ -3343,155 +3411,10 @@ export function SettingsPage({
                             </div>
                           ) : null}
 
-                          <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
-                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="font-medium">Channel tool scope</div>
-                                <div className="tcp-subtle text-xs">
-                                  Built-in tools and MCP servers available to {channel} sessions.
-                                </div>
-                                {toolPrefs.enabled_tools.length > 0 ? (
-                                  <div className="mt-1 text-xs text-amber-300">
-                                    Explicit built-in allowlist is active for this channel.
-                                  </div>
-                                ) : null}
-                                {publicDemo ? (
-                                  <div className="mt-1 text-xs text-slate-400">
-                                    Public demo profile can only expose web and quarantined
-                                    public-memory tools here. File, shell, MCP, and operator-facing
-                                    tools stay disabled even if saved in channel preferences.
-                                  </div>
-                                ) : null}
-                              </div>
-                              <button
-                                className="tcp-btn"
-                                disabled={saveChannelToolPreferencesMutation.isPending}
-                                onClick={() =>
-                                  saveChannelToolPreferencesMutation.mutate({
-                                    channel,
-                                    payload: { reset: true },
-                                  })
-                                }
-                              >
-                                Reset scope
-                              </button>
-                            </div>
-
-                            <div className="grid gap-3">
-                              {CHANNEL_TOOL_GROUPS.map((group) => (
-                                <div key={`${channel}-${group.label}`} className="grid gap-2">
-                                  <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
-                                    {group.label}
-                                  </div>
-                                  <div className="grid gap-2 md:grid-cols-2">
-                                    {group.tools.map((tool) => {
-                                      const allowed = toolAllowedForSecurityProfile(
-                                        draft.securityProfile,
-                                        tool
-                                      );
-                                      const enabled = toolEnabledForSecurityProfile(
-                                        toolPrefs,
-                                        tool,
-                                        draft.securityProfile
-                                      );
-                                      return (
-                                        <label
-                                          key={`${channel}-${tool}`}
-                                          className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
-                                        >
-                                          <div className="flex flex-col">
-                                            <span className="font-mono text-xs">{tool}</span>
-                                            {!allowed ? (
-                                              <span className="tcp-subtle text-[11px]">
-                                                Disabled by security profile
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                          <input
-                                            type="checkbox"
-                                            checked={enabled}
-                                            disabled={
-                                              saveChannelToolPreferencesMutation.isPending ||
-                                              !allowed
-                                            }
-                                            onChange={(e) =>
-                                              saveChannelToolPreferencesMutation.mutate({
-                                                channel,
-                                                payload: nextChannelToolPreferences(
-                                                  toolPrefs,
-                                                  tool,
-                                                  e.currentTarget.checked
-                                                ),
-                                              })
-                                            }
-                                          />
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              ))}
-
-                              <div className="grid gap-2">
-                                <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
-                                  MCP servers
-                                </div>
-                                {mcpServers.length ? (
-                                  <div className="grid gap-2 md:grid-cols-2">
-                                    {mcpServers.map((server) => {
-                                      const enabled =
-                                        !publicDemo &&
-                                        toolPrefs.enabled_mcp_servers.includes(server.name);
-                                      return (
-                                        <label
-                                          key={`${channel}-mcp-${server.name}`}
-                                          className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
-                                        >
-                                          <div className="flex flex-col">
-                                            <span className="font-mono text-xs">{server.name}</span>
-                                            {publicDemo ? (
-                                              <span className="tcp-subtle text-[11px]">
-                                                Disabled by security profile
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                          <input
-                                            type="checkbox"
-                                            checked={enabled}
-                                            disabled={
-                                              saveChannelToolPreferencesMutation.isPending ||
-                                              publicDemo
-                                            }
-                                            onChange={(e) =>
-                                              saveChannelToolPreferencesMutation.mutate({
-                                                channel,
-                                                payload: nextChannelMcpPreferences(
-                                                  toolPrefs,
-                                                  server.name,
-                                                  e.currentTarget.checked
-                                                ),
-                                              })
-                                            }
-                                          />
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                ) : (
-                                  <div className="tcp-subtle text-xs">
-                                    {publicDemo
-                                      ? "MCP servers stay disabled in public demo mode."
-                                      : "No MCP servers configured yet."}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
                           <div className="flex flex-wrap gap-2">
                             <button
                               className="tcp-btn-primary"
-                              disabled={saveChannelMutation.isPending}
+                              disabled={saveChannelMutation.isPending || !channelSettingsDirty}
                               onClick={() => saveChannelMutation.mutate(channel)}
                             >
                               <i data-lucide="save"></i>
@@ -3516,6 +3439,199 @@ export function SettingsPage({
                               Remove
                             </button>
                           </div>
+
+                          <motion.div
+                            layout
+                            className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3"
+                          >
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">Channel tool scope</div>
+                                <div className="tcp-subtle text-xs">
+                                  Built-in tools and MCP servers available to {channel} sessions.
+                                </div>
+                                {toolPrefs.enabled_tools.length > 0 ? (
+                                  <div className="mt-1 text-xs text-amber-300">
+                                    Explicit built-in allowlist is active for this channel.
+                                  </div>
+                                ) : null}
+                                {publicDemo ? (
+                                  <div className="mt-1 text-xs text-slate-400">
+                                    Public demo profile can only expose web and quarantined
+                                    public-memory tools here. File, shell, MCP, and operator-facing
+                                    tools stay disabled even if saved in channel preferences.
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  className="tcp-btn"
+                                  disabled={saveChannelToolPreferencesMutation.isPending}
+                                  onClick={() =>
+                                    saveChannelToolPreferencesMutation.mutate({
+                                      channel,
+                                      payload: { reset: true },
+                                    })
+                                  }
+                                >
+                                  Reset scope
+                                </button>
+                                <button
+                                  className="tcp-btn"
+                                  aria-expanded={!!channelToolScopeOpen[channel]}
+                                  onClick={() =>
+                                    setChannelToolScopeOpen((prev) => ({
+                                      ...prev,
+                                      [channel]: !prev[channel],
+                                    }))
+                                  }
+                                >
+                                  <span>{channelToolScopeOpen[channel] ? "Hide" : "Show"}</span>
+                                  <i
+                                    data-lucide="chevron-down"
+                                    className={`h-4 w-4 transition-transform duration-200 ${
+                                      channelToolScopeOpen[channel] ? "rotate-180" : ""
+                                    }`}
+                                  ></i>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="tcp-subtle text-xs">
+                              {toolPrefs.enabled_mcp_servers.length
+                                ? `${toolPrefs.enabled_mcp_servers.length} MCP server${
+                                    toolPrefs.enabled_mcp_servers.length === 1 ? "" : "s"
+                                  } enabled.`
+                                : publicDemo
+                                  ? "MCP servers stay disabled in public demo mode."
+                                  : "No MCP servers enabled for this channel."}
+                            </div>
+
+                            <AnimatePresence initial={false}>
+                              {channelToolScopeOpen[channel] ? (
+                                <motion.div
+                                  key={`${channel}-tool-scope-body`}
+                                  initial={{ opacity: 0, height: 0, y: -6 }}
+                                  animate={{ opacity: 1, height: "auto", y: 0 }}
+                                  exit={{ opacity: 0, height: 0, y: -6 }}
+                                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="grid gap-3 pt-3">
+                                    {CHANNEL_TOOL_GROUPS.map((group) => (
+                                      <div key={`${channel}-${group.label}`} className="grid gap-2">
+                                        <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                          {group.label}
+                                        </div>
+                                        <div className="grid gap-2 md:grid-cols-2">
+                                          {group.tools.map((tool) => {
+                                            const allowed = toolAllowedForSecurityProfile(
+                                              draft.securityProfile,
+                                              tool
+                                            );
+                                            const enabled = toolEnabledForSecurityProfile(
+                                              toolPrefs,
+                                              tool,
+                                              draft.securityProfile
+                                            );
+                                            return (
+                                              <label
+                                                key={`${channel}-tool-${tool}`}
+                                                className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
+                                              >
+                                                <div className="flex flex-col">
+                                                  <span className="font-mono text-xs">{tool}</span>
+                                                  {!allowed ? (
+                                                    <span className="tcp-subtle text-[11px]">
+                                                      Disabled by security profile
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={enabled}
+                                                  disabled={
+                                                    saveChannelToolPreferencesMutation.isPending ||
+                                                    !allowed
+                                                  }
+                                                  onChange={(e) =>
+                                                    saveChannelToolPreferencesMutation.mutate({
+                                                      channel,
+                                                      payload: nextChannelToolPreferences(
+                                                        toolPrefs,
+                                                        tool,
+                                                        e.currentTarget.checked
+                                                      ),
+                                                    })
+                                                  }
+                                                />
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
+
+                                    <div className="grid gap-2">
+                                      <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                        MCP servers
+                                      </div>
+                                      {mcpServers.length ? (
+                                        <div className="grid gap-2 md:grid-cols-2">
+                                          {mcpServers.map((server) => {
+                                            const enabled =
+                                              !publicDemo &&
+                                              toolPrefs.enabled_mcp_servers.includes(server.name);
+                                            return (
+                                              <label
+                                                key={`${channel}-mcp-${server.name}`}
+                                                className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
+                                              >
+                                                <div className="flex flex-col">
+                                                  <span className="font-mono text-xs">
+                                                    {server.name}
+                                                  </span>
+                                                  {publicDemo ? (
+                                                    <span className="tcp-subtle text-[11px]">
+                                                      Disabled by security profile
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={enabled}
+                                                  disabled={
+                                                    saveChannelToolPreferencesMutation.isPending ||
+                                                    publicDemo
+                                                  }
+                                                  onChange={(e) =>
+                                                    saveChannelToolPreferencesMutation.mutate({
+                                                      channel,
+                                                      payload: nextChannelMcpPreferences(
+                                                        toolPrefs,
+                                                        server.name,
+                                                        e.currentTarget.checked
+                                                      ),
+                                                    })
+                                                  }
+                                                />
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <div className="tcp-subtle text-xs">
+                                          {publicDemo
+                                            ? "MCP servers stay disabled in public demo mode."
+                                            : "No MCP servers configured yet."}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
+                          </motion.div>
                         </div>
                       );
                     })}

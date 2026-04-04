@@ -2,9 +2,10 @@ use serde_json::{json, Value};
 use tandem_core::engine_api_token_file_path;
 use tokio::time::sleep;
 
+use super::plan_helpers;
 use crate::app::{
     Action, AgentStatus, App, AppState, ContentBlock, EngineConnectionSource, EngineStalePolicy,
-    MessageRole, ModalState, SetupStep, TandemMode, TaskStatus,
+    MessageRole, ModalState, SetupStep, TandemMode, TaskStatus, UiMode,
 };
 use crate::command_catalog::HELP_TEXT;
 
@@ -200,6 +201,234 @@ pub(super) async fn try_execute_basic_command(
             }
             _ => "Usage: /browser status | doctor".to_string(),
         }),
+        "agent" => Some(match args.first().copied() {
+            Some("new") => {
+                app.sync_active_agent_from_chat();
+                let next_agent_id = if let AppState::Chat { agents, .. } = &app.state {
+                    format!("A{}", agents.len() + 1)
+                } else {
+                    "A1".to_string()
+                };
+                let mut new_session_id: Option<String> = None;
+                if let Some(client) = &app.client {
+                    if let Ok(session) = client
+                        .create_session(Some(format!("{} session", next_agent_id)))
+                        .await
+                    {
+                        new_session_id = Some(session.id);
+                    }
+                }
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut app.state
+                {
+                    let fallback_session = agents
+                        .get(*active_agent_index)
+                        .map(|a| a.session_id.clone())
+                        .unwrap_or_default();
+                    let pane = App::make_agent_pane(
+                        next_agent_id,
+                        new_session_id.unwrap_or(fallback_session),
+                    );
+                    agents.push(pane);
+                    *active_agent_index = agents.len().saturating_sub(1);
+                }
+                app.sync_chat_from_active_agent();
+                "Created new agent.".to_string()
+            }
+            Some("list") => {
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &app.state
+                {
+                    let mut out = Vec::new();
+                    for (i, a) in agents.iter().enumerate() {
+                        let marker = if i == *active_agent_index { ">" } else { " " };
+                        out.push(format!(
+                            "{} {} [{}] {}",
+                            marker,
+                            a.agent_id,
+                            a.session_id,
+                            format!("{:?}", a.status)
+                        ));
+                    }
+                    format!("Agents:\n{}", out.join("\n"))
+                } else {
+                    "Not in chat.".to_string()
+                }
+            }
+            Some("use") => {
+                if let Some(agent_id) = args.get(1) {
+                    app.sync_active_agent_from_chat();
+                    if let AppState::Chat {
+                        agents,
+                        active_agent_index,
+                        ..
+                    } = &mut app.state
+                    {
+                        if let Some(idx) = agents.iter().position(|a| &a.agent_id == agent_id) {
+                            *active_agent_index = idx;
+                            app.sync_chat_from_active_agent();
+                            return Some(format!("Switched to {}.", agent_id));
+                        }
+                    }
+                    format!("Agent not found: {}", agent_id)
+                } else {
+                    "Usage: /agent use <A#>".to_string()
+                }
+            }
+            Some("close") => {
+                app.sync_active_agent_from_chat();
+                let active_idx = if let AppState::Chat {
+                    active_agent_index, ..
+                } = &app.state
+                {
+                    *active_agent_index
+                } else {
+                    0
+                };
+                app.cancel_agent_if_running(active_idx).await;
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    grid_page,
+                    ..
+                } = &mut app.state
+                {
+                    if agents.len() <= 1 {
+                        return Some("Cannot close last agent.".to_string());
+                    }
+                    agents.remove(active_idx);
+                    if *active_agent_index >= agents.len() {
+                        *active_agent_index = agents.len().saturating_sub(1);
+                    }
+                    let max_page = agents.len().saturating_sub(1) / 4;
+                    if *grid_page > max_page {
+                        *grid_page = max_page;
+                    }
+                }
+                app.sync_chat_from_active_agent();
+                "Closed active agent.".to_string()
+            }
+            Some("fanout") => {
+                let mode_switched = if matches!(app.current_mode, TandemMode::Plan) {
+                    app.current_mode = TandemMode::Orchestrate;
+                    true
+                } else {
+                    false
+                };
+                let mode_note = if mode_switched {
+                    " Mode auto-switched from plan -> orchestrate."
+                } else {
+                    ""
+                };
+                let (target, goal_start_idx) = match args.get(1) {
+                    Some(raw) => match raw.parse::<usize>() {
+                        Ok(n) => (n.clamp(2, 9), 2),
+                        Err(_) => (4, 1),
+                    },
+                    None => (4, 1),
+                };
+                let goal = args
+                    .iter()
+                    .skip(goal_start_idx)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim()
+                    .to_string();
+                let created = app.ensure_agent_count(target).await;
+                if let AppState::Chat {
+                    ui_mode, grid_page, ..
+                } = &mut app.state
+                {
+                    *ui_mode = UiMode::Grid;
+                    *grid_page = 0;
+                }
+                app.sync_chat_from_active_agent();
+                if !goal.is_empty() {
+                    let agents = if let AppState::Chat { agents, .. } = &app.state {
+                        agents.iter().take(target).cloned().collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(lead) = agents.first() {
+                        let team_name = format!(
+                            "fanout-{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0)
+                        );
+                        let create_team_args = serde_json::json!({
+                            "team_name": team_name,
+                            "description": format!("Fanout run for goal: {}", goal),
+                            "agent_type": "lead"
+                        });
+                        let mut lead_commands =
+                            vec![format!("/tool TeamCreate {}", create_team_args)];
+                        for agent in agents.iter().skip(1) {
+                            let task_prompt = format!(
+                                "You are {} in a coordinated fanout run for team `{}`.\n\
+                                 Goal: {}.\n\
+                                 Own one concrete workstream end-to-end, execute it, and report concise outcomes and blockers.\n\
+                                 Do not ask clarification questions unless absolutely blocked.\n\
+                                 Do not wait for plan approvals; make reasonable assumptions and proceed.",
+                                agent.agent_id, team_name, goal
+                            );
+                            let task_args = serde_json::json!({
+                                "description": format!("{} workstream for {}", agent.agent_id, goal),
+                                "prompt": task_prompt,
+                                "subagent_type": "generalist",
+                                "team_name": team_name,
+                                "name": agent.agent_id
+                            });
+                            lead_commands.push(format!("/tool task {}", task_args));
+                        }
+                        let lead_kickoff = format!(
+                            "You are the lead coordinator for team `{}`. Goal: {}.\n\
+                             Use TaskList/TaskUpdate to track delegated progress and keep execution moving until completion.",
+                            team_name, goal
+                        );
+                        lead_commands.push(lead_kickoff);
+                        if let AppState::Chat { agents, .. } = &mut app.state {
+                            if let Some(lead_agent) = agents.iter_mut().find(|a| {
+                                a.agent_id == lead.agent_id && a.session_id == lead.session_id
+                            }) {
+                                for cmd in lead_commands {
+                                    lead_agent.follow_up_queue.push_back(cmd);
+                                }
+                            }
+                        }
+                        app.maybe_dispatch_queued_for_agent(&lead.session_id, &lead.agent_id);
+                        return Some(format!(
+                            "Started coordinated fanout: {} total agents (created {}). Team `{}` bootstrapped and assignments dispatched.{}",
+                            target, created, team_name, mode_note
+                        ));
+                    }
+                    return Some(format!(
+                        "Started coordinated fanout: {} total agents (created {}). Goal dispatched.{}",
+                        target, created, mode_note
+                    ));
+                }
+                if created > 0 {
+                    format!(
+                        "Started fanout: {} total agents (created {}). Grid view enabled.{}",
+                        target, created, mode_note
+                    )
+                } else {
+                    format!(
+                        "Fanout ready: already at {}+ agents. Grid view enabled.{}",
+                        target, mode_note
+                    )
+                }
+            }
+            _ => "Usage: /agent new|list|use <A#>|close|fanout [n] [goal]".to_string(),
+        }),
         "sessions" => Some(if app.sessions.is_empty() {
             "No sessions found.".to_string()
         } else {
@@ -296,7 +525,7 @@ pub(super) async fn try_execute_basic_command(
                 app.selected_session_index = idx;
                 let loaded_messages = app.load_chat_history(target_id).await;
                 let (recalled_tasks, recalled_active_task_id) =
-                    App::rebuild_tasks_from_messages(&loaded_messages);
+                    plan_helpers::rebuild_tasks_from_messages(&loaded_messages);
                 if let AppState::Chat {
                     session_id,
                     messages,
@@ -650,6 +879,637 @@ pub(super) async fn try_execute_basic_command(
                 "Failed to rename session.".to_string()
             } else {
                 "Not in a chat session.".to_string()
+            }
+        }),
+        "missions" => Some({
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            match client.mission_list().await {
+                Ok(missions) => {
+                    if missions.is_empty() {
+                        return Some("No missions found.".to_string());
+                    }
+                    let lines = missions
+                        .into_iter()
+                        .map(|mission| {
+                            format!(
+                                "- {} [{}] {} (work_items={})",
+                                mission.mission_id,
+                                format!("{:?}", mission.status).to_lowercase(),
+                                mission.spec.title,
+                                mission.work_items.len()
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    format!("Missions:\n{}", lines.join("\n"))
+                }
+                Err(err) => format!("Failed to list missions: {}", err),
+            }
+        }),
+        "mission_create" => Some({
+            if args.is_empty() {
+                return Some(
+                    "Usage: /mission_create <title> :: <goal> [:: work_item_title]".to_string(),
+                );
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let raw = args.join(" ");
+            let segments = raw
+                .split("::")
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            if segments.len() < 2 {
+                return Some(
+                    "Usage: /mission_create <title> :: <goal> [:: work_item_title]".to_string(),
+                );
+            }
+            let work_items = if let Some(work_item_title) = segments.get(2) {
+                vec![crate::net::client::MissionCreateWorkItem {
+                    work_item_id: None,
+                    title: (*work_item_title).to_string(),
+                    detail: None,
+                    assigned_agent: None,
+                }]
+            } else {
+                vec![crate::net::client::MissionCreateWorkItem {
+                    work_item_id: None,
+                    title: "Initial implementation".to_string(),
+                    detail: Some("Auto-seeded work item".to_string()),
+                    assigned_agent: None,
+                }]
+            };
+            let request = crate::net::client::MissionCreateRequest {
+                title: segments[0].to_string(),
+                goal: segments[1].to_string(),
+                work_items,
+            };
+            match client.mission_create(request).await {
+                Ok(mission) => format!(
+                    "Created mission {}: {}",
+                    mission.mission_id, mission.spec.title
+                ),
+                Err(err) => format!("Failed to create mission: {}", err),
+            }
+        }),
+        "mission_get" => Some({
+            if args.len() != 1 {
+                return Some("Usage: /mission_get <mission_id>".to_string());
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            match client.mission_get(args[0]).await {
+                Ok(mission) => {
+                    let item_lines = mission
+                        .work_items
+                        .iter()
+                        .map(|item| {
+                            format!(
+                                "- {} [{}]",
+                                item.title,
+                                format!("{:?}", item.status).to_lowercase()
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    format!(
+                        "Mission {} [{}]\nTitle: {}\nGoal: {}\nWork Items:\n{}",
+                        mission.mission_id,
+                        format!("{:?}", mission.status).to_lowercase(),
+                        mission.spec.title,
+                        mission.spec.goal,
+                        if item_lines.is_empty() {
+                            "- (none)".to_string()
+                        } else {
+                            item_lines.join("\n")
+                        }
+                    )
+                }
+                Err(err) => format!("Failed to get mission: {}", err),
+            }
+        }),
+        "mission_event" => Some({
+            if args.len() < 2 {
+                return Some("Usage: /mission_event <mission_id> <event_json>".to_string());
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let mission_id = args[0];
+            let raw_json = args[1..].join(" ");
+            let event = match serde_json::from_str::<Value>(&raw_json) {
+                Ok(value) => value,
+                Err(err) => return Some(format!("Invalid event JSON: {}", err)),
+            };
+            match client.mission_apply_event(mission_id, event).await {
+                Ok(result) => format!(
+                    "Applied event to mission {} (revision={}, commands={})",
+                    result.mission.mission_id,
+                    result.mission.revision,
+                    result.commands.len()
+                ),
+                Err(err) => format!("Failed to apply mission event: {}", err),
+            }
+        }),
+        "mission_start" => Some({
+            if args.len() != 1 {
+                return Some("Usage: /mission_start <mission_id>".to_string());
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let mission_id = args[0];
+            let event = serde_json::json!({
+                "type": "mission_started",
+                "mission_id": mission_id
+            });
+            match client.mission_apply_event(mission_id, event).await {
+                Ok(result) => format!(
+                    "Mission started {} (revision={})",
+                    result.mission.mission_id, result.mission.revision
+                ),
+                Err(err) => format!("Failed to start mission: {}", err),
+            }
+        }),
+        "mission_review_ok" => Some({
+            if args.len() < 2 {
+                return Some(
+                    "Usage: /mission_review_ok <mission_id> <work_item_id> [approval_id]"
+                        .to_string(),
+                );
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let mission_id = args[0];
+            let work_item_id = args[1];
+            let approval_id = args.get(2).copied().unwrap_or("review-1");
+            let event = serde_json::json!({
+                "type": "approval_granted",
+                "mission_id": mission_id,
+                "work_item_id": work_item_id,
+                "approval_id": approval_id
+            });
+            match client.mission_apply_event(mission_id, event).await {
+                Ok(result) => format!(
+                    "Review approved for {}:{} (revision={})",
+                    mission_id, work_item_id, result.mission.revision
+                ),
+                Err(err) => format!("Failed to approve review: {}", err),
+            }
+        }),
+        "mission_test_ok" => Some({
+            if args.len() < 2 {
+                return Some(
+                    "Usage: /mission_test_ok <mission_id> <work_item_id> [approval_id]".to_string(),
+                );
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let mission_id = args[0];
+            let work_item_id = args[1];
+            let approval_id = args.get(2).copied().unwrap_or("test-1");
+            let event = serde_json::json!({
+                "type": "approval_granted",
+                "mission_id": mission_id,
+                "work_item_id": work_item_id,
+                "approval_id": approval_id
+            });
+            match client.mission_apply_event(mission_id, event).await {
+                Ok(result) => format!(
+                    "Test approved for {}:{} (revision={})",
+                    mission_id, work_item_id, result.mission.revision
+                ),
+                Err(err) => format!("Failed to approve test: {}", err),
+            }
+        }),
+        "mission_review_no" => Some({
+            if args.len() < 2 {
+                return Some(
+                    "Usage: /mission_review_no <mission_id> <work_item_id> [reason]".to_string(),
+                );
+            }
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let mission_id = args[0];
+            let work_item_id = args[1];
+            let reason = if args.len() > 2 {
+                args[2..].join(" ")
+            } else {
+                "needs_revision".to_string()
+            };
+            let event = serde_json::json!({
+                "type": "approval_denied",
+                "mission_id": mission_id,
+                "work_item_id": work_item_id,
+                "approval_id": "review-1",
+                "reason": reason
+            });
+            match client.mission_apply_event(mission_id, event).await {
+                Ok(result) => format!(
+                    "Review denied for {}:{} (revision={})",
+                    mission_id, work_item_id, result.mission.revision
+                ),
+                Err(err) => format!("Failed to deny review: {}", err),
+            }
+        }),
+        "agent-team" | "agent_team" => Some({
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let sub = args.first().copied().unwrap_or("summary");
+            match sub {
+                "summary" => {
+                    let missions = client.agent_team_missions().await;
+                    let instances = client.agent_team_instances(None).await;
+                    let approvals = client.agent_team_approvals().await;
+                    match (missions, instances, approvals) {
+                        (Ok(missions), Ok(instances), Ok(approvals)) => format!(
+                            "Agent-Team Summary:\n  Missions: {}\n  Instances: {}\n  Spawn approvals: {}\n  Tool approvals: {}",
+                            missions.len(),
+                            instances.len(),
+                            approvals.spawn_approvals.len(),
+                            approvals.tool_approvals.len()
+                        ),
+                        _ => "Failed to load agent-team summary.".to_string(),
+                    }
+                }
+                "missions" => match client.agent_team_missions().await {
+                    Ok(missions) => {
+                        if missions.is_empty() {
+                            return Some("No agent-team missions found.".to_string());
+                        }
+                        let lines = missions
+                            .into_iter()
+                            .map(|mission| {
+                                format!(
+                                    "- {} total={} running={} done={} failed={} cancelled={}",
+                                    mission.mission_id,
+                                    mission.instance_count,
+                                    mission.running_count,
+                                    mission.completed_count,
+                                    mission.failed_count,
+                                    mission.cancelled_count
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        format!("Agent-Team Missions:\n{}", lines.join("\n"))
+                    }
+                    Err(err) => format!("Failed to list agent-team missions: {}", err),
+                },
+                "instances" => {
+                    let mission_id = args.get(1).copied();
+                    match client.agent_team_instances(mission_id).await {
+                        Ok(instances) => {
+                            if instances.is_empty() {
+                                return Some("No agent-team instances found.".to_string());
+                            }
+                            let lines = instances
+                                .into_iter()
+                                .map(|instance| {
+                                    format!(
+                                        "- {} role={} mission={} status={} parent={}",
+                                        instance.instance_id,
+                                        instance.role,
+                                        instance.mission_id,
+                                        instance.status,
+                                        instance
+                                            .parent_instance_id
+                                            .unwrap_or_else(|| "-".to_string())
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            format!("Agent-Team Instances:\n{}", lines.join("\n"))
+                        }
+                        Err(err) => format!("Failed to list agent-team instances: {}", err),
+                    }
+                }
+                "approvals" => match client.agent_team_approvals().await {
+                    Ok(approvals) => {
+                        let mut lines = Vec::new();
+                        for spawn in approvals.spawn_approvals {
+                            lines.push(format!("- spawn approval {}", spawn.approval_id));
+                        }
+                        for tool in approvals.tool_approvals {
+                            lines.push(format!(
+                                "- tool approval {} ({})",
+                                tool.approval_id,
+                                tool.tool.unwrap_or_else(|| "tool".to_string())
+                            ));
+                        }
+                        if lines.is_empty() {
+                            "No agent-team approvals pending.".to_string()
+                        } else {
+                            format!("Agent-Team Approvals:\n{}", lines.join("\n"))
+                        }
+                    }
+                    Err(err) => format!("Failed to list agent-team approvals: {}", err),
+                },
+                "bindings" => {
+                    let team_filter = args.get(1).copied();
+                    App::format_local_agent_team_bindings(team_filter)
+                }
+                "approve" => {
+                    if args.len() < 3 {
+                        return Some(
+                            "Usage: /agent-team approve <spawn|tool> <id> [reason]".to_string(),
+                        );
+                    }
+                    let target = args[1];
+                    let id = args[2];
+                    let reason = if args.len() > 3 {
+                        args[3..].join(" ")
+                    } else {
+                        "approved in TUI".to_string()
+                    };
+                    match target {
+                        "spawn" => match client.agent_team_approve_spawn(id, &reason).await {
+                            Ok(true) => format!("Approved spawn approval {}.", id),
+                            Ok(false) => format!("Spawn approval not found or denied: {}", id),
+                            Err(err) => format!("Failed to approve spawn approval: {}", err),
+                        },
+                        "tool" => match client.reply_permission(id, "allow").await {
+                            Ok(true) => format!("Approved tool request {}.", id),
+                            Ok(false) => format!("Tool request not found: {}", id),
+                            Err(err) => format!("Failed to approve tool request: {}", err),
+                        },
+                        _ => "Usage: /agent-team approve <spawn|tool> <id> [reason]".to_string(),
+                    }
+                }
+                "deny" => {
+                    if args.len() < 3 {
+                        return Some(
+                            "Usage: /agent-team deny <spawn|tool> <id> [reason]".to_string(),
+                        );
+                    }
+                    let target = args[1];
+                    let id = args[2];
+                    let reason = if args.len() > 3 {
+                        args[3..].join(" ")
+                    } else {
+                        "denied in TUI".to_string()
+                    };
+                    match target {
+                        "spawn" => match client.agent_team_deny_spawn(id, &reason).await {
+                            Ok(true) => format!("Denied spawn approval {}.", id),
+                            Ok(false) => {
+                                format!("Spawn approval not found or already resolved: {}", id)
+                            }
+                            Err(err) => format!("Failed to deny spawn approval: {}", err),
+                        },
+                        "tool" => match client.reply_permission(id, "deny").await {
+                            Ok(true) => format!("Denied tool request {}.", id),
+                            Ok(false) => format!("Tool request not found: {}", id),
+                            Err(err) => format!("Failed to deny tool request: {}", err),
+                        },
+                        _ => "Usage: /agent-team deny <spawn|tool> <id> [reason]".to_string(),
+                    }
+                }
+                _ => {
+                    "Usage: /agent-team [summary|missions|instances [mission_id]|approvals|bindings [team]|approve <spawn|tool> <id> [reason]|deny <spawn|tool> <id> [reason]]".to_string()
+                }
+            }
+        }),
+        "preset" | "presets" => Some({
+            let Some(client) = &app.client else {
+                return Some("Engine client not connected.".to_string());
+            };
+            let sub = args.first().copied().unwrap_or("help").to_ascii_lowercase();
+            match sub.as_str() {
+                "index" => match client.presets_index().await {
+                    Ok(index) => format!(
+                        "Preset index:\n  skill_modules: {}\n  agent_presets: {}\n  automation_presets: {}\n  pack_presets: {}\n  generated_at_ms: {}",
+                        index.skill_modules.len(),
+                        index.agent_presets.len(),
+                        index.automation_presets.len(),
+                        index.pack_presets.len(),
+                        index.generated_at_ms
+                    ),
+                    Err(err) => format!("Failed to load preset index: {}", err),
+                },
+                "agent" => {
+                    let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
+                    match action.as_str() {
+                        "compose" => {
+                            let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                            let mut pieces = tail.splitn(2, "::");
+                            let base_prompt = pieces.next().unwrap_or("").trim();
+                            let fragments_raw = pieces.next().unwrap_or("").trim();
+                            if base_prompt.is_empty() || fragments_raw.is_empty() {
+                                return Some(
+                                    "Usage: /preset agent compose <base_prompt> :: <fragments_json>"
+                                        .to_string(),
+                                );
+                            }
+                            let fragments_json =
+                                match serde_json::from_str::<Value>(fragments_raw) {
+                                    Ok(value) if value.is_array() => value,
+                                    Ok(_) => {
+                                        return Some(
+                                            "fragments_json must be a JSON array of {id,phase,content}"
+                                                .to_string(),
+                                        );
+                                    }
+                                    Err(err) => return Some(format!("Invalid fragments_json: {}", err)),
+                                };
+                            let request = json!({
+                                "base_prompt": base_prompt,
+                                "fragments": fragments_json,
+                            });
+                            match client.presets_compose_preview(request).await {
+                                Ok(payload) => {
+                                    let composition =
+                                        payload.get("composition").cloned().unwrap_or(payload);
+                                    format!(
+                                        "Agent compose preview:\n{}",
+                                        serde_json::to_string_pretty(&composition)
+                                            .unwrap_or_else(|_| "{}".to_string())
+                                    )
+                                }
+                                Err(err) => format!("Compose preview failed: {}", err),
+                            }
+                        }
+                        "summary" => {
+                            let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                            let (required, optional) =
+                                App::parse_required_optional_segments(&tail);
+                            let request = json!({
+                                "agent": {
+                                    "required": required,
+                                    "optional": optional,
+                                },
+                                "tasks": [],
+                            });
+                            match client.presets_capability_summary(request).await {
+                                Ok(payload) => {
+                                    let summary = payload.get("summary").cloned().unwrap_or(payload);
+                                    format!(
+                                        "Agent capability summary:\n{}",
+                                        serde_json::to_string_pretty(&summary)
+                                            .unwrap_or_else(|_| "{}".to_string())
+                                    )
+                                }
+                                Err(err) => format!("Capability summary failed: {}", err),
+                            }
+                        }
+                        "fork" => {
+                            if args.len() < 3 {
+                                return Some(
+                                    "Usage: /preset agent fork <source_path> [target_id]".to_string(),
+                                );
+                            }
+                            let source_path = args[2];
+                            let target_id = args.get(3).copied();
+                            let request = json!({
+                                "kind": "agent_preset",
+                                "source_path": source_path,
+                                "target_id": target_id,
+                            });
+                            match client.presets_fork(request).await {
+                                Ok(payload) => format!(
+                                    "Forked agent preset override:\n{}",
+                                    serde_json::to_string_pretty(&payload)
+                                        .unwrap_or_else(|_| "{}".to_string())
+                                ),
+                                Err(err) => format!("Agent preset fork failed: {}", err),
+                            }
+                        }
+                        _ => "Usage: /preset agent <compose|summary|fork> ...".to_string(),
+                    }
+                }
+                "automation" => {
+                    let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
+                    match action.as_str() {
+                        "summary" => {
+                            let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                            let segments = tail
+                                .split("::")
+                                .map(str::trim)
+                                .filter(|part| !part.is_empty())
+                                .collect::<Vec<_>>();
+                            if segments.is_empty() {
+                                return Some("Usage: /preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string());
+                            }
+                            let tasks_json = match serde_json::from_str::<Value>(segments[0]) {
+                                Ok(value) => value,
+                                Err(err) => return Some(format!("Invalid tasks_json: {}", err)),
+                            };
+                            let tasks = match App::normalize_automation_tasks(&tasks_json) {
+                                Ok(items) => items,
+                                Err(err) => return Some(err),
+                            };
+                            let (required, optional) = if segments.len() > 1 {
+                                App::parse_required_optional_segments(&segments[1..].join(" :: "))
+                            } else {
+                                (Vec::new(), Vec::new())
+                            };
+                            let capability_tasks = tasks
+                                .iter()
+                                .map(|task| {
+                                    json!({
+                                        "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
+                                        "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            let request = json!({
+                                "agent": {
+                                    "required": required,
+                                    "optional": optional,
+                                },
+                                "tasks": capability_tasks,
+                            });
+                            match client.presets_capability_summary(request).await {
+                                Ok(payload) => {
+                                    let summary = payload.get("summary").cloned().unwrap_or(payload);
+                                    format!(
+                                        "Automation capability summary ({} tasks):\n{}",
+                                        tasks.len(),
+                                        serde_json::to_string_pretty(&summary)
+                                            .unwrap_or_else(|_| "{}".to_string())
+                                    )
+                                }
+                                Err(err) => format!("Automation summary failed: {}", err),
+                            }
+                        }
+                        "save" => {
+                            let tail = args.get(2..).unwrap_or(&[]).join(" ");
+                            let segments = tail
+                                .split("::")
+                                .map(str::trim)
+                                .filter(|part| !part.is_empty())
+                                .collect::<Vec<_>>();
+                            if segments.len() < 2 {
+                                return Some("Usage: /preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string());
+                            }
+                            let id = segments[0];
+                            if id.is_empty() {
+                                return Some("Automation preset id is required.".to_string());
+                            }
+                            let tasks_json = match serde_json::from_str::<Value>(segments[1]) {
+                                Ok(value) => value,
+                                Err(err) => return Some(format!("Invalid tasks_json: {}", err)),
+                            };
+                            let tasks = match App::normalize_automation_tasks(&tasks_json) {
+                                Ok(items) => items,
+                                Err(err) => return Some(err),
+                            };
+                            let (required, optional) = if segments.len() > 2 {
+                                App::parse_required_optional_segments(&segments[2..].join(" :: "))
+                            } else {
+                                (Vec::new(), Vec::new())
+                            };
+                            let capability_tasks = tasks
+                                .iter()
+                                .map(|task| {
+                                    json!({
+                                        "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
+                                        "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            let summary_request = json!({
+                                "agent": {
+                                    "required": required,
+                                    "optional": optional,
+                                },
+                                "tasks": capability_tasks,
+                            });
+                            let summary_payload =
+                                match client.presets_capability_summary(summary_request).await {
+                                    Ok(payload) => payload,
+                                    Err(err) => {
+                                        return Some(format!("Automation summary failed: {}", err));
+                                    }
+                                };
+                            let summary = summary_payload
+                                .get("summary")
+                                .cloned()
+                                .unwrap_or_else(|| json!({}));
+                            let yaml = App::automation_override_yaml(id, &tasks, &summary);
+                            match client
+                                .presets_override_put("automation_preset", id, &yaml)
+                                .await
+                            {
+                                Ok(payload) => format!(
+                                    "Saved automation preset override `{}` with {} task(s).\n{}",
+                                    id,
+                                    tasks.len(),
+                                    serde_json::to_string_pretty(&payload)
+                                        .unwrap_or_else(|_| "{}".to_string())
+                                ),
+                                Err(err) => format!("Automation override save failed: {}", err),
+                            }
+                        }
+                        _ => "Usage: /preset automation <summary|save> ...".to_string(),
+                    }
+                }
+                _ => "Usage: /preset <index|agent|automation> ...".to_string(),
             }
         }),
         "context_runs" => Some({
@@ -1281,7 +2141,7 @@ pub(super) async fn try_execute_basic_command(
                     tasks,
                     ..
                 } => {
-                    let mapped = App::context_todo_items_from_tasks(tasks);
+                    let mapped = plan_helpers::context_todo_items_from_tasks(tasks);
                     let run_ref = agents
                         .get(*active_agent_index)
                         .and_then(|agent| agent.active_run_id.clone());
@@ -2169,6 +3029,365 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mission_commands_render_list_detail_and_create_views() {
+        let mission =
+            mission_state_json("m-1", "running", "Stabilize rollback", "Ship safer undo", 3);
+        let created = mission_state_json("m-2", "draft", "Fresh mission", "Start clean", 1);
+        let server = MockServer::start(HashMap::from([
+            (
+                "/mission".to_string(),
+                json_response(
+                    &serde_json::json!({
+                        "missions": [serde_json::from_str::<serde_json::Value>(&mission).expect("mission")]
+                    })
+                    .to_string(),
+                ),
+            ),
+            (
+                "/mission/m-1".to_string(),
+                json_response(
+                    &serde_json::json!({
+                        "mission": serde_json::from_str::<serde_json::Value>(&mission).expect("mission detail")
+                    })
+                    .to_string(),
+                ),
+            ),
+        ]))
+        .expect("mock server");
+        let create_server = MockServer::start(HashMap::from([(
+            "/mission".to_string(),
+            json_response(
+                &serde_json::json!({
+                    "mission": serde_json::from_str::<serde_json::Value>(&created).expect("created mission")
+                })
+                .to_string(),
+            ),
+        )]))
+        .expect("create mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let list = app.execute_command("/missions").await;
+        assert!(list.contains("Missions:"));
+        assert!(list.contains("m-1 [running] Stabilize rollback (work_items=1)"));
+
+        let detail = app.execute_command("/mission_get m-1").await;
+        assert!(detail.contains("Mission m-1 [running]"));
+        assert!(detail.contains("Title: Stabilize rollback"));
+        assert!(detail.contains("Goal: Ship safer undo"));
+        assert!(detail.contains("- Verify rollback [review]"));
+
+        app.client = Some(EngineClient::new(create_server.base_url()));
+        let created = app
+            .execute_command("/mission_create Fresh mission :: Start clean :: Draft task")
+            .await;
+        assert_eq!(created, "Created mission m-2: Fresh mission");
+    }
+
+    #[tokio::test]
+    async fn mission_event_commands_apply_expected_engine_events() {
+        let mission =
+            mission_state_json("m-1", "running", "Stabilize rollback", "Ship safer undo", 5);
+        let server = MockServer::start(HashMap::from([(
+            "/mission/m-1/event".to_string(),
+            json_response(
+                &serde_json::json!({
+                    "mission": serde_json::from_str::<serde_json::Value>(&mission).expect("mission event result"),
+                    "commands": [{ "type": "notify" }]
+                })
+                .to_string(),
+            ),
+        )]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let invalid = app.execute_command("/mission_event m-1 nope").await;
+        assert!(invalid.starts_with("Invalid event JSON:"));
+
+        let applied = app
+            .execute_command(r#"/mission_event m-1 {"type":"custom","state":"ok"}"#)
+            .await;
+        assert_eq!(
+            applied,
+            "Applied event to mission m-1 (revision=5, commands=1)"
+        );
+
+        let started = app.execute_command("/mission_start m-1").await;
+        assert_eq!(started, "Mission started m-1 (revision=5)");
+
+        let review_ok = app
+            .execute_command("/mission_review_ok m-1 w-1 gate-7")
+            .await;
+        assert_eq!(review_ok, "Review approved for m-1:w-1 (revision=5)");
+
+        let test_ok = app.execute_command("/mission_test_ok m-1 w-1").await;
+        assert_eq!(test_ok, "Test approved for m-1:w-1 (revision=5)");
+
+        let review_no = app
+            .execute_command("/mission_review_no m-1 w-1 needs more logs")
+            .await;
+        assert_eq!(review_no, "Review denied for m-1:w-1 (revision=5)");
+    }
+
+    #[tokio::test]
+    async fn agent_team_commands_render_summary_and_list_views() {
+        let server = MockServer::start(HashMap::from([
+            (
+                "/agent-team/missions".to_string(),
+                json_response(
+                    r#"{"missions":[{"missionID":"mission-1","instanceCount":3,"runningCount":1,"completedCount":1,"failedCount":0,"cancelledCount":1}]}"#,
+                ),
+            ),
+            (
+                "/agent-team/instances".to_string(),
+                json_response(
+                    r#"{"instances":[{"instanceID":"agent-1","role":"reviewer","missionID":"mission-1","sessionID":"s-1","status":"running","parentInstanceID":"lead-1"}]}"#,
+                ),
+            ),
+            (
+                "/agent-team/approvals".to_string(),
+                json_response(
+                    r#"{"spawnApprovals":[{"approvalID":"spawn-1","createdAtMs":1,"request":{"missionID":"mission-1","reason":"Need helper"}}],"toolApprovals":[{"approvalID":"tool-1","sessionID":"s-1","toolCallID":"call-1","tool":"shell","status":"pending"}]}"#,
+                ),
+            ),
+        ]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let summary = app.execute_command("/agent-team").await;
+        assert!(summary.contains("Agent-Team Summary:"));
+        assert!(summary.contains("Missions: 1"));
+        assert!(summary.contains("Instances: 1"));
+        assert!(summary.contains("Spawn approvals: 1"));
+        assert!(summary.contains("Tool approvals: 1"));
+
+        let missions = app.execute_command("/agent-team missions").await;
+        assert!(missions.contains("Agent-Team Missions:"));
+        assert!(missions.contains("mission-1 total=3 running=1 done=1 failed=0 cancelled=1"));
+
+        let instances = app.execute_command("/agent-team instances mission-1").await;
+        assert!(instances.contains("Agent-Team Instances:"));
+        assert!(instances
+            .contains("agent-1 role=reviewer mission=mission-1 status=running parent=lead-1"));
+
+        let approvals = app.execute_command("/agent-team approvals").await;
+        assert!(approvals.contains("Agent-Team Approvals:"));
+        assert!(approvals.contains("spawn approval spawn-1"));
+        assert!(approvals.contains("tool approval tool-1 (shell)"));
+    }
+
+    #[tokio::test]
+    async fn agent_team_commands_handle_bindings_and_permission_replies() {
+        let server = MockServer::start(HashMap::from([
+            (
+                "/agent-team/approvals/spawn/spawn-1/approve".to_string(),
+                json_response(r#"{"ok":true}"#),
+            ),
+            (
+                "/agent-team/approvals/spawn/spawn-1/deny".to_string(),
+                json_response(r#"{"ok":true}"#),
+            ),
+            (
+                "/permission/tool-1/reply".to_string(),
+                json_response(r#"{"ok":true}"#),
+            ),
+        ]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let bindings = app.execute_command("/agent-team bindings").await;
+        assert!(
+            bindings == "No local agent-team state found."
+                || bindings == "No local agent-team bindings found."
+        );
+
+        let approve_spawn = app
+            .execute_command("/agent-team approve spawn spawn-1 looks good")
+            .await;
+        assert_eq!(approve_spawn, "Approved spawn approval spawn-1.");
+
+        let approve_tool = app.execute_command("/agent-team approve tool tool-1").await;
+        assert_eq!(approve_tool, "Approved tool request tool-1.");
+
+        let deny_spawn = app.execute_command("/agent-team deny spawn spawn-1").await;
+        assert_eq!(deny_spawn, "Denied spawn approval spawn-1.");
+
+        let deny_tool = app.execute_command("/agent-team deny tool tool-1").await;
+        assert_eq!(deny_tool, "Denied tool request tool-1.");
+    }
+
+    #[tokio::test]
+    async fn agent_commands_manage_agent_panes() {
+        let server = MockServer::start(HashMap::from([(
+            "/api/session".to_string(),
+            json_response(
+                r#"{"id":"s-2","title":"A2 session","directory":null,"workspaceRoot":null,"time":{"created":1,"updated":2}}"#,
+            ),
+        )]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+        app.state = chat_state("s-1");
+
+        let created = app.execute_command("/agent new").await;
+        assert_eq!(created, "Created new agent.");
+
+        let listed = app.execute_command("/agent list").await;
+        assert!(listed.contains("Agents:"));
+        assert!(listed.contains("> A2 [s-2] Idle"));
+        assert!(listed.contains("  A1 [s-1] Idle"));
+
+        let switched = app.execute_command("/agent use A1").await;
+        assert_eq!(switched, "Switched to A1.");
+
+        let closed = app.execute_command("/agent close").await;
+        assert_eq!(closed, "Closed active agent.");
+        match &app.state {
+            AppState::Chat {
+                agents,
+                active_agent_index,
+                ..
+            } => {
+                assert_eq!(agents.len(), 1);
+                assert_eq!(*active_agent_index, 0);
+                assert_eq!(agents[0].agent_id, "A2");
+            }
+            _ => panic!("expected chat state"),
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_fanout_creates_grid_and_switches_mode() {
+        let mut app = App::new();
+        app.state = chat_state("s-1");
+        app.current_mode = TandemMode::Plan;
+
+        let result = app.execute_command("/agent fanout 3").await;
+        assert_eq!(
+            result,
+            "Started fanout: 3 total agents (created 2). Grid view enabled. Mode auto-switched from plan -> orchestrate."
+        );
+        assert_eq!(app.current_mode, TandemMode::Orchestrate);
+        match &app.state {
+            AppState::Chat {
+                agents,
+                ui_mode,
+                grid_page,
+                ..
+            } => {
+                assert_eq!(agents.len(), 3);
+                assert_eq!(*ui_mode, UiMode::Grid);
+                assert_eq!(*grid_page, 0);
+                assert_eq!(agents[1].agent_id, "A2");
+                assert_eq!(agents[2].agent_id, "A3");
+            }
+            _ => panic!("expected chat state"),
+        }
+    }
+
+    #[tokio::test]
+    async fn preset_commands_render_index_and_agent_views() {
+        let server = MockServer::start(HashMap::from([
+            (
+                "/presets/index".to_string(),
+                json_response(
+                    r#"{"index":{"skill_modules":[{"id":"skill.a","version":"1","kind":"skill_module","layer":"base","path":"skills/a","tags":[],"publisher":null,"required_capabilities":[]}],"agent_presets":[{"id":"agent.main","version":"1","kind":"agent_preset","layer":"base","path":"agents/main","tags":[],"publisher":null,"required_capabilities":[]}],"automation_presets":[],"pack_presets":[],"generated_at_ms":42}}"#,
+                ),
+            ),
+            (
+                "/presets/compose/preview".to_string(),
+                json_response(r#"{"composition":{"prompt":"merged preset prompt"}}"#),
+            ),
+            (
+                "/presets/capability_summary".to_string(),
+                json_response(r#"{"summary":{"required":["shell"],"optional":["git"]}}"#),
+            ),
+            (
+                "/presets/fork".to_string(),
+                json_response(r#"{"id":"agent-copy","kind":"agent_preset","layer":"override"}"#),
+            ),
+        ]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let index = app.execute_command("/preset index").await;
+        assert!(index.contains("Preset index:"));
+        assert!(index.contains("skill_modules: 1"));
+        assert!(index.contains("agent_presets: 1"));
+        assert!(index.contains("generated_at_ms: 42"));
+
+        let compose = app
+            .execute_command(r#"/preset agent compose Base prompt :: [{"id":"frag-1","phase":"plan","content":"think"}]"#)
+            .await;
+        assert!(compose.contains("Agent compose preview:"));
+        assert!(compose.contains("merged preset prompt"));
+
+        let summary = app
+            .execute_command("/preset agent summary required=shell optional=git")
+            .await;
+        assert!(summary.contains("Agent capability summary:"));
+        assert!(summary.contains("\"required\""));
+
+        let fork = app
+            .execute_command("/preset agent fork presets/base.yaml agent-copy")
+            .await;
+        assert!(fork.contains("Forked agent preset override:"));
+        assert!(fork.contains("agent-copy"));
+    }
+
+    #[tokio::test]
+    async fn preset_automation_commands_validate_and_save() {
+        let server = MockServer::start(HashMap::from([
+            (
+                "/presets/capability_summary".to_string(),
+                json_response(r#"{"summary":{"score":"ok","required":["shell"]}}"#),
+            ),
+            (
+                "/presets/overrides/automation_preset/nightly".to_string(),
+                json_response(r#"{"ok":true,"path":"automation_preset/nightly"}"#),
+            ),
+        ]))
+        .expect("mock server");
+
+        let mut app = App::new();
+        app.client = Some(EngineClient::new(server.base_url()));
+
+        let invalid = app
+            .execute_command("/preset agent compose Base prompt :: {\"bad\":true}")
+            .await;
+        assert_eq!(
+            invalid,
+            "fragments_json must be a JSON array of {id,phase,content}"
+        );
+
+        let summary = app
+            .execute_command(
+                r#"/preset automation summary [{"required":["shell"],"optional":["git"]}] :: required=python :: optional=gh"#,
+            )
+            .await;
+        assert!(summary.contains("Automation capability summary (1 tasks):"));
+        assert!(summary.contains("\"score\""));
+
+        let saved = app
+            .execute_command(
+                r#"/preset automation save nightly :: [{"required":["shell"],"optional":["git"]}] :: required=python :: optional=gh"#,
+            )
+            .await;
+        assert!(saved.contains("Saved automation preset override `nightly` with 1 task(s)."));
+        assert!(saved.contains("automation_preset/nightly"));
+    }
+
+    #[tokio::test]
     async fn routine_commands_validate_usage_and_engine_requirements() {
         let mut app = App::new();
 
@@ -2624,6 +3843,45 @@ mod tests {
             "revision": 4,
             "created_at_ms": 10,
             "updated_at_ms": updated_at_ms
+        })
+        .to_string()
+    }
+
+    fn mission_state_json(
+        mission_id: &str,
+        status: &str,
+        title: &str,
+        goal: &str,
+        revision: u64,
+    ) -> String {
+        serde_json::json!({
+            "mission_id": mission_id,
+            "status": status,
+            "spec": {
+                "mission_id": mission_id,
+                "title": title,
+                "goal": goal,
+                "success_criteria": [],
+                "entrypoint": null,
+                "budgets": {},
+                "capabilities": {},
+                "metadata": null
+            },
+            "work_items": [
+                {
+                    "work_item_id": "w-1",
+                    "title": "Verify rollback",
+                    "detail": null,
+                    "status": "review",
+                    "depends_on": [],
+                    "assigned_agent": null,
+                    "run_id": null,
+                    "artifact_refs": [],
+                    "metadata": null
+                }
+            ],
+            "revision": revision,
+            "updated_at_ms": 100
         })
         .to_string()
     }

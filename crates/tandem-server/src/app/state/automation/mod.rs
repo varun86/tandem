@@ -2657,6 +2657,23 @@ fn publish_automation_verified_output(
         std::fs::create_dir_all(parent)?;
     }
 
+    if source_path == destination {
+        return Ok(json!({
+            "scope": match spec.scope {
+                AutomationArtifactPublishScope::Workspace => "workspace",
+                AutomationArtifactPublishScope::Global => "global",
+            },
+            "mode": match spec.mode {
+                AutomationArtifactPublishMode::SnapshotReplace => "snapshot_replace",
+                AutomationArtifactPublishMode::AppendJsonl => "append_jsonl",
+            },
+            "path": display_automation_published_output_path(workspace_root, &destination, spec),
+            "source_artifact_path": verified_output.0,
+            "appended_records": None::<u64>,
+            "copied": false,
+        }));
+    }
+
     let mut appended_records = None;
     match spec.mode {
         AutomationArtifactPublishMode::SnapshotReplace => {
@@ -2722,7 +2739,57 @@ fn publish_automation_verified_output(
         "path": display_automation_published_output_path(workspace_root, &destination, spec),
         "source_artifact_path": verified_output.0,
         "appended_records": appended_records,
+        "copied": true,
     }))
+}
+
+fn automation_output_target_publish_specs(
+    targets: &[String],
+) -> Vec<AutomationArtifactPublishSpec> {
+    let mut specs = Vec::new();
+    let mut seen = HashSet::new();
+    for target in targets {
+        let trimmed = target.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let normalized = trimmed.strip_prefix("file://").unwrap_or(trimmed).trim();
+        if normalized.is_empty() || normalized.contains("://") {
+            continue;
+        }
+        let spec = AutomationArtifactPublishSpec {
+            scope: AutomationArtifactPublishScope::Workspace,
+            path: normalized.to_string(),
+            mode: AutomationArtifactPublishMode::SnapshotReplace,
+        };
+        if seen.insert(spec.path.clone()) {
+            specs.push(spec);
+        }
+    }
+    specs
+}
+
+fn publish_automation_verified_outputs(
+    workspace_root: &str,
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    verified_output: &(String, String),
+) -> anyhow::Result<Value> {
+    let publications = automation_output_target_publish_specs(&automation.output_targets)
+        .into_iter()
+        .map(|spec| {
+            publish_automation_verified_output(
+                workspace_root,
+                automation,
+                run_id,
+                node,
+                verified_output,
+                &spec,
+            )
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(json!({ "targets": publications }))
 }
 
 fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
@@ -6558,27 +6625,47 @@ pub(crate) async fn execute_automation_v2_node(
         .and_then(Value::as_str)
         .is_none()
     {
-        if let (Some(spec), Some(verified_output)) =
-            (automation_node_publish_spec(node), verified_output.as_ref())
-        {
-            Some(
-                publish_automation_verified_output(
-                    &workspace_root,
-                    automation,
-                    run_id,
-                    node,
-                    verified_output,
-                    &spec,
-                )
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "durable publication failed for node `{}` after validating `{}`: {}",
-                        node.node_id,
-                        verified_output.0,
-                        error
+        if let Some(verified_output) = verified_output.as_ref() {
+            if let Some(spec) = automation_node_publish_spec(node) {
+                Some(
+                    publish_automation_verified_output(
+                        &workspace_root,
+                        automation,
+                        run_id,
+                        node,
+                        verified_output,
+                        &spec,
                     )
-                })?,
-            )
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "durable publication failed for node `{}` after validating `{}`: {}",
+                            node.node_id,
+                            verified_output.0,
+                            error
+                        )
+                    })?,
+                )
+            } else if !automation.output_targets.is_empty() {
+                Some(
+                    publish_automation_verified_outputs(
+                        &workspace_root,
+                        automation,
+                        run_id,
+                        node,
+                        verified_output,
+                    )
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "durable publication failed for node `{}` after validating `{}`: {}",
+                            node.node_id,
+                            verified_output.0,
+                            error
+                        )
+                    })?,
+                )
+            } else {
+                None
+            }
         } else {
             None
         }

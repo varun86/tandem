@@ -19,7 +19,7 @@ fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
 
 fn mask_saved_token(has_token: bool) -> Option<&'static str> {
     if has_token {
-        Some("********")
+        Some("****")
     } else {
         None
     }

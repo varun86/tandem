@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.21] - Unreleased
+
+### Added
+
+- **Shared Workflow Context / Context Packs**:
+  - Added persisted context-pack records plus publish/list/get/bind/revoke/supersede routes so approved workflow context can be published once and reused later with explicit bindings.
+  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound packs participate in automation runtime materialization instead of sitting only as metadata.
+  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, and project-key list filtering so the reuse path stays scoped and explicit.
+
+### Changed
+
+- **Tandem TUI modular slash-command extraction**:
+  - Continued moving the remaining higher-risk slash-command families out of `app.rs` into `app/commands.rs`, including mission list/create/get/event flows, quick mission approval helpers, agent-team summary views, local bindings, agent-team approval reply helpers, preset index lookups, agent compose/summary/fork flows, automation preset summary/save flows, and agent-pane creation/switching/fanout orchestration commands.
+  - Updated the TUI modularization kanban to reflect that the higher-risk slash-command extraction track is now complete and `TUI-201` is closed.
+- **Tandem TUI plan-helper extraction**:
+  - Moved question-draft parsing, task-payload normalization, plan fingerprint/preview generation, plan-feedback markdown rendering, assistant-text extraction, reconstructed-task replay, and context-todo sync helpers out of `app.rs` into `app/plan_helpers.rs`.
+  - Rewired `app.rs` and `app/commands.rs` to use the new helper module while preserving existing plan-mode and approval-flow behavior.
+
 ## [0.4.20] - 2026-04-03
 
 ### Added
@@ -34,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved long command/tool result rendering with stable head/tail truncation so operators can see both the opening context and the final output without flooding narrow terminals.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, status summaries, and focused next steps.
   - Continued landing new TUI behavior in modular UI and activity files rather than growing `app.rs`, matching the current maintainability plan.
-  - Continued extracting low-risk slash commands from `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
+  - Continued extracting slash commands from `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
 
 ### Fixed
 

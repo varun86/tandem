@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tandem_workflows::plan_package::{
     AutomationV2Schedule, AutomationV2ScheduleType, WorkflowPlan, WorkflowPlanConversation,
     WorkflowPlanDraftRecord, WorkflowPlanStep,
@@ -365,6 +365,38 @@ pub fn normalize_string_list(raw: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+pub fn infer_explicit_output_targets(prompt: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for raw_token in prompt.split_whitespace() {
+        let token = raw_token
+            .trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':'
+                )
+            })
+            .trim();
+        if token.is_empty() || token.contains("://") {
+            continue;
+        }
+        let path = Path::new(token);
+        let has_extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| !value.is_empty());
+        let looks_like_path = token.starts_with('/')
+            || token.starts_with("./")
+            || token.starts_with("../")
+            || token.contains('/');
+        if looks_like_path && has_extension {
+            targets.push(token.to_string());
+        }
+    }
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 pub fn plan_max_parallel_agents(operator_preferences: Option<&Value>) -> u32 {
@@ -1528,5 +1560,30 @@ Here is the planner response:
 
         let error = validate_workflow_plan(&plan).expect_err("unknown step id should fail");
         assert!(error.contains("unsupported workflow step id"));
+    }
+
+    #[test]
+    fn infer_explicit_output_targets_extracts_path_like_workspace_targets() {
+        let prompt = "Generate and save /home/evan/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md and also summarize the findings.";
+
+        let targets = infer_explicit_output_targets(prompt);
+
+        assert_eq!(
+            targets,
+            vec![
+                "/home/evan/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn infer_explicit_output_targets_ignores_urls_and_deduplicates_targets() {
+        let prompt =
+            "Write to https://example.com/report.md, ./notes/final.md, and ./notes/final.md again.";
+
+        let targets = infer_explicit_output_targets(prompt);
+
+        assert_eq!(targets, vec!["./notes/final.md".to_string()]);
     }
 }

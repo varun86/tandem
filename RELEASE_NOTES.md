@@ -2,6 +2,20 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.21 (Unreleased)
+
+- **Shared Workflow Context / Context Packs**
+  - Added persisted context-pack records plus publish/list/get/bind/revoke/supersede routes so approved workflow context can be published once and reused later with explicit bindings.
+  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound packs participate in automation runtime materialization instead of sitting only as metadata.
+  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, and project-key list filtering so the reuse path stays scoped and explicit.
+
+- **Tandem TUI mission-command modularization**
+  - Moved the remaining higher-risk slash commands out of `app.rs` into `app/commands.rs`, including mission list/create/get/event flows, quick mission approval helpers, agent-team summary views, local bindings, agent-team approval reply helpers, preset index lookups, agent compose/summary/fork flows, automation preset summary/save flows, and agent-pane creation/switching/fanout orchestration commands.
+  - Updated the TUI modularization kanban so the higher-risk slash-command extraction track is now complete and `TUI-201` is closed.
+- **Tandem TUI plan-helper modularization**
+  - Moved question-draft parsing, task-payload normalization, plan fingerprint/preview generation, plan-feedback markdown rendering, assistant-text extraction, reconstructed-task replay, and context-todo sync helpers out of `app.rs` into `app/plan_helpers.rs`.
+  - Rewired both `app.rs` and `app/commands.rs` to consume the new helper module without changing plan-mode approval or task-sync behavior.
+
 ## v0.4.20 (Released 2026-04-03)
 
 - **Backend-backed coder planner sessions**
@@ -29,7 +43,7 @@ This is the canonical release-notes file used by release tooling.
   - Improved transcript differentiation for tool-focused system messages and governance/operator-action-required messages with clearer badges.
   - Improved generic command/tool output rendering with stable head/tail truncation so transcript history stays readable during long runs.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, concise summaries, and focused next steps.
-  - Continued moving low-risk slash commands out of `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
+  - Continued moving slash commands out of `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, the routine-management command family, config/request-center/clipboard/permission reply helpers, and the context-run command family.
 
 - **Installed desktop startup black-screen after vault unlock**
   - Added a timeout to installed-build sidecar release discovery so a stalled GitHub metadata lookup cannot hold the Tauri app on a black screen after passcode unlock.

@@ -13,7 +13,8 @@ use crate::materialization::{
 };
 use crate::workflow_plan::{
     agent_id_for_role, compile_operator_model_policy, compile_workflow_agent_tool_allowlist,
-    display_name_for_role, plan_max_parallel_agents, workflow_plan_agent_roles,
+    display_name_for_role, infer_explicit_output_targets, plan_max_parallel_agents,
+    workflow_plan_agent_roles,
 };
 
 pub fn compile_workflow_runtime_projection<S, I, O>(
@@ -66,6 +67,7 @@ where
         name: plan.title.clone(),
         description: plan.description.clone(),
         workspace_root: Some(plan.workspace_root.clone()),
+        output_targets: infer_explicit_output_targets(&plan.original_prompt),
         agents,
         nodes,
         execution: ProjectedAutomationExecutionPolicy {
@@ -162,5 +164,6 @@ mod tests {
                 .and_then(Value::as_str),
             Some("wfplan-test")
         );
+        assert!(projection.output_targets.is_empty());
     }
 }

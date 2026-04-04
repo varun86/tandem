@@ -1468,6 +1468,73 @@ fn publish_verified_output_append_jsonl_appends_records() {
 }
 
 #[test]
+fn publish_verified_output_falls_back_to_automation_output_targets() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-publish-targets-{}", uuid::Uuid::new_v4()));
+    let run_artifact = workspace_root.join(".tandem/runs/run-targets/artifacts/report.md");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "# Targeted Report\n").expect("write run artifact");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-targets".to_string(),
+        name: "Targets".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: Default::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["notes/final-report.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = bare_node();
+
+    let result = super::publish_automation_verified_outputs(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-targets",
+        &node,
+        &(
+            ".tandem/runs/run-targets/artifacts/report.md".to_string(),
+            "# Targeted Report\n".to_string(),
+        ),
+    )
+    .expect("publish to output targets");
+
+    let published = workspace_root.join("notes/final-report.md");
+    assert_eq!(
+        std::fs::read_to_string(&published).expect("read published"),
+        "# Targeted Report\n"
+    );
+    assert_eq!(result["targets"][0]["scope"], "workspace");
+    assert_eq!(result["targets"][0]["mode"], "snapshot_replace");
+    assert_eq!(result["targets"][0]["path"], "notes/final-report.md");
+    assert_eq!(result["targets"][0]["copied"], true);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn publish_verified_output_rejects_workspace_target_outside_workspace() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-publish-invalid-workspace-{}",

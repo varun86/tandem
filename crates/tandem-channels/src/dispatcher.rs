@@ -283,9 +283,11 @@ async fn save_tool_preferences(map: &HashMap<String, ChannelToolPreferences>) {
 
 async fn load_channel_tool_preferences(channel: &str, scope_id: &str) -> ChannelToolPreferences {
     let map = load_tool_preferences().await;
-    map.get(&format!("{}:{}", channel, scope_id))
-        .cloned()
-        .unwrap_or_default()
+    let scoped_key = format!("{}:{}", channel, scope_id);
+    if let Some(prefs) = map.get(&scoped_key) {
+        return prefs.clone();
+    }
+    map.get(channel).cloned().unwrap_or_default()
 }
 
 async fn save_channel_tool_preferences(
@@ -1968,7 +1970,10 @@ fn build_channel_tool_allowlist(
         return Some(pb.clone());
     }
 
-    if tool_prefs.enabled_tools.is_empty() && tool_prefs.disabled_tools.is_empty() {
+    if tool_prefs.enabled_tools.is_empty()
+        && tool_prefs.disabled_tools.is_empty()
+        && tool_prefs.enabled_mcp_servers.is_empty()
+    {
         return None;
     }
 
@@ -1991,6 +1996,7 @@ fn build_channel_tool_allowlist(
         "memory_search",
         "memory_store",
         "memory_list",
+        "mcp_list",
         "skill",
         "task",
         "question",
@@ -2023,13 +2029,37 @@ fn build_channel_tool_allowlist(
     }
 
     for server in &tool_prefs.enabled_mcp_servers {
-        result.push(format!("mcp.{}.*", server));
+        result.push(format!("mcp.{}.*", mcp_namespace_segment(server)));
+    }
+
+    if !tool_prefs.enabled_mcp_servers.is_empty() {
+        result.push("mcp_list".to_string());
     }
 
     if result.is_empty() {
         return None;
     }
     Some(result)
+}
+
+fn mcp_namespace_segment(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_underscore = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_underscore = false;
+        } else if !previous_underscore {
+            out.push('_');
+            previous_underscore = true;
+        }
+    }
+    let cleaned = out.trim_matches('_');
+    if cleaned.is_empty() {
+        "server".to_string()
+    } else {
+        cleaned.to_string()
+    }
 }
 
 fn is_pack_builder_intent(content: &str) -> bool {
@@ -6215,6 +6245,48 @@ async fn set_model_text(model_id: String, base_url: &str, api_token: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn dispatcher_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct DispatcherEnvGuard {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl DispatcherEnvGuard {
+        fn new(vars: &[&'static str]) -> Self {
+            let guard = dispatcher_env_lock().lock().expect("dispatcher env lock");
+            let saved = vars
+                .iter()
+                .copied()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+            Self {
+                _guard: guard,
+                saved,
+            }
+        }
+
+        fn set(&self, key: &'static str, value: impl AsRef<str>) {
+            std::env::set_var(key, value.as_ref());
+        }
+    }
+
+    impl Drop for DispatcherEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
 
     // ── Slash command parser ──────────────────────────────────────────────
 
@@ -6765,6 +6837,44 @@ mod tests {
         .expect("public demo allowlist");
 
         assert_eq!(result, vec!["websearch".to_string()]);
+    }
+
+    #[test]
+    fn channel_mcp_server_names_are_normalized_into_tool_allowlist_patterns() {
+        let prefs = ChannelToolPreferences {
+            enabled_mcp_servers: vec!["composio-1".to_string(), "tandem-mcp".to_string()],
+            ..Default::default()
+        };
+
+        let result = build_channel_tool_allowlist(None, &prefs, ChannelSecurityProfile::Operator)
+            .expect("channel allowlist");
+
+        assert!(result.contains(&"mcp.composio_1.*".to_string()));
+        assert!(result.contains(&"mcp.tandem_mcp.*".to_string()));
+        assert!(result.contains(&"mcp_list".to_string()));
+        assert!(result.iter().any(|tool| tool == "read"));
+    }
+
+    #[tokio::test]
+    async fn channel_tool_preferences_fall_back_to_channel_defaults_for_scoped_sessions() {
+        let _guard = DispatcherEnvGuard::new(&["TANDEM_STATE_DIR"]);
+        let state_dir =
+            std::env::temp_dir().join(format!("tandem-channel-prefs-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        _guard.set("TANDEM_STATE_DIR", state_dir.display().to_string());
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "telegram".to_string(),
+            ChannelToolPreferences {
+                enabled_mcp_servers: vec!["composio-1".to_string()],
+                ..Default::default()
+            },
+        );
+        save_tool_preferences(&map).await;
+
+        let prefs = load_channel_tool_preferences("telegram", "chat:123").await;
+        assert_eq!(prefs.enabled_mcp_servers, vec!["composio-1".to_string()]);
     }
 
     #[tokio::test]

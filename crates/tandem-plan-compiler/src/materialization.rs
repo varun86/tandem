@@ -74,6 +74,8 @@ pub struct ProjectedAutomationMaterializationSeed<I, O> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
     #[serde(default)]
+    pub output_targets: Vec<String>,
+    #[serde(default)]
     pub agents: Vec<ProjectedAutomationAgentProfile>,
     #[serde(default)]
     pub nodes: Vec<ProjectedAutomationNode<I, O>>,
@@ -89,6 +91,7 @@ impl<I, O> From<ProjectedAutomationDraft<I, O>> for ProjectedAutomationMateriali
             name: value.name,
             description: value.description,
             workspace_root: value.workspace_root,
+            output_targets: value.output_targets,
             agents: value.agents,
             nodes: value.nodes,
             execution: value.execution,
@@ -104,6 +107,7 @@ impl<I, O> From<ProjectedAutomationMaterializationSeed<I, O>> for ProjectedAutom
             name: value.name,
             description: value.description,
             workspace_root: value.workspace_root,
+            output_targets: value.output_targets,
             agents: value.agents,
             nodes: value.nodes,
             execution: value.execution,
@@ -233,6 +237,7 @@ mod tests {
             name: "Example".to_string(),
             description: Some("desc".to_string()),
             workspace_root: Some("/repo".to_string()),
+            output_targets: vec!["notes.md".to_string()],
             agents: vec![ProjectedAutomationAgentProfile {
                 agent_id: "agent_worker".to_string(),
                 template_id: None,
@@ -280,6 +285,7 @@ mod tests {
         assert_eq!(roundtrip.name, draft.name);
         assert_eq!(roundtrip.nodes.len(), draft.nodes.len());
         assert_eq!(roundtrip.context, draft.context);
+        assert_eq!(roundtrip.output_targets, draft.output_targets);
         assert_eq!(roundtrip.metadata, draft.metadata);
     }
 

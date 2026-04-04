@@ -2156,6 +2156,126 @@ async fn automation_v2_approved_plan_materialization_is_recovered_from_snapshot(
     );
 }
 
+#[tokio::test]
+async fn automation_runtime_context_merges_shared_context_packs() {
+    let state = ready_test_state().await;
+    let pack_id = format!("context-pack-{}", uuid::Uuid::new_v4());
+    let shared_context = json!({
+        "routines": [
+            {
+                "routine_id": "shared_routine",
+                "visible_context_objects": [
+                    {
+                        "context_object_id": "ctx:shared:goal",
+                        "name": "Shared goal",
+                        "kind": "mission_goal",
+                        "scope": "mission",
+                        "owner_routine_id": "shared_routine",
+                        "declared_consumers": ["shared_routine"],
+                        "data_scope_refs": ["mission.goal"],
+                        "validation_status": "pending",
+                        "provenance": {
+                            "plan_id": "plan-shared-1",
+                            "routine_id": "shared_routine"
+                        },
+                        "summary": "Shared goal"
+                    }
+                ],
+                "step_context_bindings": [
+                    {
+                        "step_id": "shared_step",
+                        "context_reads": ["ctx:shared:goal"],
+                        "context_writes": []
+                    }
+                ]
+            }
+        ]
+    });
+    state
+        .put_context_pack(crate::http::context_packs::ContextPackRecord {
+            pack_id: pack_id.clone(),
+            title: "Shared context pack".to_string(),
+            summary: Some("Shared runtime context".to_string()),
+            project_key: Some("project-a".to_string()),
+            workspace_root: ".".to_string(),
+            source_plan_id: Some("plan-shared-1".to_string()),
+            source_automation_id: None,
+            source_run_id: None,
+            source_context_run_id: None,
+            visibility_scope: crate::http::context_packs::ContextPackVisibilityScope::SameProject,
+            state: crate::http::context_packs::ContextPackState::Published,
+            manifest: crate::http::context_packs::ContextPackManifest {
+                runtime_context: Some(shared_context),
+                ..Default::default()
+            },
+            bindings: Vec::new(),
+            freshness_window_hours: None,
+            published_actor_metadata: None,
+            revoked_actor_metadata: None,
+            superseded_actor_metadata: None,
+            superseded_by_pack_id: None,
+            published_at_ms: Some(1),
+            revoked_at_ms: None,
+            superseded_at_ms: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .expect("store pack");
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-shared-context".to_string(),
+        name: "Shared Context".to_string(),
+        description: None,
+        status: AutomationV2Status::Draft,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "shared_context_bindings": [
+                { "pack_id": pack_id, "required": true }
+            ]
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let runtime_context = run.runtime_context.expect("runtime context");
+    assert_eq!(runtime_context.routines.len(), 1);
+    assert_eq!(runtime_context.routines[0].routine_id, "shared_routine");
+    assert_eq!(
+        runtime_context.routines[0].visible_context_objects[0].context_object_id,
+        "ctx:shared:goal"
+    );
+    assert_eq!(
+        runtime_context.routines[0].step_context_bindings[0].step_id,
+        "shared_step"
+    );
+}
+
 #[test]
 fn first_attempt_structured_json_prompt_without_output_path_requires_handoff_even_without_enforcement(
 ) {

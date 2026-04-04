@@ -710,6 +710,16 @@ export function MyAutomationsContainer({
         draft.customToolsText
       );
       const connectorBindings = parseConnectorBindingsJson(draft.connectorBindingsJson);
+      const sharedContextPackIds = uniqueStrings(
+        String(draft.sharedContextPackIdsText || "")
+          .split(/[\n,]/g)
+          .map((value: string) => String(value || "").trim())
+          .filter(Boolean)
+      );
+      const sharedContextBindings = sharedContextPackIds.map((packId: string) => ({
+        pack_id: packId,
+        required: true,
+      }));
       const stepModelPolicies = new Map<string, Record<string, any> | null>();
       for (const node of draft.nodes) {
         const nodeAgentId = String(node.agentId || "").trim();
@@ -783,6 +793,21 @@ export function MyAutomationsContainer({
             ...nextScopeSnapshot,
           }
         : existingMetadata?.plan_package;
+      const sharedContextProjectKey = String(
+        nextScopeSnapshot?.project_key ||
+          nextScopeSnapshot?.projectKey ||
+          existingMetadata?.shared_context_project_key ||
+          existingMetadata?.sharedContextProjectKey ||
+          ""
+      ).trim();
+      if (nextScopeSnapshot && typeof nextScopeSnapshot === "object") {
+        nextScopeSnapshot.shared_context_pack_ids = sharedContextPackIds;
+        nextScopeSnapshot.shared_context_bindings = sharedContextBindings;
+        if (sharedContextProjectKey) {
+          nextScopeSnapshot.shared_context_project_key = sharedContextProjectKey;
+        }
+        nextScopeSnapshot.shared_context_workspace_root = workspaceRoot;
+      }
       const nextPlanPackageBundle =
         nextScopeSnapshot && existingMetadata?.plan_package_bundle
           ? {
@@ -819,6 +844,12 @@ export function MyAutomationsContainer({
           allowed_mcp_servers: selectedMcpServers,
           ...(nextPlanPackage ? { plan_package: nextPlanPackage } : {}),
           ...(nextPlanPackageBundle ? { plan_package: nextPlanPackageBundle } : {}),
+          shared_context_pack_ids: sharedContextPackIds,
+          shared_context_bindings: sharedContextBindings,
+          ...(sharedContextProjectKey
+            ? { shared_context_project_key: sharedContextProjectKey }
+            : {}),
+          shared_context_workspace_root: workspaceRoot,
         },
       });
     },

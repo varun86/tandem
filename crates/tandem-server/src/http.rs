@@ -55,6 +55,7 @@ mod capabilities;
 mod channels_api;
 mod coder;
 mod config_providers;
+pub(crate) mod context_packs;
 mod context_run_ledger;
 mod context_run_mutation_checkpoints;
 pub(crate) mod context_runs;
@@ -112,6 +113,7 @@ mod workflow_planner_transport;
 mod workflows;
 
 use capabilities::*;
+use context_packs::*;
 use context_run_ledger::*;
 use context_run_mutation_checkpoints::*;
 use context_runs::*;

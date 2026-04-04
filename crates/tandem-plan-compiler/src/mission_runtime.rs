@@ -255,6 +255,7 @@ pub fn compile_mission_runtime_projection(
         name: blueprint.title.clone(),
         description: Some(blueprint.goal.clone()),
         workspace_root: Some(blueprint.workspace_root.clone()),
+        output_targets: Vec::new(),
         agents,
         nodes,
         execution: ProjectedAutomationExecutionPolicy {

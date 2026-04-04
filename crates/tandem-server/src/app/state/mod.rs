@@ -85,6 +85,9 @@ pub struct AppState {
             >,
         >,
     >,
+    pub(crate) context_packs: Arc<
+        RwLock<std::collections::HashMap<String, crate::http::context_packs::ContextPackRecord>>,
+    >,
     pub optimization_campaigns:
         Arc<RwLock<std::collections::HashMap<String, OptimizationCampaignRecord>>>,
     pub optimization_experiments:
@@ -118,6 +121,7 @@ pub struct AppState {
     pub external_actions_path: PathBuf,
     pub workflow_runs_path: PathBuf,
     pub workflow_planner_sessions_path: PathBuf,
+    pub context_packs_path: PathBuf,
     pub workflow_hook_overrides_path: PathBuf,
     pub agent_teams: AgentTeamRuntime,
     pub web_ui_enabled: Arc<AtomicBool>,
@@ -195,6 +199,7 @@ impl AppState {
             workflow_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_plan_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_planner_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            context_packs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             optimization_campaigns: Arc::new(RwLock::new(std::collections::HashMap::new())),
             optimization_experiments: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_config: Arc::new(
@@ -225,6 +230,7 @@ impl AppState {
             external_actions_path: config::paths::resolve_external_actions_path(),
             workflow_runs_path: config::paths::resolve_workflow_runs_path(),
             workflow_planner_sessions_path: config::paths::resolve_workflow_planner_sessions_path(),
+            context_packs_path: config::paths::resolve_context_packs_path(),
             workflow_hook_overrides_path: config::paths::resolve_workflow_hook_overrides_path(),
             agent_teams: AgentTeamRuntime::new(config::paths::resolve_agent_team_audit_path()),
             web_ui_enabled: Arc::new(AtomicBool::new(false)),
@@ -384,6 +390,7 @@ impl AppState {
         let _ = self.load_bug_monitor_posts().await;
         let _ = self.load_external_actions().await;
         let _ = self.load_workflow_planner_sessions().await;
+        let _ = self.load_context_packs().await;
         let _ = self.load_workflow_runs().await;
         let _ = self.load_workflow_hook_overrides().await;
         let _ = self.reload_workflows().await;
@@ -2639,6 +2646,143 @@ impl AppState {
         })
     }
 
+    fn merge_automation_runtime_context_materializations(
+        base: Option<AutomationRuntimeContextMaterialization>,
+        extra: Option<AutomationRuntimeContextMaterialization>,
+    ) -> Option<AutomationRuntimeContextMaterialization> {
+        let mut partitions = std::collections::BTreeMap::<
+            String,
+            tandem_plan_compiler::api::ProjectedRoutineContextPartition,
+        >::new();
+        let mut merge_partition =
+            |partition: tandem_plan_compiler::api::ProjectedRoutineContextPartition| {
+                let entry = partitions
+                    .entry(partition.routine_id.clone())
+                    .or_insert_with(|| {
+                        tandem_plan_compiler::api::ProjectedRoutineContextPartition {
+                            routine_id: partition.routine_id.clone(),
+                            visible_context_objects: Vec::new(),
+                            step_context_bindings: Vec::new(),
+                        }
+                    });
+
+                let mut seen_context_object_ids = entry
+                    .visible_context_objects
+                    .iter()
+                    .map(|context_object| context_object.context_object_id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                for context_object in partition.visible_context_objects {
+                    if seen_context_object_ids.insert(context_object.context_object_id.clone()) {
+                        entry.visible_context_objects.push(context_object);
+                    }
+                }
+                entry
+                    .visible_context_objects
+                    .sort_by(|left, right| left.context_object_id.cmp(&right.context_object_id));
+
+                let mut seen_step_ids = entry
+                    .step_context_bindings
+                    .iter()
+                    .map(|binding| binding.step_id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                for binding in partition.step_context_bindings {
+                    if seen_step_ids.insert(binding.step_id.clone()) {
+                        entry.step_context_bindings.push(binding);
+                    }
+                }
+                entry
+                    .step_context_bindings
+                    .sort_by(|left, right| left.step_id.cmp(&right.step_id));
+            };
+
+        if let Some(base) = base {
+            for partition in base.routines {
+                merge_partition(partition);
+            }
+        }
+        if let Some(extra) = extra {
+            for partition in extra.routines {
+                merge_partition(partition);
+            }
+        }
+        if partitions.is_empty() {
+            None
+        } else {
+            Some(AutomationRuntimeContextMaterialization {
+                routines: partitions.into_values().collect(),
+            })
+        }
+    }
+
+    async fn automation_v2_shared_context_runtime_context(
+        &self,
+        automation: &AutomationV2Spec,
+    ) -> anyhow::Result<Option<AutomationRuntimeContextMaterialization>> {
+        let pack_ids = crate::http::context_packs::shared_context_pack_ids_from_metadata(
+            automation.metadata.as_ref(),
+        );
+        if pack_ids.is_empty() {
+            return Ok(None);
+        }
+
+        let mut contexts = Vec::new();
+        for pack_id in pack_ids {
+            let Some(pack) = self.get_context_pack(&pack_id).await else {
+                anyhow::bail!("shared context pack not found: {pack_id}");
+            };
+            if pack.state != crate::http::context_packs::ContextPackState::Published {
+                anyhow::bail!("shared context pack is not published: {pack_id}");
+            }
+            let pack_context = pack
+                .manifest
+                .runtime_context
+                .clone()
+                .and_then(|value| {
+                    serde_json::from_value::<AutomationRuntimeContextMaterialization>(value).ok()
+                })
+                .or_else(|| {
+                    pack.manifest
+                        .plan_package
+                        .as_ref()
+                        .and_then(|value| {
+                            serde_json::from_value::<tandem_plan_compiler::api::PlanPackage>(
+                                value.clone(),
+                            )
+                            .ok()
+                        })
+                        .map(|plan_package| {
+                            tandem_plan_compiler::api::project_plan_context_materialization(
+                                &plan_package,
+                            )
+                        })
+                });
+            let Some(pack_context) = pack_context else {
+                anyhow::bail!("shared context pack lacks runtime context: {pack_id}");
+            };
+            contexts.push(pack_context);
+        }
+
+        let mut merged: Option<AutomationRuntimeContextMaterialization> = None;
+        for context in contexts {
+            merged = Self::merge_automation_runtime_context_materializations(merged, Some(context));
+        }
+        Ok(merged)
+    }
+
+    async fn automation_v2_effective_runtime_context(
+        &self,
+        automation: &AutomationV2Spec,
+        base_runtime_context: Option<AutomationRuntimeContextMaterialization>,
+    ) -> anyhow::Result<Option<AutomationRuntimeContextMaterialization>> {
+        let shared_context = self
+            .automation_v2_shared_context_runtime_context(automation)
+            .await?;
+        Ok(Self::merge_automation_runtime_context_materializations(
+            base_runtime_context,
+            shared_context,
+        ))
+    }
+
     pub(crate) fn automation_v2_approved_plan_materialization(
         &self,
         run: &AutomationV2RunRecord,
@@ -2824,6 +2968,155 @@ impl AppState {
         }
         let _ = self.persist_workflow_planner_sessions().await;
         removed
+    }
+
+    pub async fn load_context_packs(&self) -> anyhow::Result<()> {
+        if !self.context_packs_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.context_packs_path).await?;
+        let parsed = serde_json::from_str::<
+            std::collections::HashMap<String, crate::http::context_packs::ContextPackRecord>,
+        >(&raw)
+        .unwrap_or_default();
+        {
+            let mut guard = self.context_packs.write().await;
+            *guard = parsed;
+        }
+        Ok(())
+    }
+
+    pub async fn persist_context_packs(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.context_packs_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.context_packs.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        fs::write(&self.context_packs_path, payload).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn put_context_pack(
+        &self,
+        mut pack: crate::http::context_packs::ContextPackRecord,
+    ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
+        if pack.pack_id.trim().is_empty() {
+            anyhow::bail!("pack_id is required");
+        }
+        if pack.title.trim().is_empty() {
+            anyhow::bail!("title is required");
+        }
+        if pack.workspace_root.trim().is_empty() {
+            anyhow::bail!("workspace_root is required");
+        }
+        let now = now_ms();
+        if pack.created_at_ms == 0 {
+            pack.created_at_ms = now;
+        }
+        pack.updated_at_ms = now;
+        {
+            self.context_packs
+                .write()
+                .await
+                .insert(pack.pack_id.clone(), pack.clone());
+        }
+        self.persist_context_packs().await?;
+        Ok(pack)
+    }
+
+    pub(crate) async fn get_context_pack(
+        &self,
+        pack_id: &str,
+    ) -> Option<crate::http::context_packs::ContextPackRecord> {
+        self.context_packs.read().await.get(pack_id).cloned()
+    }
+
+    pub(crate) async fn list_context_packs(
+        &self,
+        project_key: Option<&str>,
+        workspace_root: Option<&str>,
+    ) -> Vec<crate::http::context_packs::ContextPackRecord> {
+        let mut rows = self
+            .context_packs
+            .read()
+            .await
+            .values()
+            .filter(|pack| {
+                let project_ok = project_key
+                    .map(|key| pack.project_key.as_deref() == Some(key))
+                    .unwrap_or(true);
+                let workspace_ok = workspace_root
+                    .map(|root| pack.workspace_root == root)
+                    .unwrap_or(true);
+                project_ok && workspace_ok
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+        rows
+    }
+
+    pub(crate) async fn update_context_pack(
+        &self,
+        pack_id: &str,
+        update: impl FnOnce(&mut crate::http::context_packs::ContextPackRecord) -> anyhow::Result<()>,
+    ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
+        let mut guard = self.context_packs.write().await;
+        let Some(pack) = guard.get_mut(pack_id) else {
+            anyhow::bail!("context pack not found");
+        };
+        update(pack)?;
+        pack.updated_at_ms = now_ms();
+        let next = pack.clone();
+        drop(guard);
+        self.persist_context_packs().await?;
+        Ok(next)
+    }
+
+    pub(crate) async fn revoke_context_pack(
+        &self,
+        pack_id: &str,
+        revoked_actor_metadata: Option<Value>,
+    ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
+        self.update_context_pack(pack_id, move |pack| {
+            pack.state = crate::http::context_packs::ContextPackState::Revoked;
+            pack.revoked_at_ms = Some(now_ms());
+            pack.revoked_actor_metadata = revoked_actor_metadata;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn supersede_context_pack(
+        &self,
+        pack_id: &str,
+        superseded_by_pack_id: String,
+        superseded_actor_metadata: Option<Value>,
+    ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
+        self.update_context_pack(pack_id, move |pack| {
+            pack.state = crate::http::context_packs::ContextPackState::Superseded;
+            pack.superseded_by_pack_id = Some(superseded_by_pack_id);
+            pack.superseded_at_ms = Some(now_ms());
+            pack.superseded_actor_metadata = superseded_actor_metadata;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn bind_context_pack(
+        &self,
+        pack_id: &str,
+        binding: crate::http::context_packs::ContextPackBindingRecord,
+    ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
+        self.update_context_pack(pack_id, move |pack| {
+            pack.bindings
+                .retain(|row| row.binding_id != binding.binding_id);
+            pack.bindings.push(binding);
+            Ok(())
+        })
+        .await
     }
 
     pub async fn put_optimization_campaign(
@@ -4174,6 +4467,14 @@ impl AppState {
         trigger_type: &str,
     ) -> anyhow::Result<AutomationV2RunRecord> {
         let now = now_ms();
+        let runtime_context = self
+            .automation_v2_effective_runtime_context(
+                automation,
+                automation
+                    .runtime_context_materialization()
+                    .or_else(|| automation.approved_plan_runtime_context_materialization()),
+            )
+            .await?;
         let pending_nodes = automation
             .flow
             .nodes
@@ -4203,9 +4504,7 @@ impl AppState {
                 lifecycle_history: Vec::new(),
                 last_failure: None,
             },
-            runtime_context: automation
-                .runtime_context_materialization()
-                .or_else(|| automation.approved_plan_runtime_context_materialization()),
+            runtime_context,
             automation_snapshot: Some(automation.clone()),
             pause_reason: None,
             resume_reason: None,
@@ -4235,6 +4534,14 @@ impl AppState {
         trigger_type: &str,
     ) -> anyhow::Result<AutomationV2RunRecord> {
         let now = now_ms();
+        let runtime_context = self
+            .automation_v2_effective_runtime_context(
+                automation,
+                automation
+                    .runtime_context_materialization()
+                    .or_else(|| automation.approved_plan_runtime_context_materialization()),
+            )
+            .await?;
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
@@ -4258,9 +4565,7 @@ impl AppState {
                 lifecycle_history: Vec::new(),
                 last_failure: None,
             },
-            runtime_context: automation
-                .runtime_context_materialization()
-                .or_else(|| automation.approved_plan_runtime_context_materialization()),
+            runtime_context,
             automation_snapshot: Some(automation.clone()),
             pause_reason: None,
             resume_reason: None,
@@ -4484,21 +4789,33 @@ impl AppState {
         &self,
         run_id: &str,
     ) -> Option<AutomationV2RunRecord> {
-        let mut guard = self.automation_v2_runs.write().await;
-        let run = guard.get_mut(run_id)?;
-        if run.status != AutomationRunStatus::Queued {
-            return None;
-        }
-        let previous_status = run.status.clone();
-        let now = now_ms();
-        if run.runtime_context.is_none() {
-            run.runtime_context = run.automation_snapshot.as_ref().and_then(|automation| {
-                automation
-                    .runtime_context_materialization()
-                    .or_else(|| automation.approved_plan_runtime_context_materialization())
-            });
-        }
-        if run.runtime_context.is_none() {
+        let (automation_snapshot, previous_status) = {
+            let mut guard = self.automation_v2_runs.write().await;
+            let run = guard.get_mut(run_id)?;
+            if run.status != AutomationRunStatus::Queued {
+                return None;
+            }
+            (run.automation_snapshot.clone(), run.status.clone())
+        };
+        let runtime_context = match automation_snapshot.as_ref() {
+            Some(automation) => self
+                .automation_v2_effective_runtime_context(
+                    automation,
+                    automation
+                        .runtime_context_materialization()
+                        .or_else(|| automation.approved_plan_runtime_context_materialization()),
+                )
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        if runtime_context.is_none() {
+            let mut guard = self.automation_v2_runs.write().await;
+            let run = guard.get_mut(run_id)?;
+            if run.status != AutomationRunStatus::Queued {
+                return None;
+            }
             let previous_status = run.status.clone();
             let now = now_ms();
             run.status = AutomationRunStatus::Failed;
@@ -4513,6 +4830,14 @@ impl AppState {
             let _ = self.persist_automation_v2_runs().await;
             return None;
         }
+
+        let mut guard = self.automation_v2_runs.write().await;
+        let run = guard.get_mut(run_id)?;
+        if run.status != AutomationRunStatus::Queued {
+            return None;
+        }
+        let now = now_ms();
+        run.runtime_context = runtime_context;
         run.status = AutomationRunStatus::Running;
         run.updated_at_ms = now;
         run.started_at_ms.get_or_insert(now);

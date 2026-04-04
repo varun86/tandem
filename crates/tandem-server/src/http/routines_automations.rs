@@ -219,6 +219,102 @@ fn automation_v2_failed_node_ids(run: &crate::AutomationV2RunRecord) -> Vec<Stri
     failed_nodes
 }
 
+async fn validate_shared_context_pack_bindings(
+    state: &AppState,
+    workspace_root: Option<&str>,
+    metadata: Option<&Value>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let pack_ids = crate::http::context_packs::shared_context_pack_ids_from_metadata(metadata);
+    if pack_ids.is_empty() {
+        return Ok(());
+    }
+    let normalized_workspace_root = match workspace_root {
+        Some(value) if !value.trim().is_empty() => Some(
+            crate::normalize_absolute_workspace_root(value).map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": error,
+                        "code": "AUTOMATION_V2_SHARED_CONTEXT_INVALID",
+                    })),
+                )
+            })?,
+        ),
+        _ => None,
+    };
+    let declared_project_key = metadata
+        .and_then(Value::as_object)
+        .and_then(|object| {
+            object
+                .get("shared_context_project_key")
+                .or_else(|| object.get("sharedContextProjectKey"))
+                .or_else(|| object.get("project_key"))
+                .or_else(|| object.get("projectKey"))
+                .or_else(|| {
+                    object
+                        .get("plan_package")
+                        .and_then(Value::as_object)
+                        .and_then(|value| {
+                            value.get("project_key").or_else(|| value.get("projectKey"))
+                        })
+                })
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .map(ToString::to_string)
+        })
+        .filter(|value| !value.is_empty());
+    for pack_id in pack_ids {
+        let Some(pack) = state.get_context_pack(&pack_id).await else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "shared context pack not found",
+                    "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_NOT_FOUND",
+                    "pack_id": pack_id,
+                })),
+            ));
+        };
+        if pack.state != crate::http::context_packs::ContextPackState::Published {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "shared context pack is not published",
+                    "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_INVALID",
+                    "pack_id": pack.pack_id,
+                    "state": pack.state,
+                })),
+            ));
+        }
+        if let Some(root) = normalized_workspace_root.as_deref() {
+            if pack.workspace_root != root {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": "shared context pack workspace does not match",
+                        "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH",
+                        "pack_id": pack.pack_id,
+                        "workspace_root": pack.workspace_root,
+                    })),
+                ));
+            }
+        }
+        if let Some(project_key) = declared_project_key.as_deref() {
+            if pack.project_key.as_deref() != Some(project_key) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": "shared context pack project does not match",
+                        "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH",
+                        "pack_id": pack.pack_id,
+                        "project_key": pack.project_key,
+                    })),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn automation_v2_recoverable_failure_node_id(run: &crate::AutomationV2RunRecord) -> Option<String> {
     run.checkpoint
         .last_failure
@@ -2201,6 +2297,12 @@ pub(super) async fn automations_v2_create(
         next_fire_at_ms: None,
         last_fired_at_ms: None,
     };
+    validate_shared_context_pack_bindings(
+        &state,
+        automation.workspace_root.as_deref(),
+        automation.metadata.as_ref(),
+    )
+    .await?;
     let stored = state.put_automation_v2(automation).await.map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -2292,6 +2394,12 @@ pub(super) async fn automations_v2_patch(
     if let Some(metadata) = input.metadata {
         automation.metadata = Some(metadata);
     }
+    validate_shared_context_pack_bindings(
+        &state,
+        automation.workspace_root.as_deref(),
+        automation.metadata.as_ref(),
+    )
+    .await?;
     let stored = state.put_automation_v2(automation).await.map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -4014,6 +4122,35 @@ mod tests {
             Some(
                 "coverage `project::ops::workflow::incident-response` in space `project-default` expired at 1234"
             )
+        );
+    }
+
+    #[test]
+    fn shared_context_pack_ids_extracts_binding_shapes_and_dedupes() {
+        let metadata = json!({
+            "shared_context_bindings": [
+                { "pack_id": "context-pack-a", "required": true },
+                { "packId": "context-pack-b", "required": false },
+                "context-pack-c",
+                { "context_pack_id": "context-pack-a" }
+            ],
+            "shared_context_pack_ids": [
+                "context-pack-d",
+                "context-pack-b"
+            ]
+        });
+
+        let pack_ids =
+            crate::http::context_packs::shared_context_pack_ids_from_metadata(Some(&metadata));
+
+        assert_eq!(
+            pack_ids,
+            vec![
+                "context-pack-a".to_string(),
+                "context-pack-b".to_string(),
+                "context-pack-c".to_string(),
+                "context-pack-d".to_string(),
+            ]
         );
     }
 }

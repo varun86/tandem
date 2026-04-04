@@ -76,6 +76,7 @@ interface WorkflowEditDraft {
   runtimeContext: any | null;
   approvedPlanMaterialization: any | null;
   connectorBindingsJson: string;
+  sharedContextPackIdsText: string;
 }
 
 interface WorkflowNodeEditDraft {
@@ -328,6 +329,56 @@ function connectorBindingsJsonFromPlanPackage(planPackage: any | null) {
   );
 }
 
+function normalizeSharedContextPackIds(raw: unknown) {
+  const rows = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const row of rows) {
+    const value = String(row || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    values.push(value);
+  }
+  return values;
+}
+
+function sharedContextPackIdsFromAutomation(automation: any) {
+  const metadata =
+    automation?.metadata && typeof automation.metadata === "object" ? automation.metadata : {};
+  const candidateSources = [
+    metadata?.shared_context_bindings,
+    metadata?.sharedContextBindings,
+    metadata?.shared_context_pack_ids,
+    metadata?.sharedContextPackIds,
+    metadata?.plan_package?.shared_context_bindings,
+    metadata?.planPackage?.shared_context_bindings,
+    metadata?.plan_package?.shared_context_pack_ids,
+    metadata?.planPackage?.shared_context_pack_ids,
+  ];
+  const rows: string[] = [];
+  for (const candidate of candidateSources) {
+    if (!Array.isArray(candidate)) continue;
+    for (const entry of candidate) {
+      if (typeof entry === "string") {
+        rows.push(entry);
+        continue;
+      }
+      if (!entry || typeof entry !== "object") continue;
+      rows.push(
+        String(
+          entry.pack_id ||
+            entry.packId ||
+            entry.context_pack_id ||
+            entry.contextPackId ||
+            entry.id ||
+            ""
+        ).trim()
+      );
+    }
+  }
+  return normalizeSharedContextPackIds(rows);
+}
+
 function cloneJsonValue<T>(value: T): T {
   if (value === undefined) return value;
   return JSON.parse(JSON.stringify(value));
@@ -541,6 +592,7 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     automation?.metadata?.approvedPlanMaterialization ||
     null;
   const connectorBindingsJson = connectorBindingsJsonFromPlanPackage(scopeSnapshot);
+  const sharedContextPackIdsText = sharedContextPackIdsFromAutomation(automation).join("\n");
   return {
     automationId,
     name: String(automation?.name || automationId).trim(),
@@ -582,6 +634,7 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     runtimeContext,
     approvedPlanMaterialization,
     connectorBindingsJson,
+    sharedContextPackIdsText,
   };
 }
 

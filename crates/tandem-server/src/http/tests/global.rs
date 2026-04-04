@@ -2228,6 +2228,372 @@ async fn automations_v2_patch_rejects_relative_workspace_root() {
 }
 
 #[tokio::test]
+async fn automations_v2_create_rejects_revoked_shared_context_pack() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let workspace_root = std::env::temp_dir()
+        .join(format!(
+            "tandem-automation-v2-shared-context-{}",
+            Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri("/context/packs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "Shared automation context",
+                "workspace_root": workspace_root,
+                "project_key": "project-a",
+                "source_plan_id": "plan-shared",
+                "plan_package": {
+                    "plan_id": "plan-shared",
+                    "title": "Shared Plan",
+                    "context_objects": []
+                },
+                "approved_plan_materialization": {
+                    "plan_id": "plan-shared",
+                    "plan_revision": 1
+                },
+                "runtime_context": { "routines": [] }
+            })
+            .to_string(),
+        ))
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::OK);
+    let publish_body = to_bytes(publish_resp.into_body(), usize::MAX)
+        .await
+        .expect("publish body");
+    let publish_payload: Value = serde_json::from_slice(&publish_body).expect("publish json");
+    let pack_id = publish_payload
+        .get("context_pack")
+        .and_then(|value| value.get("pack_id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .expect("pack id");
+
+    let revoke_req = Request::builder()
+        .method("POST")
+        .uri(format!("/context/packs/{pack_id}/revoke"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "actor_metadata": { "source": "test" } }).to_string(),
+        ))
+        .expect("revoke request");
+    let revoke_resp = app
+        .clone()
+        .oneshot(revoke_req)
+        .await
+        .expect("revoke response");
+    assert_eq!(revoke_resp.status(), StatusCode::OK);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-shared-context",
+                "name": "Shared context automation",
+                "status": "draft",
+                "workspace_root": workspace_root,
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Use shared context",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "metadata": {
+                    "shared_context_bindings": [
+                        { "pack_id": pack_id, "required": true }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::CONFLICT);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_SHARED_CONTEXT_PACK_INVALID")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_create_rejects_shared_context_pack_workspace_mismatch() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let workspace_root = std::env::temp_dir()
+        .join(format!(
+            "tandem-automation-v2-shared-context-workspace-{}",
+            Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    let other_workspace_root = std::env::temp_dir()
+        .join(format!(
+            "tandem-automation-v2-shared-context-other-workspace-{}",
+            Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+    std::fs::create_dir_all(&other_workspace_root).expect("other workspace root");
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri("/context/packs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "Workspace scoped shared context",
+                "workspace_root": workspace_root,
+                "project_key": "project-a",
+                "source_plan_id": "plan-workspace",
+                "plan_package": {
+                    "plan_id": "plan-workspace",
+                    "title": "Workspace Plan",
+                    "context_objects": []
+                },
+                "approved_plan_materialization": {
+                    "plan_id": "plan-workspace",
+                    "plan_revision": 1
+                },
+                "runtime_context": { "routines": [] }
+            })
+            .to_string(),
+        ))
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::OK);
+    let publish_body = to_bytes(publish_resp.into_body(), usize::MAX)
+        .await
+        .expect("publish body");
+    let publish_payload: Value = serde_json::from_slice(&publish_body).expect("publish json");
+    let pack_id = publish_payload
+        .get("context_pack")
+        .and_then(|value| value.get("pack_id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .expect("pack id");
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-shared-context-workspace-mismatch",
+                "name": "Workspace mismatch automation",
+                "status": "draft",
+                "workspace_root": other_workspace_root,
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Use shared context",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "metadata": {
+                    "shared_context_bindings": [
+                        { "pack_id": pack_id, "required": true }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::FORBIDDEN);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_create_rejects_shared_context_pack_project_mismatch() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let workspace_root = std::env::temp_dir()
+        .join(format!(
+            "tandem-automation-v2-shared-context-project-{}",
+            Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri("/context/packs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "Project scoped shared context",
+                "workspace_root": workspace_root,
+                "project_key": "project-a",
+                "source_plan_id": "plan-project",
+                "plan_package": {
+                    "plan_id": "plan-project",
+                    "title": "Project Plan",
+                    "context_objects": []
+                },
+                "approved_plan_materialization": {
+                    "plan_id": "plan-project",
+                    "plan_revision": 1
+                },
+                "runtime_context": { "routines": [] }
+            })
+            .to_string(),
+        ))
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::OK);
+    let publish_body = to_bytes(publish_resp.into_body(), usize::MAX)
+        .await
+        .expect("publish body");
+    let publish_payload: Value = serde_json::from_slice(&publish_body).expect("publish json");
+    let pack_id = publish_payload
+        .get("context_pack")
+        .and_then(|value| value.get("pack_id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .expect("pack id");
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-shared-context-project-mismatch",
+                "name": "Project mismatch automation",
+                "status": "draft",
+                "workspace_root": workspace_root,
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Use shared context",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "metadata": {
+                    "shared_context_project_key": "project-b",
+                    "shared_context_bindings": [
+                        { "pack_id": pack_id, "required": true }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::FORBIDDEN);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH")
+    );
+}
+
+#[tokio::test]
 async fn automations_v2_executor_fails_run_when_workspace_root_missing() {
     let state = test_state().await;
     let app = app_router(state.clone());

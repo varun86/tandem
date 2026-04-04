@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { formatJson } from "../../pages/ui";
+import { api } from "../../lib/api";
 import { ConnectorSuggestionPanel } from "./ConnectorSuggestionPanel";
 import { PlanReplayComparePanel } from "./PlanReplayComparePanel";
 
@@ -121,6 +123,37 @@ function prettyEnumLabel(value: unknown) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function contextPackStateLabel(state: string, isStale: boolean) {
+  const normalized = safeString(state).toLowerCase();
+  if (normalized === "revoked") return "revoked";
+  if (normalized === "superseded") return "superseded";
+  if (normalized === "published" && isStale) return "stale";
+  return normalized || "unknown";
+}
+
+function contextPackStateTone(state: string, isStale: boolean) {
+  const normalized = safeString(state).toLowerCase();
+  if (normalized === "published" && !isStale) return "success";
+  return "warning";
+}
+
+function contextPackStateHint(entry: any) {
+  if (!entry?.pack) return "";
+  if (entry.pack.isStale) {
+    return "Freshness window has elapsed; rebinding is recommended before reuse.";
+  }
+  if (entry.pack.state === "superseded") {
+    const supersededBy = safeString(entry.pack.raw?.superseded_by_pack_id);
+    return supersededBy
+      ? `This pack has been superseded by ${supersededBy}. Rebind to the replacement pack before creating new runs.`
+      : "This pack has been superseded. Rebind to the replacement pack before creating new runs.";
+  }
+  if (entry.pack.state !== "published") {
+    return "This pack is not published. New runs will be blocked until a published pack is selected.";
+  }
+  return "";
 }
 
 function statusTone(value: unknown) {
@@ -260,7 +293,38 @@ export function ScopeInspector({
     useState<ArtifactVisibilityFilter>("all");
   const [overlapHistorySearch, setOverlapHistorySearch] = useState("");
   const [bundleShareStatus, setBundleShareStatus] = useState("");
+  const [contextPackStatus, setContextPackStatus] = useState("");
   const routines = useMemo(() => toArray(planPackage?.routine_graph), [planPackage]);
+  const workspaceRoot = useMemo(
+    () =>
+      safeString(
+        planPackage?.workspace_root ||
+          planPackage?.workspaceRoot ||
+          approvedPlanMaterialization?.workspace_root ||
+          approvedPlanMaterialization?.workspaceRoot
+      ),
+    [approvedPlanMaterialization, planPackage]
+  );
+  const projectKey = useMemo(
+    () =>
+      safeString(
+        planPackage?.project_key ||
+          planPackage?.projectKey ||
+          approvedPlanMaterialization?.project_key ||
+          approvedPlanMaterialization?.projectKey
+      ),
+    [approvedPlanMaterialization, planPackage]
+  );
+  const contextPacksQuery = useQuery({
+    queryKey: ["context-packs", "scope-inspector", workspaceRoot, projectKey],
+    enabled: !!workspaceRoot,
+    queryFn: () =>
+      api(
+        `/api/engine/context/packs?workspace_root=${encodeURIComponent(workspaceRoot)}${
+          projectKey ? `&project_key=${encodeURIComponent(projectKey)}` : ""
+        }`
+      ).catch(() => ({ context_packs: [] })),
+  });
   const connectorBindingResolution = useMemo(
     () => planPackage?.connector_binding_resolution || null,
     [planPackage]
@@ -668,6 +732,138 @@ export function ScopeInspector({
           : null,
     };
   }, [planPackage, planValidationState, successCriteriaReport]);
+  const contextPacks = useMemo(() => {
+    const nowMs = Date.now();
+    return toArray(contextPacksQuery.data, "context_packs")
+      .map((pack: any) => ({
+        packId: safeString(pack?.pack_id),
+        title: safeString(pack?.title || pack?.summary || pack?.pack_id || "shared context"),
+        state: safeString(pack?.state || "published"),
+        sourcePlanId: safeString(pack?.source_plan_id || pack?.manifest?.plan_package?.plan_id),
+        projectKey: safeString(pack?.project_key || ""),
+        bindings: toArray(pack?.bindings),
+        freshnessWindowHours: pack?.freshness_window_hours,
+        updatedAtMs: Number(pack?.updated_at_ms || pack?.published_at_ms || 0),
+        isStale:
+          Number(pack?.freshness_window_hours || 0) > 0 &&
+          Number(pack?.updated_at_ms || pack?.published_at_ms || 0) > 0 &&
+          nowMs - Number(pack?.updated_at_ms || pack?.published_at_ms || 0) >
+            Number(pack?.freshness_window_hours || 0) * 60 * 60 * 1000,
+        raw: pack,
+      }))
+      .sort((left: any, right: any) => right.updatedAtMs - left.updatedAtMs);
+  }, [contextPacksQuery.data]);
+  const sharedContextBindingRows = useMemo(() => {
+    const packById = new Map(contextPacks.map((pack: any) => [pack.packId, pack]));
+    const candidateSources = [
+      planPackage?.shared_context_bindings,
+      planPackage?.sharedContextBindings,
+      planPackage?.shared_context_pack_ids,
+      planPackage?.sharedContextPackIds,
+      approvedPlanMaterialization?.shared_context_bindings,
+      approvedPlanMaterialization?.sharedContextBindings,
+      approvedPlanMaterialization?.shared_context_pack_ids,
+      approvedPlanMaterialization?.sharedContextPackIds,
+    ];
+    const ids: Array<{
+      packId: string;
+      required: boolean;
+      alias: string;
+    }> = [];
+    for (const source of candidateSources) {
+      if (!Array.isArray(source)) continue;
+      for (const entry of source) {
+        if (typeof entry === "string") {
+          const packId = safeString(entry);
+          if (!packId) continue;
+          if (!ids.some((row) => row.packId === packId)) {
+            ids.push({ packId, required: true, alias: "" });
+          }
+          continue;
+        }
+        if (!entry || typeof entry !== "object") continue;
+        const packId = safeString(
+          entry.pack_id || entry.packId || entry.context_pack_id || entry.contextPackId || entry.id
+        );
+        if (!packId || ids.some((row) => row.packId === packId)) continue;
+        ids.push({
+          packId,
+          required: entry.required !== false,
+          alias: safeString(entry.alias || entry.name || entry.label || ""),
+        });
+      }
+    }
+    return ids.map((row) => ({
+      ...row,
+      pack: packById.get(row.packId) || null,
+    }));
+  }, [approvedPlanMaterialization, contextPacks, planPackage]);
+
+  async function publishCurrentContextPack() {
+    if (!workspaceRoot) {
+      setContextPackStatus("Workspace root is not available for this plan.");
+      return;
+    }
+    setContextPackStatus("Publishing shared context pack...");
+    try {
+      const contextObjectRefs = toArray(planPackage?.context_objects)
+        .map((entry: any) => safeString(entry?.context_object_id || entry?.contextObjectId))
+        .filter(Boolean);
+      const artifactRefs = toArray(
+        approvedPlanMaterialization?.artifact_refs ||
+          approvedPlanMaterialization?.artifactRefs ||
+          planPackage?.artifact_refs ||
+          planPackage?.artifactRefs
+      )
+        .map((entry: any) => safeString(entry))
+        .filter(Boolean);
+      const governedMemoryRefs = toArray(
+        planPackage?.governed_memory_refs || planPackage?.governedMemoryRefs
+      )
+        .map((entry: any) => safeString(entry))
+        .filter(Boolean);
+      const payload = {
+        title: safeString(
+          planPackage?.title ||
+            planPackage?.name ||
+            approvedPlanMaterialization?.title ||
+            approvedPlanMaterialization?.name ||
+            planPackage?.plan_id ||
+            "Shared context pack"
+        ),
+        summary: safeString(
+          planPackage?.summary || approvedPlanMaterialization?.summary || "Shared workflow context"
+        ),
+        workspace_root: workspaceRoot,
+        ...(projectKey ? { project_key: projectKey } : {}),
+        source_plan_id: safeString(
+          planPackage?.plan_id || planPackage?.planId || approvedPlanMaterialization?.plan_id || ""
+        ),
+        source_context_run_id: safeString(
+          approvedPlanMaterialization?.context_run_id ||
+            approvedPlanMaterialization?.contextRunId ||
+            planPackage?.context_run_id ||
+            planPackage?.contextRunId ||
+            ""
+        ),
+        plan_package: planPackage,
+        approved_plan_materialization: approvedPlanMaterialization,
+        runtime_context: runtimeContext,
+        context_object_refs: contextObjectRefs,
+        artifact_refs: artifactRefs,
+        governed_memory_refs: governedMemoryRefs,
+      };
+      const response = await api("/api/engine/context/packs", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setContextPackStatus(
+        `Published ${safeString(response?.context_pack?.pack_id || payload.title)}.`
+      );
+    } catch (error) {
+      setContextPackStatus(error instanceof Error ? error.message : "Publish failed.");
+    }
+  }
 
   if (!planPackage) {
     return (
@@ -1752,6 +1948,127 @@ export function ScopeInspector({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      ) : null}
+
+      {workspaceRoot ? (
+        <div className="grid gap-2">
+          {sharedContextBindingRows.length ? (
+            <div className="grid gap-2">
+              <div className="font-medium text-slate-200">Shared context bindings</div>
+              <div className="grid gap-2">
+                {sharedContextBindingRows.map((entry: any) => (
+                  <div
+                    key={entry.packId}
+                    className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-medium text-slate-100">
+                        {entry.alias || entry.pack?.title || entry.packId}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className={entry.required ? "tcp-badge-warning" : "tcp-badge-info"}>
+                          {entry.required ? "required" : "optional"}
+                        </span>
+                        {entry.pack ? (
+                          <span
+                            className={
+                              contextPackStateTone(entry.pack.state, entry.pack.isStale) ===
+                              "success"
+                                ? "tcp-badge-success"
+                                : "tcp-badge-warning"
+                            }
+                          >
+                            {contextPackStateLabel(entry.pack.state, entry.pack.isStale)}
+                          </span>
+                        ) : (
+                          <span className="tcp-badge-info">unresolved</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {kv("pack id", entry.packId)}
+                      {kv("source plan", entry.pack?.sourcePlanId || "n/a")}
+                      {kv("workspace", entry.pack?.raw?.workspace_root || "n/a")}
+                      {kv("project", entry.pack?.projectKey || "n/a")}
+                    </div>
+                    {contextPackStateHint(entry) ? (
+                      <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-100">
+                        {contextPackStateHint(entry)}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium text-slate-200">Shared workflow context</div>
+            <button
+              type="button"
+              className="tcp-btn h-7 px-2 text-[11px]"
+              onClick={() => {
+                void publishCurrentContextPack();
+              }}
+              disabled={!workspaceRoot}
+            >
+              <i data-lucide="package-plus"></i>
+              Publish context pack
+            </button>
+          </div>
+          <div className="tcp-subtle text-[11px]">
+            workspace: {workspaceRoot || "n/a"}
+            {projectKey ? ` · project: ${projectKey}` : ""}
+          </div>
+          {contextPackStatus ? (
+            <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 text-[11px] text-slate-200">
+              {contextPackStatus}
+            </div>
+          ) : null}
+          <div className="grid gap-2">
+            {contextPacks.length ? (
+              contextPacks.map((pack: any) => (
+                <div
+                  key={pack.packId}
+                  className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium text-slate-100">{pack.title}</div>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="tcp-badge-info">{pack.state}</span>
+                      <button
+                        type="button"
+                        className="tcp-btn h-7 px-2 text-[11px]"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(pack.packId);
+                            setContextPackStatus(`Copied ${pack.packId}.`);
+                          } catch (error) {
+                            setContextPackStatus(
+                              error instanceof Error ? error.message : "Copy failed."
+                            );
+                          }
+                        }}
+                      >
+                        <i data-lucide="copy"></i>
+                        Copy id
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {kv("pack id", pack.packId)}
+                    {kv("source plan", pack.sourcePlanId || "n/a")}
+                    {kv("bindings", pack.bindings.length)}
+                    {kv("freshness", pack.freshnessWindowHours || "n/a")}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3 text-[11px] text-slate-400">
+                No shared context packs have been published for this workspace yet.
+              </div>
+            )}
           </div>
         </div>
       ) : null}

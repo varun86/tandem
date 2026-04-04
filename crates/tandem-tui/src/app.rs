@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use std::collections::{HashMap, HashSet, VecDeque};
 
 mod commands;
+mod plan_helpers;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -4106,7 +4107,7 @@ impl App {
                     let session = &self.sessions[self.selected_session_index];
                     let loaded_messages = self.load_chat_history(&session.id).await;
                     let (recalled_tasks, recalled_active_task_id) =
-                        Self::rebuild_tasks_from_messages(&loaded_messages);
+                        plan_helpers::rebuild_tasks_from_messages(&loaded_messages);
                     let mut first_agent =
                         Self::make_agent_pane("A1".to_string(), session.id.clone());
                     first_agent.messages = loaded_messages.clone();
@@ -4848,7 +4849,7 @@ impl App {
                 let (follow_up, needs_clarification_question) =
                     if let AppState::Chat { plan_wizard, .. } = &self.state {
                         (
-                            Self::build_plan_feedback_markdown(plan_wizard),
+                            plan_helpers::build_plan_feedback_markdown(plan_wizard),
                             Self::plan_feedback_needs_clarification(plan_wizard),
                         )
                     } else {
@@ -4966,7 +4967,9 @@ impl App {
                                 remove_request_id = Some(permission.id.clone());
                                 permission_reply = Some(reply.to_string());
                                 approved_request_id = Some(permission.id.clone());
-                                if reply != "deny" && Self::is_task_tool_name(&permission.tool) {
+                                if reply != "deny"
+                                    && plan_helpers::is_task_tool_name(&permission.tool)
+                                {
                                     approved_task_payload =
                                         Some((permission.tool.clone(), permission.args.clone()));
                                 }
@@ -5096,14 +5099,14 @@ impl App {
                 }
 
                 if let Some((tool, args)) = approved_task_payload {
-                    let fingerprint = Self::plan_fingerprint_from_args(args.as_ref());
-                    let preview = Self::plan_preview_from_args(args.as_ref());
+                    let fingerprint = plan_helpers::plan_fingerprint_from_args(args.as_ref());
+                    let preview = plan_helpers::plan_preview_from_args(args.as_ref());
                     let should_open_wizard = if let AppState::Chat {
                         last_plan_task_fingerprint,
                         ..
                     } = &self.state
                     {
-                        Self::is_todo_write_tool_name(&tool)
+                        plan_helpers::is_todo_write_tool_name(&tool)
                             && !fingerprint.is_empty()
                             && *last_plan_task_fingerprint != fingerprint
                     } else {
@@ -5119,8 +5122,13 @@ impl App {
                         ..
                     } = &mut self.state
                     {
-                        Self::apply_task_payload(tasks, active_task_id, &tool, args.as_ref());
-                        if Self::is_todo_write_tool_name(&tool) && !fingerprint.is_empty() {
+                        plan_helpers::apply_task_payload(
+                            tasks,
+                            active_task_id,
+                            &tool,
+                            args.as_ref(),
+                        );
+                        if plan_helpers::is_todo_write_tool_name(&tool) && !fingerprint.is_empty() {
                             *last_plan_task_fingerprint = fingerprint;
                         }
                         if should_open_wizard {
@@ -5137,7 +5145,7 @@ impl App {
                             };
                         }
                     }
-                    if Self::is_todo_write_tool_name(&tool)
+                    if plan_helpers::is_todo_write_tool_name(&tool)
                         && matches!(self.current_mode, TandemMode::Plan)
                     {
                         self.queue_plan_agent_prompt(4);
@@ -6147,7 +6155,7 @@ impl App {
                     Option<String>,
                 )> = Vec::new();
                 let should_guard_pending = matches!(self.current_mode, TandemMode::Plan)
-                    && Self::task_payload_all_pending(Some(&payload));
+                    && plan_helpers::task_payload_all_pending(Some(&payload));
                 if let AppState::Chat {
                     session_id,
                     messages,
@@ -6165,14 +6173,14 @@ impl App {
                         return Ok(());
                     }
 
-                    let fingerprint = Self::plan_fingerprint_from_args(Some(&payload));
-                    let preview = Self::plan_preview_from_args(Some(&payload));
+                    let fingerprint = plan_helpers::plan_fingerprint_from_args(Some(&payload));
+                    let preview = plan_helpers::plan_preview_from_args(Some(&payload));
                     let should_open_wizard = matches!(self.current_mode, TandemMode::Plan)
                         && !fingerprint.is_empty()
                         && *last_plan_task_fingerprint != fingerprint;
 
                     if *session_id == event_session_id {
-                        Self::apply_task_payload(
+                        plan_helpers::apply_task_payload(
                             tasks,
                             active_task_id,
                             "todo_write",
@@ -6181,7 +6189,7 @@ impl App {
                     }
                     for agent in agents.iter_mut() {
                         if agent.session_id == event_session_id {
-                            Self::apply_task_payload(
+                            plan_helpers::apply_task_payload(
                                 &mut agent.tasks,
                                 &mut agent.active_task_id,
                                 "todo_write",
@@ -6190,7 +6198,7 @@ impl App {
                             if let Some(bound_run_id) = agent.bound_context_run_id.clone() {
                                 todo_sync_jobs.push((
                                     bound_run_id,
-                                    Self::context_todo_items_from_tasks(&agent.tasks),
+                                    plan_helpers::context_todo_items_from_tasks(&agent.tasks),
                                     Some(agent.session_id.clone()),
                                     agent.active_run_id.clone(),
                                 ));
@@ -6580,13 +6588,14 @@ impl App {
                 }
                 if matches!(self.current_mode, TandemMode::Plan) {
                     if let PendingRequestKind::Permission(permission) = &request {
-                        if Self::is_todo_write_tool_name(&permission.tool) {
+                        if plan_helpers::is_todo_write_tool_name(&permission.tool) {
                             if let Some(client) = &self.client {
                                 let _ = client.reply_permission(&permission.id, "once").await;
                             }
                             let fingerprint =
-                                Self::plan_fingerprint_from_args(permission.args.as_ref());
-                            let preview = Self::plan_preview_from_args(permission.args.as_ref());
+                                plan_helpers::plan_fingerprint_from_args(permission.args.as_ref());
+                            let preview =
+                                plan_helpers::plan_preview_from_args(permission.args.as_ref());
                             let should_open_wizard = if let AppState::Chat {
                                 last_plan_task_fingerprint,
                                 ..
@@ -6606,7 +6615,7 @@ impl App {
                                 ..
                             } = &mut self.state
                             {
-                                Self::apply_task_payload(
+                                plan_helpers::apply_task_payload(
                                     tasks,
                                     active_task_id,
                                     &permission.tool,
@@ -7107,859 +7116,6 @@ impl App {
         }
 
         match normalized_cmd.as_str() {
-            "agent" => match args.first().copied() {
-                Some("new") => {
-                    self.sync_active_agent_from_chat();
-                    let next_agent_id = if let AppState::Chat { agents, .. } = &self.state {
-                        format!("A{}", agents.len() + 1)
-                    } else {
-                        "A1".to_string()
-                    };
-                    let mut new_session_id: Option<String> = None;
-                    if let Some(client) = &self.client {
-                        if let Ok(session) = client
-                            .create_session(Some(format!("{} session", next_agent_id)))
-                            .await
-                        {
-                            new_session_id = Some(session.id);
-                        }
-                    }
-                    if let AppState::Chat {
-                        agents,
-                        active_agent_index,
-                        ..
-                    } = &mut self.state
-                    {
-                        let fallback_session = agents
-                            .get(*active_agent_index)
-                            .map(|a| a.session_id.clone())
-                            .unwrap_or_default();
-                        let pane = Self::make_agent_pane(
-                            next_agent_id,
-                            new_session_id.unwrap_or(fallback_session),
-                        );
-                        agents.push(pane);
-                        *active_agent_index = agents.len().saturating_sub(1);
-                    }
-                    self.sync_chat_from_active_agent();
-                    "Created new agent.".to_string()
-                }
-                Some("list") => {
-                    if let AppState::Chat {
-                        agents,
-                        active_agent_index,
-                        ..
-                    } = &self.state
-                    {
-                        let mut out = Vec::new();
-                        for (i, a) in agents.iter().enumerate() {
-                            let marker = if i == *active_agent_index { ">" } else { " " };
-                            out.push(format!(
-                                "{} {} [{}] {}",
-                                marker,
-                                a.agent_id,
-                                a.session_id,
-                                format!("{:?}", a.status)
-                            ));
-                        }
-                        format!("Agents:\n{}", out.join("\n"))
-                    } else {
-                        "Not in chat.".to_string()
-                    }
-                }
-                Some("use") => {
-                    if let Some(agent_id) = args.get(1) {
-                        self.sync_active_agent_from_chat();
-                        if let AppState::Chat {
-                            agents,
-                            active_agent_index,
-                            ..
-                        } = &mut self.state
-                        {
-                            if let Some(idx) = agents.iter().position(|a| &a.agent_id == agent_id) {
-                                *active_agent_index = idx;
-                                self.sync_chat_from_active_agent();
-                                return format!("Switched to {}.", agent_id);
-                            }
-                        }
-                        format!("Agent not found: {}", agent_id)
-                    } else {
-                        "Usage: /agent use <A#>".to_string()
-                    }
-                }
-                Some("close") => {
-                    self.sync_active_agent_from_chat();
-                    let active_idx = if let AppState::Chat {
-                        active_agent_index, ..
-                    } = &self.state
-                    {
-                        *active_agent_index
-                    } else {
-                        0
-                    };
-                    self.cancel_agent_if_running(active_idx).await;
-                    if let AppState::Chat {
-                        agents,
-                        active_agent_index,
-                        grid_page,
-                        ..
-                    } = &mut self.state
-                    {
-                        if agents.len() <= 1 {
-                            return "Cannot close last agent.".to_string();
-                        }
-                        agents.remove(active_idx);
-                        if *active_agent_index >= agents.len() {
-                            *active_agent_index = agents.len().saturating_sub(1);
-                        }
-                        let max_page = agents.len().saturating_sub(1) / 4;
-                        if *grid_page > max_page {
-                            *grid_page = max_page;
-                        }
-                    }
-                    self.sync_chat_from_active_agent();
-                    "Closed active agent.".to_string()
-                }
-                Some("fanout") => {
-                    let mode_switched = if matches!(self.current_mode, TandemMode::Plan) {
-                        self.current_mode = TandemMode::Orchestrate;
-                        true
-                    } else {
-                        false
-                    };
-                    let mode_note = if mode_switched {
-                        " Mode auto-switched from plan -> orchestrate."
-                    } else {
-                        ""
-                    };
-                    let (target, goal_start_idx) = match args.get(1) {
-                        Some(raw) => match raw.parse::<usize>() {
-                            Ok(n) => (n.clamp(2, 9), 2),
-                            Err(_) => (4, 1),
-                        },
-                        None => (4, 1),
-                    };
-                    let goal = args
-                        .iter()
-                        .skip(goal_start_idx)
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .trim()
-                        .to_string();
-                    let created = self.ensure_agent_count(target).await;
-                    if let AppState::Chat {
-                        ui_mode, grid_page, ..
-                    } = &mut self.state
-                    {
-                        *ui_mode = UiMode::Grid;
-                        *grid_page = 0;
-                    }
-                    self.sync_chat_from_active_agent();
-                    if !goal.is_empty() {
-                        let agents = if let AppState::Chat { agents, .. } = &self.state {
-                            agents.iter().take(target).cloned().collect::<Vec<_>>()
-                        } else {
-                            Vec::new()
-                        };
-                        if let Some(lead) = agents.first() {
-                            let team_name = format!(
-                                "fanout-{}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs())
-                                    .unwrap_or(0)
-                            );
-                            let create_team_args = serde_json::json!({
-                                "team_name": team_name,
-                                "description": format!("Fanout run for goal: {}", goal),
-                                "agent_type": "lead"
-                            });
-                            let mut lead_commands =
-                                vec![format!("/tool TeamCreate {}", create_team_args)];
-                            for agent in agents.iter().skip(1) {
-                                let task_prompt = format!(
-                                    "You are {} in a coordinated fanout run for team `{}`.\n\
-                                     Goal: {}.\n\
-                                     Own one concrete workstream end-to-end, execute it, and report concise outcomes and blockers.\n\
-                                     Do not ask clarification questions unless absolutely blocked.\n\
-                                     Do not wait for plan approvals; make reasonable assumptions and proceed.",
-                                    agent.agent_id, team_name, goal
-                                );
-                                let task_args = serde_json::json!({
-                                    "description": format!("{} workstream for {}", agent.agent_id, goal),
-                                    "prompt": task_prompt,
-                                    "subagent_type": "generalist",
-                                    "team_name": team_name,
-                                    "name": agent.agent_id
-                                });
-                                lead_commands.push(format!("/tool task {}", task_args));
-                            }
-                            let lead_kickoff = format!(
-                                "You are the lead coordinator for team `{}`. Goal: {}.\n\
-                                 Use TaskList/TaskUpdate to track delegated progress and keep execution moving until completion.",
-                                team_name, goal
-                            );
-                            lead_commands.push(lead_kickoff);
-                            if let AppState::Chat { agents, .. } = &mut self.state {
-                                if let Some(lead_agent) = agents.iter_mut().find(|a| {
-                                    a.agent_id == lead.agent_id && a.session_id == lead.session_id
-                                }) {
-                                    for cmd in lead_commands {
-                                        lead_agent.follow_up_queue.push_back(cmd);
-                                    }
-                                }
-                            }
-                            self.maybe_dispatch_queued_for_agent(&lead.session_id, &lead.agent_id);
-                            return format!(
-                                "Started coordinated fanout: {} total agents (created {}). Team `{}` bootstrapped and assignments dispatched.{}",
-                                target, created, team_name, mode_note
-                            );
-                        }
-                        return format!(
-                            "Started coordinated fanout: {} total agents (created {}). Goal dispatched.{}",
-                            target, created, mode_note
-                        );
-                    }
-                    if created > 0 {
-                        format!(
-                            "Started fanout: {} total agents (created {}). Grid view enabled.{}",
-                            target, created, mode_note
-                        )
-                    } else {
-                        format!(
-                            "Fanout ready: already at {}+ agents. Grid view enabled.{}",
-                            target, mode_note
-                        )
-                    }
-                }
-                _ => "Usage: /agent new|list|use <A#>|close|fanout [n] [goal]".to_string(),
-            },
-
-            "missions" => {
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                match client.mission_list().await {
-                    Ok(missions) => {
-                        if missions.is_empty() {
-                            return "No missions found.".to_string();
-                        }
-                        let lines = missions
-                            .into_iter()
-                            .map(|mission| {
-                                format!(
-                                    "- {} [{}] {} (work_items={})",
-                                    mission.mission_id,
-                                    format!("{:?}", mission.status).to_lowercase(),
-                                    mission.spec.title,
-                                    mission.work_items.len()
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        format!("Missions:\n{}", lines.join("\n"))
-                    }
-                    Err(err) => format!("Failed to list missions: {}", err),
-                }
-            }
-
-            "mission_create" => {
-                if args.is_empty() {
-                    return "Usage: /mission_create <title> :: <goal> [:: work_item_title]"
-                        .to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let raw = args.join(" ");
-                let segments = raw
-                    .split("::")
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>();
-                if segments.len() < 2 {
-                    return "Usage: /mission_create <title> :: <goal> [:: work_item_title]"
-                        .to_string();
-                }
-                let work_items = if let Some(work_item_title) = segments.get(2) {
-                    vec![crate::net::client::MissionCreateWorkItem {
-                        work_item_id: None,
-                        title: (*work_item_title).to_string(),
-                        detail: None,
-                        assigned_agent: None,
-                    }]
-                } else {
-                    vec![crate::net::client::MissionCreateWorkItem {
-                        work_item_id: None,
-                        title: "Initial implementation".to_string(),
-                        detail: Some("Auto-seeded work item".to_string()),
-                        assigned_agent: None,
-                    }]
-                };
-                let request = crate::net::client::MissionCreateRequest {
-                    title: segments[0].to_string(),
-                    goal: segments[1].to_string(),
-                    work_items,
-                };
-                match client.mission_create(request).await {
-                    Ok(mission) => format!(
-                        "Created mission {}: {}",
-                        mission.mission_id, mission.spec.title
-                    ),
-                    Err(err) => format!("Failed to create mission: {}", err),
-                }
-            }
-
-            "mission_get" => {
-                if args.len() != 1 {
-                    return "Usage: /mission_get <mission_id>".to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                match client.mission_get(args[0]).await {
-                    Ok(mission) => {
-                        let item_lines = mission
-                            .work_items
-                            .iter()
-                            .map(|item| {
-                                format!(
-                                    "- {} [{}]",
-                                    item.title,
-                                    format!("{:?}", item.status).to_lowercase()
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        format!(
-                            "Mission {} [{}]\nTitle: {}\nGoal: {}\nWork Items:\n{}",
-                            mission.mission_id,
-                            format!("{:?}", mission.status).to_lowercase(),
-                            mission.spec.title,
-                            mission.spec.goal,
-                            if item_lines.is_empty() {
-                                "- (none)".to_string()
-                            } else {
-                                item_lines.join("\n")
-                            }
-                        )
-                    }
-                    Err(err) => format!("Failed to get mission: {}", err),
-                }
-            }
-
-            "mission_event" => {
-                if args.len() < 2 {
-                    return "Usage: /mission_event <mission_id> <event_json>".to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let mission_id = args[0];
-                let raw_json = args[1..].join(" ");
-                let event = match serde_json::from_str::<Value>(&raw_json) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return format!("Invalid event JSON: {}", err);
-                    }
-                };
-                match client.mission_apply_event(mission_id, event).await {
-                    Ok(result) => format!(
-                        "Applied event to mission {} (revision={}, commands={})",
-                        result.mission.mission_id,
-                        result.mission.revision,
-                        result.commands.len()
-                    ),
-                    Err(err) => format!("Failed to apply mission event: {}", err),
-                }
-            }
-
-            "mission_start" => {
-                if args.len() != 1 {
-                    return "Usage: /mission_start <mission_id>".to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let mission_id = args[0];
-                let event = serde_json::json!({
-                    "type": "mission_started",
-                    "mission_id": mission_id
-                });
-                match client.mission_apply_event(mission_id, event).await {
-                    Ok(result) => format!(
-                        "Mission started {} (revision={})",
-                        result.mission.mission_id, result.mission.revision
-                    ),
-                    Err(err) => format!("Failed to start mission: {}", err),
-                }
-            }
-
-            "mission_review_ok" => {
-                if args.len() < 2 {
-                    return "Usage: /mission_review_ok <mission_id> <work_item_id> [approval_id]"
-                        .to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let mission_id = args[0];
-                let work_item_id = args[1];
-                let approval_id = args.get(2).copied().unwrap_or("review-1");
-                let event = serde_json::json!({
-                    "type": "approval_granted",
-                    "mission_id": mission_id,
-                    "work_item_id": work_item_id,
-                    "approval_id": approval_id
-                });
-                match client.mission_apply_event(mission_id, event).await {
-                    Ok(result) => format!(
-                        "Review approved for {}:{} (revision={})",
-                        mission_id, work_item_id, result.mission.revision
-                    ),
-                    Err(err) => format!("Failed to approve review: {}", err),
-                }
-            }
-
-            "mission_test_ok" => {
-                if args.len() < 2 {
-                    return "Usage: /mission_test_ok <mission_id> <work_item_id> [approval_id]"
-                        .to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let mission_id = args[0];
-                let work_item_id = args[1];
-                let approval_id = args.get(2).copied().unwrap_or("test-1");
-                let event = serde_json::json!({
-                    "type": "approval_granted",
-                    "mission_id": mission_id,
-                    "work_item_id": work_item_id,
-                    "approval_id": approval_id
-                });
-                match client.mission_apply_event(mission_id, event).await {
-                    Ok(result) => format!(
-                        "Test approved for {}:{} (revision={})",
-                        mission_id, work_item_id, result.mission.revision
-                    ),
-                    Err(err) => format!("Failed to approve test: {}", err),
-                }
-            }
-
-            "mission_review_no" => {
-                if args.len() < 2 {
-                    return "Usage: /mission_review_no <mission_id> <work_item_id> [reason]"
-                        .to_string();
-                }
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let mission_id = args[0];
-                let work_item_id = args[1];
-                let reason = if args.len() > 2 {
-                    args[2..].join(" ")
-                } else {
-                    "needs_revision".to_string()
-                };
-                let event = serde_json::json!({
-                    "type": "approval_denied",
-                    "mission_id": mission_id,
-                    "work_item_id": work_item_id,
-                    "approval_id": "review-1",
-                    "reason": reason
-                });
-                match client.mission_apply_event(mission_id, event).await {
-                    Ok(result) => format!(
-                        "Review denied for {}:{} (revision={})",
-                        mission_id, work_item_id, result.mission.revision
-                    ),
-                    Err(err) => format!("Failed to deny review: {}", err),
-                }
-            }
-
-            "agent-team" | "agent_team" => {
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let sub = args.first().copied().unwrap_or("summary");
-                match sub {
-                    "summary" => {
-                        let missions = client.agent_team_missions().await;
-                        let instances = client.agent_team_instances(None).await;
-                        let approvals = client.agent_team_approvals().await;
-                        match (missions, instances, approvals) {
-                            (Ok(missions), Ok(instances), Ok(approvals)) => format!(
-                                "Agent-Team Summary:\n  Missions: {}\n  Instances: {}\n  Spawn approvals: {}\n  Tool approvals: {}",
-                                missions.len(),
-                                instances.len(),
-                                approvals.spawn_approvals.len(),
-                                approvals.tool_approvals.len()
-                            ),
-                            _ => "Failed to load agent-team summary.".to_string(),
-                        }
-                    }
-                    "missions" => match client.agent_team_missions().await {
-                        Ok(missions) => {
-                            if missions.is_empty() {
-                                return "No agent-team missions found.".to_string();
-                            }
-                            let lines = missions
-                                .into_iter()
-                                .map(|mission| {
-                                    format!(
-                                        "- {} total={} running={} done={} failed={} cancelled={}",
-                                        mission.mission_id,
-                                        mission.instance_count,
-                                        mission.running_count,
-                                        mission.completed_count,
-                                        mission.failed_count,
-                                        mission.cancelled_count
-                                    )
-                                })
-                                .collect::<Vec<_>>();
-                            format!("Agent-Team Missions:\n{}", lines.join("\n"))
-                        }
-                        Err(err) => format!("Failed to list agent-team missions: {}", err),
-                    },
-                    "instances" => {
-                        let mission_id = args.get(1).copied();
-                        match client.agent_team_instances(mission_id).await {
-                            Ok(instances) => {
-                                if instances.is_empty() {
-                                    return "No agent-team instances found.".to_string();
-                                }
-                                let lines = instances
-                                    .into_iter()
-                                    .map(|instance| {
-                                        format!(
-                                            "- {} role={} mission={} status={} parent={}",
-                                            instance.instance_id,
-                                            instance.role,
-                                            instance.mission_id,
-                                            instance.status,
-                                            instance.parent_instance_id.unwrap_or_else(|| "-".to_string())
-                                        )
-                                    })
-                                    .collect::<Vec<_>>();
-                                format!("Agent-Team Instances:\n{}", lines.join("\n"))
-                            }
-                            Err(err) => format!("Failed to list agent-team instances: {}", err),
-                        }
-                    }
-                    "approvals" => match client.agent_team_approvals().await {
-                        Ok(approvals) => {
-                            let mut lines = Vec::new();
-                            for spawn in approvals.spawn_approvals {
-                                lines.push(format!("- spawn approval {}", spawn.approval_id));
-                            }
-                            for tool in approvals.tool_approvals {
-                                lines.push(format!(
-                                    "- tool approval {} ({})",
-                                    tool.approval_id,
-                                    tool.tool.unwrap_or_else(|| "tool".to_string())
-                                ));
-                            }
-                            if lines.is_empty() {
-                                "No agent-team approvals pending.".to_string()
-                            } else {
-                            format!("Agent-Team Approvals:\n{}", lines.join("\n"))
-                            }
-                        }
-                        Err(err) => format!("Failed to list agent-team approvals: {}", err),
-                    },
-                    "bindings" => {
-                        let team_filter = args.get(1).copied();
-                        Self::format_local_agent_team_bindings(team_filter)
-                    }
-                    "approve" => {
-                        if args.len() < 3 {
-                            return "Usage: /agent-team approve <spawn|tool> <id> [reason]"
-                                .to_string();
-                        }
-                        let target = args[1];
-                        let id = args[2];
-                        let reason = if args.len() > 3 {
-                            args[3..].join(" ")
-                        } else {
-                            "approved in TUI".to_string()
-                        };
-                        match target {
-                            "spawn" => match client.agent_team_approve_spawn(id, &reason).await {
-                                Ok(true) => format!("Approved spawn approval {}.", id),
-                                Ok(false) => format!("Spawn approval not found or denied: {}", id),
-                                Err(err) => format!("Failed to approve spawn approval: {}", err),
-                            },
-                            "tool" => match client.reply_permission(id, "allow").await {
-                                Ok(true) => format!("Approved tool request {}.", id),
-                                Ok(false) => format!("Tool request not found: {}", id),
-                                Err(err) => format!("Failed to approve tool request: {}", err),
-                            },
-                            _ => "Usage: /agent-team approve <spawn|tool> <id> [reason]"
-                                .to_string(),
-                        }
-                    }
-                    "deny" => {
-                        if args.len() < 3 {
-                            return "Usage: /agent-team deny <spawn|tool> <id> [reason]"
-                                .to_string();
-                        }
-                        let target = args[1];
-                        let id = args[2];
-                        let reason = if args.len() > 3 {
-                            args[3..].join(" ")
-                        } else {
-                            "denied in TUI".to_string()
-                        };
-                        match target {
-                            "spawn" => match client.agent_team_deny_spawn(id, &reason).await {
-                                Ok(true) => format!("Denied spawn approval {}.", id),
-                                Ok(false) => format!("Spawn approval not found or already resolved: {}", id),
-                                Err(err) => format!("Failed to deny spawn approval: {}", err),
-                            },
-                            "tool" => match client.reply_permission(id, "deny").await {
-                                Ok(true) => format!("Denied tool request {}.", id),
-                                Ok(false) => format!("Tool request not found: {}", id),
-                                Err(err) => format!("Failed to deny tool request: {}", err),
-                            },
-                            _ => "Usage: /agent-team deny <spawn|tool> <id> [reason]"
-                                .to_string(),
-                        }
-                    }
-                    _ => {
-                        "Usage: /agent-team [summary|missions|instances [mission_id]|approvals|bindings [team]|approve <spawn|tool> <id> [reason]|deny <spawn|tool> <id> [reason]]".to_string()
-                    }
-                }
-            }
-
-            "preset" | "presets" => {
-                let Some(client) = &self.client else {
-                    return "Engine client not connected.".to_string();
-                };
-                let sub = args.first().copied().unwrap_or("help").to_ascii_lowercase();
-                match sub.as_str() {
-                    "index" => match client.presets_index().await {
-                        Ok(index) => format!(
-                            "Preset index:\n  skill_modules: {}\n  agent_presets: {}\n  automation_presets: {}\n  pack_presets: {}\n  generated_at_ms: {}",
-                            index.skill_modules.len(),
-                            index.agent_presets.len(),
-                            index.automation_presets.len(),
-                            index.pack_presets.len(),
-                            index.generated_at_ms
-                        ),
-                        Err(err) => format!("Failed to load preset index: {}", err),
-                    },
-                    "agent" => {
-                        let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
-                        match action.as_str() {
-                            "compose" => {
-                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
-                                let mut pieces = tail.splitn(2, "::");
-                                let base_prompt = pieces.next().unwrap_or("").trim();
-                                let fragments_raw = pieces.next().unwrap_or("").trim();
-                                if base_prompt.is_empty() || fragments_raw.is_empty() {
-                                    return "Usage: /preset agent compose <base_prompt> :: <fragments_json>".to_string();
-                                }
-                                let fragments_json = match serde_json::from_str::<Value>(fragments_raw) {
-                                    Ok(value) if value.is_array() => value,
-                                    Ok(_) => return "fragments_json must be a JSON array of {id,phase,content}".to_string(),
-                                    Err(err) => return format!("Invalid fragments_json: {}", err),
-                                };
-                                let request = json!({
-                                    "base_prompt": base_prompt,
-                                    "fragments": fragments_json,
-                                });
-                                match client.presets_compose_preview(request).await {
-                                    Ok(payload) => {
-                                        let composition = payload.get("composition").cloned().unwrap_or(payload);
-                                        format!(
-                                            "Agent compose preview:\n{}",
-                                            serde_json::to_string_pretty(&composition)
-                                                .unwrap_or_else(|_| "{}".to_string())
-                                        )
-                                    }
-                                    Err(err) => format!("Compose preview failed: {}", err),
-                                }
-                            }
-                            "summary" => {
-                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
-                                let (required, optional) = Self::parse_required_optional_segments(&tail);
-                                let request = json!({
-                                    "agent": {
-                                        "required": required,
-                                        "optional": optional,
-                                    },
-                                    "tasks": [],
-                                });
-                                match client.presets_capability_summary(request).await {
-                                    Ok(payload) => {
-                                        let summary = payload.get("summary").cloned().unwrap_or(payload);
-                                        format!(
-                                            "Agent capability summary:\n{}",
-                                            serde_json::to_string_pretty(&summary)
-                                                .unwrap_or_else(|_| "{}".to_string())
-                                        )
-                                    }
-                                    Err(err) => format!("Capability summary failed: {}", err),
-                                }
-                            }
-                            "fork" => {
-                                if args.len() < 3 {
-                                    return "Usage: /preset agent fork <source_path> [target_id]".to_string();
-                                }
-                                let source_path = args[2];
-                                let target_id = args.get(3).copied();
-                                let request = json!({
-                                    "kind": "agent_preset",
-                                    "source_path": source_path,
-                                    "target_id": target_id,
-                                });
-                                match client.presets_fork(request).await {
-                                    Ok(payload) => {
-                                        format!(
-                                            "Forked agent preset override:\n{}",
-                                            serde_json::to_string_pretty(&payload)
-                                                .unwrap_or_else(|_| "{}".to_string())
-                                        )
-                                    }
-                                    Err(err) => format!("Agent preset fork failed: {}", err),
-                                }
-                            }
-                            _ => "Usage: /preset agent <compose|summary|fork> ...".to_string(),
-                        }
-                    }
-                    "automation" => {
-                        let action = args.get(1).copied().unwrap_or("help").to_ascii_lowercase();
-                        match action.as_str() {
-                            "summary" => {
-                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
-                                let segments = tail
-                                    .split("::")
-                                    .map(str::trim)
-                                    .filter(|part| !part.is_empty())
-                                    .collect::<Vec<_>>();
-                                if segments.is_empty() {
-                                    return "Usage: /preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string();
-                                }
-                                let tasks_json = match serde_json::from_str::<Value>(segments[0]) {
-                                    Ok(value) => value,
-                                    Err(err) => return format!("Invalid tasks_json: {}", err),
-                                };
-                                let tasks = match Self::normalize_automation_tasks(&tasks_json) {
-                                    Ok(items) => items,
-                                    Err(err) => return err,
-                                };
-                                let (required, optional) = if segments.len() > 1 {
-                                    Self::parse_required_optional_segments(&segments[1..].join(" :: "))
-                                } else {
-                                    (Vec::new(), Vec::new())
-                                };
-                                let capability_tasks = tasks
-                                    .iter()
-                                    .map(|task| {
-                                        json!({
-                                            "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
-                                            "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
-                                        })
-                                    })
-                                    .collect::<Vec<_>>();
-                                let request = json!({
-                                    "agent": {
-                                        "required": required,
-                                        "optional": optional,
-                                    },
-                                    "tasks": capability_tasks,
-                                });
-                                match client.presets_capability_summary(request).await {
-                                    Ok(payload) => {
-                                        let summary = payload.get("summary").cloned().unwrap_or(payload);
-                                        format!(
-                                            "Automation capability summary ({} tasks):\n{}",
-                                            tasks.len(),
-                                            serde_json::to_string_pretty(&summary)
-                                                .unwrap_or_else(|_| "{}".to_string())
-                                        )
-                                    }
-                                    Err(err) => format!("Automation summary failed: {}", err),
-                                }
-                            }
-                            "save" => {
-                                let tail = args.get(2..).unwrap_or(&[]).join(" ");
-                                let segments = tail
-                                    .split("::")
-                                    .map(str::trim)
-                                    .filter(|part| !part.is_empty())
-                                    .collect::<Vec<_>>();
-                                if segments.len() < 2 {
-                                    return "Usage: /preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]".to_string();
-                                }
-                                let id = segments[0];
-                                if id.is_empty() {
-                                    return "Automation preset id is required.".to_string();
-                                }
-                                let tasks_json = match serde_json::from_str::<Value>(segments[1]) {
-                                    Ok(value) => value,
-                                    Err(err) => return format!("Invalid tasks_json: {}", err),
-                                };
-                                let tasks = match Self::normalize_automation_tasks(&tasks_json) {
-                                    Ok(items) => items,
-                                    Err(err) => return err,
-                                };
-                                let (required, optional) = if segments.len() > 2 {
-                                    Self::parse_required_optional_segments(&segments[2..].join(" :: "))
-                                } else {
-                                    (Vec::new(), Vec::new())
-                                };
-                                let capability_tasks = tasks
-                                    .iter()
-                                    .map(|task| {
-                                        json!({
-                                            "required": task.get("required").cloned().unwrap_or_else(|| json!([])),
-                                            "optional": task.get("optional").cloned().unwrap_or_else(|| json!([])),
-                                        })
-                                    })
-                                    .collect::<Vec<_>>();
-                                let summary_request = json!({
-                                    "agent": {
-                                        "required": required,
-                                        "optional": optional,
-                                    },
-                                    "tasks": capability_tasks,
-                                });
-                                let summary_payload = match client
-                                    .presets_capability_summary(summary_request)
-                                    .await
-                                {
-                                    Ok(payload) => payload,
-                                    Err(err) => return format!("Automation summary failed: {}", err),
-                                };
-                                let summary = summary_payload
-                                    .get("summary")
-                                    .cloned()
-                                    .unwrap_or_else(|| json!({}));
-                                let yaml = Self::automation_override_yaml(id, &tasks, &summary);
-                                match client
-                                    .presets_override_put("automation_preset", id, &yaml)
-                                    .await
-                                {
-                                    Ok(payload) => {
-                                        format!(
-                                            "Saved automation preset override `{}` with {} task(s).\n{}",
-                                            id,
-                                            tasks.len(),
-                                            serde_json::to_string_pretty(&payload)
-                                                .unwrap_or_else(|_| "{}".to_string())
-                                        )
-                                    }
-                                    Err(err) => format!("Automation override save failed: {}", err),
-                                }
-                            }
-                            _ => "Usage: /preset automation <summary|save> ...".to_string(),
-                        }
-                    }
-                    _ => "Usage: /preset <index|agent|automation> ...".to_string(),
-                }
-            }
-
             _ => format!(
                 "Unknown command: {}. Type /help for available commands.",
                 cmd_name
@@ -7977,10 +7133,10 @@ impl App {
                 if request
                     .tool
                     .as_deref()
-                    .map(Self::is_question_tool_name)
+                    .map(plan_helpers::is_question_tool_name)
                     .unwrap_or(false)
                 {
-                    let questions = Self::question_drafts_from_permission_args(
+                    let questions = plan_helpers::question_drafts_from_permission_args(
                         request.args.as_ref(),
                         request.query.as_deref(),
                     );
@@ -8058,481 +7214,11 @@ impl App {
         }
     }
 
-    fn question_drafts_from_permission_args(
-        args: Option<&serde_json::Value>,
-        fallback_query: Option<&str>,
-    ) -> Vec<QuestionDraft> {
-        let Some(raw_args) = args else {
-            if let Some(query) = fallback_query.map(str::trim).filter(|q| !q.is_empty()) {
-                return vec![QuestionDraft {
-                    header: "Question".to_string(),
-                    question: query.to_string(),
-                    options: Vec::new(),
-                    multiple: false,
-                    custom: true,
-                    selected_options: Vec::new(),
-                    custom_input: String::new(),
-                    option_cursor: 0,
-                }];
-            }
-            return Vec::new();
-        };
-
-        // Some providers emit `args` as a JSON string; decode if possible.
-        let parsed_args;
-        let args = if let Some(raw) = raw_args.as_str() {
-            if let Ok(decoded) = serde_json::from_str::<serde_json::Value>(raw) {
-                parsed_args = decoded;
-                &parsed_args
-            } else {
-                raw_args
-            }
-        } else {
-            raw_args
-        };
-
-        let parse_choice = |opt: &serde_json::Value| -> Option<crate::net::client::QuestionChoice> {
-            if let Some(label) = opt.as_str() {
-                return Some(crate::net::client::QuestionChoice {
-                    label: label.to_string(),
-                    description: String::new(),
-                });
-            }
-            let label = opt
-                .get("label")
-                .or_else(|| opt.get("title"))
-                .or_else(|| opt.get("name"))
-                .or_else(|| opt.get("value"))
-                .or_else(|| opt.get("text"))
-                .and_then(|v| {
-                    if let Some(s) = v.as_str() {
-                        Some(s.to_string())
-                    } else {
-                        v.as_i64()
-                            .map(|n| n.to_string())
-                            .or_else(|| v.as_u64().map(|n| n.to_string()))
-                    }
-                })?;
-            let description = opt
-                .get("description")
-                .or_else(|| opt.get("hint"))
-                .or_else(|| opt.get("subtitle"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some(crate::net::client::QuestionChoice { label, description })
-        };
-
-        if let Some(items) = args.get("questions").and_then(|v| v.as_array()) {
-            let parsed = items
-                .iter()
-                .filter_map(|item| {
-                    if let Some(question) = item.as_str() {
-                        let text = question.trim();
-                        if text.is_empty() {
-                            return None;
-                        }
-                        return Some(QuestionDraft {
-                            header: "Question".to_string(),
-                            question: text.to_string(),
-                            options: Vec::new(),
-                            multiple: false,
-                            custom: true,
-                            selected_options: Vec::new(),
-                            custom_input: String::new(),
-                            option_cursor: 0,
-                        });
-                    }
-                    let question = item
-                        .get("question")
-                        .or_else(|| item.get("prompt"))
-                        .or_else(|| item.get("query"))
-                        .or_else(|| item.get("text"))
-                        .and_then(|v| v.as_str())?;
-                    let header = item
-                        .get("header")
-                        .or_else(|| item.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Question")
-                        .to_string();
-                    let options = item
-                        .get("options")
-                        .or_else(|| item.get("choices"))
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(parse_choice).collect::<Vec<_>>())
-                        .unwrap_or_default();
-                    let has_options = !options.is_empty();
-                    let multiple = item
-                        .get("multiple")
-                        .or_else(|| item.get("multi_select"))
-                        .or_else(|| item.get("multiSelect"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let custom = item
-                        .get("custom")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(!has_options);
-
-                    Some(QuestionDraft {
-                        header,
-                        question: question.to_string(),
-                        options,
-                        multiple,
-                        custom,
-                        selected_options: Vec::new(),
-                        custom_input: String::new(),
-                        option_cursor: 0,
-                    })
-                })
-                .collect::<Vec<_>>();
-            if !parsed.is_empty() {
-                return parsed;
-            }
-        }
-
-        let options = args
-            .get("options")
-            .or_else(|| args.get("choices"))
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(parse_choice).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let has_options = !options.is_empty();
-        let question = args
-            .get("question")
-            .or_else(|| args.get("prompt"))
-            .or_else(|| args.get("text"))
-            .or_else(|| args.get("title"))
-            .or_else(|| args.get("query"))
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .or_else(|| fallback_query.map(str::trim).filter(|s| !s.is_empty()));
-        if let Some(question) = question {
-            return vec![QuestionDraft {
-                header: args
-                    .get("header")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Question")
-                    .to_string(),
-                question: question.to_string(),
-                options,
-                multiple: args
-                    .get("multiple")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                custom: args
-                    .get("custom")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(!has_options),
-                selected_options: Vec::new(),
-                custom_input: String::new(),
-                option_cursor: 0,
-            }];
-        }
-        Vec::new()
-    }
-
-    fn is_task_tool_name(tool: &str) -> bool {
-        matches!(
-            Self::canonical_tool_name(tool).as_str(),
-            "task" | "todo_write" | "todowrite" | "update_todo_list" | "new_task"
-        )
-    }
-
-    fn is_todo_write_tool_name(tool: &str) -> bool {
-        matches!(
-            Self::canonical_tool_name(tool).as_str(),
-            "todo_write" | "todowrite" | "update_todo_list"
-        )
-    }
-
-    fn canonical_tool_name(tool: &str) -> String {
-        let last = tool
-            .rsplit('.')
-            .next()
-            .unwrap_or(tool)
-            .trim()
-            .to_lowercase();
-        last.replace('-', "_")
-    }
-
-    fn is_question_tool_name(tool: &str) -> bool {
-        let canonical = Self::canonical_tool_name(tool);
-        canonical == "question"
-            || canonical.starts_with("question_")
-            || canonical.starts_with("question")
-            || canonical.contains("question")
-    }
-
-    fn task_status_from_text(status: &str) -> TaskStatus {
-        match status.to_ascii_lowercase().as_str() {
-            "done" | "completed" | "complete" => TaskStatus::Done,
-            "working" | "in_progress" | "in-progress" | "active" => TaskStatus::Working,
-            "failed" | "error" | "blocked" => TaskStatus::Failed,
-            _ => TaskStatus::Pending,
-        }
-    }
-
-    fn extract_task_payload_items(args: Option<&serde_json::Value>) -> Vec<(String, TaskStatus)> {
-        let Some(args) = args else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        let arrays = [
-            args.get("todos").and_then(|v| v.as_array()),
-            args.get("tasks").and_then(|v| v.as_array()),
-            args.get("steps").and_then(|v| v.as_array()),
-            args.get("items").and_then(|v| v.as_array()),
-        ];
-        for arr in arrays.into_iter().flatten() {
-            for item in arr {
-                if let Some(obj) = item.as_object() {
-                    let content = obj
-                        .get("content")
-                        .or_else(|| obj.get("description"))
-                        .or_else(|| obj.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    if content.is_empty() {
-                        continue;
-                    }
-                    let status_text = obj
-                        .get("status")
-                        .or_else(|| obj.get("state"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("pending");
-                    out.push((
-                        content.to_string(),
-                        Self::task_status_from_text(status_text),
-                    ));
-                }
-            }
-        }
-        out
-    }
-
-    fn task_payload_all_pending(args: Option<&serde_json::Value>) -> bool {
-        let items = Self::extract_task_payload_items(args);
-        !items.is_empty()
-            && items
-                .iter()
-                .all(|(_, status)| matches!(status, TaskStatus::Pending))
-    }
-
-    fn apply_task_payload(
-        tasks: &mut Vec<Task>,
-        active_task_id: &mut Option<String>,
-        tool: &str,
-        args: Option<&serde_json::Value>,
-    ) {
-        let incoming = Self::extract_task_payload_items(args);
-        if incoming.is_empty() {
-            return;
-        }
-
-        if Self::is_todo_write_tool_name(tool) {
-            let mut normalized: Vec<(String, TaskStatus)> = Vec::new();
-            for (description, status) in incoming {
-                if let Some(existing) = normalized
-                    .iter_mut()
-                    .find(|(d, _)| d.eq_ignore_ascii_case(description.as_str()))
-                {
-                    existing.1 = status;
-                } else {
-                    normalized.push((description, status));
-                }
-            }
-
-            let pinned_by_description = tasks
-                .iter()
-                .map(|t| (t.description.to_ascii_lowercase(), t.pinned))
-                .collect::<std::collections::HashMap<_, _>>();
-
-            tasks.clear();
-            for (idx, (description, status)) in normalized.into_iter().enumerate() {
-                let pinned = pinned_by_description
-                    .get(&description.to_ascii_lowercase())
-                    .copied()
-                    .unwrap_or(false);
-                tasks.push(Task {
-                    id: format!("task-{}", idx + 1),
-                    description,
-                    status,
-                    pinned,
-                });
-            }
-        } else {
-            for (description, status) in incoming {
-                if let Some(existing) = tasks.iter_mut().find(|t| t.description == description) {
-                    existing.status = status.clone();
-                } else {
-                    let id = format!("task-{}", tasks.len() + 1);
-                    tasks.push(Task {
-                        id,
-                        description,
-                        status: status.clone(),
-                        pinned: false,
-                    });
-                }
-            }
-        }
-
-        if let Some(working) = tasks
-            .iter()
-            .find(|t| matches!(t.status, TaskStatus::Working))
-        {
-            *active_task_id = Some(working.id.clone());
-        } else {
-            *active_task_id = None;
-        }
-    }
-
-    fn plan_fingerprint_from_args(args: Option<&serde_json::Value>) -> Vec<String> {
-        let Some(args) = args else {
-            return Vec::new();
-        };
-        let arrays = [
-            args.get("todos").and_then(|v| v.as_array()),
-            args.get("tasks").and_then(|v| v.as_array()),
-            args.get("steps").and_then(|v| v.as_array()),
-            args.get("items").and_then(|v| v.as_array()),
-        ];
-
-        let mut items: Vec<String> = Vec::new();
-        for arr in arrays.into_iter().flatten() {
-            for item in arr {
-                if let Some(obj) = item.as_object() {
-                    if let Some(content) = obj
-                        .get("content")
-                        .or_else(|| obj.get("description"))
-                        .or_else(|| obj.get("title"))
-                        .and_then(|v| v.as_str())
-                    {
-                        let normalized = content.trim().to_lowercase();
-                        if !normalized.is_empty() {
-                            items.push(normalized);
-                        }
-                    }
-                }
-            }
-        }
-        items.sort();
-        items.dedup();
-        items
-    }
-
-    fn plan_preview_from_args(args: Option<&serde_json::Value>) -> Vec<String> {
-        Self::extract_task_payload_items(args)
-            .into_iter()
-            .map(|(content, _)| content)
-            .take(10)
-            .collect()
-    }
-
-    fn build_plan_feedback_markdown(wizard: &PlanFeedbackWizardState) -> String {
-        let plan_name = if wizard.plan_name.trim().is_empty() {
-            "Current plan".to_string()
-        } else {
-            wizard.plan_name.trim().to_string()
-        };
-        let scope = if wizard.scope.trim().is_empty() {
-            "Use the proposed tasks as the working scope.".to_string()
-        } else {
-            wizard.scope.trim().to_string()
-        };
-        let constraints = if wizard.constraints.trim().is_empty() {
-            "No additional constraints.".to_string()
-        } else {
-            wizard.constraints.trim().to_string()
-        };
-        let priorities = if wizard.priorities.trim().is_empty() {
-            "Follow logical dependency order.".to_string()
-        } else {
-            wizard.priorities.trim().to_string()
-        };
-        let notes = if wizard.notes.trim().is_empty() {
-            "No additional notes.".to_string()
-        } else {
-            wizard.notes.trim().to_string()
-        };
-
-        let mut task_lines = String::new();
-        if wizard.task_preview.is_empty() {
-            task_lines.push_str("- Use the current todo list from `todowrite`.\n");
-        } else {
-            for (idx, task) in wizard.task_preview.iter().enumerate() {
-                task_lines.push_str(&format!("{}. {}\n", idx + 1, task));
-            }
-        }
-
-        format!(
-            "## Plan Feedback\n\
-             \n\
-             **Plan:** {}\n\
-             \n\
-             ### Approved Task Draft\n\
-             {}\n\
-             ### Scope\n\
-             {}\n\
-             \n\
-             ### Constraints\n\
-             {}\n\
-             \n\
-             ### Priority Order\n\
-             {}\n\
-             \n\
-             ### Additional Notes\n\
-             {}\n\
-             \n\
-             ### Next Action\n\
-             Revise the plan using this feedback, update `todowrite` with refined tasks, and then ask for approval before execution.",
-            plan_name, task_lines, scope, constraints, priorities, notes
-        )
-    }
-
-    fn latest_assistant_text(messages: &[ChatMessage]) -> Option<String> {
-        for message in messages.iter().rev() {
-            if !matches!(message.role, MessageRole::Assistant) {
-                continue;
-            }
-            let mut chunks = Vec::new();
-            for block in &message.content {
-                match block {
-                    ContentBlock::Text(text) => {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            chunks.push(trimmed.to_string());
-                        }
-                    }
-                    ContentBlock::Code { language, code } => {
-                        let lang = language.trim();
-                        if lang.is_empty() {
-                            chunks.push(format!("```\n{}\n```", code));
-                        } else {
-                            chunks.push(format!("```{}\n{}\n```", lang, code));
-                        }
-                    }
-                    ContentBlock::ToolCall(tool) => {
-                        chunks.push(format!("Tool call: {} {}", tool.name, tool.args));
-                    }
-                    ContentBlock::ToolResult(result) => {
-                        chunks.push(format!("Tool result: {}", result));
-                    }
-                }
-            }
-            if !chunks.is_empty() {
-                return Some(chunks.join("\n\n"));
-            }
-        }
-        None
-    }
-
     fn copy_latest_assistant_to_clipboard(
         &self,
         messages: &[ChatMessage],
     ) -> Result<usize, String> {
-        let Some(text) = Self::latest_assistant_text(messages) else {
+        let Some(text) = plan_helpers::latest_assistant_text(messages) else {
             return Err("No assistant content available to copy.".to_string());
         };
         let mut clipboard =
@@ -8549,32 +7235,6 @@ impl App {
             && wizard.constraints.trim().is_empty()
             && wizard.priorities.trim().is_empty()
             && wizard.notes.trim().is_empty()
-    }
-
-    fn rebuild_tasks_from_messages(messages: &[ChatMessage]) -> (Vec<Task>, Option<String>) {
-        let mut tasks = Vec::new();
-        let mut active_task_id = None;
-
-        for message in messages {
-            for block in &message.content {
-                let ContentBlock::ToolCall(tool_call) = block else {
-                    continue;
-                };
-                if !Self::is_task_tool_name(&tool_call.name) {
-                    continue;
-                }
-                if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.args) {
-                    Self::apply_task_payload(
-                        &mut tasks,
-                        &mut active_task_id,
-                        &tool_call.name,
-                        Some(&args),
-                    );
-                }
-            }
-        }
-
-        (tasks, active_task_id)
     }
 
     fn prepare_prompt_text(&self, text: &str) -> String {
@@ -8625,63 +7285,7 @@ impl App {
             } => (tasks, active_task_id),
             _ => return None,
         };
-        if tasks.is_empty() {
-            return None;
-        }
-
-        let mut lines = Vec::new();
-        lines.push(format!("Total tasks: {}", tasks.len()));
-        if let Some(active_id) = active_task_id {
-            lines.push(format!("Active task id: {}", active_id));
-        }
-        for task in tasks.iter().take(12) {
-            let active_marker = if active_task_id.as_deref() == Some(task.id.as_str()) {
-                ">"
-            } else {
-                "-"
-            };
-            lines.push(format!(
-                "{} [{}] {}",
-                active_marker,
-                Self::task_status_label(&task.status),
-                task.description
-            ));
-        }
-        if tasks.len() > 12 {
-            lines.push(format!("... and {} more", tasks.len() - 12));
-        }
-        Some(lines.join("\n"))
-    }
-
-    fn task_status_label(status: &TaskStatus) -> &'static str {
-        match status {
-            TaskStatus::Pending => "pending",
-            TaskStatus::Working => "working",
-            TaskStatus::Done => "done",
-            TaskStatus::Failed => "failed",
-        }
-    }
-
-    fn context_todo_status_label(status: &TaskStatus) -> &'static str {
-        match status {
-            TaskStatus::Pending => "pending",
-            TaskStatus::Working => "in_progress",
-            TaskStatus::Done => "completed",
-            TaskStatus::Failed => "failed",
-        }
-    }
-
-    fn context_todo_items_from_tasks(
-        tasks: &[Task],
-    ) -> Vec<crate::net::client::ContextTodoSyncItem> {
-        tasks
-            .iter()
-            .map(|task| crate::net::client::ContextTodoSyncItem {
-                id: Some(task.id.clone()),
-                content: task.description.clone(),
-                status: Some(Self::context_todo_status_label(&task.status).to_string()),
-            })
-            .collect::<Vec<_>>()
+        plan_helpers::plan_task_context_block(tasks, active_task_id.as_deref())
     }
 
     fn format_local_agent_team_bindings(team_filter: Option<&str>) -> String {

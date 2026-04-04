@@ -527,6 +527,36 @@ export function WorkflowAutomationEditDialog({
               </div>
             </div>
 
+            <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
+              <div className="text-xs uppercase tracking-wide text-slate-500">
+                Shared workflow context
+              </div>
+              <div className="text-xs text-slate-400">
+                Bind approved context packs here, one pack id per line. The ids are validated
+                against this workflow&apos;s workspace and kept on the saved automation metadata so
+                later runs can reuse the same approved context.
+              </div>
+              <textarea
+                className="tcp-input min-h-[120px] font-mono text-xs leading-5"
+                value={workflowEditDraft.sharedContextPackIdsText}
+                onInput={(e) =>
+                  setWorkflowEditDraft((current: any) =>
+                    current
+                      ? {
+                          ...current,
+                          sharedContextPackIdsText: (e.target as HTMLTextAreaElement).value,
+                        }
+                      : current
+                  )
+                }
+                placeholder={`context-pack-123\ncontext-pack-456`}
+              />
+              <div className="text-xs text-slate-500">
+                Use the copy-id button in the Shared workflow context panel to paste pack ids
+                quickly.
+              </div>
+            </div>
+
             <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
               <div className="text-xs uppercase tracking-wide text-slate-500">MCP Servers</div>
               {mcpServers.length ? (

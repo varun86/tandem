@@ -86,6 +86,8 @@ pub struct ProjectedAutomationDraft<I, O> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
     #[serde(default)]
+    pub output_targets: Vec<String>,
+    #[serde(default)]
     pub agents: Vec<ProjectedAutomationAgentProfile>,
     #[serde(default)]
     pub nodes: Vec<ProjectedAutomationNode<I, O>>,
