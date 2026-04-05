@@ -1,5 +1,10 @@
 pub fn tool_name_matches_policy(pattern: &str, tool_name: &str) -> bool {
-    let pattern = pattern.trim();
+    // Normalize both sides so callers don't need to pre-normalize.
+    // This makes the function safe to use with unnormalized names from any call site.
+    let pattern = pattern.trim().to_ascii_lowercase();
+    let tool_name = tool_name.trim().to_ascii_lowercase();
+    let pattern = pattern.as_str();
+    let tool_name = tool_name.as_str();
     if pattern.is_empty() {
         return false;
     }

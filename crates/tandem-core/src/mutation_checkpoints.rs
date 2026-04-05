@@ -171,6 +171,9 @@ fn is_mutating_tool(tool: &str) -> bool {
     matches!(
         tool.trim(),
         "write" | "edit" | "apply_patch" | "delete" | "delete_file"
+        // bash/shell: included because redirect operations (>) write files outside the
+        // normal write/edit path and should also get pre-mutation snapshots.
+        | "bash" | "shell"
     )
 }
 
@@ -182,6 +185,16 @@ fn extract_mutation_target_paths(tool: &str, args: &Value) -> Vec<String> {
             .and_then(Value::as_str)
             .map(extract_apply_patch_paths)
             .unwrap_or_default(),
+        "bash" | "shell" => {
+            // Extract redirect targets from the shell command string.
+            // Matches patterns like:  cmd > /path/to/file  and  cmd >> /path/to/file
+            let command = args
+                .get("command")
+                .or_else(|| args.get("cmd"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            extract_bash_redirect_targets(command)
+        }
         _ => Vec::new(),
     };
     paths.sort();
@@ -204,6 +217,25 @@ fn extract_apply_patch_paths(patch: &str) -> Vec<String> {
     let mut paths = paths.into_iter().collect::<Vec<_>>();
     paths.sort();
     paths
+}
+
+/// Extract file paths that a bash command will write to via shell redirect operators (`>` / `>>`).
+/// Only captures paths that look like actual filesystem paths (start with `/`, `./`, or `~/`).
+/// Does not attempt full shell parsing — this is best-effort for checkpoint snapshotting.
+fn extract_bash_redirect_targets(command: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    // Split on redirect operators, then grab the first token of each right-hand side.
+    // Order matters: check ">>" before ">" to avoid splitting ">>" into ">" + ">".
+    for part in command.split(">>").flat_map(|s| s.split('>')) {
+        let candidate = part.trim().split_whitespace().next().unwrap_or("").trim();
+        if candidate.starts_with('/') || candidate.starts_with("./") || candidate.starts_with("~/")
+        {
+            targets.push(candidate.to_string());
+        }
+    }
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 fn resolve_workspace_path(

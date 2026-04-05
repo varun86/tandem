@@ -1,4 +1,7 @@
 pub(super) const MIN_TOOL_CALL_LIMIT: usize = 200;
+/// Hard absolute ceiling on tool calls per turn. Cannot be bypassed by any env var,
+/// including TANDEM_DISABLE_TOOL_GUARD_BUDGETS. Prevents runaway compute in all modes.
+pub(super) const HARD_TOOL_CALL_CEILING: usize = 10_000;
 const EMAIL_DELIVERY_TOOL_LIMIT: usize = 1;
 
 pub(super) fn tool_budget_for(tool_name: &str) -> usize {
@@ -13,7 +16,13 @@ pub(super) fn tool_budget_for(tool_name: &str) -> usize {
         return EMAIL_DELIVERY_TOOL_LIMIT;
     }
     if env_budget_guards_disabled() {
-        return usize::MAX;
+        tracing::warn!(
+            tool = %tool_name,
+            ceiling = %HARD_TOOL_CALL_CEILING,
+            "TANDEM_DISABLE_TOOL_GUARD_BUDGETS is active: tool budgets disabled, \
+             hard ceiling still enforced"
+        );
+        return HARD_TOOL_CALL_CEILING;
     }
     let env_key = match normalized.as_str() {
         "glob" => "TANDEM_TOOL_BUDGET_GLOB",
@@ -25,9 +34,12 @@ pub(super) fn tool_budget_for(tool_name: &str) -> usize {
     };
     if let Some(override_budget) = parse_budget_override(env_key) {
         if override_budget == usize::MAX {
-            return usize::MAX;
+            // Treat "unlimited" overrides as the hard ceiling, not truly unlimited.
+            return HARD_TOOL_CALL_CEILING;
         }
-        return override_budget.max(MIN_TOOL_CALL_LIMIT);
+        return override_budget
+            .max(MIN_TOOL_CALL_LIMIT)
+            .min(HARD_TOOL_CALL_CEILING);
     }
     MIN_TOOL_CALL_LIMIT
 }

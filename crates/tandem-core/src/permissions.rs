@@ -89,6 +89,13 @@ impl PermissionManager {
         PermissionAction::Ask
     }
 
+    /// Convenience wrapper for the common case where both the permission name
+    /// and the match pattern are the same tool name. Prefer this over
+    /// `evaluate(&tool, &tool)` at call sites to make the intent explicit.
+    pub async fn evaluate_tool(&self, tool_name: &str) -> PermissionAction {
+        self.evaluate(tool_name, tool_name).await
+    }
+
     pub async fn ask_for_session(
         &self,
         session_id: Option<&str>,

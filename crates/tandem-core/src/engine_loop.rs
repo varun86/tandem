@@ -21,11 +21,11 @@ use tracing::Level;
 mod loop_guards;
 mod prewrite_gate;
 
-#[cfg(test)]
-use loop_guards::parse_budget_override;
 use loop_guards::{
     duplicate_signature_limit_for, tool_budget_for, websearch_duplicate_signature_limit,
 };
+#[cfg(test)]
+use loop_guards::{parse_budget_override, HARD_TOOL_CALL_CEILING};
 use prewrite_gate::{
     describe_unmet_prewrite_requirements_for_prompt, evaluate_prewrite_gate, PrewriteProgress,
 };
@@ -240,15 +240,35 @@ impl EngineLoop {
         session_id: &str,
         ttl_seconds: u64,
     ) -> u64 {
+        // Cap the override TTL to prevent indefinite sandbox bypass.
+        const MAX_WORKSPACE_OVERRIDE_TTL_SECONDS: u64 = 600; // 10 minutes
+        let capped_ttl = ttl_seconds.min(MAX_WORKSPACE_OVERRIDE_TTL_SECONDS);
+        if capped_ttl < ttl_seconds {
+            tracing::warn!(
+                session_id = %session_id,
+                requested_ttl_s = %ttl_seconds,
+                capped_ttl_s = %capped_ttl,
+                "workspace override TTL capped to maximum allowed value"
+            );
+        }
         let expires_at = chrono::Utc::now()
             .timestamp_millis()
             .max(0)
-            .saturating_add((ttl_seconds as i64).saturating_mul(1000))
+            .saturating_add((capped_ttl as i64).saturating_mul(1000))
             as u64;
         self.workspace_overrides
             .write()
             .await
             .insert(session_id.to_string(), expires_at);
+        self.event_bus.publish(EngineEvent::new(
+            "workspace.override.activated",
+            json!({
+                "sessionID": session_id,
+                "requestedTtlSeconds": ttl_seconds,
+                "cappedTtlSeconds": capped_ttl,
+                "expiresAt": expires_at,
+            }),
+        ));
         expires_at
     }
 
@@ -1546,6 +1566,20 @@ impl EngineLoop {
                                     continue;
                                 }
                                 if !prewrite_gate_waived {
+                                    if prewrite_gate_strict_mode() {
+                                        // Strict mode: refuse to waive; emit blocked event and
+                                        // continue so the gate retains control.
+                                        self.event_bus.publish(EngineEvent::new(
+                                            "prewrite.gate.strict_mode.blocked",
+                                            json!({
+                                                "sessionID": session_id,
+                                                "messageID": user_message_id,
+                                                "iteration": iteration,
+                                                "unmetCodes": unmet_prewrite_codes,
+                                            }),
+                                        ));
+                                        continue;
+                                    }
                                     prewrite_gate_waived = true;
                                     let repair_attempt = unmet_prewrite_repair_retry_count;
                                     let repair_attempts_remaining =
@@ -1554,6 +1588,14 @@ impl EngineLoop {
                                     followup_context = Some(build_prewrite_waived_write_context(
                                         &text,
                                         &unmet_prewrite_codes,
+                                    ));
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "prewrite.gate.waived.write_executed",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "unmetCodes": unmet_prewrite_codes,
+                                        }),
                                     ));
                                     self.event_bus.publish(EngineEvent::new(
                                         "provider.call.iteration.finish",
@@ -1942,6 +1984,18 @@ impl EngineLoop {
                             ));
                             continue;
                         }
+                        if prewrite_gate_strict_mode() {
+                            self.event_bus.publish(EngineEvent::new(
+                                "prewrite.gate.strict_mode.blocked",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "unmetCodes": unmet_prewrite_codes,
+                                }),
+                            ));
+                            continue;
+                        }
                         prewrite_gate_waived = true;
                         let repair_attempt = unmet_prewrite_repair_retry_count;
                         let repair_attempts_remaining =
@@ -1949,6 +2003,14 @@ impl EngineLoop {
                         followup_context = Some(build_prewrite_waived_write_context(
                             &text,
                             &unmet_prewrite_codes,
+                        ));
+                        self.event_bus.publish(EngineEvent::new(
+                            "prewrite.gate.waived.write_executed",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "unmetCodes": unmet_prewrite_codes,
+                            }),
                         ));
                         self.event_bus.publish(EngineEvent::new(
                             "provider.call.iteration.finish",
@@ -2093,10 +2155,11 @@ impl EngineLoop {
                     "I couldn't produce a final response for that run. Please retry your request."
                         .to_string();
             }
-            if email_delivery_requested
-                && !email_action_executed
-                && completion_claims_email_sent(&completion)
-            {
+            // M-3: Gate fires unconditionally when email was requested but no email
+            // action tool was executed. The completion text is NOT consulted — this
+            // prevents the model from bypassing the gate by rephrasing, and prevents
+            // false positives on legitimate text containing email keywords.
+            if email_delivery_requested && !email_action_executed {
                 let mut fallback = "I could not verify that an email was sent in this run. I did not complete the delivery action."
                     .to_string();
                 if let Some(note) = latest_email_action_note.as_ref() {
@@ -2484,6 +2547,29 @@ impl EngineLoop {
                 .copied()
                 .unwrap_or(false);
             if auto_approve_permissions {
+                // Governance audit: if args were recovered via heuristics and the tool is
+                // mutating, log a WARN so recovered writes are never silent in automation
+                // mode. Does not block — operators must opt out via TANDEM_AUTO_APPROVE_RECOVERED_ARGS=false
+                // if they want a hard block (reserved for strict automation policy).
+                if normalized.args_integrity == "recovered" && is_workspace_write_tool(&tool) {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        message_id = %message_id,
+                        tool = %tool,
+                        args_source = %normalized.args_source,
+                        "auto-approve granted for mutating tool with recovered args; verify intent"
+                    );
+                    self.event_bus.publish(EngineEvent::new(
+                        "tool.args.recovered_write_auto_approved",
+                        json!({
+                            "sessionID": session_id,
+                            "messageID": message_id,
+                            "tool": tool,
+                            "argsSource": normalized.args_source,
+                            "argsIntegrity": normalized.args_integrity,
+                        }),
+                    ));
+                }
                 self.event_bus.publish(EngineEvent::new(
                     "permission.auto_approved",
                     json!({
@@ -2782,6 +2868,137 @@ impl EngineLoop {
             );
             return Ok(Some(output.to_string()));
         }
+        // Batch governance: validate sub-calls against engine policy and inject execution context
+        // before delegating to BatchTool. This ensures sub-calls cannot bypass permissions,
+        // sandbox checks, or allowed-tool lists, and that they receive the correct workspace
+        // context (__workspace_root, __effective_cwd, __session_id, __project_id).
+        //
+        // By this point `args` already has those keys injected (see context injection above).
+        if tool == "batch" {
+            let allowed_tools = self
+                .session_allowed_tools
+                .read()
+                .await
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default();
+
+            // Extract parent execution context from already-injected batch args.
+            let ctx_workspace_root = args
+                .get("__workspace_root")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let ctx_effective_cwd = args
+                .get("__effective_cwd")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let ctx_session_id = args
+                .get("__session_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let ctx_project_id = args
+                .get("__project_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+
+            // Process each sub-call: check governance, inject context.
+            let raw_calls = args
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut governed_calls: Vec<Value> = Vec::new();
+            for mut call in raw_calls {
+                let (sub_tool, mut sub_args) = {
+                    let obj = match call.as_object() {
+                        Some(o) => o,
+                        None => {
+                            governed_calls.push(call);
+                            continue;
+                        }
+                    };
+                    let tool_raw = non_empty_string_at(obj, "tool")
+                        .or_else(|| nested_non_empty_string_at(obj, "function", "name"))
+                        .or_else(|| nested_non_empty_string_at(obj, "tool", "name"))
+                        .or_else(|| non_empty_string_at(obj, "name"));
+                    let sub_tool = match tool_raw {
+                        Some(t) => normalize_tool_name(t),
+                        None => {
+                            governed_calls.push(call);
+                            continue;
+                        }
+                    };
+                    let sub_args = obj.get("args").cloned().unwrap_or_else(|| json!({}));
+                    (sub_tool, sub_args)
+                };
+
+                // 1. Allowed-tools check.
+                if !allowed_tools.is_empty() && !any_policy_matches(&allowed_tools, &sub_tool) {
+                    // Strip this sub-call: replace it with an explanatory result.
+                    if let Some(obj) = call.as_object_mut() {
+                        obj.insert(
+                            "_blocked".to_string(),
+                            Value::String(format!(
+                                "batch sub-call skipped: tool `{sub_tool}` is not in the allowed list for this run"
+                            )),
+                        );
+                    }
+                    governed_calls.push(call);
+                    continue;
+                }
+
+                // 2. Workspace sandbox check.
+                if let Some(violation) = self
+                    .workspace_sandbox_violation(session_id, &sub_tool, &sub_args)
+                    .await
+                {
+                    if let Some(obj) = call.as_object_mut() {
+                        obj.insert(
+                            "_blocked".to_string(),
+                            Value::String(format!("batch sub-call skipped: {violation}")),
+                        );
+                    }
+                    governed_calls.push(call);
+                    continue;
+                }
+
+                // 3. Inject parent execution context into sub-call args.
+                if let Some(sub_obj) = sub_args.as_object_mut() {
+                    if let Some(ref v) = ctx_workspace_root {
+                        sub_obj
+                            .entry("__workspace_root")
+                            .or_insert_with(|| Value::String(v.clone()));
+                    }
+                    if let Some(ref v) = ctx_effective_cwd {
+                        sub_obj
+                            .entry("__effective_cwd")
+                            .or_insert_with(|| Value::String(v.clone()));
+                    }
+                    if let Some(ref v) = ctx_session_id {
+                        sub_obj
+                            .entry("__session_id")
+                            .or_insert_with(|| Value::String(v.clone()));
+                    }
+                    if let Some(ref v) = ctx_project_id {
+                        sub_obj
+                            .entry("__project_id")
+                            .or_insert_with(|| Value::String(v.clone()));
+                    }
+                }
+
+                // Write enriched args back into the call object.
+                if let Some(obj) = call.as_object_mut() {
+                    obj.insert("args".to_string(), sub_args);
+                }
+                governed_calls.push(call);
+            }
+
+            // Rebuild batch args with the governed sub-calls.
+            if let Some(obj) = args.as_object_mut() {
+                obj.insert("tool_calls".to_string(), Value::Array(governed_calls));
+            }
+        }
         let result = match self
             .execute_tool_with_timeout(&tool, args, cancel.clone())
             .await
@@ -3068,8 +3285,51 @@ impl EngineLoop {
         if self.workspace_override_active(session_id).await {
             return None;
         }
+        // MCP tools: apply sandbox only if they supply path-like arguments.
+        // Purely API-based MCP tools (no path args) are allowed through.
+        // Operators can exempt specific MCP servers via TANDEM_MCP_SANDBOX_EXEMPT_SERVERS.
         if is_mcp_tool_name(tool) {
-            return None;
+            if let Some(server) = mcp_server_from_tool_name(tool) {
+                if is_mcp_sandbox_exempt_server(server) {
+                    return None;
+                }
+            }
+            let candidate_paths = extract_tool_candidate_paths(tool, args);
+            if candidate_paths.is_empty() {
+                // No path arguments — this is a remote/API-only call; allow it.
+                return None;
+            }
+            // Has path args — apply workspace containment to those paths.
+            let session = self.storage.get_session(session_id).await?;
+            let workspace = session
+                .workspace_root
+                .or_else(|| crate::normalize_workspace_path(&session.directory))?;
+            let workspace_path = PathBuf::from(&workspace);
+            if let Some(sensitive) = candidate_paths.iter().find(|path| {
+                let raw = Path::new(path);
+                let resolved = if raw.is_absolute() {
+                    raw.to_path_buf()
+                } else {
+                    workspace_path.join(raw)
+                };
+                is_sensitive_path_candidate(&resolved)
+            }) {
+                return Some(format!(
+                    "Sandbox blocked MCP tool `{tool}` path `{sensitive}` (sensitive path policy)."
+                ));
+            }
+            let outside = candidate_paths.iter().find(|path| {
+                let raw = Path::new(path);
+                let resolved = if raw.is_absolute() {
+                    raw.to_path_buf()
+                } else {
+                    workspace_path.join(raw)
+                };
+                !crate::is_within_workspace_root(&resolved, &workspace_path)
+            })?;
+            return Some(format!(
+                "Sandbox blocked MCP tool `{tool}` path `{outside}` (workspace root: `{workspace}`)"
+            ));
         }
         let session = self.storage.get_session(session_id).await?;
         let workspace = session
@@ -3142,8 +3402,22 @@ impl EngineLoop {
     async fn workspace_override_active(&self, session_id: &str) -> bool {
         let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
         let mut overrides = self.workspace_overrides.write().await;
+        // Collect expired session IDs for audit events before pruning.
+        let expired: Vec<String> = overrides
+            .iter()
+            .filter_map(|(id, &exp)| if exp <= now { Some(id.clone()) } else { None })
+            .collect();
         overrides.retain(|_, expires_at| *expires_at > now);
-        overrides
+        drop(overrides);
+        for expired_id in expired {
+            self.event_bus.publish(EngineEvent::new(
+                "workspace.override.expired",
+                json!({ "sessionID": expired_id }),
+            ));
+        }
+        self.workspace_overrides
+            .read()
+            .await
             .get(session_id)
             .map(|expires_at| *expires_at > now)
             .unwrap_or(false)
@@ -3407,20 +3681,58 @@ fn extract_tool_candidate_paths(tool: &str, args: &Value) -> Vec<String> {
     let Some(obj) = args.as_object() else {
         return Vec::new();
     };
-    let keys: &[&str] = match tool {
-        "read" | "write" | "edit" | "grep" | "codesearch" => &["path", "filePath", "cwd"],
-        "glob" => &["pattern"],
-        "lsp" => &["filePath", "path"],
-        "bash" => &["cwd"],
-        "apply_patch" => &[],
-        _ => &["path", "cwd"],
+    // For MCP tools, probe a wider set of path-like keys since MCP schemas vary by server.
+    let mcp_path_keys: &[&str] = &[
+        "path",
+        "file_path",
+        "filePath",
+        "filepath",
+        "filename",
+        "directory",
+        "dir",
+        "cwd",
+        "target",
+        "source",
+        "dest",
+        "destination",
+    ];
+    let keys: &[&str] = if tool.starts_with("mcp.") {
+        mcp_path_keys
+    } else {
+        match tool {
+            "read" | "write" | "edit" | "grep" | "codesearch" => &["path", "filePath", "cwd"],
+            "glob" => &["pattern"],
+            "lsp" => &["filePath", "path"],
+            "bash" => &["cwd"],
+            "apply_patch" => &[],
+            _ => &["path", "cwd"],
+        }
     };
     keys.iter()
         .filter_map(|key| obj.get(*key))
         .filter_map(|value| value.as_str())
-        .filter(|s| !s.trim().is_empty())
+        .filter(|s| {
+            let t = s.trim();
+            // Exclude placeholder/empty strings or obvious non-paths
+            !t.is_empty()
+                && (t.starts_with('/')
+                    || t.starts_with('.')
+                    || t.starts_with('~')
+                    || t.contains('/'))
+        })
         .map(ToString::to_string)
         .collect()
+}
+
+/// Returns true if the MCP server name is in the operator-configured exemption list.
+/// Set `TANDEM_MCP_SANDBOX_EXEMPT_SERVERS` to a comma-separated list of server names
+/// (e.g. `composio,github`) to exempt those servers from workspace path containment.
+fn is_mcp_sandbox_exempt_server(server_name: &str) -> bool {
+    let Ok(raw) = std::env::var("TANDEM_MCP_SANDBOX_EXEMPT_SERVERS") else {
+        return false;
+    };
+    raw.split(',')
+        .any(|s| s.trim().eq_ignore_ascii_case(server_name))
 }
 
 fn is_mcp_tool_name(tool_name: &str) -> bool {
@@ -4402,6 +4714,21 @@ pub fn prewrite_repair_retry_max_attempts() -> usize {
     5
 }
 
+/// When `TANDEM_PREWRITE_GATE_STRICT=true`, the engine refuses to waive the prewrite
+/// evidence gate even after exhausting repair retries. Instead of proceeding with
+/// an unverified write, it holds the gate and emits `prewrite.gate.strict_mode.blocked`.
+pub(super) fn prewrite_gate_strict_mode() -> bool {
+    std::env::var("TANDEM_PREWRITE_GATE_STRICT")
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn build_invalid_tool_args_retry_context_from_outputs(
     outputs: &[String],
     previous_attempts: usize,
@@ -4602,54 +4929,95 @@ fn is_duplicate_signature_limit_output(output: &str) -> bool {
 
 fn is_sensitive_path_candidate(path: &Path) -> bool {
     let lowered = path.to_string_lossy().to_ascii_lowercase();
-    if lowered.contains("/.ssh/")
-        || lowered.ends_with("/.ssh")
-        || lowered.contains("/.gnupg/")
-        || lowered.ends_with("/.gnupg")
-    {
+
+    // SSH / GPG directories
+    if lowered.contains("/.ssh/") || lowered.ends_with("/.ssh") {
         return true;
     }
+    if lowered.contains("/.gnupg/") || lowered.ends_with("/.gnupg") {
+        return true;
+    }
+
+    // Cloud credential files
     if lowered.contains("/.aws/credentials")
-        || lowered.ends_with("/.npmrc")
-        || lowered.ends_with("/.netrc")
-        || lowered.ends_with("/.pypirc")
+        || lowered.contains("/.config/gcloud/")
+        || lowered.contains("/.docker/config.json")
+        || lowered.contains("/.kube/config")
+        || lowered.contains("/.git-credentials")
     {
         return true;
     }
-    if lowered.contains("id_rsa")
-        || lowered.contains("id_ed25519")
-        || lowered.contains("id_ecdsa")
-        || lowered.contains(".pem")
-        || lowered.contains(".p12")
-        || lowered.contains(".pfx")
-        || lowered.contains(".key")
+
+    // Package manager / tool secrets
+    if lowered.ends_with("/.npmrc") || lowered.ends_with("/.netrc") || lowered.ends_with("/.pypirc")
     {
         return true;
     }
+
+    // Known private key file names (use file_name() to avoid false positives on paths)
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         let n = name.to_ascii_lowercase();
-        if n == ".env" || n.starts_with(".env.") {
+        // .env files (but not .env.example — check no extra extension after .env)
+        if n == ".env"
+            || n.starts_with(".env.") && !n.ends_with(".example") && !n.ends_with(".sample")
+        {
+            return true;
+        }
+        // Key identity files
+        if n.starts_with("id_rsa")
+            || n.starts_with("id_ed25519")
+            || n.starts_with("id_ecdsa")
+            || n.starts_with("id_dsa")
+        {
             return true;
         }
     }
+
+    // Certificate / private key extensions — use extension() to avoid substring false positives
+    // e.g. keyboard.rs has no .key extension, so it won't match here.
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_ascii_lowercase();
+        if matches!(
+            ext_lower.as_str(),
+            "pem" | "p12" | "pfx" | "key" | "keystore" | "jks"
+        ) {
+            return true;
+        }
+    }
+
     false
 }
 
 fn shell_command_targets_sensitive_path(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     let patterns = [
-        ".env",
-        ".ssh",
-        ".gnupg",
-        ".aws/credentials",
+        "/.ssh/",
+        "/.gnupg/",
+        "/.aws/credentials",
+        "/.config/gcloud/",
+        "/.docker/config.json",
+        "/.kube/config",
+        "/.git-credentials",
         "id_rsa",
         "id_ed25519",
-        ".pem",
-        ".p12",
-        ".pfx",
-        ".key",
+        "id_ecdsa",
+        "id_dsa",
+        ".npmrc",
+        ".netrc",
+        ".pypirc",
     ];
-    patterns.iter().any(|p| lower.contains(p))
+    // Check structural path patterns
+    if patterns.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    // Check .env (standalone, not .env.example)
+    if let Some(pos) = lower.find(".env") {
+        let after = &lower[pos + 4..];
+        if after.is_empty() || after.starts_with(' ') || after.starts_with('/') {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone)]
@@ -9611,7 +9979,9 @@ Required output target:
             std::env::remove_var("TANDEM_TOOL_BUDGET_EMAIL_DELIVERY");
         }
         assert_eq!(tool_budget_for("mcp.arcade.gmail_sendemail"), 1);
-        assert_eq!(tool_budget_for("websearch"), usize::MAX);
+        // M-2: disabling guards now returns HARD_TOOL_CALL_CEILING, not usize::MAX,
+        // because the hard ceiling cannot be bypassed by any env setting.
+        assert_eq!(tool_budget_for("websearch"), HARD_TOOL_CALL_CEILING);
         unsafe {
             std::env::remove_var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS");
         }
