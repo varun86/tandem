@@ -1,5 +1,6 @@
 import { formatJson } from "../../pages/ui";
 import {
+  workflowActiveLifecycleTaskIds,
   workflowArtifactValidation,
   workflowDerivedRunStatus,
   workflowEventBlockers,
@@ -326,28 +327,41 @@ export function detectWorkflowActiveTaskId(
   sessionMessages: Array<{ sessionId: string; message: any }>,
   sessionEvents: Array<{ id: string; at: number; event: any }>
 ) {
+  const activeTaskIds = detectWorkflowActiveTaskIds(run, sessionMessages, sessionEvents);
+  if (activeTaskIds.length) return activeTaskIds[0];
+  return "";
+}
+
+export function detectWorkflowActiveTaskIds(
+  run: any,
+  sessionMessages: Array<{ sessionId: string; message: any }>,
+  sessionEvents: Array<{ id: string; at: number; event: any }>
+) {
   const status = String(run?.status || "")
     .trim()
     .toLowerCase();
-  if (!["running", "pausing", "paused"].includes(status)) return "";
+  if (!["running", "pausing", "paused"].includes(status)) return [];
+  const lifecycleTaskIds = workflowActiveLifecycleTaskIds(run);
+  if (lifecycleTaskIds.length) return lifecycleTaskIds;
   const lifecycleTaskId = workflowLatestLifecycleTaskId(run);
-  if (lifecycleTaskId) return lifecycleTaskId;
+  if (lifecycleTaskId) return [lifecycleTaskId];
   for (let i = sessionEvents.length - 1; i >= 0; i -= 1) {
     const payload = sessionEvents[i]?.event?.properties || sessionEvents[i]?.event || {};
     const explicit = normalizeWorkflowTaskId(
       String(payload?.task_id || payload?.step_id || payload?.node_id || "").trim()
     );
-    if (explicit) return explicit;
+    if (explicit) return [explicit];
     const fromText = workflowNodeIdFromText(
       String(payload?.message || payload?.detail || payload?.reason || "")
     );
-    if (fromText) return fromText;
+    if (fromText) return [fromText];
   }
   for (let i = sessionMessages.length - 1; i >= 0; i -= 1) {
     const fromText = workflowNodeIdFromText(sessionMessageText(sessionMessages[i]?.message));
-    if (fromText) return fromText;
+    if (fromText) return [fromText];
   }
-  return workflowFirstPendingTaskId(run);
+  const firstPending = workflowFirstPendingTaskId(run);
+  return firstPending ? [firstPending] : [];
 }
 
 export function explainRunFailure(run: any) {

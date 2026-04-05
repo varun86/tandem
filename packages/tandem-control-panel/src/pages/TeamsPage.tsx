@@ -155,6 +155,7 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [timezone, setTimezone] = useState(() => detectBrowserTimezone());
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const agentsSectionRef = useRef<HTMLDivElement | null>(null);
   const caps = useCapabilities();
   const agentTeamsAvailable = caps.data?.agent_teams === true;
   const healthQuery = useQuery({
@@ -331,16 +332,20 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
     replyMutation.isPending,
   ]);
 
+  const [copiedPath, setCopiedPath] = useState("");
+
   const copyCatalogPath = async (path: string) => {
     try {
       await navigator.clipboard.writeText(path);
-      setCatalogStatus(`Copied ${path}`);
+      setCopiedPath(path);
+      setCatalogStatus(`Copied: ${path}`);
+      setTimeout(() => setCopiedPath((current) => (current === path ? "" : current)), 2000);
     } catch (error) {
       setCatalogStatus(error instanceof Error ? error.message : String(error));
     }
   };
 
-  const seedStudioFromCatalog = async (entry: AgentCatalogEntry) => {
+  const seedStudioFromCatalog = (entry: AgentCatalogEntry) => {
     try {
       sessionStorage.setItem(
         AGENT_CATALOG_HANDOFF_KEY,
@@ -358,11 +363,54 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
           instructions: entry.instructions,
         })
       );
-      toast("ok", `Seeded ${entry.name} into Studio.`);
-      navigate("studio");
+      // Open Studio in a new tab so the user doesn't lose their current form state.
+      const base = window.location.href.replace(/#.*$/, "");
+      window.open(`${base}#studio`, "_blank", "noopener");
     } catch (error) {
       toast("err", error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const importFromCatalog = (entry: AgentCatalogEntry) => {
+    // Derive a clean template ID from the catalog entry name.
+    const derivedId = entry.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    // Map catalog role to the agent template role options.
+    const roleMap: Record<string, TemplateFormState["role"]> = {
+      worker: "worker",
+      reviewer: "reviewer",
+      delegator: "delegator",
+      orchestrator: "orchestrator",
+      watcher: "watcher",
+      committer: "committer",
+      tester: "tester",
+    };
+    const mappedRole: TemplateFormState["role"] = roleMap[entry.role] ?? "worker";
+    setEditingTemplateId(null);
+    setForm({
+      templateId: derivedId,
+      displayName: entry.name,
+      avatarUrl: "",
+      role: mappedRole,
+      // Use the first paragraph of instructions as the system prompt so it's a
+      // useful starting point the user can edit, not just the summary.
+      systemPrompt: [
+        entry.summary,
+        previewInstructions(entry) !== entry.summary ? previewInstructions(entry) : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+        .trim(),
+      modelProvider: "",
+      modelId: "",
+    });
+    setCatalogStatus(`Imported "${entry.name}" into the agent form — review and save below.`);
+    // Scroll the agent creation form into view.
+    setTimeout(() => {
+      agentsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
   };
 
   const handleAvatarUpload = (file: File | null) => {
@@ -417,7 +465,7 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
 
       <PageCard
         title="Agent Catalog"
-        subtitle="Search the canonical Codex subagent set by name, category, tag, or source path."
+        subtitle="Browse and import from the canonical Codex subagent set. Use any entry to pre-fill the agent form below."
       >
         <div className="grid gap-3">
           <div className="grid gap-2 md:grid-cols-[1fr_auto]">
@@ -507,15 +555,31 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
                       <div className="flex flex-wrap gap-2">
                         <button
                           className="tcp-btn h-8 px-3 text-xs"
-                          onClick={() => void copyCatalogPath(entry.source_path)}
+                          title="Pre-fill the agent creation form from this catalog entry"
+                          onClick={() => importFromCatalog(entry)}
                         >
-                          Copy path
+                          <i data-lucide="download"></i>
+                          Import as Agent
                         </button>
                         <button
                           className="tcp-btn h-8 px-3 text-xs"
-                          onClick={() => void seedStudioFromCatalog(entry)}
+                          title="Open this agent in Studio (new tab)"
+                          onClick={() => seedStudioFromCatalog(entry)}
                         >
-                          Use in Studio
+                          <i data-lucide="external-link"></i>
+                          Studio ↗
+                        </button>
+                        <button
+                          className={`tcp-btn h-8 px-3 text-xs ${
+                            copiedPath === entry.source_path
+                              ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-300"
+                              : ""
+                          }`}
+                          title="Copy source path to clipboard"
+                          onClick={() => void copyCatalogPath(entry.source_path)}
+                        >
+                          <i data-lucide={copiedPath === entry.source_path ? "check" : "copy"}></i>
+                          {copiedPath === entry.source_path ? "Copied" : "Copy path"}
                         </button>
                       </div>
                     </div>
@@ -530,314 +594,316 @@ export function TeamsPage({ client, toast, navigate }: AppPageProps) {
       </PageCard>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <PageCard
-          title="Agents"
-          subtitle="Create reusable agent personalities, prompts, and default models for automation workflows"
-        >
-          <div className="grid gap-3">
-            <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-              <div className="text-xs font-medium uppercase tracking-[0.24em] text-cyan-300">
-                Reusable Personalities
-              </div>
-              <div className="mt-2 text-sm text-slate-300">
-                Each saved agent defines a persistent personality for automation workflows. Define
-                who the agent is, what kind of work it owns, and which default model it should use.
-                These personalities can be reused in standups and other workflow responses.
-              </div>
-            </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              <input
-                className="tcp-input"
-                placeholder="template-id"
-                value={form.templateId}
-                disabled={!!editingTemplateId}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    templateId: (event.target as HTMLInputElement).value,
-                  }))
-                }
-              />
-              <input
-                className="tcp-input"
-                placeholder="Display name"
-                value={form.displayName}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    displayName: (event.target as HTMLInputElement).value,
-                  }))
-                }
-              />
-              <select
-                className="tcp-input"
-                value={form.role}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    role: (event.target as HTMLSelectElement).value as TemplateFormState["role"],
-                  }))
-                }
-              >
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="tcp-input"
-                placeholder="Avatar URL or upload (optional)"
-                value={form.avatarUrl}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    avatarUrl: (event.target as HTMLInputElement).value,
-                  }))
-                }
-              />
-              <input
-                className="tcp-input"
-                placeholder="Model provider (optional)"
-                value={form.modelProvider}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    modelProvider: (event.target as HTMLInputElement).value,
-                  }))
-                }
-              />
-              <input
-                className="tcp-input"
-                placeholder="Model ID (optional)"
-                value={form.modelId}
-                onInput={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    modelId: (event.target as HTMLInputElement).value,
-                  }))
-                }
-              />
-            </div>
-            <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
-              <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-3">
-                <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
-                  Prompt Guidance
+        <div ref={agentsSectionRef}>
+          <PageCard
+            title="Agents"
+            subtitle="Create reusable agent personalities, prompts, and default models for automation workflows"
+          >
+            <div className="grid gap-3">
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                <div className="text-xs font-medium uppercase tracking-[0.24em] text-cyan-300">
+                  Reusable Personalities
                 </div>
                 <div className="mt-2 text-sm text-slate-300">
-                  Write the lasting perspective for this agent, not a one-off task. Good prompts
-                  describe ownership and judgment: frontend lead, backend lead, product ops,
-                  incident watcher.
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {PROMPT_EXAMPLES.map((example) => (
-                    <button
-                      type="button"
-                      key={example}
-                      className="tcp-btn h-auto min-h-8 px-3 py-2 text-left text-xs"
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          systemPrompt: example,
-                        }))
-                      }
-                    >
-                      Use Example
-                    </button>
-                  ))}
+                  Each saved agent defines a persistent personality for automation workflows. Define
+                  who the agent is, what kind of work it owns, and which default model it should
+                  use. These personalities can be reused in standups and other workflow responses.
                 </div>
               </div>
-              <div className="rounded-[28px] border border-slate-800/80 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.18),_transparent_45%),linear-gradient(180deg,rgba(15,23,42,0.9),rgba(2,6,23,0.96))] p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-4">
-                    <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyan-400/10 text-lg font-semibold text-cyan-100">
-                      {avatarUrl ? (
-                        <img
-                          src={avatarUrl}
-                          alt={personalityName}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        personalityInitial
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <strong className="text-white">{personalityName}</strong>
-                        <span className="tcp-badge-info">{form.role}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {form.templateId.trim() || "template-id"}
-                      </div>
-                      <div className="mt-2 text-sm text-slate-300">{selectedRoleHint}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="tcp-icon-btn"
-                      title="Upload avatar"
-                      aria-label="Upload avatar"
-                      onClick={() => avatarInputRef.current?.click()}
-                    >
-                      <i data-lucide="pencil"></i>
-                    </button>
-                    <button
-                      type="button"
-                      className="tcp-icon-btn"
-                      title="Clear avatar"
-                      aria-label="Clear avatar"
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          avatarUrl: "",
-                        }))
-                      }
-                    >
-                      <i data-lucide="trash-2"></i>
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-slate-400">
-                  Upload an image like Settings Identity preview, or paste a direct avatar URL.
-                </div>
+              <div className="grid gap-2 md:grid-cols-2">
                 <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    handleAvatarUpload((event.target as HTMLInputElement).files?.[0] || null);
-                    (event.target as HTMLInputElement).value = "";
-                  }}
+                  className="tcp-input"
+                  placeholder="template-id"
+                  value={form.templateId}
+                  disabled={!!editingTemplateId}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      templateId: (event.target as HTMLInputElement).value,
+                    }))
+                  }
                 />
-                <div className="mt-4 rounded-2xl border border-slate-800/70 bg-black/20 p-4">
+                <input
+                  className="tcp-input"
+                  placeholder="Display name"
+                  value={form.displayName}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      displayName: (event.target as HTMLInputElement).value,
+                    }))
+                  }
+                />
+                <select
+                  className="tcp-input"
+                  value={form.role}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      role: (event.target as HTMLSelectElement).value as TemplateFormState["role"],
+                    }))
+                  }
+                >
+                  {ROLE_OPTIONS.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="tcp-input"
+                  placeholder="Avatar URL or upload (optional)"
+                  value={form.avatarUrl}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      avatarUrl: (event.target as HTMLInputElement).value,
+                    }))
+                  }
+                />
+                <input
+                  className="tcp-input"
+                  placeholder="Model provider (optional)"
+                  value={form.modelProvider}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      modelProvider: (event.target as HTMLInputElement).value,
+                    }))
+                  }
+                />
+                <input
+                  className="tcp-input"
+                  placeholder="Model ID (optional)"
+                  value={form.modelId}
+                  onInput={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      modelId: (event.target as HTMLInputElement).value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+                <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-3">
                   <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
-                    Personality Preview
+                    Prompt Guidance
                   </div>
-                  <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">
-                    {form.systemPrompt.trim() ||
-                      "This agent will respond from the persistent personality you define here across workflows and standups."}
+                  <div className="mt-2 text-sm text-slate-300">
+                    Write the lasting perspective for this agent, not a one-off task. Good prompts
+                    describe ownership and judgment: frontend lead, backend lead, product ops,
+                    incident watcher.
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {PROMPT_EXAMPLES.map((example) => (
+                      <button
+                        type="button"
+                        key={example}
+                        className="tcp-btn h-auto min-h-8 px-3 py-2 text-left text-xs"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            systemPrompt: example,
+                          }))
+                        }
+                      >
+                        Use Example
+                      </button>
+                    ))}
                   </div>
                 </div>
-                {(form.modelProvider.trim() || form.modelId.trim()) && (
-                  <div className="mt-3 text-xs text-cyan-200">
-                    Default model: {form.modelProvider.trim() || "provider"}/
-                    {form.modelId.trim() || "model"}
+                <div className="rounded-[28px] border border-slate-800/80 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.18),_transparent_45%),linear-gradient(180deg,rgba(15,23,42,0.9),rgba(2,6,23,0.96))] p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyan-400/10 text-lg font-semibold text-cyan-100">
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt={personalityName}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          personalityInitial
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="text-white">{personalityName}</strong>
+                          <span className="tcp-badge-info">{form.role}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {form.templateId.trim() || "template-id"}
+                        </div>
+                        <div className="mt-2 text-sm text-slate-300">{selectedRoleHint}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="tcp-icon-btn"
+                        title="Upload avatar"
+                        aria-label="Upload avatar"
+                        onClick={() => avatarInputRef.current?.click()}
+                      >
+                        <i data-lucide="pencil"></i>
+                      </button>
+                      <button
+                        type="button"
+                        className="tcp-icon-btn"
+                        title="Clear avatar"
+                        aria-label="Clear avatar"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            avatarUrl: "",
+                          }))
+                        }
+                      >
+                        <i data-lucide="trash-2"></i>
+                      </button>
+                    </div>
                   </div>
-                )}
+                  <div className="mt-3 text-xs text-slate-400">
+                    Upload an image like Settings Identity preview, or paste a direct avatar URL.
+                  </div>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      handleAvatarUpload((event.target as HTMLInputElement).files?.[0] || null);
+                      (event.target as HTMLInputElement).value = "";
+                    }}
+                  />
+                  <div className="mt-4 rounded-2xl border border-slate-800/70 bg-black/20 p-4">
+                    <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
+                      Personality Preview
+                    </div>
+                    <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">
+                      {form.systemPrompt.trim() ||
+                        "This agent will respond from the persistent personality you define here across workflows and standups."}
+                    </div>
+                  </div>
+                  {(form.modelProvider.trim() || form.modelId.trim()) && (
+                    <div className="mt-3 text-xs text-cyan-200">
+                      Default model: {form.modelProvider.trim() || "provider"}/
+                      {form.modelId.trim() || "model"}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-            <textarea
-              className="tcp-input min-h-[140px]"
-              placeholder="Persistent system prompt"
-              value={form.systemPrompt}
-              onInput={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  systemPrompt: (event.target as HTMLTextAreaElement).value,
-                }))
-              }
-            />
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="tcp-btn"
-                disabled={templateMutation.isPending}
-                onClick={() => templateMutation.mutate()}
-              >
-                <i data-lucide="save"></i>
-                {editingTemplateId ? "Update Agent" : "Create Agent"}
-              </button>
-              {hasDraft && (
+              <textarea
+                className="tcp-input min-h-[140px]"
+                placeholder="Persistent system prompt"
+                value={form.systemPrompt}
+                onInput={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    systemPrompt: (event.target as HTMLTextAreaElement).value,
+                  }))
+                }
+              />
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   className="tcp-btn"
-                  onClick={() => {
-                    setEditingTemplateId(null);
-                    setForm(EMPTY_FORM);
-                  }}
+                  disabled={templateMutation.isPending}
+                  onClick={() => templateMutation.mutate()}
                 >
-                  <i data-lucide="rotate-ccw"></i>
-                  Reset
+                  <i data-lucide="save"></i>
+                  {editingTemplateId ? "Update Agent" : "Create Agent"}
                 </button>
-              )}
-            </div>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
-                  Saved Agents
-                </div>
-                <div className="tcp-subtle text-xs">{templates.length} saved</div>
+                {hasDraft && (
+                  <button
+                    type="button"
+                    className="tcp-btn"
+                    onClick={() => {
+                      setEditingTemplateId(null);
+                      setForm(EMPTY_FORM);
+                    }}
+                  >
+                    <i data-lucide="rotate-ccw"></i>
+                    Reset
+                  </button>
+                )}
               </div>
-              {templates.length ? (
-                templates.map((template) => (
-                  <div key={template.templateId} className="tcp-list-item">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <strong>{template.displayName || template.templateId}</strong>
-                          <span className="tcp-badge-info">{template.role}</span>
-                          {template.modelProvider && template.modelId ? (
-                            <span className="tcp-badge-ok">
-                              {template.modelProvider}/{template.modelId}
-                            </span>
-                          ) : null}
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
+                    Saved Agents
+                  </div>
+                  <div className="tcp-subtle text-xs">{templates.length} saved</div>
+                </div>
+                {templates.length ? (
+                  templates.map((template) => (
+                    <div key={template.templateId} className="tcp-list-item">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <strong>{template.displayName || template.templateId}</strong>
+                            <span className="tcp-badge-info">{template.role}</span>
+                            {template.modelProvider && template.modelId ? (
+                              <span className="tcp-badge-ok">
+                                {template.modelProvider}/{template.modelId}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="tcp-subtle text-xs">{template.templateId}</div>
+                          {template.systemPrompt ? (
+                            <div className="mt-2 line-clamp-4 text-xs text-slate-300">
+                              {template.systemPrompt}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-xs text-slate-500">
+                              No persistent prompt set yet.
+                            </div>
+                          )}
                         </div>
-                        <div className="tcp-subtle text-xs">{template.templateId}</div>
-                        {template.systemPrompt ? (
-                          <div className="mt-2 line-clamp-4 text-xs text-slate-300">
-                            {template.systemPrompt}
-                          </div>
-                        ) : (
-                          <div className="mt-2 text-xs text-slate-500">
-                            No persistent prompt set yet.
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          className="tcp-btn h-7 px-2 text-xs"
-                          onClick={() => {
-                            setEditingTemplateId(template.templateId);
-                            setForm({
-                              templateId: template.templateId,
-                              displayName: template.displayName,
-                              avatarUrl: template.avatarUrl,
-                              role: (ROLE_OPTIONS.includes(template.role as any)
-                                ? template.role
-                                : "worker") as TemplateFormState["role"],
-                              systemPrompt: template.systemPrompt,
-                              modelProvider: template.modelProvider,
-                              modelId: template.modelId,
-                            });
-                          }}
-                        >
-                          <i data-lucide="pencil"></i>
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="tcp-btn-danger h-7 px-2 text-xs"
-                          onClick={() => deleteMutation.mutate(template.templateId)}
-                        >
-                          <i data-lucide="trash-2"></i>
-                          Delete
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-xs"
+                            onClick={() => {
+                              setEditingTemplateId(template.templateId);
+                              setForm({
+                                templateId: template.templateId,
+                                displayName: template.displayName,
+                                avatarUrl: template.avatarUrl,
+                                role: (ROLE_OPTIONS.includes(template.role as any)
+                                  ? template.role
+                                  : "worker") as TemplateFormState["role"],
+                                systemPrompt: template.systemPrompt,
+                                modelProvider: template.modelProvider,
+                                modelId: template.modelId,
+                              });
+                            }}
+                          >
+                            <i data-lucide="pencil"></i>
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn-danger h-7 px-2 text-xs"
+                            onClick={() => deleteMutation.mutate(template.templateId)}
+                          >
+                            <i data-lucide="trash-2"></i>
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
-              ) : (
-                <EmptyState
-                  title="No agents yet"
-                  text="Create your first saved personality here, then reuse it across automation workflows and standups."
-                />
-              )}
+                  ))
+                ) : (
+                  <EmptyState
+                    title="No agents yet"
+                    text="Create your first saved personality here, then reuse it across automation workflows and standups."
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        </PageCard>
+          </PageCard>
+        </div>
 
         <PageCard title="Team Instances" subtitle="Running collaborative agent instances">
           <div className="grid gap-2">

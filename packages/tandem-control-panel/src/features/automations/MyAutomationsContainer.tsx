@@ -75,6 +75,7 @@ export function MyAutomationsContainer({
     normalizeTimestamp,
     workflowQueueReason,
     detectWorkflowActiveTaskId,
+    detectWorkflowActiveTaskIds,
     workflowDescendantTaskIds,
     deriveRunDebugHints,
     explainRunFailure,
@@ -1228,7 +1229,9 @@ export function MyAutomationsContainer({
     : [];
   const workflowProjection = useMemo(() => {
     if (!isWorkflowRun) return { tasks: [], currentTaskId: "", taskSource: "empty" as const };
-    const activeTaskId = detectWorkflowActiveTaskId(selectedRun, [], sessionEvents);
+    const activeTaskIds = detectWorkflowActiveTaskIds(selectedRun, [], sessionEvents);
+    const activeTaskId = activeTaskIds[0] || "";
+    const activeTaskIdSet = new Set(activeTaskIds);
     const contextProjection = projectOrchestrationRun({
       run: (workflowContextRunQuery.data as any)?.run || null,
       tasks: Array.isArray((workflowContextRunQuery.data as any)?.run?.steps)
@@ -1238,9 +1241,9 @@ export function MyAutomationsContainer({
       events: workflowContextEvents,
     });
     if (contextProjection.tasks.length) {
-      const normalizedTasks = activeTaskId
+      const normalizedTasks = activeTaskIdSet.size
         ? contextProjection.tasks.map((task: any) =>
-            task.id === activeTaskId && ["pending", "runnable", "assigned"].includes(task.state)
+            activeTaskIdSet.has(task.id) && ["pending", "runnable", "assigned"].includes(task.state)
               ? { ...task, state: "in_progress" as const }
               : task
           )
@@ -1251,9 +1254,22 @@ export function MyAutomationsContainer({
         currentTaskId: contextProjection.currentTaskId || activeTaskId,
       };
     }
-    return workflowProjectionFromRunSnapshot(selectedRun, activeTaskId);
+    const snapshotProjection = workflowProjectionFromRunSnapshot(selectedRun, activeTaskId);
+    const normalizedTasks = activeTaskIdSet.size
+      ? snapshotProjection.tasks.map((task: any) =>
+          activeTaskIdSet.has(task.id) && ["pending", "runnable", "assigned"].includes(task.state)
+            ? { ...task, state: "in_progress" as const }
+            : task
+        )
+      : snapshotProjection.tasks;
+    return {
+      ...snapshotProjection,
+      tasks: normalizedTasks,
+      currentTaskId: snapshotProjection.currentTaskId || activeTaskId,
+    };
   }, [
     detectWorkflowActiveTaskId,
+    detectWorkflowActiveTaskIds,
     isWorkflowRun,
     selectedRun,
     sessionEvents,

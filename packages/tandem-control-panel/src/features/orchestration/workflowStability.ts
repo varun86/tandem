@@ -376,6 +376,38 @@ export function workflowLatestLifecycleTaskId(run: any) {
   return workflowEventTaskId(latestEvent);
 }
 
+export function workflowActiveLifecycleTaskIds(run: any) {
+  const active = new Set<string>();
+  const terminalEvents = new Set([
+    "node_completed",
+    "node_completed_with_warnings",
+    "node_failed",
+    "node_blocked",
+    "node_verify_failed",
+    "node_repair_requested",
+    "node_skipped_no_work",
+    "node_approval_rollback",
+  ]);
+  const history = [...workflowLifecycleHistory(run)].sort(
+    (a: any, b: any) =>
+      Number(a?.recorded_at_ms || a?.recordedAtMs || 0) -
+      Number(b?.recorded_at_ms || b?.recordedAtMs || 0)
+  );
+  for (const event of history) {
+    const taskId = workflowEventTaskId(event);
+    if (!taskId) continue;
+    const eventType = String(event?.event || "").trim();
+    if (eventType === "node_started") {
+      active.add(taskId);
+      continue;
+    }
+    if (terminalEvents.has(eventType)) {
+      active.delete(taskId);
+    }
+  }
+  return Array.from(active);
+}
+
 export function workflowLatestNodeOutput(run: any) {
   const outputs = Object.values(workflowNodeOutputs(run)).filter(Boolean);
   if (!outputs.length) return null;
