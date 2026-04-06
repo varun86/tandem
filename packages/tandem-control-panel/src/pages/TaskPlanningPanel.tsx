@@ -745,7 +745,7 @@ export function TaskPlanningPanel({
         if (!rows.length && client?.workflowPlannerSessions?.create) {
           const created = await client.workflowPlannerSessions.create({
             project_slug: selectedProjectSlug,
-            title: plannerSessionDefaultTitle("", Date.now()),
+            title: plannerSessionTitle({ goal: "", fallbackTime: Date.now() }),
             workspace_root: resolvedWorkspaceRoot || workspaceRootSeed || "",
             goal: "",
             notes: "",

@@ -79,12 +79,12 @@ export function Step1Goal(props: Step1GoalProps) {
   }, [value]);
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-col h-full gap-4">
       <p className="text-sm text-slate-400">
         Describe what you want the AI to do — in plain English. No technical knowledge needed.
       </p>
       <textarea
-        className="tcp-input min-h-[120px] text-base"
+        className="tcp-input flex-1 min-h-[200px] text-base"
         placeholder={`e.g. "${goalPlaceholder}"`}
         value={value}
         onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}

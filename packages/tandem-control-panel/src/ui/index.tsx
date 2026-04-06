@@ -259,18 +259,23 @@ export function PanelCard({
   subtitle,
   actions,
   className = "",
+  fullHeight,
   children,
 }: {
   title?: any;
   subtitle?: any;
   actions?: any;
   className?: string;
+  fullHeight?: boolean;
   children: any;
 }) {
   return (
-    <RevealCard as="section" className={`tcp-panel-card ${className}`.trim()}>
+    <RevealCard
+      as="section"
+      className={`tcp-panel-card ${fullHeight ? "flex flex-col h-full" : ""} ${className}`.trim()}
+    >
       {title || subtitle || actions ? (
-        <div className="tcp-panel-card-head">
+        <div className="tcp-panel-card-head shrink-0">
           <div className="min-w-0">
             {title ? <h3 className="tcp-title">{title}</h3> : null}
             {subtitle ? <p className="tcp-subtle mt-1">{subtitle}</p> : null}
@@ -278,7 +283,7 @@ export function PanelCard({
           {actions ? <div className="shrink-0">{actions}</div> : null}
         </div>
       ) : null}
-      {children}
+      <div className={fullHeight ? "flex-1 flex flex-col min-h-0" : ""}>{children}</div>
     </RevealCard>
   );
 }

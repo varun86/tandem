@@ -747,7 +747,7 @@ export function CreateWizard({
   }, [step]);
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-col h-full gap-4 min-h-0">
       <div className="flex items-center gap-2">
         {AUTOMATION_WIZARD_CONFIG.steps.map((label, i) => {
           const num = (i + 1) as WizardStep;
@@ -780,6 +780,7 @@ export function CreateWizard({
       <AnimatePresence mode="wait">
         <motion.div
           key={step}
+          className="flex-1 flex flex-col min-h-0 overflow-hidden"
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -16 }}

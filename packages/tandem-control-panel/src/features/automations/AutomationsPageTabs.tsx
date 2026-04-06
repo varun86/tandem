@@ -56,7 +56,7 @@ export function AutomationsPageTabs({
   ];
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-col h-full gap-4">
       <div className="flex gap-1 rounded-xl border border-slate-700/50 bg-slate-900/40 p-1">
         {tabs.map((entry) => (
           <button
@@ -77,6 +77,7 @@ export function AutomationsPageTabs({
       <AnimatePresence mode="wait">
         <motion.div
           key={tab}
+          className="flex-1 flex flex-col min-h-0"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
@@ -86,8 +87,9 @@ export function AutomationsPageTabs({
             <PageCardComponent
               title="Create an Automation"
               subtitle="Describe what you want, pick a schedule, and Tandem handles the rest"
+              fullHeight
             >
-              <div className="grid gap-4">
+              <div className="flex flex-col h-full gap-4">
                 <div className="rounded-xl border border-slate-700/50 bg-slate-950/50 p-4">
                   <div className="mb-2 text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
                     Builder Mode

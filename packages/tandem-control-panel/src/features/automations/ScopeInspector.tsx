@@ -792,7 +792,7 @@ export function ScopeInspector({
   }, [planPackage, planValidationState, successCriteriaReport]);
   const contextPacks = useMemo(() => {
     const nowMs = Date.now();
-    return toArray(contextPacksQuery.data, "context_packs")
+    return toArray((contextPacksQuery.data as any)?.context_packs)
       .map((pack: any) => ({
         packId: safeString(pack?.pack_id),
         title: safeString(pack?.title || pack?.summary || pack?.pack_id || "shared context"),

@@ -7,15 +7,23 @@ export function PageCard({
   children,
   actions,
   className,
+  fullHeight,
 }: {
   title: any;
   subtitle?: string;
   children: any;
   actions?: any;
   className?: string;
+  fullHeight?: boolean;
 }) {
   return (
-    <PanelCard title={title} subtitle={subtitle} actions={actions} className={className || ""}>
+    <PanelCard
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      className={className || ""}
+      fullHeight={fullHeight}
+    >
       {children}
     </PanelCard>
   );
