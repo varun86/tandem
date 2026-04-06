@@ -2,6 +2,10 @@ import { motion } from "motion/react";
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
 import { ScheduleBuilder } from "./ScheduleBuilder";
 import { ScopeInspector } from "./ScopeInspector";
+import { WatchConditionEditor } from "./WatchConditionEditor";
+import { ScopePolicyEditor } from "./ScopePolicyEditor";
+import { HandoffConfigEditor } from "./HandoffConfigEditor";
+import { HandoffPanel } from "./HandoffPanel";
 
 export function LegacyAutomationEditDialog({
   editDraft,
@@ -200,6 +204,8 @@ export function WorkflowAutomationEditDialog({
   overlapHistoryEntries,
   runNowV2Mutation,
   updateWorkflowAutomationMutation,
+  automationsV2List = [],
+  client,
 }: any) {
   if (!workflowEditDraft) return null;
 
@@ -591,6 +597,52 @@ export function WorkflowAutomationEditDialog({
                 </div>
               ) : (
                 <div className="text-xs text-slate-400">No MCP servers configured yet.</div>
+              )}
+            </div>
+
+            {/* ─── Connected Agent Handoffs ─────────────────────────────── */}
+            <div className="grid gap-3 rounded-xl border border-violet-500/20 bg-violet-900/5 p-4">
+              <div className="flex items-center gap-2">
+                <i data-lucide="network" className="h-4 w-4 text-violet-400" />
+                <div>
+                  <div className="text-xs font-medium text-violet-300">Connected agents</div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    Handoff configuration, watch conditions, and scope policy for agent-to-agent
+                    messaging.
+                  </div>
+                </div>
+              </div>
+
+              <HandoffConfigEditor
+                value={workflowEditDraft.handoffConfig}
+                onChange={(next: any) =>
+                  setWorkflowEditDraft((current: any) =>
+                    current ? { ...current, handoffConfig: next } : current
+                  )
+                }
+              />
+
+              <WatchConditionEditor
+                value={workflowEditDraft.watchConditions ?? []}
+                automations={automationsV2List}
+                onChange={(next: any) =>
+                  setWorkflowEditDraft((current: any) =>
+                    current ? { ...current, watchConditions: next } : current
+                  )
+                }
+              />
+
+              <ScopePolicyEditor
+                value={workflowEditDraft.scopePolicy}
+                onChange={(next: any) =>
+                  setWorkflowEditDraft((current: any) =>
+                    current ? { ...current, scopePolicy: next } : current
+                  )
+                }
+              />
+
+              {workflowEditDraft.automationId && client?.automationsV2?.listHandoffs && (
+                <HandoffPanel automationId={workflowEditDraft.automationId} client={client} />
               )}
             </div>
 

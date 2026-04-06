@@ -3101,6 +3101,47 @@ class AutomationsV2 {
     );
   }
 
+  async gateDecide(
+    runId: string,
+    input: { decision: "approve" | "deny"; reason?: string }
+  ): Promise<{ ok?: boolean; run?: AutomationV2RunRecord }> {
+    return this.req<{ ok?: boolean; run?: AutomationV2RunRecord }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/gate`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+
+  /** List handoff artifacts (inbox / approved / archived) for a workflow automation. */
+  async listHandoffs(id: string): Promise<{
+    automation_id: string;
+    workspace_root: string;
+    handoff_config: {
+      inbox_dir: string;
+      approved_dir: string;
+      archived_dir: string;
+      auto_approve: boolean;
+    };
+    inbox: JsonObject[];
+    approved: JsonObject[];
+    archived: JsonObject[];
+    counts: { inbox: number; approved: number; archived: number; total: number };
+  }> {
+    return this.req<{
+      automation_id: string;
+      workspace_root: string;
+      handoff_config: {
+        inbox_dir: string;
+        approved_dir: string;
+        archived_dir: string;
+        auto_approve: boolean;
+      };
+      inbox: JsonObject[];
+      approved: JsonObject[];
+      archived: JsonObject[];
+      counts: { inbox: number; approved: number; archived: number; total: number };
+    }>(`/automations/v2/${encodeURIComponent(id)}/handoffs`);
+  }
+
   events(options?: {
     automationId?: string;
     automation_id?: string;

@@ -849,6 +849,11 @@ export function MyAutomationsContainer({
             }
           : existing?.flow,
         agents,
+        ...(draft.handoffConfig != null ? { handoff_config: draft.handoffConfig } : {}),
+        ...(Array.isArray(draft.watchConditions) && draft.watchConditions.length > 0
+          ? { watch_conditions: draft.watchConditions }
+          : {}),
+        ...(draft.scopePolicy != null ? { scope_policy: draft.scopePolicy } : {}),
         metadata: {
           ...existingMetadata,
           workspace_root: workspaceRoot,
@@ -2123,6 +2128,7 @@ export function MyAutomationsContainer({
         overlapHistoryEntries,
         providerOptions,
         mcpServers,
+        client,
       }}
       actions={{
         setCalendarRange,

@@ -636,6 +636,14 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     approvedPlanMaterialization,
     connectorBindingsJson,
     sharedContextPackIdsText,
+    // Connected-agent fields
+    handoffConfig: automation?.handoff_config || automation?.handoffConfig || null,
+    watchConditions: Array.isArray(automation?.watch_conditions)
+      ? automation.watch_conditions
+      : Array.isArray(automation?.watchConditions)
+        ? automation.watchConditions
+        : [],
+    scopePolicy: automation?.scope_policy || automation?.scopePolicy || null,
   };
 }
 

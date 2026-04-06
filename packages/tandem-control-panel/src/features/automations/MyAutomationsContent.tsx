@@ -115,6 +115,8 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     overlapHistoryEntries,
     providerOptions,
     mcpServers,
+    automationsV2,
+    client,
   } = state;
 
   const {
@@ -1042,6 +1044,8 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
         overlapHistoryEntries={overlapHistoryEntries}
         runNowV2Mutation={runNowV2Mutation}
         updateWorkflowAutomationMutation={updateWorkflowAutomationMutation}
+        automationsV2List={automationsV2 ?? []}
+        client={client}
       />
       <DeleteAutomationDialog
         deleteConfirm={deleteConfirm}
