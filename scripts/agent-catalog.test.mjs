@@ -7,7 +7,7 @@ import test from "node:test";
 import { generateAgentCatalog } from "./generate-agent-catalog.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourceRoot = path.join(repoRoot, "docs/internal/awesome-codex-subagents/categories");
+const sourceRoot = path.join(repoRoot, "docs/internal/tandem-proprietary/categories");
 
 function walkTomls(dir) {
   const out = [];

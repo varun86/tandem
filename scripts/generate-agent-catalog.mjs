@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
-const sourceRoot = path.join(repoRoot, "docs/internal/awesome-codex-subagents");
+const sourceRoot = path.join(repoRoot, "docs/internal/tandem-proprietary");
 const categoryRoot = path.join(sourceRoot, "categories");
 const outputFiles = [
   path.join(repoRoot, "src/generated/agent-catalog.json"),
@@ -200,7 +200,7 @@ function buildCatalog() {
         id: categorySlug,
         title: categoryMeta.title || toTitleCase(categorySlug),
         summary: categoryMeta.summary || "",
-        source_path: path.posix.join("docs/internal/awesome-codex-subagents/categories", categoryDir),
+        source_path: path.posix.join("docs/internal/tandem-proprietary/categories", categoryDir),
         toml_files: fs
           .readdirSync(categoryPath, { withFileTypes: true })
           .filter((file) => file.isFile() && file.name.endsWith(".toml"))
@@ -224,7 +224,7 @@ function buildCatalog() {
       }
 
       const sourcePath = path.posix.join(
-        "docs/internal/awesome-codex-subagents/categories",
+        "docs/internal/tandem-proprietary/categories",
         path.relative(categoryRoot, filePath).split(path.sep).join("/")
       );
 
@@ -276,7 +276,7 @@ function buildCatalog() {
 
   return {
     generated_at: new Date().toISOString(),
-    source_root: path.posix.join("docs/internal/awesome-codex-subagents"),
+    source_root: path.posix.join("docs/internal/tandem-proprietary"),
     categories,
     agents,
   };
