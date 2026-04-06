@@ -719,14 +719,12 @@ export function IntentPlannerPage({
 
   return (
     <AnimatedPage className="flex flex-col min-h-0 h-full overflow-hidden">
-      <div
-        className={`grid flex-1 gap-4 min-h-0 ${showThirdColumn ? "xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.2fr)_minmax(320px,0.95fr)]" : "xl:grid-cols-[minmax(320px,0.8fr)_minmax(0,1.2fr)]"}`}
-      >
-        <div className="flex flex-col gap-4 min-h-0 h-full">
+      <div className="grid flex-1 gap-4 min-h-0 xl:grid-cols-[minmax(400px,0.8fr)_minmax(0,1.2fr)]">
+        <div className="flex flex-col gap-4 min-h-0 h-full overflow-y-auto pr-1">
           <PanelCard
             title="Intent brief"
             subtitle="Describe the mission goal."
-            className="flex flex-col h-full min-h-0"
+            className="flex flex-col shrink-0"
             actions={
               <div className="flex flex-wrap gap-2 text-[10px]">
                 <Badge tone="ok">intent → plan</Badge>
@@ -794,161 +792,124 @@ export function IntentPlannerPage({
             />
           </PanelCard>
 
-          {!showThirdColumn && (
-            <PlannerDraftList
-              storagePrefix={namedDraftPrefix}
-              historyKey={historyKey}
-              draftName={namedDraftName}
-              onDraftNameChange={setNamedDraftName}
-              onSaveCurrentDraft={saveCurrentNamedDraft}
-              onOpenDraft={openNamedDraft}
-              onDeleteDraft={deleteNamedDraft}
-              onOpenHistory={openHistoryDraft}
-              onDeleteHistory={deleteHistoryDraft}
-            />
-          )}
+          <PlannerDraftList
+            storagePrefix={namedDraftPrefix}
+            historyKey={historyKey}
+            draftName={namedDraftName}
+            onDraftNameChange={setNamedDraftName}
+            onSaveCurrentDraft={saveCurrentNamedDraft}
+            onOpenDraft={openNamedDraft}
+            onDeleteDraft={deleteNamedDraft}
+            onOpenHistory={openHistoryDraft}
+            onDeleteHistory={deleteHistoryDraft}
+          />
         </div>
 
-        <PanelCard
-          title="Planner conversation"
-          subtitle="Shape the full workflow plan."
-          className="flex flex-col min-h-0"
-          actions={
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="tcp-btn"
-                onClick={() => void startPlanning()}
-                disabled={isPlanning}
-              >
-                <i data-lucide={hasPlan ? "refresh-cw" : "play"} className="mr-1 h-3 w-3"></i>
-                {hasPlan ? "Regenerate" : "Start planning"}
-              </button>
-              <button
-                type="button"
-                className="tcp-btn"
-                onClick={() => void resetPlan()}
-                title="Reset session"
-              >
-                <i data-lucide="rotate-ccw"></i>
-              </button>
-            </div>
-          }
-        >
-          <div className="tcp-chat-container flex-1">
-            {plannerDraftUpdatedAtMs ? (
-              <div className="mb-3 rounded-xl border border-white/5 bg-black/20 px-3 py-2 text-[10px] text-slate-500">
-                Last autosave: {new Date(plannerDraftUpdatedAtMs).toLocaleTimeString()}
+        <div className="flex flex-col gap-4 min-h-0 h-full overflow-y-auto pr-1 pb-10">
+          <PanelCard
+            title="Planner conversation"
+            subtitle="Shape the full workflow plan."
+            className={`flex flex-col shrink-0 ${hasGeneratedDraft ? "h-[500px]" : "flex-1 min-h-[500px]"}`}
+            actions={
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="tcp-btn"
+                  onClick={() => void startPlanning()}
+                  disabled={isPlanning}
+                >
+                  <i data-lucide={hasPlan ? "refresh-cw" : "play"} className="mr-1 h-3 w-3"></i>
+                  {hasPlan ? "Regenerate" : "Start planning"}
+                </button>
+                <button
+                  type="button"
+                  className="tcp-btn"
+                  onClick={() => void resetPlan()}
+                  title="Reset session"
+                >
+                  <i data-lucide="rotate-ccw"></i>
+                </button>
               </div>
-            ) : null}
-            <div className="tcp-chat-fill">
-              <ChatInterfacePanel
-                messages={plannerChatMessages}
-                emptyText="Describe your mission intent to start."
-                inputValue={plannerInput}
-                inputPlaceholder={
-                  hasPlan ? "Refine the plan..." : "Describe the mission and outcome..."
-                }
-                sendLabel={hasPlan ? "Send to planner" : "Start plan"}
-                onInputChange={setPlannerInput}
-                onSend={() =>
-                  void (hasPlan ? revisePlan(plannerInput) : startPlanning(plannerInput))
-                }
-                sendDisabled={isPlanning || !safeString(plannerInput)}
-                inputDisabled={isPlanning}
-                statusTitle={plannerStatusTitle}
-                statusDetail={isPlanning ? plannerStatusDetail : ""}
-                questionTitle="Planner question"
-                questionText={clarification.status === "waiting" ? clarification.question : ""}
-                quickReplies={clarification.status === "waiting" ? clarification.options || [] : []}
-                onQuickReply={(option) => void revisePlan(option.label)}
-                questionHint="Reply with more detail."
-                botIdentity={{
-                  botName: `Tandem Planner`,
-                  botAvatarUrl: identity.botAvatarUrl,
-                }}
-                showThinking={planningState === "generating" || planningState === "revising"}
-                thinkingText={planningState === "revising" ? "Revising plan" : "Drafting plan"}
-              />
+            }
+          >
+            <div className="tcp-chat-container flex-1">
+              {plannerDraftUpdatedAtMs ? (
+                <div className="mb-3 rounded-xl border border-white/5 bg-black/20 px-3 py-2 text-[10px] text-slate-500">
+                  Last autosave: {new Date(plannerDraftUpdatedAtMs).toLocaleTimeString()}
+                </div>
+              ) : null}
+              <div className="tcp-chat-fill">
+                <ChatInterfacePanel
+                  messages={plannerChatMessages}
+                  emptyText="Describe your mission intent to start."
+                  inputValue={plannerInput}
+                  inputPlaceholder={
+                    hasPlan ? "Refine the plan..." : "Describe the mission and outcome..."
+                  }
+                  sendLabel={hasPlan ? "Send to planner" : "Start plan"}
+                  onInputChange={setPlannerInput}
+                  onSend={() =>
+                    void (hasPlan ? revisePlan(plannerInput) : startPlanning(plannerInput))
+                  }
+                  sendDisabled={isPlanning || !safeString(plannerInput)}
+                  inputDisabled={isPlanning}
+                  statusTitle={plannerStatusTitle}
+                  statusDetail={isPlanning ? plannerStatusDetail : ""}
+                  questionTitle="Planner question"
+                  questionText={clarification.status === "waiting" ? clarification.question : ""}
+                  quickReplies={
+                    clarification.status === "waiting" ? clarification.options || [] : []
+                  }
+                  onQuickReply={(option) => void revisePlan(option.label)}
+                  questionHint="Reply with more detail."
+                  botIdentity={{
+                    botName: `Tandem Planner`,
+                    botAvatarUrl: identity.botAvatarUrl,
+                  }}
+                  showThinking={planningState === "generating" || planningState === "revising"}
+                  thinkingText={planningState === "revising" ? "Revising plan" : "Drafting plan"}
+                />
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="tcp-btn-primary"
+                  onClick={() =>
+                    void (hasPlan ? revisePlan(plannerInput || brief.goal) : startPlanning())
+                  }
+                  disabled={
+                    isPlanning ||
+                    (!hasPlan && !safeString(brief.goal)) ||
+                    !safeString(brief.workspaceRoot)
+                  }
+                >
+                  {hasPlan ? "Revise draft" : "Generate draft"}
+                </button>
+                <button
+                  type="button"
+                  className="tcp-btn"
+                  onClick={() => setPlannerInput(brief.goal)}
+                  disabled={isPlanning || !safeString(brief.goal)}
+                >
+                  Seed from brief
+                </button>
+              </div>
             </div>
+          </PanelCard>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="tcp-btn-primary"
-                onClick={() =>
-                  void (hasPlan ? revisePlan(plannerInput || brief.goal) : startPlanning())
-                }
-                disabled={
-                  isPlanning ||
-                  (!hasPlan && !safeString(brief.goal)) ||
-                  !safeString(brief.workspaceRoot)
-                }
-              >
-                {hasPlan ? "Revise draft" : "Generate draft"}
-              </button>
-              <button
-                type="button"
-                className="tcp-btn"
-                onClick={() => setPlannerInput(brief.goal)}
-                disabled={isPlanning || !safeString(brief.goal)}
-              >
-                Seed from brief
-              </button>
-            </div>
-          </div>
-        </PanelCard>
+          {isPlanning ? (
+            <PanelCard
+              title="Generating plan flow"
+              subtitle="The planner is synthesizing structure."
+              className="shrink-0"
+            >
+              <PlanGenerationAnimation />
+            </PanelCard>
+          ) : null}
 
-        {showThirdColumn && (
-          <div className="flex flex-col gap-4 min-h-0 h-full overflow-y-auto pr-1">
-            {isPlanning ? (
-              <PanelCard
-                title="Generating plan flow"
-                subtitle="The planner is synthesizing structure."
-                className="shrink-0"
-              >
-                <PlanGenerationAnimation />
-              </PanelCard>
-            ) : null}
-            {hasGeneratedDraft ? (
-              <>
-                <PlanFormationPanel
-                  brief={brief}
-                  planPreview={planPreview}
-                  validationReport={validationReport}
-                  overlapAnalysis={overlapAnalysis}
-                />
-                <TimelinePlanPanel brief={brief} planPreview={planPreview} />
-                <PlanSummaryPanel
-                  planPreview={planPreview}
-                  brief={brief}
-                  planPackage={planPackage}
-                  planPackageBundle={planPackageBundle}
-                />
-                <PlanValidationPanel validationReport={validationReport} />
-                <PlanOverlapPanel overlapAnalysis={overlapAnalysis} />
-                <PlanReplayPanel planPackageReplay={planPackageReplay} />
-                <PlannerDiagnosticsPanel
-                  plannerDiagnostics={plannerDiagnostics}
-                  teachingLibrary={teachingLibrary}
-                  planningChangeSummary={planningChangeSummary}
-                />
-              </>
-            ) : null}
-
-            <PlannerDraftList
-              storagePrefix={namedDraftPrefix}
-              historyKey={historyKey}
-              draftName={namedDraftName}
-              onDraftNameChange={setNamedDraftName}
-              onSaveCurrentDraft={saveCurrentNamedDraft}
-              onOpenDraft={openNamedDraft}
-              onDeleteDraft={deleteNamedDraft}
-              onOpenHistory={openHistoryDraft}
-              onDeleteHistory={deleteHistoryDraft}
-            />
-
-            {hasGeneratedDraft ? (
+          {hasGeneratedDraft ? (
+            <>
               <PlannerHandoffPanel
                 brief={brief}
                 planPreview={planPreview}
@@ -960,9 +921,30 @@ export function IntentPlannerPage({
                 navigate={navigate}
                 toast={toast}
               />
-            ) : null}
-          </div>
-        )}
+              <PlanFormationPanel
+                brief={brief}
+                planPreview={planPreview}
+                validationReport={validationReport}
+                overlapAnalysis={overlapAnalysis}
+              />
+              <TimelinePlanPanel brief={brief} planPreview={planPreview} />
+              <PlanSummaryPanel
+                planPreview={planPreview}
+                brief={brief}
+                planPackage={planPackage}
+                planPackageBundle={planPackageBundle}
+              />
+              <PlanValidationPanel validationReport={validationReport} />
+              <PlanOverlapPanel overlapAnalysis={overlapAnalysis} />
+              <PlanReplayPanel planPackageReplay={planPackageReplay} />
+              <PlannerDiagnosticsPanel
+                plannerDiagnostics={plannerDiagnostics}
+                teachingLibrary={teachingLibrary}
+                planningChangeSummary={planningChangeSummary}
+              />
+            </>
+          ) : null}
+        </div>
       </div>
     </AnimatedPage>
   );

@@ -78,6 +78,10 @@ interface WorkflowEditDraft {
   approvedPlanMaterialization: any | null;
   connectorBindingsJson: string;
   sharedContextPackIdsText: string;
+  // Connected-agent handoff fields
+  handoffConfig: any | null;
+  watchConditions: any[];
+  scopePolicy: any | null;
 }
 
 interface WorkflowNodeEditDraft {

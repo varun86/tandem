@@ -33,6 +33,9 @@ Primary surfaces:
 - you already know the DAG or stage structure
 - you want a persistent scheduled workflow
 - you want agent-specific policies, checkpoints, retries, and run inspection
+- you want to stage artifacts through inbox/approved/archived handoff directories (`handoff_config`)
+- you want to restrict agent filesystem access with a scope policy (`scope_policy`)
+- you want filesystem watch conditions that gate or trigger execution (`watch_conditions`)
 
 Primary surfaces:
 
@@ -317,5 +320,6 @@ That gives you:
 - [Prompting Workflows And Missions](./prompting-workflows-and-missions/)
 - [Control Panel (Web Admin)](./control-panel/)
 - [MCP Automated Agents](./mcp-automated-agents/)
+- [Connected-Agent Handoffs](./connected-agent-handoffs/)
 - [Scheduling Workflows And Automations](./sdk/scheduling-automations/)
 - [Engine Authentication For Agents](./engine-authentication-for-agents/)

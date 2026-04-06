@@ -5,7 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.21] - Unreleased
+## [0.4.22] - Unreleased
+
+### Added
+
+- **Connected-agent handoff documentation and UI wiring**:
+  - Added `handoff_config`, `watch_conditions`, and `scope_policy` fields to the `WorkflowEditDraft` interface so the control panel can safely modify automations containing handoff artifacts without dropping those fields.
+  - Added a dedicated `Connected-Agent Handoffs` guide covering inbox/approved directory layout, auto-approval toggles, watch conditions, and restricted-access scope policies.
+  - Documented the new Handoffs tab in the Control Panel workflow edit dialog, bringing full visibility and management for artifact staging to the frontend.
+
+- **Engine Security & Governance Hardening**:
+  - Resolved 13 audit findings (including 2 critical sandbox/governance bypasses) across the core engine loop.
+  - Fixed an issue where `batch` tool sub-calls could operate outside workspace boundaries and bypass permission/policy evaluations by properly inheriting and forwarding execution context.
+  - Removed blanket local filesystem exemptions for MCP tools; added `TANDEM_MCP_SANDBOX_EXEMPT_SERVERS` for remote-only exceptions.
+  - Enforced a 10-minute TTL maximum on workspace sandbox overrides, expanded sensitive path blocklists, and implemented deny-wins plugin permission precedence.
+  - Prevented silent waiver of prewrite gates via `TANDEM_PREWRITE_GATE_STRICT=true`.
+
+- **Standup Reporting Pipeline Infrastructure**:
+  - Integrated `StandupUpdate` validator contracts, standup enforcement profiles, and strict filler rejection pipelines to guarantee high-quality non-meta-commentary reports.
+  - Added delta-aware previous standup injection to prevent duplicate findings across daily reports by automatically retrieving prior reports up to 7 days back.
+  - Formalized workspace-root output conventions so final standup deliverables are consistently placed in `outputs/` for immediate human discoverability.
+
+## [0.4.21] - 2026-04-06
 
 ### Added
 

@@ -161,6 +161,38 @@ If an external agent needs to create or run those missions through the engine AP
 
 Saved workflows auto-migrate to `workflow_structure_version = 2` while preserving automation IDs and original research node IDs used by downstream nodes.
 
+## Edit Workflow Automation Dialog (Handoffs Tab)
+
+The **Edit workflow automation** dialog (Automations page → three-dot menu → Edit) now includes a **Handoffs** tab that exposes three connected-agent fields on V2 automations:
+
+### Handoff config
+
+Controls the directory layout for staged handoff artifacts, relative to the automation's workspace root.
+
+- **Auto-approve toggle** — when on (default), artifacts move directly to the approved directory; when off, they wait in the inbox for a manual review step
+- **Inbox directory** — where agents write new output artifacts (default: `shared/handoffs/inbox`)
+- **Approved directory** — where promoted artifacts land (default: `shared/handoffs/approved`)
+- **Archived directory** — where old artifacts are retired (default: `shared/handoffs/archived`)
+- **Reset** — restores all fields to system defaults
+
+### Scope policy
+
+Defines the filesystem sandbox for all agents in the automation. Empty = open access.
+
+- **Readable paths** — agents may read files at or under these paths
+- **Writable paths** — agents may write to these paths (should be a subset of readable)
+- **Denied paths** — always blocked, takes priority over readable/writable
+- **Watch paths** — paths the watch evaluator may scan; defaults to readable paths if empty
+- **Clear** — removes all restrictions (reverts to open policy)
+
+Path entries use one path per line, prefix matching relative to workspace root.
+
+### Watch conditions
+
+Array of filesystem conditions that the automation evaluator checks. Each condition has a `path` and a `condition` type (`any_file_present`, `modified_since_last_run`, `empty`).
+
+See [Connected-Agent Handoffs](./connected-agent-handoffs/) for the full reference including API shapes, HTTP examples, and WorkflowEditDraft type annotations.
+
 ## Optimize Tab (AutoResearch)
 
 The **Optimize** tab (`#/automations?tab=optimize`) provides a UI for workflow prompt/objective optimization campaigns.
