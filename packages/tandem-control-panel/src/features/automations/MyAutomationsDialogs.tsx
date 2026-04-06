@@ -1,3 +1,4 @@
+import { useState } from "preact/hooks";
 import { motion } from "motion/react";
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
 import { ScheduleBuilder } from "./ScheduleBuilder";
@@ -192,6 +193,69 @@ export function LegacyAutomationEditDialog({
   );
 }
 
+export function AccordionSection({
+  title,
+  defaultOpen = false,
+  children,
+  description = "",
+  headerStyle = "",
+  icon = "",
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: any;
+  description?: string;
+  headerStyle?: string;
+  icon?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div
+      className={`rounded-xl border border-slate-700/50 bg-slate-900/30 overflow-hidden ${headerStyle === "violet" ? "border-violet-500/20 bg-violet-900/5" : ""}`}
+    >
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-800/40 transition-colors focus:outline-none"
+        onClick={() => setOpen(!open)}
+      >
+        <div className="flex items-center gap-2">
+          {icon && (
+            <i
+              data-lucide={icon}
+              className={`h-4 w-4 ${headerStyle === "violet" ? "text-violet-400" : "text-slate-400"}`}
+            ></i>
+          )}
+          <div>
+            <div
+              className={`text-xs uppercase tracking-wide font-medium ${headerStyle === "violet" ? "text-violet-300" : "text-slate-500"}`}
+            >
+              {title}
+            </div>
+            {description && open && (
+              <div
+                className={`text-xs mt-0.5 ${headerStyle === "violet" ? "text-slate-500" : "text-slate-400"}`}
+              >
+                {description}
+              </div>
+            )}
+          </div>
+        </div>
+        <i
+          data-lucide={open ? "chevron-up" : "chevron-down"}
+          className="h-4 w-4 text-slate-500 shrink-0 ml-4"
+        ></i>
+      </button>
+      {open && (
+        <div
+          className={`px-4 pb-4 border-t ${headerStyle === "violet" ? "border-violet-900/40" : "border-slate-800/60"} pt-3`}
+        >
+          <div className="grid gap-3">{children}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WorkflowAutomationEditDialog({
   workflowEditDraft,
   setWorkflowEditDraft,
@@ -236,11 +300,8 @@ export function WorkflowAutomationEditDialog({
           </button>
         </div>
         <div className="grid flex-1 gap-4 overflow-y-auto px-4 py-4 xl:grid-cols-[minmax(22rem,0.92fr)_minmax(0,1.35fr)]">
-          <div className="grid content-start gap-4">
-            <div
-              id="workflow-model-selection"
-              className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
-            >
+          <div className="grid content-start gap-4 min-w-0">
+            <AccordionSection title="General setup" defaultOpen={true}>
               <div className="grid gap-1">
                 <label className="text-xs text-slate-400">Automation name</label>
                 <input
@@ -294,10 +355,9 @@ export function WorkflowAutomationEditDialog({
                   </div>
                 ) : null}
               </div>
-            </div>
+            </AccordionSection>
 
-            <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Execution</div>
+            <AccordionSection title="Execution" defaultOpen={true}>
               <div className="grid gap-3">
                 <div className="grid gap-1">
                   <label className="text-xs text-slate-400">Schedule</label>
@@ -368,50 +428,16 @@ export function WorkflowAutomationEditDialog({
                   />
                 </div>
               </div>
-            </div>
+            </AccordionSection>
 
-            <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Model Selection</div>
-              <ProviderModelSelector
-                providerLabel="Model provider"
-                modelLabel="Model"
-                draft={{
-                  provider: workflowEditDraft.modelProvider,
-                  model: workflowEditDraft.modelId,
-                }}
-                providers={providerOptions}
-                onChange={(draft) =>
-                  setWorkflowEditDraft((current: any) =>
-                    current
-                      ? {
-                          ...current,
-                          modelProvider: draft.provider,
-                          modelId: draft.model,
-                        }
-                      : current
-                  )
-                }
-                inheritLabel="Workspace default"
-              />
-              {validateModelInput(workflowEditDraft.modelProvider, workflowEditDraft.modelId) ? (
-                <div className="text-xs text-red-300">
-                  {validateModelInput(workflowEditDraft.modelProvider, workflowEditDraft.modelId)}
-                </div>
-              ) : null}
-              <div className="grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">
-                  Planner fallback model
-                </div>
-                <div className="text-xs text-slate-400">
-                  Optional. Leave blank to use the workflow default model for planning and
-                  revisions.
-                </div>
+            <div id="workflow-model-selection">
+              <AccordionSection title="Model Selection">
                 <ProviderModelSelector
-                  providerLabel="Planner provider"
-                  modelLabel="Planner model"
+                  providerLabel="Model provider"
+                  modelLabel="Model"
                   draft={{
-                    provider: workflowEditDraft.plannerModelProvider,
-                    model: workflowEditDraft.plannerModelId,
+                    provider: workflowEditDraft.modelProvider,
+                    model: workflowEditDraft.modelId,
                   }}
                   providers={providerOptions}
                   onChange={(draft) =>
@@ -419,30 +445,64 @@ export function WorkflowAutomationEditDialog({
                       current
                         ? {
                             ...current,
-                            plannerModelProvider: draft.provider,
-                            plannerModelId: draft.model,
+                            modelProvider: draft.provider,
+                            modelId: draft.model,
                           }
                         : current
                     )
                   }
-                  inheritLabel="Use workflow model"
+                  inheritLabel="Workspace default"
                 />
-                {validatePlannerModelInput(
-                  workflowEditDraft.plannerModelProvider,
-                  workflowEditDraft.plannerModelId
-                ) ? (
+                {validateModelInput(workflowEditDraft.modelProvider, workflowEditDraft.modelId) ? (
                   <div className="text-xs text-red-300">
-                    {validatePlannerModelInput(
-                      workflowEditDraft.plannerModelProvider,
-                      workflowEditDraft.plannerModelId
-                    )}
+                    {validateModelInput(workflowEditDraft.modelProvider, workflowEditDraft.modelId)}
                   </div>
                 ) : null}
-              </div>
+                <div className="grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">
+                    Planner fallback model
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Optional. Leave blank to use the workflow default model for planning and
+                    revisions.
+                  </div>
+                  <ProviderModelSelector
+                    providerLabel="Planner provider"
+                    modelLabel="Planner model"
+                    draft={{
+                      provider: workflowEditDraft.plannerModelProvider,
+                      model: workflowEditDraft.plannerModelId,
+                    }}
+                    providers={providerOptions}
+                    onChange={(draft) =>
+                      setWorkflowEditDraft((current: any) =>
+                        current
+                          ? {
+                              ...current,
+                              plannerModelProvider: draft.provider,
+                              plannerModelId: draft.model,
+                            }
+                          : current
+                      )
+                    }
+                    inheritLabel="Use workflow model"
+                  />
+                  {validatePlannerModelInput(
+                    workflowEditDraft.plannerModelProvider,
+                    workflowEditDraft.plannerModelId
+                  ) ? (
+                    <div className="text-xs text-red-300">
+                      {validatePlannerModelInput(
+                        workflowEditDraft.plannerModelProvider,
+                        workflowEditDraft.plannerModelId
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </AccordionSection>
             </div>
 
-            <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Tool Access</div>
+            <AccordionSection title="Tool Access">
               <div className="grid gap-2 sm:grid-cols-2">
                 <button
                   type="button"
@@ -497,51 +557,40 @@ export function WorkflowAutomationEditDialog({
                   All built-in tools are allowed for this automation.
                 </div>
               )}
+            </AccordionSection>
+
+            <div id="workflow-connector-bindings">
+              <AccordionSection
+                title="Connector bindings"
+                description="Edit the connector binding snapshot that the scope inspector reads back. Save will persist the new binding set into the automation metadata. Each binding must include an explicit status (mapped, unresolved_required, or unresolved_optional)."
+              >
+                <textarea
+                  className="tcp-input min-h-[220px] font-mono text-xs leading-5"
+                  value={workflowEditDraft.connectorBindingsJson}
+                  onInput={(e) =>
+                    setWorkflowEditDraft((current: any) =>
+                      current
+                        ? {
+                            ...current,
+                            connectorBindingsJson: (e.target as HTMLTextAreaElement).value,
+                          }
+                        : current
+                    )
+                  }
+                  placeholder={`[\n  {\n    "capability": "github",\n    "binding_type": "oauth",\n    "binding_id": "github-primary",\n    "allowlist_pattern": "github.com/*",\n    "status": "mapped"\n  },\n  {\n    "capability": "slack",\n    "binding_type": null,\n    "binding_id": null,\n    "allowlist_pattern": null,\n    "status": "unresolved_required"\n  }\n]`}
+                />
+                <div className="text-xs text-slate-500">
+                  Keep this as a JSON array of binding objects with capability, binding_type,
+                  binding_id, allowlist_pattern, and an explicit status: mapped,
+                  unresolved_required, or unresolved_optional.
+                </div>
+              </AccordionSection>
             </div>
 
-            <div
-              id="workflow-connector-bindings"
-              className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
+            <AccordionSection
+              title="Shared workflow context"
+              description="Bind approved shared workflow contexts here, one context id per line. The ids are validated against this workflow's workspace and kept on the saved automation metadata so later runs can reuse the same approved context."
             >
-              <div className="text-xs uppercase tracking-wide text-slate-500">
-                Connector bindings
-              </div>
-              <div className="text-xs text-slate-400">
-                Edit the connector binding snapshot that the scope inspector reads back. Save will
-                persist the new binding set into the automation metadata. Each binding must include
-                an explicit status (mapped, unresolved_required, or unresolved_optional).
-              </div>
-              <textarea
-                className="tcp-input min-h-[220px] font-mono text-xs leading-5"
-                value={workflowEditDraft.connectorBindingsJson}
-                onInput={(e) =>
-                  setWorkflowEditDraft((current: any) =>
-                    current
-                      ? {
-                          ...current,
-                          connectorBindingsJson: (e.target as HTMLTextAreaElement).value,
-                        }
-                      : current
-                  )
-                }
-                placeholder={`[\n  {\n    "capability": "github",\n    "binding_type": "oauth",\n    "binding_id": "github-primary",\n    "allowlist_pattern": "github.com/*",\n    "status": "mapped"\n  },\n  {\n    "capability": "slack",\n    "binding_type": null,\n    "binding_id": null,\n    "allowlist_pattern": null,\n    "status": "unresolved_required"\n  }\n]`}
-              />
-              <div className="text-xs text-slate-500">
-                Keep this as a JSON array of binding objects with capability, binding_type,
-                binding_id, allowlist_pattern, and an explicit status: mapped, unresolved_required,
-                or unresolved_optional.
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
-                Shared workflow context
-              </div>
-              <div className="text-xs text-slate-400">
-                Bind approved shared workflow contexts here, one context id per line. The ids are
-                validated against this workflow&apos;s workspace and kept on the saved automation
-                metadata so later runs can reuse the same approved context.
-              </div>
               <textarea
                 className="tcp-input min-h-[120px] font-mono text-xs leading-5"
                 value={workflowEditDraft.sharedContextPackIdsText}
@@ -561,10 +610,9 @@ export function WorkflowAutomationEditDialog({
                 Use the copy context id button in the Shared workflow context panel to paste ids
                 quickly.
               </div>
-            </div>
+            </AccordionSection>
 
-            <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">MCP Servers</div>
+            <AccordionSection title="MCP Servers">
               {mcpServers.length ? (
                 <div className="flex flex-wrap gap-2">
                   {mcpServers.map((server: any) => {
@@ -598,21 +646,15 @@ export function WorkflowAutomationEditDialog({
               ) : (
                 <div className="text-xs text-slate-400">No MCP servers configured yet.</div>
               )}
-            </div>
+            </AccordionSection>
 
             {/* ─── Connected Agent Handoffs ─────────────────────────────── */}
-            <div className="grid gap-3 rounded-xl border border-violet-500/20 bg-violet-900/5 p-4">
-              <div className="flex items-center gap-2">
-                <i data-lucide="network" className="h-4 w-4 text-violet-400" />
-                <div>
-                  <div className="text-xs font-medium text-violet-300">Connected agents</div>
-                  <div className="mt-0.5 text-xs text-slate-500">
-                    Handoff configuration, watch conditions, and scope policy for agent-to-agent
-                    messaging.
-                  </div>
-                </div>
-              </div>
-
+            <AccordionSection
+              title="Connected agents"
+              icon="network"
+              headerStyle="violet"
+              description="Handoff configuration, watch conditions, and scope policy for agent-to-agent messaging."
+            >
               <HandoffConfigEditor
                 value={workflowEditDraft.handoffConfig}
                 onChange={(next: any) =>
@@ -644,138 +686,93 @@ export function WorkflowAutomationEditDialog({
               {workflowEditDraft.automationId && client?.automationsV2?.listHandoffs && (
                 <HandoffPanel automationId={workflowEditDraft.automationId} client={client} />
               )}
-            </div>
+            </AccordionSection>
 
-            <ScopeInspector
-              title="Workflow scope inspector"
-              planPackage={workflowEditDraft.scopeSnapshot}
-              planPackageBundle={workflowEditDraft.planPackageBundle}
-              planPackageReplay={workflowEditDraft.planPackageReplay}
-              validationReport={workflowEditDraft.scopeValidation}
-              runtimeContext={workflowEditDraft.runtimeContext}
-              approvedPlanMaterialization={workflowEditDraft.approvedPlanMaterialization}
-              overlapHistoryEntries={overlapHistoryEntries}
-              onOpenPromptEditor={() => {
-                document
-                  .getElementById("workflow-prompt-editor")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              onOpenModelRoutingEditor={() => {
-                document
-                  .getElementById("workflow-model-selection")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              onOpenConnectorBindingsEditor={() => {
-                document
-                  .getElementById("workflow-connector-bindings")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              onReplaceSharedContextPack={(fromPackId: string, toPackId: string) => {
-                if (!fromPackId || !toPackId) return;
-                setWorkflowEditDraft((current: any) =>
-                  current
-                    ? {
-                        ...current,
-                        sharedContextPackIdsText: String(current.sharedContextPackIdsText || "")
-                          .split(/[\n,]/g)
-                          .map((value: string) => String(value || "").trim())
-                          .filter(Boolean)
-                          .map((value: string) => (value === fromPackId ? toPackId : value))
-                          .filter(
-                            (value: string, index: number, values: string[]) =>
-                              values.indexOf(value) === index
-                          )
-                          .join("\n"),
-                      }
-                    : current
-                );
-              }}
-              onDryRun={
-                workflowEditDraft.automationId
-                  ? () =>
-                      runNowV2Mutation.mutate({
-                        id: workflowEditDraft.automationId,
-                        dryRun: true,
-                      })
-                  : undefined
-              }
-              dryRunDisabled={!workflowEditDraft.automationId || runNowV2Mutation.isPending}
-            />
+            <AccordionSection title="Scope Inspector">
+              <ScopeInspector
+                title=""
+                planPackage={workflowEditDraft.scopeSnapshot}
+                planPackageBundle={workflowEditDraft.planPackageBundle}
+                planPackageReplay={workflowEditDraft.planPackageReplay}
+                validationReport={workflowEditDraft.scopeValidation}
+                runtimeContext={workflowEditDraft.runtimeContext}
+                approvedPlanMaterialization={workflowEditDraft.approvedPlanMaterialization}
+                overlapHistoryEntries={overlapHistoryEntries}
+                onOpenPromptEditor={() => {
+                  document
+                    .getElementById("workflow-prompt-editor")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onOpenModelRoutingEditor={() => {
+                  document
+                    .getElementById("workflow-model-selection")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onOpenConnectorBindingsEditor={() => {
+                  document
+                    .getElementById("workflow-connector-bindings")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onReplaceSharedContextPack={(fromPackId: string, toPackId: string) => {
+                  if (!fromPackId || !toPackId) return;
+                  setWorkflowEditDraft((current: any) =>
+                    current
+                      ? {
+                          ...current,
+                          sharedContextPackIdsText: String(current.sharedContextPackIdsText || "")
+                            .split(/[\n,]/g)
+                            .map((value: string) => String(value || "").trim())
+                            .filter(Boolean)
+                            .map((value: string) => (value === fromPackId ? toPackId : value))
+                            .filter(
+                              (value: string, index: number, values: string[]) =>
+                                values.indexOf(value) === index
+                            )
+                            .join("\n"),
+                        }
+                      : current
+                  );
+                }}
+                onDryRun={
+                  workflowEditDraft.automationId
+                    ? () =>
+                        runNowV2Mutation.mutate({
+                          id: workflowEditDraft.automationId,
+                          dryRun: true,
+                        })
+                    : undefined
+                }
+                dryRunDisabled={!workflowEditDraft.automationId || runNowV2Mutation.isPending}
+              />
+            </AccordionSection>
           </div>
 
-          <div className="grid content-start gap-4">
-            <div
-              id="workflow-prompt-editor"
-              className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
-            >
-              <div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500">
-                    Prompt Editor
-                  </div>
-                  <div className="mt-1 text-xs text-slate-400">
-                    Edit the actual prompts Tandem sends for each workflow step. These objectives
-                    control what every node does at runtime.
-                  </div>
-                </div>
-              </div>
-              {workflowEditDraft.nodes.length ? (
-                <div className="grid gap-3">
-                  {workflowEditDraft.nodes.map((node: any, index: number) => (
-                    <div
-                      key={node.nodeId || index}
-                      className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3"
-                    >
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <strong className="text-sm text-slate-100">
-                          {node.nodeId || node.title || `Step ${index + 1}`}
-                        </strong>
-                        {node.agentId ? (
-                          <span className="tcp-badge-info">agent: {node.agentId}</span>
-                        ) : null}
-                      </div>
-                      <textarea
-                        className="tcp-input min-h-[180px] text-sm leading-6"
-                        value={node.objective}
-                        onInput={(e) =>
-                          setWorkflowEditDraft((current: any) =>
-                            current
-                              ? {
-                                  ...current,
-                                  nodes: current.nodes.map((row: any) =>
-                                    row.nodeId === node.nodeId
-                                      ? {
-                                          ...row,
-                                          objective: (e.target as HTMLTextAreaElement).value,
-                                        }
-                                      : row
-                                  ),
-                                }
-                              : current
-                          )
-                        }
-                        placeholder="Describe exactly what this step should do."
-                      />
-                      <div className="mt-3 grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-xs uppercase tracking-wide text-slate-500">
-                            Step routing
-                          </div>
-                          {node.modelProvider || node.modelId ? (
-                            <span className="tcp-badge-info">overrides workflow model</span>
-                          ) : (
-                            <span className="tcp-badge-info">inherits workflow model</span>
-                          )}
+          <div className="grid content-start gap-4 min-w-0">
+            <div id="workflow-prompt-editor">
+              <AccordionSection
+                title="Prompt Editor"
+                description="Edit the actual prompts Tandem sends for each workflow step. These objectives control what every node does at runtime."
+                defaultOpen={true}
+              >
+                {workflowEditDraft.nodes.length ? (
+                  <div className="grid gap-3">
+                    {workflowEditDraft.nodes.map((node: any, index: number) => (
+                      <div
+                        key={node.nodeId || index}
+                        className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3"
+                      >
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <strong className="text-sm text-slate-100">
+                            {node.nodeId || node.title || `Step ${index + 1}`}
+                          </strong>
+                          {node.agentId ? (
+                            <span className="tcp-badge-info">agent: {node.agentId}</span>
+                          ) : null}
                         </div>
-                        <ProviderModelSelector
-                          providerLabel="Step model provider"
-                          modelLabel="Step model"
-                          draft={{
-                            provider: node.modelProvider,
-                            model: node.modelId,
-                          }}
-                          providers={providerOptions}
-                          onChange={(draftModel) =>
+                        <textarea
+                          className="tcp-input min-h-[180px] text-sm leading-6"
+                          value={node.objective}
+                          onInput={(e) =>
                             setWorkflowEditDraft((current: any) =>
                               current
                                 ? {
@@ -784,8 +781,7 @@ export function WorkflowAutomationEditDialog({
                                       row.nodeId === node.nodeId
                                         ? {
                                             ...row,
-                                            modelProvider: draftModel.provider,
-                                            modelId: draftModel.model,
+                                            objective: (e.target as HTMLTextAreaElement).value,
                                           }
                                         : row
                                     ),
@@ -793,26 +789,66 @@ export function WorkflowAutomationEditDialog({
                                 : current
                             )
                           }
-                          inheritLabel="Use workflow model"
+                          placeholder="Describe exactly what this step should do."
                         />
-                        {validateModelInput(node.modelProvider, node.modelId) ? (
-                          <div className="text-xs text-red-300">
-                            {validateModelInput(node.modelProvider, node.modelId)}
+                        <div className="mt-3 grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-xs uppercase tracking-wide text-slate-500">
+                              Step routing
+                            </div>
+                            {node.modelProvider || node.modelId ? (
+                              <span className="tcp-badge-info">overrides workflow model</span>
+                            ) : (
+                              <span className="tcp-badge-info">inherits workflow model</span>
+                            )}
                           </div>
-                        ) : (
-                          <div className="text-xs text-slate-500">
-                            Leave both fields blank to inherit the workflow model.
-                          </div>
-                        )}
+                          <ProviderModelSelector
+                            providerLabel="Step model provider"
+                            modelLabel="Step model"
+                            draft={{
+                              provider: node.modelProvider,
+                              model: node.modelId,
+                            }}
+                            providers={providerOptions}
+                            onChange={(draftModel) =>
+                              setWorkflowEditDraft((current: any) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      nodes: current.nodes.map((row: any) =>
+                                        row.nodeId === node.nodeId
+                                          ? {
+                                              ...row,
+                                              modelProvider: draftModel.provider,
+                                              modelId: draftModel.model,
+                                            }
+                                          : row
+                                      ),
+                                    }
+                                  : current
+                              )
+                            }
+                            inheritLabel="Use workflow model"
+                          />
+                          {validateModelInput(node.modelProvider, node.modelId) ? (
+                            <div className="text-xs text-red-300">
+                              {validateModelInput(node.modelProvider, node.modelId)}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-500">
+                              Leave both fields blank to inherit the workflow model.
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400">
-                  This workflow does not currently expose editable node objectives.
-                </div>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400">
+                    This workflow does not currently expose editable node objectives.
+                  </div>
+                )}
+              </AccordionSection>
             </div>
           </div>
         </div>
