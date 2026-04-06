@@ -188,10 +188,11 @@ export function Step1Goal(props: Step1GoalProps) {
             <span className="text-[11px] text-slate-500">{filteredAgents.length} agents</span>
             {selectedAgentId ? (
               <button
+                type="button"
                 className="tcp-btn h-6 px-2 text-xs"
                 onClick={() => onChangeSelectedAgentId("")}
               >
-                Clear
+                Clear selection
               </button>
             ) : null}
           </div>
@@ -210,11 +211,12 @@ export function Step1Goal(props: Step1GoalProps) {
               {filteredAgents.map((agent) => (
                 <button
                   key={agent.id}
+                  type="button"
                   className={`tcp-list-item flex flex-col items-start gap-1 text-left transition-all ${
                     selectedAgentId === agent.id ? "border-amber-400/60 bg-amber-400/10" : ""
                   }`}
                   onClick={() => {
-                    onChangeSelectedAgentId(agent.id);
+                    onChangeSelectedAgentId(selectedAgentId === agent.id ? "" : agent.id);
                     setAgentSearch("");
                   }}
                 >
@@ -234,7 +236,16 @@ export function Step1Goal(props: Step1GoalProps) {
         <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="font-medium text-amber-300">Selected: {selectedAgent.name}</span>
-            <span className="tcp-badge-info">{selectedAgent.role}</span>
+            <div className="flex items-center gap-2">
+              <span className="tcp-badge-info">{selectedAgent.role}</span>
+              <button
+                type="button"
+                className="tcp-btn h-6 px-2 text-[10px]"
+                onClick={() => onChangeSelectedAgentId("")}
+              >
+                Clear selection
+              </button>
+            </div>
           </div>
           <div
             className="prose prose-sm prose-invert max-w-none text-slate-300 prose-headings:text-amber-100 prose-p:text-slate-300 prose-li:text-slate-300 prose-strong:text-slate-100"
@@ -244,6 +255,9 @@ export function Step1Goal(props: Step1GoalProps) {
               ),
             }}
           />
+          <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+            Preview only. This selection does not change the compiled automation payload.
+          </p>
         </div>
       ) : null}
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
