@@ -800,6 +800,17 @@ pub(crate) fn detect_automation_node_status(
         .take(1600)
         .collect::<String>()
         .to_ascii_lowercase();
+    let structured_handoff_present = validator_kind
+        == crate::AutomationOutputValidatorKind::StructuredJson
+        && extract_structured_handoff_json(session_text).is_some();
+    let explicit_status_present = parsed
+        .as_ref()
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let has_structural_completion_signal =
+        explicit_status_present || verified_output.is_some() || structured_handoff_present;
     // TODO(coding-hardening): Replace these content markers with structured node
     // status signals from the runtime/session wrapper. Prompt text should not be the
     // primary source of truth for blocked vs completed vs verify_failed decisions.
@@ -1088,6 +1099,20 @@ pub(crate) fn detect_automation_node_status(
                 "blocked".to_string()
             },
             Some(reason),
+            approved,
+        );
+    }
+    if !has_structural_completion_signal && !session_text.trim().is_empty() {
+        return (
+            if validation_repairable || automation_node_is_code_workflow(node) {
+                "needs_repair".to_string()
+            } else {
+                "blocked".to_string()
+            },
+            Some(
+                "node did not return a final workflow result with an explicit status or validated output"
+                    .to_string(),
+            ),
             approved,
         );
     }

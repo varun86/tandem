@@ -4901,6 +4901,57 @@ fn code_workflow_missing_verification_requests_repair() {
 }
 
 #[test]
+fn code_workflow_without_structural_completion_signal_requests_repair() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "job-scout".to_string(),
+        objective: "Operate the hourly job scout workflow".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "code_patch".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "task_kind": "code_change"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["glob", "read", "websearch", "webfetch", "write", "bash"],
+        "executed_tools": ["glob", "read", "websearch", "webfetch", "bash"],
+        "verification_expected": false,
+        "verification_ran": false,
+        "verification_failed": false
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "I see the results from your previous tool calls:\n\nWhat would you like me to do next? For example:\n- Fetch more content from a specific URL\n- Search for Rust developer jobs\n- Explore the current workspace for related code/projects\n- Something else?",
+            None,
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "needs_repair");
+    assert_eq!(
+        reason.as_deref(),
+        Some("node did not return a final workflow result with an explicit status or validated output")
+    );
+    assert_eq!(approved, None);
+}
+
+#[test]
 fn report_markdown_validation_accepts_updated_verified_output_without_session_write_telemetry() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-report-updated-without-session-write-{}",
