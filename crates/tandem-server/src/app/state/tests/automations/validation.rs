@@ -990,6 +990,49 @@ fn automation_output_enforcement_backfills_research_contract_from_legacy_builder
 }
 
 #[test]
+fn structured_handoff_workspace_bootstrap_nodes_infer_local_file_tools_from_objective_paths() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "workspace-operator".to_string(),
+        objective: "Initialize any missing job-search workspace directories and files, read README.md if present, and update resume-overview.md, tracker/search-ledger/2026-04-07.json, tracker/seen-jobs.jsonl, and daily-recaps/2026-04-07-job-search-recap.md.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return a structured handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+
+    let enforcement = automation_node_output_enforcement(&node);
+    assert!(enforcement.required_tools.iter().any(|tool| tool == "glob"));
+    assert!(enforcement.required_tools.iter().any(|tool| tool == "read"));
+    assert!(enforcement
+        .required_tools
+        .iter()
+        .any(|tool| tool == "write"));
+
+    let capabilities = automation_tool_capability_ids(&node, "artifact_write");
+    assert!(capabilities
+        .iter()
+        .any(|capability| capability == "workspace_discover"));
+    assert!(capabilities
+        .iter()
+        .any(|capability| capability == "workspace_read"));
+    assert!(capabilities
+        .iter()
+        .any(|capability| capability == "artifact_write"));
+}
+
+#[test]
 fn research_nodes_default_to_five_attempts() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

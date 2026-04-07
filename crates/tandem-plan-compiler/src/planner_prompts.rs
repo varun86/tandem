@@ -21,6 +21,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
             "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations|brief|review|review_summary|approval_gate|code_patch\",\"validator\":\"structured_json|generic_artifact|research_brief|review_decision|code_patch\"}}\n",
             "- use `code_patch` for code-editing steps that should be judged by patch/apply/test behavior rather than a prose summary\n",
+            "- when a step mainly produces a markdown, json, or text artifact such as a recap, report, ledger, or merged daily summary, use `report_markdown`, `structured_json`, or `text_summary` instead of `code_patch` even if the step compiles earlier findings into one file\n",
             "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
             "- when the request names connector-backed sources or `allowed_mcp_servers` is non-empty, plan MCP-backed steps instead of inventing hidden capabilities or defaulting to generic web search\n",
             "{}",
@@ -38,6 +39,7 @@ fn workflow_plan_teaching_library_sections() -> String {
         "- proof points: cite evidence sources, validation checks, or artifacts that will prove success\n",
         "- connector-backed work: prefer the selected MCP inventory for source-specific systems such as Reddit, GitHub issues, Slack, or Jira, and clarify when no relevant connector is available\n",
         "- code changes: prefer `code_patch` plus an inspect -> patch -> apply -> test -> repair loop, and reserve `write` for brand-new files\n",
+        "- recap and synthesis files: prefer `report_markdown`, `structured_json`, or `text_summary` for markdown/json/text deliverables even when they merge prior findings into a final artifact\n",
         "- monitor-pattern plans: when the user describes a recurring awareness task (checking email, watching for changes, monitoring a data source, scanning for new items), generate a triage-first plan\n",
         "  - first step must be an `assess` step that uses MCP tools to check the data source and outputs structured JSON: {\"has_work\": true/false, \"summary\": \"...\", \"items\": [...]}\n",
         "  - set metadata.triage_gate: true on the assess step so the engine skips downstream nodes when has_work is false\n",
@@ -62,6 +64,8 @@ mod tests {
         assert!(sections.contains("code_patch"));
         assert!(sections.contains("inspect -> patch -> apply -> test -> repair"));
         assert!(sections.contains("reserve `write` for brand-new files"));
+        assert!(sections.contains("recap and synthesis files"));
+        assert!(sections.contains("compiles earlier findings into one file"));
         assert!(sections.contains("monitor-pattern plans"));
         assert!(sections.contains("assess"));
         assert!(sections.contains("triage_gate"));

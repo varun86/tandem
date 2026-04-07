@@ -88,20 +88,26 @@ pub(crate) fn automation_tool_capability_ids(
     execution_mode: &str,
 ) -> Vec<String> {
     let mut capabilities = Vec::new();
-    if !node.input_refs.is_empty()
-        || automation_node_required_tools(node)
-            .iter()
-            .any(|tool| tool == "read")
-    {
-        capabilities.push("workspace_read".to_string());
-    }
-    if automation_node_required_output_path(node).is_some()
+    let required_tools = automation_node_required_tools(node);
+    let requires_workspace_read =
+        !node.input_refs.is_empty() || required_tools.iter().any(|tool| tool == "read");
+    let requires_workspace_discover = automation_node_required_output_path(node).is_some()
         || automation_output_validator_kind(node)
             == crate::AutomationOutputValidatorKind::ResearchBrief
-    {
+        || required_tools
+            .iter()
+            .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list"));
+    let requires_artifact_write = automation_node_required_output_path(node).is_some()
+        || required_tools
+            .iter()
+            .any(|tool| matches!(tool.as_str(), "write" | "edit" | "apply_patch"));
+    if requires_workspace_read {
+        capabilities.push("workspace_read".to_string());
+    }
+    if requires_workspace_discover {
         capabilities.push("workspace_discover".to_string());
     }
-    if automation_node_required_output_path(node).is_some() {
+    if requires_artifact_write {
         capabilities.push("artifact_write".to_string());
     }
     if automation_node_web_research_expected(node) {

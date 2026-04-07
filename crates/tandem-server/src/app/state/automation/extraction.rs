@@ -89,21 +89,32 @@ pub(crate) fn extract_session_text_output(session: &Session) -> String {
 
 pub(crate) fn parse_status_json(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
-        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            return Some(value);
-        }
+    if trimmed.is_empty() {
+        return None;
     }
-    for (idx, ch) in trimmed.char_indices().rev() {
-        if ch != '{' {
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    let mut candidates = Vec::<String>::new();
+
+    for candidate in std::iter::once(trimmed.to_string())
+        .chain(extract_markdown_json_blocks(trimmed))
+        .chain(extract_loose_json_blocks(trimmed))
+    {
+        let normalized = candidate.trim().to_string();
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
             continue;
         }
-        let candidate = trimmed[idx..].trim();
-        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-            return Some(value);
-        }
+        candidates.push(normalized);
     }
-    None
+
+    candidates.into_iter().find_map(|candidate| {
+        let value = serde_json::from_str::<Value>(&candidate).ok()?;
+        if automation_json_looks_like_status_payload(&value) {
+            Some(value)
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn extract_markdown_json_blocks(text: &str) -> Vec<String> {

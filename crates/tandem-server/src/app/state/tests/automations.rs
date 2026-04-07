@@ -2245,6 +2245,84 @@ async fn automation_run_rejects_invalid_activation_validation_snapshot() {
 }
 
 #[tokio::test]
+async fn stale_running_automation_runs_are_failed_and_release_scheduler_capacity() {
+    let automation = AutomationV2Spec {
+        automation_id: "auto-stale-run-test".to_string(),
+        name: "Stale Run Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp/stale-run-workspace".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let run_id = run.run_id.clone();
+    let claimed = state
+        .claim_specific_automation_v2_run(&run_id)
+        .await
+        .expect("claim run");
+    assert_eq!(claimed.status, AutomationRunStatus::Running);
+    {
+        let scheduler = state.automation_scheduler.read().await;
+        assert_eq!(scheduler.active_count(), 1);
+    }
+    {
+        let mut guard = state.automation_v2_runs.write().await;
+        let persisted = guard.get_mut(&run_id).expect("persisted run");
+        persisted.active_session_ids.clear();
+        persisted.active_instance_ids.clear();
+        persisted.latest_session_id = None;
+        persisted.updated_at_ms = now_ms().saturating_sub(180_000);
+    }
+
+    let reaped = state.reap_stale_running_automation_runs(120_000).await;
+    assert_eq!(reaped, 1);
+
+    let persisted = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Failed);
+    assert_eq!(
+        persisted.detail.as_deref(),
+        Some("automation run stalled without active sessions or instances for at least 120s")
+    );
+    {
+        let scheduler = state.automation_scheduler.read().await;
+        assert_eq!(scheduler.active_count(), 0);
+    }
+}
+
+#[tokio::test]
 async fn automation_v2_approved_plan_materialization_is_recovered_from_snapshot() {
     let automation = AutomationV2Spec {
         automation_id: "auto-approved-plan-test".to_string(),

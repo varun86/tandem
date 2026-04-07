@@ -4675,6 +4675,51 @@ impl AppState {
         }
     }
 
+    pub async fn reap_stale_running_automation_runs(&self, stale_after_ms: u64) -> usize {
+        let now = now_ms();
+        let runs = self
+            .automation_v2_runs
+            .read()
+            .await
+            .values()
+            .filter(|run| {
+                run.status == AutomationRunStatus::Running
+                    && run.active_session_ids.is_empty()
+                    && run.active_instance_ids.is_empty()
+                    && now.saturating_sub(run.updated_at_ms) >= stale_after_ms
+            })
+            .map(|run| run.run_id.clone())
+            .collect::<Vec<_>>();
+        let mut reaped = 0usize;
+        for run_id in runs {
+            let detail = format!(
+                "automation run stalled without active sessions or instances for at least {}s",
+                stale_after_ms / 1000
+            );
+            if self
+                .update_automation_v2_run(&run_id, |row| {
+                    row.status = AutomationRunStatus::Failed;
+                    row.detail = Some(detail.clone());
+                    row.stop_reason = Some(detail.clone());
+                    row.active_session_ids.clear();
+                    row.latest_session_id = None;
+                    row.active_instance_ids.clear();
+                    automation::record_automation_lifecycle_event(
+                        row,
+                        "run_failed_stalled_execution",
+                        Some(detail.clone()),
+                        None,
+                    );
+                })
+                .await
+                .is_some()
+            {
+                reaped += 1;
+            }
+        }
+        reaped
+    }
+
     pub async fn recover_in_flight_runs(&self) -> usize {
         let runs = self
             .automation_v2_runs

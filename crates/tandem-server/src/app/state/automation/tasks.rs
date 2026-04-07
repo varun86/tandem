@@ -10,6 +10,8 @@ use crate::app::state::AppState;
 use crate::automation_v2::executor::run_automation_v2_run;
 use crate::automation_v2::types::{AutomationRunStatus, AutomationStopKind, AutomationV2RunRecord};
 
+const STALE_RUNNING_AUTOMATION_RUN_MS: u64 = 120_000;
+
 pub async fn run_automation_v2_executor(state: AppState) {
     // Step 6: Call recover_in_flight_runs on startup
     let _ = state.recover_in_flight_runs().await;
@@ -30,6 +32,9 @@ async fn run_automation_v2_executor_single(state: AppState) {
         if state.is_automation_scheduler_stopping() {
             break;
         }
+        let _ = state
+            .reap_stale_running_automation_runs(STALE_RUNNING_AUTOMATION_RUN_MS)
+            .await;
         let Some(run) = state.claim_next_queued_automation_v2_run().await else {
             continue;
         };
@@ -53,6 +58,10 @@ async fn run_automation_v2_executor_multi(state: AppState) {
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         }
+
+        let _ = state
+            .reap_stale_running_automation_runs(STALE_RUNNING_AUTOMATION_RUN_MS)
+            .await;
 
         let capacity = {
             let scheduler = state.automation_scheduler.read().await;

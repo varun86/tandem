@@ -4952,6 +4952,54 @@ fn code_workflow_without_structural_completion_signal_requests_repair() {
 }
 
 #[test]
+fn code_workflow_accepts_fenced_status_json_after_markdown_summary() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "job-scout".to_string(),
+        objective: "Operate the hourly job scout workflow".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "code_patch".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "task_kind": "code_change"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["read", "bash", "glob", "websearch", "write"],
+        "executed_tools": ["read", "bash", "glob", "websearch", "write"],
+        "verification_expected": false,
+        "verification_ran": false,
+        "verification_failed": false
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "## Summary\n\nExecution complete.\n\n```json\n{\"status\":\"completed\",\"summary\":\"all files updated\"}\n```",
+            None,
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "done");
+    assert_eq!(reason, None);
+    assert_eq!(approved, None);
+}
+
+#[test]
 fn report_markdown_validation_accepts_updated_verified_output_without_session_write_telemetry() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-report-updated-without-session-write-{}",
