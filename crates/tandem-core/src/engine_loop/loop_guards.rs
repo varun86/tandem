@@ -46,6 +46,9 @@ pub(super) fn tool_budget_for(tool_name: &str) -> usize {
 
 pub(super) fn duplicate_signature_limit_for(tool_name: &str) -> usize {
     let normalized = super::normalize_tool_name(tool_name);
+    if normalized == "mcp_list" {
+        return 3;
+    }
     if super::is_email_delivery_tool_name(&normalized) {
         if let Ok(raw) = std::env::var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT_EMAIL_DELIVERY")
         {

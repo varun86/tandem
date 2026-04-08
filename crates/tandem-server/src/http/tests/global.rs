@@ -4943,11 +4943,22 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
     );
     assert_eq!(
         run_payload
+            .get("blockedNodeIDs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["research-brief"])
+    );
+    assert_eq!(
+        run_payload
             .get("needsRepairNodeIDs")
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(0)
     );
+    assert!(run_payload
+        .get("last_activity_at_ms")
+        .and_then(Value::as_u64)
+        .is_some_and(|value| value > 0));
     assert!(run_payload
         .get("checkpoint")
         .and_then(|value| value.get("node_outputs"))

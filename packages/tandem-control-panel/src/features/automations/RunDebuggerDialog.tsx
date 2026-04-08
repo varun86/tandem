@@ -23,6 +23,8 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     continueBlockedNodeId,
     canRecoverWorkflowRun,
     runDebuggerRetryNodeId,
+    serverBlockedNodeIds,
+    serverNeedsRepairNodeIds,
     selectedContextRunId,
     runSummaryRows,
     workflowProjection,
@@ -66,6 +68,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     selectedBoardTaskResetOutputPaths,
     canTaskContinue,
     canTaskRetry,
+    selectedBoardTaskServerActionMessage,
     canTaskRequeue,
     canBacklogTaskClaim,
     canBacklogTaskRequeue,
@@ -937,11 +940,15 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                             selectedRunId={selectedRunId}
                             canTaskContinue={canTaskContinue}
                             canTaskRetry={canTaskRetry}
+                            runDebuggerRetryNodeId={runDebuggerRetryNodeId}
+                            continueBlockedNodeId={continueBlockedNodeId}
+                            selectedBoardTaskServerActionMessage={
+                              selectedBoardTaskServerActionMessage
+                            }
                             canTaskRequeue={canTaskRequeue}
                             canBacklogTaskClaim={canBacklogTaskClaim}
                             canBacklogTaskRequeue={canBacklogTaskRequeue}
                             canRecoverWorkflowRun={canRecoverWorkflowRun}
-                            continueBlockedNodeId={continueBlockedNodeId}
                             backlogTaskClaimMutation={backlogTaskClaimMutation}
                             backlogTaskRequeueMutation={backlogTaskRequeueMutation}
                             workflowTaskContinueMutation={workflowTaskContinueMutation}
@@ -1013,6 +1020,8 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                 <WorkflowDebugHintsPanel runHints={runHints} />
                 <WorkflowRequiredActionsPanel
                   runRepairGuidanceEntries={runRepairGuidanceEntries}
+                  blockedNodeIds={serverBlockedNodeIds}
+                  needsRepairNodeIds={serverNeedsRepairNodeIds}
                   isWorkflowRun={isWorkflowRun}
                   selectedRunId={selectedRunId}
                   hasActiveSessions={workflowActiveSessionCount(selectedRun) > 0}

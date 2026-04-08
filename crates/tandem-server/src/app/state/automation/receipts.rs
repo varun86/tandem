@@ -104,6 +104,21 @@ pub(crate) fn automation_attempt_receipt_path_for_state_dir(
     automation_attempt_receipts_path(&root, run_id, node_id)
 }
 
+pub(crate) fn automation_attempt_forensic_path(
+    workspace_root: &str,
+    run_id: &str,
+    node_id: &str,
+    attempt: u32,
+) -> PathBuf {
+    Path::new(workspace_root)
+        .join(".tandem")
+        .join("runs")
+        .join(sanitize_segment(run_id))
+        .join("attempts")
+        .join(sanitize_segment(node_id))
+        .join(format!("{attempt}.json"))
+}
+
 fn extract_line_seq(line: &str) -> Option<u64> {
     serde_json::from_str::<AutomationAttemptReceiptRecord>(line)
         .ok()
@@ -232,6 +247,22 @@ pub(crate) async fn append_automation_attempt_receipt(
         seq: summary.seq,
         record_count,
     })
+}
+
+pub(crate) async fn persist_automation_attempt_forensic_record(
+    workspace_root: &str,
+    run_id: &str,
+    node_id: &str,
+    attempt: u32,
+    payload: &Value,
+) -> anyhow::Result<PathBuf> {
+    let path = automation_attempt_forensic_path(workspace_root, run_id, node_id, attempt);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let serialized = serde_json::to_string_pretty(payload)?;
+    tokio::fs::write(&path, serialized).await?;
+    Ok(path)
 }
 
 pub(crate) async fn reconcile_automation_attempt_receipts(
@@ -449,6 +480,39 @@ mod tests {
             "unexpected path: {}",
             path.display()
         );
+    }
+
+    #[tokio::test]
+    async fn persist_automation_attempt_forensic_record_writes_attempt_json() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-attempt-forensics-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workspace_root)
+            .await
+            .expect("create workspace root");
+        let payload = json!({
+            "attempt": 2,
+            "final_backend_actionability_state": "needs_repair",
+            "blocker_category": "provider_transport_failure"
+        });
+
+        let path = persist_automation_attempt_forensic_record(
+            workspace_root.to_str().expect("workspace root"),
+            "run-123",
+            "research:sources",
+            2,
+            &payload,
+        )
+        .await
+        .expect("persist forensic record");
+
+        assert!(path.ends_with(PathBuf::from(
+            ".tandem/runs/run-123/attempts/research-sources/2.json"
+        )));
+        let stored = tokio::fs::read_to_string(&path)
+            .await
+            .expect("read forensic record");
+        let parsed: Value = serde_json::from_str(&stored).expect("parse forensic json");
+        assert_eq!(parsed, payload);
     }
 
     #[tokio::test]

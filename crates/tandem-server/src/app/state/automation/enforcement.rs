@@ -71,6 +71,160 @@ fn automation_node_legacy_required_tools(node: &AutomationFlowNode) -> Vec<Strin
         .unwrap_or_default()
 }
 
+fn automation_node_workspace_intent_text(node: &AutomationFlowNode) -> String {
+    [
+        node.objective.as_str(),
+        automation_node_legacy_builder(node)
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    ]
+    .join("\n")
+}
+
+fn automation_trim_workspace_token(token: &str) -> &str {
+    token
+        .trim()
+        .trim_matches(|c: char| {
+            matches!(
+                c,
+                '`' | '"' | '\'' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}'
+            )
+        })
+        .trim_end_matches(['.', '!', '?'])
+}
+
+fn automation_text_has_workspace_tokens(text: &str) -> bool {
+    text.split_whitespace().any(|token| {
+        let trimmed = automation_trim_workspace_token(token);
+        !trimmed.is_empty()
+            && !trimmed.starts_with("http://")
+            && !trimmed.starts_with("https://")
+            && (trimmed.contains('/')
+                || trimmed.ends_with(".md")
+                || trimmed.ends_with(".yaml")
+                || trimmed.ends_with(".yml")
+                || trimmed.ends_with(".json")
+                || trimmed.ends_with(".jsonl")
+                || trimmed.ends_with(".txt")
+                || trimmed.ends_with(".csv"))
+    })
+}
+
+pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationFlowNode) -> bool {
+    let combined = automation_node_workspace_intent_text(node);
+    if !automation_text_has_workspace_tokens(&combined) {
+        return false;
+    }
+    let lowered = combined.to_ascii_lowercase();
+    let has_write_intent = [
+        "write",
+        "update",
+        "create",
+        "initialize",
+        "bootstrap",
+        "merge",
+        "append",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle));
+    let has_bootstrap_or_missing_intent = [
+        "missing",
+        "initialize",
+        "bootstrap",
+        "directory",
+        "directories",
+        "folder",
+        "folders",
+        "workspace",
+        "if present",
+        "if available",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle));
+    has_write_intent && has_bootstrap_or_missing_intent
+}
+
+pub(crate) fn automation_node_inferred_bootstrap_required_files(
+    node: &AutomationFlowNode,
+) -> Vec<String> {
+    if !node.depends_on.is_empty() {
+        return Vec::new();
+    }
+    if node.output_contract.as_ref().is_some_and(|contract| {
+        matches!(
+            contract.kind.trim().to_ascii_lowercase().as_str(),
+            "brief" | "report_markdown" | "text_summary" | "citations"
+        )
+    }) {
+        return Vec::new();
+    }
+    let combined = automation_node_workspace_intent_text(node);
+    if !automation_text_has_workspace_tokens(&combined) {
+        return Vec::new();
+    }
+    let lowered = combined.to_ascii_lowercase();
+    let has_bootstrap_write_intent = ["write", "create", "initialize", "bootstrap", "missing"]
+        .iter()
+        .any(|needle| lowered.contains(needle));
+    if !has_bootstrap_write_intent {
+        return Vec::new();
+    }
+
+    let mut files = combined
+        .split_whitespace()
+        .filter_map(|token| {
+            let trimmed = automation_trim_workspace_token(token);
+            if trimmed.is_empty()
+                || trimmed.starts_with("http://")
+                || trimmed.starts_with("https://")
+            {
+                return None;
+            }
+            let looks_like_file = trimmed.ends_with(".md")
+                || trimmed.ends_with(".markdown")
+                || trimmed.ends_with(".txt")
+                || trimmed.ends_with(".json")
+                || trimmed.ends_with(".jsonl")
+                || trimmed.ends_with(".yaml")
+                || trimmed.ends_with(".yml")
+                || trimmed.ends_with(".csv")
+                || trimmed.ends_with(".toml")
+                || trimmed.ends_with(".ini")
+                || trimmed.ends_with(".cfg")
+                || trimmed.ends_with(".conf")
+                || trimmed.ends_with(".env")
+                || trimmed.ends_with(".xml")
+                || trimmed.ends_with(".html")
+                || trimmed.ends_with(".sql");
+            if looks_like_file {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|path| {
+            let path_lower = path.to_ascii_lowercase();
+            let optional_read_patterns = [
+                format!("read {} if present", path_lower),
+                format!("read {} if available", path_lower),
+                format!("inspect {} if present", path_lower),
+                format!("inspect {} if available", path_lower),
+                format!("review {} if present", path_lower),
+                format!("review {} if available", path_lower),
+                format!("open {} if present", path_lower),
+                format!("open {} if available", path_lower),
+            ];
+            !optional_read_patterns
+                .iter()
+                .any(|pattern| lowered.contains(pattern))
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn parse_quality_mode(value: &str) -> Option<AutomationQualityMode> {
     match value.trim().to_ascii_lowercase().as_str() {
         "strict" | "strict_research_v1" | "strict-research-v1" => {
@@ -171,6 +325,7 @@ pub(crate) fn automation_node_output_enforcement(
     let validator_kind = automation_output_validator_kind(node);
     let legacy_required_tools = automation_node_legacy_required_tools(node);
     let legacy_web_research_expected = automation_node_legacy_web_research_expected(node);
+    let optional_workspace_reads = automation_node_allows_optional_workspace_reads(node);
     let is_research_contract =
         validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
     let code_patch_contract = node
@@ -211,6 +366,8 @@ pub(crate) fn automation_node_output_enforcement(
                     ))
             {
                 "research_synthesis".to_string()
+            } else if optional_workspace_reads {
+                "artifact_only".to_string()
             } else if legacy_required_tools.iter().any(|tool| tool == "read")
                 || is_research_contract
                 || citations_contract
@@ -228,8 +385,6 @@ pub(crate) fn automation_node_output_enforcement(
 
     if enforcement.required_tools.is_empty() {
         enforcement.required_tools = legacy_required_tools.clone();
-        // standup_update: require read but not glob — participants that go straight to
-        // reading relevant files satisfy the quality bar without a glob pass first.
         if is_standup_update {
             if !enforcement.required_tools.iter().any(|tool| tool == "read") {
                 enforcement.required_tools.push("read".to_string());
@@ -250,12 +405,73 @@ pub(crate) fn automation_node_output_enforcement(
             enforcement.required_tools.push("websearch".to_string());
         }
     }
+
+    if !code_patch_contract
+        && enforcement
+            .required_tools
+            .iter()
+            .all(|tool| !matches!(tool.as_str(), "glob" | "read" | "write"))
+    {
+        let combined = automation_node_workspace_intent_text(node);
+        let has_read_intent = ["read", "review", "inspect", "examine", "open"]
+            .iter()
+            .any(|needle| combined.to_ascii_lowercase().contains(needle));
+        let has_write_intent = [
+            "write",
+            "update",
+            "create",
+            "initialize",
+            "bootstrap",
+            "merge",
+            "append",
+        ]
+        .iter()
+        .any(|needle| combined.to_ascii_lowercase().contains(needle));
+        let has_discovery_intent = [
+            "directory",
+            "directories",
+            "folder",
+            "folders",
+            "workspace",
+            "missing",
+        ]
+        .iter()
+        .any(|needle| combined.to_ascii_lowercase().contains(needle));
+        let has_workspace_files = automation_text_has_workspace_tokens(&combined);
+        if has_workspace_files
+            && has_discovery_intent
+            && !enforcement.required_tools.iter().any(|tool| tool == "glob")
+        {
+            enforcement.required_tools.push("glob".to_string());
+        }
+        if has_workspace_files
+            && has_read_intent
+            && !optional_workspace_reads
+            && !enforcement.required_tools.iter().any(|tool| tool == "read")
+        {
+            enforcement.required_tools.push("read".to_string());
+        }
+        if has_workspace_files
+            && has_write_intent
+            && !enforcement
+                .required_tools
+                .iter()
+                .any(|tool| tool == "write")
+        {
+            enforcement.required_tools.push("write".to_string());
+        }
+    }
+
     if code_patch_contract && !enforcement.required_tools.iter().any(|tool| tool == "read") {
         enforcement.required_tools.push("read".to_string());
     }
 
+    if optional_workspace_reads {
+        enforcement.required_tools.retain(|tool| tool != "read");
+    }
+
     if enforcement.required_evidence.is_empty() {
-        if is_local_research
+        if is_local_research && !optional_workspace_reads
             || (is_research_synthesis
                 && enforcement.required_tools.iter().any(|tool| tool == "read"))
         {
@@ -302,11 +518,13 @@ pub(crate) fn automation_node_output_enforcement(
     if enforcement.prewrite_gates.is_empty() && automation_node_required_output_path(node).is_some()
     {
         if is_standup_update {
-            // Only require a concrete read. workspace_inspection (glob) is not a hard gate
-            // for standup participants — they get a repair signal instead of a hard block.
             enforcement
                 .prewrite_gates
                 .push("concrete_reads".to_string());
+        } else if optional_workspace_reads {
+            enforcement
+                .prewrite_gates
+                .push("workspace_inspection".to_string());
         } else if is_local_research {
             enforcement
                 .prewrite_gates

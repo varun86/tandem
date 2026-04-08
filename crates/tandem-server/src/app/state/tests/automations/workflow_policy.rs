@@ -482,6 +482,8 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
             "resolved": {},
             "missing_capabilities": []
         }),
+        Some(".tandem/artifacts/research-sources.json"),
+        None,
         None,
     );
 
@@ -4948,6 +4950,108 @@ fn code_workflow_without_structural_completion_signal_requests_repair() {
         reason.as_deref(),
         Some("node did not return a final workflow result with an explicit status or validated output")
     );
+    assert_eq!(approved, None);
+}
+
+#[test]
+fn artifact_workflow_with_materialized_output_completes_without_explicit_status_json() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "outputs/generate-report.md"
+            }
+        })),
+    };
+    let verified_output = (
+        "outputs/generate-report.md".to_string(),
+        "# Final Report\n\nCompleted synthesis.".to_string(),
+    );
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Completed the requested tool actions and wrote the final report artifact.",
+            Some(&verified_output),
+            &json!({
+                "requested_tools": ["read", "write"],
+                "executed_tools": ["read", "write"]
+            }),
+            None,
+        );
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, None);
+}
+
+#[test]
+fn code_workflow_accepts_status_json_when_it_appears_at_end_of_long_response() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "job-scout".to_string(),
+        objective: "Operate the hourly job scout workflow".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "code_patch".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "task_kind": "code_change"
+            }
+        })),
+    };
+    let session_text = format!(
+        "{}\n\n{{\"status\":\"completed\"}}",
+        "Completed workspace analysis and validation steps. ".repeat(80)
+    );
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            &session_text,
+            None,
+            &json!({
+                "requested_tools": ["glob", "read", "bash"],
+                "executed_tools": ["glob", "read", "bash"],
+                "verification_expected": false,
+                "verification_ran": false,
+                "verification_failed": false
+            }),
+            None,
+        );
+
+    assert_eq!(status, "done");
+    assert_eq!(reason, None);
     assert_eq!(approved, None);
 }
 

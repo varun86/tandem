@@ -14,11 +14,13 @@ type WorkflowTaskActionsPanelProps = {
   selectedRunId: string;
   canTaskContinue: boolean;
   canTaskRetry: boolean;
+  runDebuggerRetryNodeId: string;
+  continueBlockedNodeId: string;
+  selectedBoardTaskServerActionMessage: string;
   canTaskRequeue: boolean;
   canBacklogTaskClaim: boolean;
   canBacklogTaskRequeue: boolean;
   canRecoverWorkflowRun: boolean;
-  continueBlockedNodeId: string;
   backlogTaskClaimMutation: MutationLike;
   backlogTaskRequeueMutation: MutationLike;
   workflowTaskContinueMutation: MutationLike;
@@ -40,11 +42,13 @@ export function WorkflowTaskActionsPanel({
   selectedRunId,
   canTaskContinue,
   canTaskRetry,
+  runDebuggerRetryNodeId,
+  continueBlockedNodeId,
+  selectedBoardTaskServerActionMessage,
   canTaskRequeue,
   canBacklogTaskClaim,
   canBacklogTaskRequeue,
   canRecoverWorkflowRun,
-  continueBlockedNodeId,
   backlogTaskClaimMutation,
   backlogTaskRequeueMutation,
   workflowTaskContinueMutation,
@@ -54,9 +58,19 @@ export function WorkflowTaskActionsPanel({
   workflowRecoverMutation,
   taskResetPreviewQuery,
 }: WorkflowTaskActionsPanelProps) {
+  const shouldShowContinueTaskButton =
+    selectedBoardTaskIsWorkflowNode &&
+    !!selectedBoardTaskNodeId &&
+    selectedBoardTaskStateNormalized === "blocked";
+  const shouldShowRetryTaskButton =
+    selectedBoardTaskIsWorkflowNode &&
+    !!selectedBoardTaskNodeId &&
+    ["blocked", "failed"].includes(selectedBoardTaskStateNormalized);
   if (
     !selectedRunId ||
     !(
+      shouldShowContinueTaskButton ||
+      shouldShowRetryTaskButton ||
       canTaskContinue ||
       canTaskRetry ||
       canTaskRequeue ||
@@ -175,7 +189,7 @@ export function WorkflowTaskActionsPanel({
             </div>
           </div>
         ) : null}
-        {canTaskContinue ? (
+        {shouldShowContinueTaskButton ? (
           <div className="space-y-1">
             <button
               type="button"
@@ -183,11 +197,13 @@ export function WorkflowTaskActionsPanel({
               onClick={() =>
                 workflowTaskContinueMutation.mutate({
                   runId: selectedRunId,
-                  nodeId: selectedBoardTaskNodeId,
-                  reason: `continued blocked task ${selectedBoardTaskNodeId} from debugger`,
+                  nodeId: continueBlockedNodeId,
+                  reason: `continued blocked task ${continueBlockedNodeId} from debugger`,
                 })
               }
+              title={canTaskContinue ? "" : selectedBoardTaskServerActionMessage}
               disabled={
+                !canTaskContinue ||
                 workflowTaskContinueMutation.isPending ||
                 workflowTaskRetryMutation.isPending ||
                 workflowTaskRequeueMutation.isPending ||
@@ -198,12 +214,13 @@ export function WorkflowTaskActionsPanel({
               {workflowTaskContinueMutation.isPending ? "Continuing..." : "Continue Task"}
             </button>
             <div className="tcp-subtle text-[11px]">
-              Minimal reset: reruns the blocked task itself and preserves descendants unless they
-              need to rerun later.
+              {canTaskContinue
+                ? "Minimal reset: reruns the blocked task itself and preserves descendants unless they need to rerun later."
+                : selectedBoardTaskServerActionMessage}
             </div>
           </div>
         ) : null}
-        {canTaskRetry ? (
+        {shouldShowRetryTaskButton ? (
           <div className="space-y-1">
             <button
               type="button"
@@ -211,11 +228,13 @@ export function WorkflowTaskActionsPanel({
               onClick={() =>
                 workflowTaskRetryMutation.mutate({
                   runId: selectedRunId,
-                  nodeId: selectedBoardTaskNodeId,
-                  reason: `retried task ${selectedBoardTaskNodeId} from debugger`,
+                  nodeId: runDebuggerRetryNodeId,
+                  reason: `retried task ${runDebuggerRetryNodeId} from debugger`,
                 })
               }
+              title={canTaskRetry ? "" : selectedBoardTaskServerActionMessage}
               disabled={
+                !canTaskRetry ||
                 workflowTaskContinueMutation.isPending ||
                 workflowTaskRetryMutation.isPending ||
                 workflowTaskRequeueMutation.isPending ||
@@ -226,7 +245,9 @@ export function WorkflowTaskActionsPanel({
               {workflowTaskRetryMutation.isPending ? "Retrying task..." : "Retry Task"}
             </button>
             <div className="tcp-subtle text-[11px]">
-              Best for blocked or failed work that should rerun from this task downward.
+              {canTaskRetry
+                ? "Best for blocked or failed work that should rerun from this task downward."
+                : selectedBoardTaskServerActionMessage}
             </div>
           </div>
         ) : null}

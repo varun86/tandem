@@ -900,6 +900,7 @@ pub enum AutomationStopKind {
     Panic,
     Shutdown,
     ServerRestart,
+    StaleReaped,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

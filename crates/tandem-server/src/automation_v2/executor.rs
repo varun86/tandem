@@ -41,6 +41,258 @@ fn node_output_failure_kind(value: &Value) -> String {
         .to_ascii_lowercase()
 }
 
+fn output_only_failed_for_missing_materialized_artifact(value: &Value) -> bool {
+    let unmet_requirements = value
+        .pointer("/artifact_validation/unmet_requirements")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let unmet_is_missing_output_only = unmet_requirements.is_empty()
+        || unmet_requirements.iter().all(|item| {
+            matches!(
+                item.as_str(),
+                Some("current_attempt_output_missing") | Some("structured_handoff_missing")
+            )
+        });
+    if !unmet_is_missing_output_only {
+        return false;
+    }
+    let blocked_reason = value
+        .get("blocked_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let rejected_reason = value
+        .pointer("/artifact_validation/rejected_artifact_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    blocked_reason.contains("explicit status or validated output")
+        || blocked_reason.contains("required output `")
+        || rejected_reason.contains("required output `")
+}
+
+fn promote_materialized_output(
+    output: &mut Value,
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    artifact_path: &str,
+    artifact_text: &str,
+    recovery_source: Option<&str>,
+) {
+    let accepted_candidate_source = if recovery_source.is_some() {
+        "session_write_recovery"
+    } else {
+        "verified_output"
+    };
+    let content_digest = crate::sha256_hex(&[artifact_text]);
+    let should_complete = matches!(
+        node_output_status(output).as_str(),
+        "blocked" | "needs_repair"
+    ) && output_only_failed_for_missing_materialized_artifact(output);
+
+    if let Some(object) = output.as_object_mut() {
+        object.insert(
+            "summary".to_string(),
+            json!(format!(
+                "Verified workspace output `{}` for node `{}`.",
+                artifact_path, node.node_id
+            )),
+        );
+        if should_complete {
+            object.insert(
+                "status".to_string(),
+                json!(if crate::app::state::automation_output_validator_kind(node)
+                    == crate::AutomationOutputValidatorKind::CodePatch
+                {
+                    "done"
+                } else {
+                    "completed"
+                }),
+            );
+            object.insert("blocked_reason".to_string(), Value::Null);
+            object.insert("failure_kind".to_string(), Value::Null);
+        }
+    }
+
+    let artifact_validation = output
+        .as_object_mut()
+        .and_then(|object| object.get_mut("artifact_validation"))
+        .and_then(Value::as_object_mut);
+    if let Some(artifact_validation) = artifact_validation {
+        artifact_validation.insert(
+            "accepted_candidate_source".to_string(),
+            json!(accepted_candidate_source),
+        );
+        artifact_validation.insert("rejected_artifact_reason".to_string(), Value::Null);
+        if should_complete {
+            artifact_validation.insert("semantic_block_reason".to_string(), Value::Null);
+            artifact_validation.insert("unmet_requirements".to_string(), json!([]));
+        }
+        if let Some(validation_basis) = artifact_validation
+            .entry("validation_basis".to_string())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+        {
+            validation_basis.insert(
+                "current_attempt_output_materialized".to_string(),
+                json!(true),
+            );
+            validation_basis.insert(
+                "current_attempt_output_materialized_via_filesystem".to_string(),
+                json!(true),
+            );
+            validation_basis.insert("verified_output_materialized".to_string(), json!(true));
+            validation_basis.insert("required_output_path".to_string(), json!(artifact_path));
+        }
+        if recovery_source.is_some() {
+            artifact_validation.insert("artifact_recovered_from_session".to_string(), json!(true));
+        }
+    }
+
+    let validator_summary = output
+        .as_object_mut()
+        .and_then(|object| object.get_mut("validator_summary"))
+        .and_then(Value::as_object_mut);
+    if let Some(validator_summary) = validator_summary {
+        validator_summary.insert(
+            "accepted_candidate_source".to_string(),
+            json!(accepted_candidate_source),
+        );
+        if should_complete {
+            validator_summary.insert(
+                "outcome".to_string(),
+                json!(if crate::app::state::automation_output_validator_kind(node)
+                    == crate::AutomationOutputValidatorKind::CodePatch
+                {
+                    "done"
+                } else {
+                    "completed"
+                }),
+            );
+            validator_summary.insert("reason".to_string(), Value::Null);
+            validator_summary.insert("unmet_requirements".to_string(), json!([]));
+        }
+    }
+
+    let attempt_artifact = output
+        .as_object_mut()
+        .and_then(|object| object.get_mut("attempt_evidence"))
+        .and_then(|value| value.get_mut("artifact"))
+        .and_then(Value::as_object_mut);
+    if let Some(attempt_artifact) = attempt_artifact {
+        attempt_artifact.insert("status".to_string(), json!("written"));
+        attempt_artifact.insert("path".to_string(), json!(artifact_path));
+        attempt_artifact.insert("content_digest".to_string(), json!(content_digest));
+        attempt_artifact.insert(
+            "accepted_candidate_source".to_string(),
+            json!(accepted_candidate_source),
+        );
+        if let Some(recovery_source) = recovery_source {
+            attempt_artifact.insert("recovery_source".to_string(), json!(recovery_source));
+        }
+    }
+}
+
+fn execution_error_blocker_category(detail: &str) -> &'static str {
+    let lowered = detail.trim().to_ascii_lowercase();
+    if lowered.contains("connect timeout") || lowered.contains("timed out") {
+        "provider_connect_timeout"
+    } else if lowered.contains("authentication") || lowered.contains("unauthorized") {
+        "provider_auth"
+    } else {
+        "execution_error"
+    }
+}
+
+fn execution_error_validator_kind(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+) -> &'static str {
+    match crate::app::state::automation_output_validator_kind(node) {
+        crate::AutomationOutputValidatorKind::CodePatch => "code_patch",
+        crate::AutomationOutputValidatorKind::ResearchBrief => "research_brief",
+        crate::AutomationOutputValidatorKind::ReviewDecision => "review_decision",
+        crate::AutomationOutputValidatorKind::StructuredJson => "structured_json",
+        crate::AutomationOutputValidatorKind::StandupUpdate => "standup_update",
+        crate::AutomationOutputValidatorKind::GenericArtifact => "generic_artifact",
+    }
+}
+
+pub(crate) fn build_node_execution_error_output_with_category(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    detail: &str,
+    terminal: bool,
+    blocker_category: &str,
+) -> Value {
+    let reason = detail.trim();
+    let reason = if reason.is_empty() {
+        "node execution failed before producing a final response".to_string()
+    } else {
+        reason.to_string()
+    };
+    let status = if terminal { "failed" } else { "needs_repair" };
+    let summary = if terminal {
+        format!(
+            "Node `{}` failed before producing a final response.",
+            node.node_id
+        )
+    } else {
+        format!(
+            "Node `{}` failed before producing a final response and will be retried.",
+            node.node_id
+        )
+    };
+    let required_next_tool_actions = if terminal {
+        Vec::new()
+    } else if blocker_category == "tool_resolution_failed" {
+        vec![
+            "Retry this node only after the required tool capabilities are actually available."
+                .to_string(),
+            "Do not continue with a collapsed tool set that only exposes discovery helpers."
+                .to_string(),
+        ]
+    } else {
+        vec![
+            "Retry the same node execution after provider connectivity recovers.".to_string(),
+            "Do not classify this attempt as a missing handoff unless a final response was actually returned."
+                .to_string(),
+        ]
+    };
+    json!({
+        "status": status,
+        "summary": summary,
+        "blocked_reason": reason,
+        "failure_kind": if terminal { "run_failed" } else { "execution_failed" },
+        "blocker_category": blocker_category,
+        "validator_summary": {
+            "kind": execution_error_validator_kind(node),
+            "outcome": status,
+            "reason": reason,
+            "unmet_requirements": [],
+            "warning_count": 0,
+        },
+        "artifact_validation": {
+            "blocking_classification": blocker_category,
+            "required_next_tool_actions": required_next_tool_actions,
+            "unmet_requirements": [],
+        },
+    })
+}
+
+fn build_node_execution_error_output(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    detail: &str,
+    terminal: bool,
+) -> Value {
+    build_node_execution_error_output_with_category(
+        node,
+        detail,
+        terminal,
+        execution_error_blocker_category(detail),
+    )
+}
+
 fn blocked_failure_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -578,6 +830,7 @@ pub async fn run_automation_v2_run(
                 else {
                     return futures::future::ready((
                         node.node_id.clone(),
+                        node.clone(),
                         Err(anyhow::anyhow!("agent not found")),
                     ))
                     .boxed();
@@ -607,7 +860,7 @@ pub async fn run_automation_v2_run(
                         anyhow::anyhow!("node execution panicked: {}", detail)
                     })
                     .and_then(|result| result);
-                    (node.node_id, result)
+                    (node.node_id.clone(), node, result)
                 }
                 .boxed()
             })
@@ -620,10 +873,75 @@ pub async fn run_automation_v2_run(
             .await
             .map(|row| row.checkpoint.node_attempts)
             .unwrap_or_default();
-        for (node_id, result) in outcomes {
+        for (node_id, node, result) in outcomes {
             match result {
                 Ok(output) => {
                     let mut output = output;
+                    if let Some(output_path) =
+                        crate::app::state::automation::automation_node_required_output_path(&node)
+                    {
+                        let workspace_root =
+                            crate::app::state::resolve_automation_v2_workspace_root(
+                                &state,
+                                &automation,
+                            )
+                            .await;
+                        let required_output_path =
+                            crate::app::state::automation::automation_node_required_output_path_for_run(
+                                &node,
+                                Some(&run_id),
+                            )
+                            .unwrap_or_else(|| output_path.clone());
+                        if let Ok(resolved) =
+                            crate::app::state::automation::resolve_automation_output_path_for_run(
+                                &workspace_root,
+                                &run_id,
+                                &output_path,
+                            )
+                        {
+                            let mut observed_artifact_text =
+                                if resolved.exists() && resolved.is_file() {
+                                    std::fs::read_to_string(&resolved)
+                                        .ok()
+                                        .filter(|text| !text.trim().is_empty())
+                                } else {
+                                    None
+                                };
+                            let mut recovery_source = None::<&str>;
+                            if observed_artifact_text.is_none() {
+                                if let Some(session_id) =
+                                    crate::app::state::automation_output_session_id(&output)
+                                {
+                                    if let Some(runtime) = state.runtime.get() {
+                                        if let Some(session) =
+                                            runtime.storage.get_session(&session_id).await
+                                        {
+                                            if let Some(payload) = crate::app::state::automation::extraction::extract_recoverable_json_from_session(&session) {
+                                                if let Some(parent) = resolved.parent() {
+                                                    let _ = std::fs::create_dir_all(parent);
+                                                }
+                                                if let Ok(serialized) = serde_json::to_string_pretty(&payload) {
+                                                    if std::fs::write(&resolved, &serialized).is_ok() {
+                                                        observed_artifact_text = Some(serialized);
+                                                        recovery_source = Some("session_text_salvage");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(artifact_text) = observed_artifact_text.as_deref() {
+                                promote_materialized_output(
+                                    &mut output,
+                                    &node,
+                                    &required_output_path,
+                                    artifact_text,
+                                    recovery_source,
+                                );
+                            }
+                        }
+                    }
                     if let Some((path, content_digest)) =
                         crate::app::state::automation::node_output::automation_output_validated_artifact(
                             &output,
@@ -947,16 +1265,92 @@ pub async fn run_automation_v2_run(
                     }
                     let detail = crate::app::state::truncate_text(&error.to_string(), 500);
                     let attempts = latest_attempts.get(&node_id).copied().unwrap_or(1);
-                    let max_attempts = automation
-                        .flow
-                        .nodes
-                        .iter()
-                        .find(|row| row.node_id == node_id)
-                        .map(crate::app::state::automation_node_max_attempts)
-                        .unwrap_or(1);
+                    let max_attempts = crate::app::state::automation_node_max_attempts(&node);
                     let terminal = attempts >= max_attempts;
+
+                    let artifact_recovered = if let Some(output_path) =
+                        crate::app::state::automation::automation_node_required_output_path(&node)
+                    {
+                        let workspace_root =
+                            crate::app::state::resolve_automation_v2_workspace_root(
+                                &state,
+                                &automation,
+                            )
+                            .await;
+                        let run_session_id = state
+                            .get_automation_v2_run(&run_id)
+                            .await
+                            .and_then(|row| row.latest_session_id.clone())
+                            .unwrap_or_default();
+                        let session = if let Some(runtime) = state.runtime.get() {
+                            runtime.storage.get_session(&run_session_id).await
+                        } else {
+                            None
+                        };
+                        match (session.as_ref(), Some(output_path.as_str())) {
+                            (Some(session), Some(output_path)) => {
+                                let session_text =
+                                    crate::app::state::automation::extract_session_text_output(
+                                        session,
+                                    );
+                                let recovered = crate::app::state::automation::extract_recoverable_json_artifact(&session_text)
+                                    .and_then(|payload| {
+                                        crate::app::state::automation::resolve_automation_output_path_for_run(
+                                            &workspace_root,
+                                            &run_id,
+                                            output_path,
+                                        )
+                                        .ok()
+                                        .map(|resolved| (payload, resolved))
+                                    })
+                                    .map(|(payload, resolved)| {
+                                        if let Some(parent) = resolved.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        serde_json::to_string_pretty(&payload)
+                                            .ok()
+                                            .and_then(|serialized| {
+                                                std::fs::write(&resolved, serialized).ok()?;
+                                                Some(())
+                                            })
+                                    })
+                                    .is_some();
+                                recovered
+                            }
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    };
+
+                    let mut failure_output =
+                        build_node_execution_error_output(&node, &detail, terminal);
+                    if artifact_recovered {
+                        if let Some(obj) = failure_output.as_object_mut() {
+                            obj.insert("artifact_recovered_from_session".to_string(), json!(true));
+                            obj.get_mut("validator_summary")
+                                .and_then(|v| v.as_object_mut())
+                                .map(|v| {
+                                    v.insert(
+                                        "artifact_recovered_from_session".to_string(),
+                                        json!(true),
+                                    );
+                                });
+                            obj.get_mut("artifact_validation")
+                                .and_then(|v| v.as_object_mut())
+                                .map(|v| {
+                                    v.insert(
+                                        "artifact_recovered_from_session".to_string(),
+                                        json!(true),
+                                    );
+                                });
+                        }
+                    }
                     let _ = state
                         .update_automation_v2_run(&run_id, |row| {
+                            row.checkpoint
+                                .node_outputs
+                                .insert(node_id.clone(), failure_output.clone());
                             crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
                                 row,
                                 "node_failed",
@@ -968,6 +1362,7 @@ pub async fn run_automation_v2_run(
                                     "max_attempts": max_attempts,
                                     "reason": detail,
                                     "terminal": terminal,
+                                    "artifact_recovered_from_session": artifact_recovered,
                                 })),
                             );
                         })
@@ -1113,6 +1508,131 @@ mod tests {
     }
 
     #[test]
+    fn promote_materialized_output_completes_missing_output_repairs() {
+        let node = crate::automation_v2::types::AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+            node_id: "research-brief".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(crate::automation_v2::types::AutomationFlowOutputContract {
+                kind: "structured_json".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": ".tandem/runs/run-test/artifacts/research-brief.json"
+                }
+            })),
+        };
+        let mut output = json!({
+            "status": "needs_repair",
+            "blocked_reason": "required output `.tandem/runs/run-test/artifacts/research-brief.json` was not created in the current attempt",
+            "failure_kind": "artifact_rejected",
+            "validator_summary": {
+                "outcome": "needs_repair",
+                "reason": "required output `.tandem/runs/run-test/artifacts/research-brief.json` was not created in the current attempt",
+                "unmet_requirements": ["current_attempt_output_missing"]
+            },
+            "artifact_validation": {
+                "rejected_artifact_reason": "required output `.tandem/runs/run-test/artifacts/research-brief.json` was not created in the current attempt",
+                "unmet_requirements": ["current_attempt_output_missing"],
+                "validation_basis": {
+                    "current_attempt_output_materialized": false,
+                    "verified_output_materialized": false
+                }
+            },
+            "attempt_evidence": {
+                "artifact": {
+                    "status": "missing",
+                    "path": ".tandem/runs/run-test/artifacts/research-brief.json"
+                }
+            }
+        });
+
+        promote_materialized_output(
+            &mut output,
+            &node,
+            ".tandem/runs/run-test/artifacts/research-brief.json",
+            "{\"status\":\"completed\"}",
+            None,
+        );
+
+        assert_eq!(node_output_status(&output), "completed");
+        assert_eq!(
+            output
+                .pointer("/artifact_validation/accepted_candidate_source")
+                .and_then(Value::as_str),
+            Some("verified_output")
+        );
+        assert_eq!(
+            output
+                .pointer(
+                    "/artifact_validation/validation_basis/current_attempt_output_materialized"
+                )
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            output
+                .pointer("/attempt_evidence/artifact/status")
+                .and_then(Value::as_str),
+            Some("written")
+        );
+    }
+
+    #[test]
+    fn promote_materialized_output_marks_session_salvage_recovery_source() {
+        let node = &test_automation().flow.nodes[0];
+        let mut output = json!({
+            "status": "completed",
+            "artifact_validation": {
+                "validation_basis": {}
+            },
+            "attempt_evidence": {
+                "artifact": {
+                    "status": "missing"
+                }
+            }
+        });
+
+        promote_materialized_output(
+            &mut output,
+            node,
+            ".tandem/runs/run-test/artifacts/research-brief.json",
+            "{\"status\":\"completed\"}",
+            Some("session_text_salvage"),
+        );
+
+        assert_eq!(
+            output
+                .pointer("/artifact_validation/artifact_recovered_from_session")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            output
+                .pointer("/attempt_evidence/artifact/recovery_source")
+                .and_then(Value::as_str),
+            Some("session_text_salvage")
+        );
+        assert_eq!(
+            output
+                .pointer("/artifact_validation/accepted_candidate_source")
+                .and_then(Value::as_str),
+            Some("session_write_recovery")
+        );
+    }
+
+    #[test]
     fn derive_terminal_run_state_marks_blocked_outputs_as_blocked() {
         let automation = test_automation();
         let run = test_run_with_output(json!({
@@ -1181,5 +1701,75 @@ mod tests {
                 detail: "automation run failed from node outcomes: research-brief".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn transient_execution_error_output_requests_retry_without_handoff_requirements() {
+        let node = &test_automation().flow.nodes[0];
+        let output = build_node_execution_error_output(
+            node,
+            "provider stream connect timeout after 90000 ms",
+            false,
+        );
+        assert_eq!(node_output_status(&output), "needs_repair");
+        assert_eq!(node_output_failure_kind(&output), "execution_failed");
+        assert_eq!(
+            output.get("blocker_category").and_then(Value::as_str),
+            Some("provider_connect_timeout")
+        );
+        assert_eq!(
+            output.get("blocked_reason").and_then(Value::as_str),
+            Some("provider stream connect timeout after 90000 ms")
+        );
+        assert!(output
+            .pointer("/validator_summary/unmet_requirements")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.is_empty()));
+        assert!(output
+            .pointer("/artifact_validation/required_next_tool_actions")
+            .and_then(Value::as_array)
+            .is_some_and(
+                |items| items.iter().any(|value| value.as_str().is_some_and(
+                    |text| text.contains("Do not classify this attempt as a missing handoff")
+                ))
+            ));
+    }
+
+    #[test]
+    fn tool_resolution_execution_error_output_uses_dedicated_blocker_category() {
+        let node = &test_automation().flow.nodes[0];
+        let output = build_node_execution_error_output_with_category(
+            node,
+            "required automation capabilities were not offered after MCP/tool sync: email_delivery",
+            false,
+            "tool_resolution_failed",
+        );
+        assert_eq!(node_output_status(&output), "needs_repair");
+        assert_eq!(
+            output.get("blocker_category").and_then(Value::as_str),
+            Some("tool_resolution_failed")
+        );
+        assert!(output
+            .pointer("/artifact_validation/required_next_tool_actions")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(|value| value
+                .as_str()
+                .is_some_and(|text| text.contains("collapsed tool set")))));
+    }
+
+    #[test]
+    fn terminal_execution_error_output_marks_node_failed() {
+        let node = &test_automation().flow.nodes[0];
+        let output = build_node_execution_error_output(
+            node,
+            "provider stream connect timeout after 90000 ms",
+            true,
+        );
+        assert_eq!(node_output_status(&output), "failed");
+        assert_eq!(node_output_failure_kind(&output), "run_failed");
+        assert!(output
+            .pointer("/artifact_validation/required_next_tool_actions")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.is_empty()));
     }
 }

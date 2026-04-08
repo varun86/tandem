@@ -713,6 +713,47 @@ fn research_finalize_prewrite_requirements_skip_same_node_reads_and_websearch() 
 }
 
 #[test]
+fn explicit_input_files_skip_workspace_inspection_but_still_require_concrete_reads() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "draft_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Write final report".to_string(),
+        depends_on: vec!["collect_inputs".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "collect_inputs".to_string(),
+            alias: "inputs".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "artifact".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "reports/final.md",
+                "input_files": ["inputs/brief.md"],
+                "required_tools": ["read"]
+            }
+        })),
+    };
+
+    let requirements =
+        automation_node_prewrite_requirements(&node, &["read".to_string(), "write".to_string()])
+            .expect("prewrite requirements");
+
+    assert!(!requirements.workspace_inspection_required);
+    assert!(requirements.concrete_read_required);
+    assert!(requirements.repair_on_unmet_requirements);
+}
+
+#[test]
 fn generic_required_tools_validation_needs_repair_when_read_unused() {
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-required-tools-test-{}", now_ms()));
@@ -2245,7 +2286,7 @@ async fn automation_run_rejects_invalid_activation_validation_snapshot() {
 }
 
 #[tokio::test]
-async fn stale_running_automation_runs_are_failed_and_release_scheduler_capacity() {
+async fn stale_running_automation_runs_are_paused_and_release_scheduler_capacity() {
     let automation = AutomationV2Spec {
         automation_id: "auto-stale-run-test".to_string(),
         name: "Stale Run Test".to_string(),
@@ -2298,10 +2339,15 @@ async fn stale_running_automation_runs_are_failed_and_release_scheduler_capacity
     {
         let mut guard = state.automation_v2_runs.write().await;
         let persisted = guard.get_mut(&run_id).expect("persisted run");
-        persisted.active_session_ids.clear();
-        persisted.active_instance_ids.clear();
-        persisted.latest_session_id = None;
-        persisted.updated_at_ms = now_ms().saturating_sub(180_000);
+        persisted.checkpoint.lifecycle_history.push(
+            crate::automation_v2::types::AutomationLifecycleRecord {
+                event: "run_started".to_string(),
+                recorded_at_ms: now_ms().saturating_sub(180_000),
+                reason: None,
+                stop_kind: None,
+                metadata: None,
+            },
+        );
     }
 
     let reaped = state.reap_stale_running_automation_runs(120_000).await;
@@ -2311,10 +2357,15 @@ async fn stale_running_automation_runs_are_failed_and_release_scheduler_capacity
         .get_automation_v2_run(&run_id)
         .await
         .expect("persisted run");
-    assert_eq!(persisted.status, AutomationRunStatus::Failed);
+    assert_eq!(persisted.status, AutomationRunStatus::Paused);
+    assert_eq!(
+        persisted.pause_reason.as_deref(),
+        Some("stale_no_provider_activity")
+    );
+    assert_eq!(persisted.stop_kind, Some(AutomationStopKind::StaleReaped));
     assert_eq!(
         persisted.detail.as_deref(),
-        Some("automation run stalled without active sessions or instances for at least 120s")
+        Some("automation run paused after no provider activity for at least 120s")
     );
     {
         let scheduler = state.automation_scheduler.read().await;

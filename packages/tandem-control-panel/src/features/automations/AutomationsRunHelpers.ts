@@ -9,6 +9,9 @@ import {
   workflowNodeOutputEntries,
   workflowNodeOutputText,
   workflowNodeToolTelemetry,
+  workflowRunIsPossiblyStale,
+  workflowRunLastActivityAt,
+  workflowRunWasStalePaused,
   workflowSessionIds,
 } from "../orchestration/workflowStability";
 
@@ -38,6 +41,15 @@ function workflowQueueResourceKey(run: any) {
   return String(run?.scheduler?.resource_key || run?.scheduler?.resourceKey || "").trim();
 }
 
+function relativeTimeFromNow(timestampMs: number | null) {
+  if (!timestampMs) return "time unavailable";
+  const deltaMs = Math.max(0, Date.now() - timestampMs);
+  const seconds = Math.floor(deltaMs / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+}
+
 export function workflowStatusDisplay(run: any) {
   const status = workflowDerivedRunStatus(run);
   if (status !== "queued") return status || "unknown";
@@ -54,8 +66,18 @@ export function workflowStatusDisplay(run: any) {
 }
 
 export function workflowStatusSubtleDetail(run: any) {
+  if (workflowRunWasStalePaused(run)) {
+    return "Run was paused automatically after provider activity stopped";
+  }
+  if (workflowRunIsPossiblyStale(run)) {
+    return `Run is possibly stale: last provider activity ${relativeTimeFromNow(
+      workflowRunLastActivityAt(run)
+    )}`;
+  }
   if (workflowDerivedRunStatus(run) === "stalled") {
-    return "Run appears stalled: no active session or instance heartbeat";
+    return `Run appears stalled: last provider activity ${relativeTimeFromNow(
+      workflowRunLastActivityAt(run)
+    )}`;
   }
   const reason = workflowQueueReason(run);
   if (!reason) return "";
@@ -90,6 +112,11 @@ export function runTimeLabel(run: any) {
 export function deriveRunDebugHints(run: any, artifacts: any[]) {
   const hints: string[] = [];
   const status = workflowDerivedRunStatus(run);
+  if (workflowRunWasStalePaused(run)) {
+    hints.push("Run was paused automatically after provider activity stopped.");
+  } else if (workflowRunIsPossiblyStale(run)) {
+    hints.push("Run may be stale. Check the latest lifecycle event and provider activity.");
+  }
   if (status === "pending_approval" || status === "awaiting_approval") {
     hints.push("Run is waiting for approval before external actions.");
   }

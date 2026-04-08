@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-attempt forensic evidence**: Every automation attempt now generates a durable JSON forensic record, capturing full context for debugging and audit.
+- **Explicit node file contracts**: Workflow nodes can now declare explicit `input_files` and `output_files` at authoring time, overriding heuristic workspace inspection and providing clearer contract enforcement.
+
+### Changed
+
+- **Stale run handling**: Stale automation runs are now paused instead of failed, using a new `last_activity_at_ms` timestamp for more accurate detection.
+- **Capability resolution hardening**: The automation runtime now fails closed when required capabilities are missing after MCP sync, and clears stale tool failure labels on retry.
+- **Provider transport failure classification**: Network and authentication issues during tool execution are now classified as `provider_transport_failure` instead of generic workflow errors.
+
+### Fixed
+
+- **Inspect run UI crash**: Fixed a UI crash in the WorkflowRequiredActionsPanel when `blockedNodeIds` or `needsRepairNodeIds` were undefined.
+
+### Added
+
 - **Connected-agent handoff documentation and UI wiring**:
   - Added `handoff_config`, `watch_conditions`, and `scope_policy` fields to the `WorkflowEditDraft` interface so the control panel can safely modify automations containing handoff artifacts without dropping those fields.
   - Added a dedicated `Connected-Agent Handoffs` guide covering inbox/approved directory layout, auto-approval toggles, watch conditions, and restricted-access scope policies.

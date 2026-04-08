@@ -495,6 +495,8 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
             "resolved": {},
             "missing_capabilities": []
         }),
+        Some(".tandem/artifacts/research-sources.json"),
+        None,
         None,
     );
 

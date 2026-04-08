@@ -4684,31 +4684,33 @@ impl AppState {
             .values()
             .filter(|run| {
                 run.status == AutomationRunStatus::Running
-                    && run.active_session_ids.is_empty()
-                    && run.active_instance_ids.is_empty()
-                    && now.saturating_sub(run.updated_at_ms) >= stale_after_ms
+                    && now
+                        .saturating_sub(automation::lifecycle::automation_last_activity_at_ms(run))
+                        >= stale_after_ms
             })
             .map(|run| run.run_id.clone())
             .collect::<Vec<_>>();
         let mut reaped = 0usize;
         for run_id in runs {
             let detail = format!(
-                "automation run stalled without active sessions or instances for at least {}s",
+                "automation run paused after no provider activity for at least {}s",
                 stale_after_ms / 1000
             );
             if self
                 .update_automation_v2_run(&run_id, |row| {
-                    row.status = AutomationRunStatus::Failed;
+                    row.status = AutomationRunStatus::Paused;
+                    row.pause_reason = Some("stale_no_provider_activity".to_string());
                     row.detail = Some(detail.clone());
+                    row.stop_kind = Some(AutomationStopKind::StaleReaped);
                     row.stop_reason = Some(detail.clone());
                     row.active_session_ids.clear();
                     row.latest_session_id = None;
                     row.active_instance_ids.clear();
                     automation::record_automation_lifecycle_event(
                         row,
-                        "run_failed_stalled_execution",
+                        "run_paused_stale_no_provider_activity",
                         Some(detail.clone()),
-                        None,
+                        Some(AutomationStopKind::StaleReaped),
                     );
                 })
                 .await

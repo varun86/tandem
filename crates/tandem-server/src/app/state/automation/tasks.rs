@@ -10,7 +10,7 @@ use crate::app::state::AppState;
 use crate::automation_v2::executor::run_automation_v2_run;
 use crate::automation_v2::types::{AutomationRunStatus, AutomationStopKind, AutomationV2RunRecord};
 
-const STALE_RUNNING_AUTOMATION_RUN_MS: u64 = 120_000;
+const STALE_RUNNING_AUTOMATION_RUN_MS: u64 = 300_000;
 
 pub async fn run_automation_v2_executor(state: AppState) {
     // Step 6: Call recover_in_flight_runs on startup

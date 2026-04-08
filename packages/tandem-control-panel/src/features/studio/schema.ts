@@ -38,9 +38,11 @@ export type StudioNodeDraft = {
   objective: string;
   dependsOn: string[];
   inputRefs: Array<{ fromStepId: string; alias: string }>;
+  inputFiles: string[];
   stageKind?: string;
   outputKind: string;
   outputPath: string;
+  outputFiles: string[];
   taskKind?: string;
   projectBacklogTasks?: boolean;
   backlogTaskId?: string;
@@ -137,8 +139,10 @@ export function createEmptyNodeDraft(
     objective: "",
     dependsOn: [...dependsOn],
     inputRefs: inputRefs.map((ref) => ({ ...ref })),
+    inputFiles: [],
     outputKind: "artifact",
     outputPath: "",
+    outputFiles: [],
     taskKind: "",
     projectBacklogTasks: false,
     backlogTaskId: "",

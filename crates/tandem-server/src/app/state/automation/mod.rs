@@ -6,6 +6,7 @@ pub(crate) mod assessment;
 pub(crate) mod capability_impl;
 pub(crate) mod enforcement;
 pub(crate) mod extraction;
+pub(crate) use extraction::{extract_recoverable_json_artifact, extract_session_text_output};
 pub(crate) mod legacy_defaults;
 pub(crate) mod lifecycle;
 pub(crate) mod node_output;
@@ -26,11 +27,11 @@ use enforcement::*;
 use extraction::*;
 pub(crate) use legacy_defaults::{
     automation_node_allows_attachments, automation_node_builder_metadata,
-    automation_node_delivery_method, automation_node_delivery_target,
-    automation_node_email_content_type, automation_node_inline_body_only,
-    automation_node_is_outbound_action, automation_node_is_research_finalize,
-    automation_node_preserves_full_upstream_inputs, automation_node_requires_email_delivery,
-    automation_node_uses_upstream_validation_evidence,
+    automation_node_builder_string_array, automation_node_delivery_method,
+    automation_node_delivery_target, automation_node_email_content_type,
+    automation_node_inline_body_only, automation_node_is_outbound_action,
+    automation_node_is_research_finalize, automation_node_preserves_full_upstream_inputs,
+    automation_node_requires_email_delivery, automation_node_uses_upstream_validation_evidence,
 };
 use lifecycle::*;
 pub use lifecycle::{record_automation_lifecycle_event, record_automation_workflow_state_events};
@@ -340,6 +341,81 @@ fn automation_capability_resolution_mcp_tools(tool_telemetry: &Value, key: &str)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn automation_capability_resolution_missing_capabilities(
+    capability_resolution: &Value,
+) -> Vec<String> {
+    capability_resolution
+        .get("missing_capabilities")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_reset_attempt_tool_failure_labels(tool_telemetry: &mut Value) {
+    let Some(object) = tool_telemetry.as_object_mut() else {
+        return;
+    };
+    object.insert("latest_web_research_failure".to_string(), Value::Null);
+    object.insert("latest_email_delivery_failure".to_string(), Value::Null);
+    if let Some(web_research) = object
+        .get_mut("attempt_evidence")
+        .and_then(Value::as_object_mut)
+        .and_then(|value| value.get_mut("evidence"))
+        .and_then(Value::as_object_mut)
+        .and_then(|value| value.get_mut("web_research"))
+        .and_then(Value::as_object_mut)
+    {
+        web_research.insert("latest_failure".to_string(), Value::Null);
+    }
+    if let Some(delivery) = object
+        .get_mut("attempt_evidence")
+        .and_then(Value::as_object_mut)
+        .and_then(|value| value.get_mut("delivery"))
+        .and_then(Value::as_object_mut)
+    {
+        delivery.insert("latest_failure".to_string(), Value::Null);
+    }
+}
+
+fn automation_initialized_attempt_tool_telemetry(
+    requested_tools: &[String],
+    capability_resolution: &Value,
+) -> Value {
+    let mut tool_telemetry = json!({
+        "requested_tools": requested_tools,
+        "executed_tools": [],
+        "tool_call_counts": {},
+        "workspace_inspection_used": false,
+        "web_research_used": false,
+        "web_research_succeeded": false,
+        "latest_web_research_failure": Value::Null,
+        "email_delivery_attempted": false,
+        "email_delivery_succeeded": false,
+        "latest_email_delivery_failure": Value::Null,
+        "verification_expected": false,
+        "verification_ran": false,
+        "verification_failed": false,
+        "verification_plan": [],
+        "verification_results": [],
+        "verification_total": 0,
+        "verification_completed": 0,
+        "verification_passed_count": 0,
+        "verification_failed_count": 0,
+        "latest_verification_command": Value::Null,
+        "latest_verification_failure": Value::Null,
+        "capability_resolution": capability_resolution.clone(),
+    });
+    automation_reset_attempt_tool_failure_labels(&mut tool_telemetry);
+    tool_telemetry
 }
 
 fn automation_normalize_server_list(raw: &[String]) -> Vec<String> {
@@ -1533,7 +1609,13 @@ pub(crate) fn render_automation_repair_brief(
 
     let validator_summary = prior_output.get("validator_summary");
     let artifact_validation = prior_output.get("artifact_validation");
-    let tool_telemetry = prior_output.get("tool_telemetry");
+    let tool_telemetry = prior_output
+        .get("tool_telemetry")
+        .cloned()
+        .map(|mut value| {
+            automation_reset_attempt_tool_failure_labels(&mut value);
+            value
+        });
     let validator_outcome = validator_summary
         .and_then(|value| value.get("outcome"))
         .and_then(Value::as_str)
@@ -1630,6 +1712,7 @@ pub(crate) fn render_automation_repair_brief(
         })
         .unwrap_or_else(|| "none recorded".to_string());
     let tools_offered = tool_telemetry
+        .as_ref()
         .and_then(|value| value.get("requested_tools"))
         .and_then(Value::as_array)
         .map(|rows| {
@@ -1642,6 +1725,7 @@ pub(crate) fn render_automation_repair_brief(
         })
         .unwrap_or_default();
     let tools_executed = tool_telemetry
+        .as_ref()
         .and_then(|value| value.get("executed_tools"))
         .and_then(Value::as_array)
         .map(|rows| {
@@ -1716,9 +1800,19 @@ pub(crate) fn render_automation_repair_brief(
     } else {
         String::new()
     };
+    let final_attempt_line = if repair_attempts_remaining <= 1 {
+        let output_path = automation_node_required_output_path(node)
+            .unwrap_or_else(|| "the declared output path".to_string());
+        format!(
+            "\n\nFINAL ATTEMPT:\n- This is the last retry.\n- The engine will accept the output file at `{}` as-is if it exists when this attempt ends.\n- Do not ask follow-up questions.\n- Do not end with a summary.\n- Write the complete artifact to the output path and include {{\"status\":\"completed\"}} as the last line of your response.",
+            output_path
+        )
+    } else {
+        String::new()
+    };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}",
         node.node_id,
         reason,
         validation_basis_line,
@@ -1731,6 +1825,7 @@ pub(crate) fn render_automation_repair_brief(
         repair_attempt,
         repair_attempts_remaining.saturating_sub(1),
         code_workflow_line,
+        final_attempt_line,
     ))
 }
 
@@ -2265,6 +2360,9 @@ fn discover_automation_tools_for_capability(
     capability_id: &str,
     available_tool_names: &HashSet<String>,
 ) -> Vec<String> {
+    if available_tool_names.is_empty() {
+        return vec!["*".to_string()];
+    }
     let mut matches = available_tool_names
         .iter()
         .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
@@ -2332,17 +2430,25 @@ pub(crate) fn automation_node_prewrite_requirements(
         web_research_expected && requested_tools.iter().any(|tool| tool == "websearch");
     let brief_research_node = validation_profile == "local_research";
     let research_finalize = validation_profile == "research_synthesis";
+    let optional_workspace_reads =
+        enforcement::automation_node_allows_optional_workspace_reads(node);
+    let explicit_input_files = automation_node_explicit_input_files(node);
     let has_required_read = required_tools.iter().any(|tool| tool == "read");
     let has_required_websearch = required_tools.iter().any(|tool| tool == "websearch");
     let has_any_required_tools = !required_tools.is_empty();
-    let concrete_read_required = !research_finalize
-        && ((brief_research_node || validation_profile == "local_research")
-            || has_required_read
-            || enforcement
-                .prewrite_gates
-                .iter()
-                .any(|gate| gate == "concrete_reads"))
-        && requested_tools.iter().any(|tool| tool == "read");
+    let concrete_read_required = if !explicit_input_files.is_empty() {
+        !research_finalize && requested_tools.iter().any(|tool| tool == "read")
+    } else {
+        !research_finalize
+            && !optional_workspace_reads
+            && ((brief_research_node || validation_profile == "local_research")
+                || has_required_read
+                || enforcement
+                    .prewrite_gates
+                    .iter()
+                    .any(|gate| gate == "concrete_reads"))
+            && requested_tools.iter().any(|tool| tool == "read")
+    };
     let successful_web_research_required = !research_finalize
         && ((validation_profile == "external_research")
             || has_required_websearch
@@ -2353,7 +2459,9 @@ pub(crate) fn automation_node_prewrite_requirements(
         && web_research_expected
         && requested_tools.iter().any(|tool| tool == "websearch");
     Some(PrewriteRequirements {
-        workspace_inspection_required: workspace_inspection_required && !research_finalize,
+        workspace_inspection_required: workspace_inspection_required
+            && !research_finalize
+            && explicit_input_files.is_empty(),
         web_research_required: web_research_required && !research_finalize,
         concrete_read_required,
         successful_web_research_required,
@@ -2637,11 +2745,33 @@ fn automation_node_allows_preexisting_output_reuse(node: &AutomationFlowNode) ->
         .unwrap_or(false)
 }
 
+fn automation_node_explicit_input_files(node: &AutomationFlowNode) -> Vec<String> {
+    let mut files = automation_node_builder_string_array(node, "input_files");
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn automation_node_explicit_output_files(node: &AutomationFlowNode) -> Vec<String> {
+    let mut files = automation_node_builder_string_array(node, "output_files");
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
-    node.metadata
+    let explicit_output_files = automation_node_explicit_output_files(node);
+    if !explicit_output_files.is_empty() {
+        return explicit_output_files;
+    }
+    let builder = node
+        .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("builder"))
-        .and_then(Value::as_object)
+        .and_then(Value::as_object);
+    let explicit_must_write_files =
+        builder.is_some_and(|builder| builder.contains_key("must_write_files"));
+    let mut files = builder
         .and_then(|builder| builder.get("must_write_files"))
         .and_then(Value::as_array)
         .map(|items| {
@@ -2653,7 +2783,24 @@ fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !explicit_must_write_files {
+        let inferred = automation_node_bootstrap_missing_files(node);
+        if !inferred.is_empty() {
+            tracing::warn!(
+                node_id = %node.node_id,
+                inferred_files = ?inferred,
+                "automation bootstrap file inference is deprecated; set builder.must_write_files explicitly"
+            );
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn automation_node_bootstrap_missing_files(node: &AutomationFlowNode) -> Vec<String> {
+    enforcement::automation_node_inferred_bootstrap_required_files(node)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2675,11 +2822,19 @@ struct AutomationArtifactPublishSpec {
     mode: AutomationArtifactPublishMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutomationVerifiedOutputResolutionKind {
+    Direct,
+    LegacyPromoted,
+    SessionTextRecovery,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AutomationVerifiedOutputResolution {
     path: PathBuf,
     legacy_workspace_artifact_promoted_from: Option<PathBuf>,
     materialized_by_current_attempt: bool,
+    resolution_kind: AutomationVerifiedOutputResolutionKind,
 }
 
 fn automation_node_publish_spec(
@@ -2777,6 +2932,7 @@ fn maybe_promote_legacy_workspace_artifact_for_run(
             path: run_scoped_path,
             legacy_workspace_artifact_promoted_from: None,
             materialized_by_current_attempt: true,
+            resolution_kind: AutomationVerifiedOutputResolutionKind::Direct,
         }));
     }
     if !legacy_path.exists() || !legacy_path.is_file() {
@@ -2797,6 +2953,7 @@ fn maybe_promote_legacy_workspace_artifact_for_run(
         path: run_scoped_path,
         legacy_workspace_artifact_promoted_from: Some(legacy_path),
         materialized_by_current_attempt: true,
+        resolution_kind: AutomationVerifiedOutputResolutionKind::LegacyPromoted,
     }))
 }
 
@@ -3146,7 +3303,7 @@ fn automation_run_scoped_absolute_output_path(
     })
 }
 
-fn resolve_automation_output_path_for_run(
+pub(crate) fn resolve_automation_output_path_for_run(
     workspace_root: &str,
     run_id: &str,
     output_path: &str,
@@ -3301,10 +3458,17 @@ async fn reconcile_automation_resolve_verified_output_path(
             node,
             output_path,
         )? {
+            let path_str = resolved.to_string_lossy().to_string();
+            let under_run_scope = path_str.contains(&format!(".tandem/runs/{}/", run_id));
             return Ok(Some(AutomationVerifiedOutputResolution {
                 path: resolved,
                 legacy_workspace_artifact_promoted_from: None,
-                materialized_by_current_attempt: output_touched,
+                materialized_by_current_attempt: if under_run_scope {
+                    true
+                } else {
+                    output_touched
+                },
+                resolution_kind: AutomationVerifiedOutputResolutionKind::Direct,
             }));
         }
         if let Some(promoted) = maybe_promote_legacy_workspace_artifact_for_run(
@@ -3326,6 +3490,7 @@ async fn reconcile_automation_resolve_verified_output_path(
                 path: recovered,
                 legacy_workspace_artifact_promoted_from: None,
                 materialized_by_current_attempt: true,
+                resolution_kind: AutomationVerifiedOutputResolutionKind::SessionTextRecovery,
             }));
         }
         if !output_touched {
@@ -3353,7 +3518,7 @@ fn recover_required_output_from_session_text(
     if !extension.eq_ignore_ascii_case("json") {
         return Ok(None);
     }
-    let payload = extract_structured_handoff_json(&extract_session_text_output(session));
+    let payload = extract_recoverable_json_from_session(session);
     let Some(payload) = payload else {
         return Ok(None);
     };
@@ -4013,6 +4178,15 @@ fn automation_verified_output_differs_from_preexisting(
     preexisting_output.is_none_or(|previous| previous != verified_output.1)
 }
 
+fn automation_repair_output_differs_from_preexisting(
+    preexisting_output: Option<&str>,
+    accepted_output: Option<&(String, String)>,
+) -> bool {
+    accepted_output.is_some_and(|output| {
+        automation_verified_output_differs_from_preexisting(preexisting_output, output)
+    })
+}
+
 fn automation_write_arg_path(args: &serde_json::Map<String, Value>) -> Option<&str> {
     args.get("path")
         .or_else(|| args.get("filePath"))
@@ -4257,6 +4431,8 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     let current_discovered_relevant_paths =
         session_discovered_relevant_paths(session, workspace_root);
     let use_upstream_evidence = automation_node_uses_upstream_validation_evidence(node);
+    let explicit_input_files = automation_node_explicit_input_files(node);
+    let explicit_output_files = automation_node_explicit_output_files(node);
     let mut read_paths = current_read_paths.clone();
     let mut discovered_relevant_paths = if use_upstream_evidence {
         let mut paths = Vec::new();
@@ -4268,6 +4444,9 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     } else {
         current_discovered_relevant_paths.clone()
     };
+    if !explicit_input_files.is_empty() {
+        discovered_relevant_paths = explicit_input_files.clone();
+    }
     read_paths.sort();
     read_paths.dedup();
     discovered_relevant_paths.sort();
@@ -4555,6 +4734,14 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             );
             object.insert("must_write_files".to_string(), json!(must_write_files));
             object.insert(
+                "explicit_input_files".to_string(),
+                json!(explicit_input_files),
+            );
+            object.insert(
+                "explicit_output_files".to_string(),
+                json!(explicit_output_files),
+            );
+            object.insert(
                 "must_write_file_statuses".to_string(),
                 json!(must_write_file_statuses),
             );
@@ -4698,13 +4885,16 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             || requires_files_not_reviewed
             || requires_citations
             || requires_web_sources_reviewed;
+        let optional_workspace_reads =
+            enforcement::automation_node_allows_optional_workspace_reads(node);
         let requires_read = required_tools_for_node.iter().any(|tool| tool == "read");
         let requires_websearch = required_tools_for_node
             .iter()
             .any(|tool| tool == "websearch")
             && !web_research_unavailable;
         if has_research_contract && (requested_has_read || requires_local_source_reads) {
-            let missing_concrete_reads = requires_local_source_reads && !executed_has_read;
+            let missing_concrete_reads =
+                !optional_workspace_reads && requires_local_source_reads && !executed_has_read;
             let files_reviewed_backed = selected_assessment.is_some_and(|assessment| {
                 !assessment.reviewed_paths.is_empty()
                     && assessment.reviewed_paths.len()
@@ -4799,7 +4989,8 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             }
         }
         if !has_research_contract && has_required_tools {
-            let missing_concrete_reads = requires_read && !executed_has_read;
+            let missing_concrete_reads =
+                !optional_workspace_reads && requires_read && !executed_has_read;
             let missing_web_research =
                 requires_websearch && requires_external_sources && !web_research_succeeded;
             if missing_concrete_reads {
@@ -4941,6 +5132,36 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                 }
             }
         }
+        let repair_promoted_after_write = repair_attempted
+            && execution_mode == "artifact_write"
+            && accepted_output.is_some()
+            && session_write_touched_output_for_output(session, workspace_root, &path, run_id);
+        let repair_promoted_after_read_and_output_change = repair_attempted
+            && execution_mode == "artifact_write"
+            && accepted_output.is_some()
+            && (current_executed_has_read || !canonical_read_paths.is_empty())
+            && automation_repair_output_differs_from_preexisting(
+                preexisting_output,
+                accepted_output.as_ref(),
+            );
+        if !writes_blocked_handoff_artifact
+            && (repair_promoted_after_write || repair_promoted_after_read_and_output_change)
+        {
+            semantic_block_reason = None;
+            rejected_reason = None;
+            unmet_requirements.clear();
+            repair_succeeded = true;
+            if let Some(object) = validation_basis.as_object_mut() {
+                object.insert(
+                    "repair_promoted_after_write".to_string(),
+                    json!(repair_promoted_after_write),
+                );
+                object.insert(
+                    "repair_promoted_after_read_and_output_change".to_string(),
+                    json!(repair_promoted_after_read_and_output_change),
+                );
+            }
+        }
         if rejected_reason.is_none()
             && matches!(execution_mode, "git_patch" | "filesystem_patch")
             && preexisting_output.is_some()
@@ -5064,6 +5285,8 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             .iter()
             .any(|gate| gate == "successful_web_research")
             && !web_research_unavailable;
+        let optional_workspace_reads =
+            enforcement::automation_node_allows_optional_workspace_reads(node);
 
         if structured_handoff.is_none() {
             unmet_requirements.push("structured_handoff_missing".to_string());
@@ -5071,10 +5294,13 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         if requires_workspace_inspection && !workspace_inspection_satisfied {
             unmet_requirements.push("workspace_inspection_required".to_string());
         }
-        if (requires_read || requires_concrete_reads) && !executed_has_read {
+        if !optional_workspace_reads
+            && (requires_read || requires_concrete_reads)
+            && !executed_has_read
+        {
             unmet_requirements.push("no_concrete_reads".to_string());
         }
-        if requires_concrete_reads && !executed_has_read {
+        if !optional_workspace_reads && requires_concrete_reads && !executed_has_read {
             unmet_requirements.push("concrete_read_required".to_string());
         }
         if (requires_websearch || requires_successful_web_research) && !web_research_succeeded {
@@ -6183,7 +6409,7 @@ pub(crate) fn automation_node_has_passing_artifact(
         .unwrap_or(false)
 }
 
-async fn resolve_automation_v2_workspace_root(
+pub(crate) async fn resolve_automation_v2_workspace_root(
     state: &AppState,
     automation: &AutomationV2Spec,
 ) -> String {
@@ -6546,6 +6772,8 @@ pub(crate) async fn execute_automation_v2_node(
             &mcp_tool_diagnostics,
         );
     }
+    let missing_capabilities =
+        automation_capability_resolution_missing_capabilities(&capability_resolution);
     let offered_tool_schemas = available_tool_schemas
         .iter()
         .filter(|schema| {
@@ -6555,6 +6783,75 @@ pub(crate) async fn execute_automation_v2_node(
         })
         .cloned()
         .collect::<Vec<_>>();
+    if !missing_capabilities.is_empty() {
+        let offered_tools_summary = if effective_offered_tools.is_empty() {
+            "none".to_string()
+        } else {
+            effective_offered_tools.join(", ")
+        };
+        let selected_servers_summary = {
+            let servers = mcp_tool_diagnostics
+                .get("selected_servers")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if servers.is_empty() {
+                "none".to_string()
+            } else {
+                servers.join(", ")
+            }
+        };
+        let registered_tools_summary = {
+            let tools = mcp_tool_diagnostics
+                .get("registered_tools")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if tools.is_empty() {
+                "none".to_string()
+            } else {
+                tools.join(", ")
+            }
+        };
+        let detail = format!(
+            "required automation capabilities were not offered after MCP/tool sync: {}. Offered tools: {}. Selected MCP servers: {}. Registered MCP tools after sync: {}.",
+            missing_capabilities.join(", "),
+            offered_tools_summary,
+            selected_servers_summary,
+            registered_tools_summary
+        );
+        let mut output =
+            crate::automation_v2::executor::build_node_execution_error_output_with_category(
+                node,
+                &detail,
+                false,
+                "tool_resolution_failed",
+            );
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "tool_telemetry".to_string(),
+                automation_initialized_attempt_tool_telemetry(
+                    &requested_tools,
+                    &capability_resolution,
+                ),
+            );
+            object.insert(
+                "capability_resolution".to_string(),
+                capability_resolution.clone(),
+            );
+        }
+        return Ok(output);
+    }
     state
         .engine_loop
         .set_session_allowed_tools(&session_id, requested_tools.clone())
@@ -6835,6 +7132,8 @@ pub(crate) async fn execute_automation_v2_node(
         &tool_telemetry,
         &preflight,
         &capability_resolution,
+        required_output_path.as_deref(),
+        verified_output_resolution.as_ref(),
         verified_output_for_evidence.as_ref(),
     );
     if let Some(object) = tool_telemetry.as_object_mut() {
@@ -7018,6 +7317,7 @@ pub(crate) async fn execute_automation_v2_node(
                     .and_then(Value::as_str),
                 receipt_blocker_category.as_deref(),
                 receipt_fallback_used,
+                node_output::automation_backend_actionability_state(&receipt_status),
             )
         });
     let receipt_telemetry_summary = json!({
@@ -7128,6 +7428,48 @@ pub(crate) async fn execute_automation_v2_node(
             }),
         None => None,
     };
+    let attempt_forensic_record = json!({
+        "version": 1,
+        "automation_id": automation.automation_id,
+        "automation_run_id": run_id,
+        "context_run_id": format!("automation-v2-{run_id}"),
+        "node_id": node.node_id,
+        "attempt": attempt,
+        "session_id": session_id,
+        "status": receipt_status,
+        "final_backend_actionability_state": node_output::automation_backend_actionability_state(&receipt_status),
+        "approved": receipt_approved,
+        "blocked_reason": receipt_blocked_reason,
+        "blocker_category": receipt_blocker_category,
+        "fallback_used": receipt_fallback_used,
+        "preflight": preflight.clone(),
+        "capability_resolution": capability_resolution.clone(),
+        "validator_summary": receipt_validator_summary,
+        "attempt_evidence": receipt_attempt_evidence.clone(),
+        "receipt_ledger": receipt_ledger.clone(),
+        "receipt_timeline": receipt_timeline.clone(),
+    });
+    let attempt_forensic_record_path = match receipts::persist_automation_attempt_forensic_record(
+        &workspace_root,
+        run_id,
+        &node.node_id,
+        attempt,
+        &attempt_forensic_record,
+    )
+    .await
+    {
+        Ok(path) => Some(path.to_string_lossy().to_string()),
+        Err(error) => {
+            tracing::warn!(
+                run_id = %run_id,
+                node_id = %node.node_id,
+                attempt = attempt,
+                error = %error,
+                "failed to persist automation attempt forensic record"
+            );
+            None
+        }
+    };
     let external_actions = if editorial_publish_block_reason.is_some() {
         Vec::new()
     } else {
@@ -7195,6 +7537,18 @@ pub(crate) async fn execute_automation_v2_node(
                 if let Some(receipt_timeline) = receipt_timeline {
                     attempt_evidence.insert("receipt_timeline".to_string(), receipt_timeline);
                 }
+            }
+        }
+        if let Some(path) = attempt_forensic_record_path.clone() {
+            object.insert(
+                "attempt_forensic_record_path".to_string(),
+                json!(path.clone()),
+            );
+            if let Some(attempt_evidence) = object
+                .get_mut("attempt_evidence")
+                .and_then(Value::as_object_mut)
+            {
+                attempt_evidence.insert("forensic_record_path".to_string(), json!(path));
             }
         }
         if !external_actions.is_empty() {

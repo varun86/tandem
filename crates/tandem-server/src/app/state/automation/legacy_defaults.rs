@@ -12,6 +12,28 @@ pub(crate) fn automation_node_builder_metadata(
         .map(str::to_string)
 }
 
+pub(crate) fn automation_node_builder_string_array(
+    node: &AutomationFlowNode,
+    key: &str,
+) -> Vec<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get(key))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn automation_node_research_stage(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "research_stage")
         .map(|value| value.trim().to_ascii_lowercase())

@@ -71,6 +71,10 @@ function workflowStringArray(value: any) {
     : [];
 }
 
+function workflowRunLevelNodeIds(run: any, snakeKey: string, camelKey: string) {
+  return workflowStringArray(run?.[snakeKey] ?? run?.[camelKey]);
+}
+
 function workflowReceiptTimelineEntries(value: any) {
   const raw = Array.isArray(value?.records) ? value.records : Array.isArray(value) ? value : [];
   return raw
@@ -117,11 +121,20 @@ function workflowNodeRuntimeStatus(output: any) {
 }
 
 export function workflowBlockedNodeIds(run: any) {
-  const ids = new Set(
-    checkpointStringArray(workflowCheckpoint(run), "blocked_nodes", "blockedNodes")
-  );
+  const ids = new Set([
+    ...workflowRunLevelNodeIds(run, "blockedNodeIDs", "blockedNodeIds"),
+    ...checkpointStringArray(workflowCheckpoint(run), "blocked_nodes", "blockedNodes"),
+  ]);
   for (const { nodeId, value } of workflowNodeOutputEntries(run)) {
     if (workflowNodeRuntimeStatus(value) === "blocked") ids.add(nodeId);
+  }
+  return Array.from(ids);
+}
+
+export function workflowNeedsRepairNodeIds(run: any) {
+  const ids = new Set(workflowRunLevelNodeIds(run, "needsRepairNodeIDs", "needsRepairNodeIds"));
+  for (const { nodeId, value } of workflowNodeOutputEntries(run)) {
+    if (workflowNodeRuntimeStatus(value) === "needs_repair") ids.add(nodeId);
   }
   return Array.from(ids);
 }
@@ -151,27 +164,59 @@ export function workflowBlockedNodeCount(run: any) {
   return workflowBlockedNodeIds(run).length;
 }
 
-const WORKFLOW_RUNNING_STALE_AFTER_MS = 120_000;
+const WORKFLOW_RUNNING_STALE_AFTER_MS = 300_000;
+const WORKFLOW_RUNNING_POSSIBLY_STALE_AFTER_MS = 60_000;
+
+export function workflowRunLastActivityAt(run: any) {
+  const direct = workflowTimestamp(run?.last_activity_at_ms ?? run?.lastActivityAtMs);
+  if (direct) return direct;
+  const history = Array.isArray(workflowCheckpoint(run)?.lifecycle_history)
+    ? workflowCheckpoint(run).lifecycle_history
+    : Array.isArray(workflowCheckpoint(run)?.lifecycleHistory)
+      ? workflowCheckpoint(run).lifecycleHistory
+      : [];
+  const latestLifecycleAt = history.reduce((latest: number, entry: any) => {
+    const value = workflowTimestamp(entry?.recorded_at_ms ?? entry?.recordedAtMs) || 0;
+    return value > latest ? value : latest;
+  }, 0);
+  if (latestLifecycleAt > 0) return latestLifecycleAt;
+  return workflowTimestamp(
+    run?.started_at_ms ?? run?.startedAtMs ?? run?.created_at_ms ?? run?.createdAtMs
+  );
+}
+
+export function workflowRunIsPossiblyStale(run: any) {
+  const raw = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if (raw !== "running") return false;
+  const lastActivityAt = workflowRunLastActivityAt(run);
+  if (!lastActivityAt) return false;
+  return Date.now() - lastActivityAt >= WORKFLOW_RUNNING_POSSIBLY_STALE_AFTER_MS;
+}
+
+export function workflowRunWasStalePaused(run: any) {
+  const raw = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if (raw !== "paused") return false;
+  const pauseReason = String(run?.pause_reason || run?.pauseReason || "")
+    .trim()
+    .toLowerCase();
+  const stopKind = String(run?.stop_kind || run?.stopKind || "")
+    .trim()
+    .toLowerCase();
+  return pauseReason === "stale_no_provider_activity" || stopKind === "stale_reaped";
+}
 
 export function workflowRunLooksStalled(run: any) {
   const raw = String(run?.status || "")
     .trim()
     .toLowerCase();
   if (raw !== "running") return false;
-  const activeSessionIds = Array.isArray(run?.active_session_ids)
-    ? run.active_session_ids
-    : Array.isArray(run?.activeSessionIds)
-      ? run.activeSessionIds
-      : [];
-  const activeInstanceIds = Array.isArray(run?.active_instance_ids)
-    ? run.active_instance_ids
-    : Array.isArray(run?.activeInstanceIds)
-      ? run.activeInstanceIds
-      : [];
-  if (activeSessionIds.length > 0 || activeInstanceIds.length > 0) return false;
-  const updatedAt = Number(run?.updated_at_ms || run?.updatedAtMs || run?.started_at_ms || 0);
-  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
-  return Date.now() - updatedAt >= WORKFLOW_RUNNING_STALE_AFTER_MS;
+  const lastActivityAt = workflowRunLastActivityAt(run);
+  if (!lastActivityAt) return false;
+  return Date.now() - lastActivityAt >= WORKFLOW_RUNNING_STALE_AFTER_MS;
 }
 
 export function workflowDerivedRunStatus(run: any) {
@@ -294,6 +339,9 @@ export function workflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
     return { currentTaskId: "", taskSource: "empty" as const, tasks: [] as any[] };
   }
   const completed = new Set(workflowCompletedNodeIds(run));
+  const serverBlockedNodeIds = new Set(
+    workflowRunLevelNodeIds(run, "blockedNodeIDs", "blockedNodeIds")
+  );
   const tasks = snapshotNodes.map((node: any) => {
     const nodeId = String(node?.node_id || "").trim();
     const taskId = `node-${nodeId}`;
@@ -303,15 +351,22 @@ export function workflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
     const ready = dependencies.every((depId) => completed.has(depId.replace(/^node-/, "")));
     const state = workflowTaskState(run, nodeId, ready ? [] : dependencies);
     const output = workflowNodeOutput(run, nodeId) || {};
+    const localBlocked =
+      checkpointStringArray(workflowCheckpoint(run), "blocked_nodes", "blockedNodes").includes(
+        nodeId
+      ) || workflowNodeRuntimeStatus(output) === "blocked";
+    const serverBlocked = serverBlockedNodeIds.has(nodeId);
     const inferredState =
       activeTaskId === taskId &&
       String(run?.status || "")
         .trim()
         .toLowerCase() === "running"
         ? "in_progress"
-        : state === "pending" && ready
-          ? "runnable"
-          : state;
+        : serverBlocked
+          ? "blocked"
+          : state === "pending" && ready
+            ? "runnable"
+            : state;
     const builder = node?.metadata?.builder || {};
     return {
       id: taskId,
@@ -326,6 +381,7 @@ export function workflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
       assigned_role: String(node?.agent_id || ""),
       workflow_id: String(run?.automation_id || ""),
       session_id: workflowNodeOutputSessionId(run, nodeId),
+      is_stale: serverBlocked !== localBlocked,
       projects_backlog_tasks: Boolean(builder?.project_backlog_tasks),
       backlog_task_id: String(builder?.task_id || ""),
       task_kind: String(builder?.task_kind || ""),

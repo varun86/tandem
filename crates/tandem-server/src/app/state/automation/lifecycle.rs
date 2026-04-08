@@ -31,6 +31,16 @@ pub fn record_automation_lifecycle_event_with_metadata(
         });
 }
 
+pub fn automation_last_activity_at_ms(run: &AutomationV2RunRecord) -> u64 {
+    run.checkpoint
+        .lifecycle_history
+        .iter()
+        .map(|record| record.recorded_at_ms)
+        .max()
+        .or(run.started_at_ms)
+        .unwrap_or(run.created_at_ms)
+}
+
 pub fn automation_lifecycle_event_metadata_for_node(
     node_id: &str,
     attempt: u32,

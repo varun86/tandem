@@ -256,3 +256,57 @@ pub(crate) fn extract_structured_handoff_json(raw: &str) -> Option<Value> {
         }
     })
 }
+
+pub(crate) fn extract_recoverable_json_artifact(raw: &str) -> Option<Value> {
+    let handoff = extract_structured_handoff_json(raw)?;
+    let nested = [
+        handoff.pointer("/structured_handoff").cloned(),
+        handoff.pointer("/content/structured_handoff").cloned(),
+        handoff.pointer("/content/data").cloned(),
+        handoff.pointer("/data").cloned(),
+        handoff.pointer("/artifact/content").cloned(),
+        handoff.pointer("/artifact/data").cloned(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|value| match value {
+        Value::Object(_) | Value::Array(_) => !automation_json_looks_like_status_payload(value),
+        _ => false,
+    });
+    nested.or(Some(handoff))
+}
+
+pub(crate) fn extract_recoverable_json_from_session(session: &Session) -> Option<Value> {
+    let from_assistant = extract_recoverable_json_artifact(&extract_session_text_output(session));
+    if from_assistant.is_some() {
+        return from_assistant;
+    }
+    for message in session.messages.iter().rev() {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation { result, .. } = part else {
+                continue;
+            };
+            let Some(payload) = automation_tool_result_output_payload(result.as_ref()) else {
+                continue;
+            };
+            match &payload {
+                Value::Object(_) | Value::Array(_) => {
+                    if !automation_json_looks_like_status_payload(&payload) {
+                        return Some(payload);
+                    }
+                }
+                Value::String(text) => {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Some(value) = extract_recoverable_json_artifact(trimmed) {
+                        return Some(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}

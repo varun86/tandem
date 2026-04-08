@@ -99,6 +99,10 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
 
 fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> Value {
     let mut normalized_run = run.clone();
+    let blocked_node_ids = automation_v2_blocked_node_ids(&normalized_run);
+    let last_activity_at_ms =
+        crate::app::state::automation::lifecycle::automation_last_activity_at_ms(&normalized_run);
+    normalized_run.checkpoint.blocked_nodes = blocked_node_ids.clone();
     if let Some(automation) = normalized_run.automation_snapshot.clone() {
         for node in &automation.flow.nodes {
             if let Some(output) = normalized_run
@@ -138,6 +142,12 @@ fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> V
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("contextRunID".to_string(), json!(context_run_id.clone()));
         obj.insert("linked_context_run_id".to_string(), json!(context_run_id));
+        obj.insert("blockedNodeIDs".to_string(), json!(blocked_node_ids));
+        obj.insert(
+            "last_activity_at_ms".to_string(),
+            json!(last_activity_at_ms),
+        );
+        obj.insert("lastActivityAtMs".to_string(), json!(last_activity_at_ms));
         obj.insert(
             "nodeRepairGuidance".to_string(),
             Value::Object(node_repair_guidance),
@@ -3874,18 +3884,9 @@ pub(super) async fn automations_v2_run_task_continue(
             })),
         ));
     }
-    let is_blocked = current
-        .checkpoint
-        .blocked_nodes
+    let is_blocked = automation_v2_blocked_node_ids(&current)
         .iter()
-        .any(|blocked| blocked == &node_id)
-        || current
-            .checkpoint
-            .node_outputs
-            .get(&node_id)
-            .map(automation_v2_node_output_status)
-            .map(|value| value == "blocked")
-            .unwrap_or(false);
+        .any(|blocked| blocked == &node_id);
     if !is_blocked {
         return Err((
             StatusCode::CONFLICT,

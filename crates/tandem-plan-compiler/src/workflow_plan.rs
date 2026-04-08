@@ -239,6 +239,117 @@ pub fn normalize_workflow_step_metadata<
     }
 }
 
+fn workflow_step_builder_map_mut(
+    step: &mut WorkflowPlanStep<impl WorkflowInputRefLike, impl Serialize>,
+) -> Option<&mut serde_json::Map<String, Value>> {
+    let metadata = step.metadata.get_or_insert_with(|| json!({}));
+    let root = metadata.as_object_mut()?;
+    let builder = root
+        .entry("builder".to_string())
+        .or_insert_with(|| json!({}));
+    builder.as_object_mut()
+}
+
+fn workflow_step_builder_string_array(
+    step: &WorkflowPlanStep<impl WorkflowInputRefLike, impl Serialize>,
+    key: &str,
+) -> Vec<String> {
+    step.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get(key))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn workflow_step_builder_string(
+    step: &WorkflowPlanStep<impl WorkflowInputRefLike, impl Serialize>,
+    key: &str,
+) -> Option<String> {
+    step.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub fn derive_workflow_step_file_contracts<S, I, O>(
+    plan: &mut WorkflowPlan<S, WorkflowPlanStep<I, O>>,
+) where
+    I: WorkflowInputRefLike + Serialize,
+    O: Serialize,
+{
+    let output_files_by_step_id = plan
+        .steps
+        .iter()
+        .map(|step| {
+            let mut output_files = workflow_step_builder_string_array(step, "output_files");
+            if output_files.is_empty() {
+                if let Some(output_path) = workflow_step_builder_string(step, "output_path") {
+                    output_files.push(output_path);
+                }
+            }
+            output_files.sort();
+            output_files.dedup();
+            (step.step_id.clone(), output_files)
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for step in &mut plan.steps {
+        let explicit_input_files = step
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(Value::as_object)
+            .is_some_and(|builder| builder.contains_key("input_files"));
+        let explicit_output_files = step
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(Value::as_object)
+            .is_some_and(|builder| builder.contains_key("output_files"));
+        let inferred_input_files = step
+            .input_refs
+            .iter()
+            .flat_map(|input_ref| {
+                output_files_by_step_id
+                    .get(input_ref.from_step_id())
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let inferred_output_files = output_files_by_step_id
+            .get(&step.step_id)
+            .cloned()
+            .unwrap_or_default();
+        let Some(builder) = workflow_step_builder_map_mut(step) else {
+            continue;
+        };
+        if !explicit_input_files && !inferred_input_files.is_empty() {
+            builder.insert("input_files".to_string(), json!(inferred_input_files));
+        }
+        if !explicit_output_files && !inferred_output_files.is_empty() {
+            builder.insert("output_files".to_string(), json!(inferred_output_files));
+        }
+    }
+}
+
 pub fn inferred_output_validator_kind(contract_kind: &str) -> ProjectedOutputValidatorKind {
     match contract_kind.trim().to_ascii_lowercase().as_str() {
         "brief" => ProjectedOutputValidatorKind::ResearchBrief,
@@ -1563,6 +1674,146 @@ Here is the planner response:
                 .and_then(|space| space.get("scope"))
                 .and_then(Value::as_str),
             Some("project")
+        );
+    }
+
+    #[test]
+    fn derive_workflow_step_file_contracts_adds_upstream_input_and_output_files() {
+        let mut plan = test_plan_with_steps(vec![
+            WorkflowPlanStep {
+                step_id: "collect_inputs".to_string(),
+                kind: "collect".to_string(),
+                objective: "Collect inputs.".to_string(),
+                depends_on: vec![],
+                agent_role: "planner".to_string(),
+                input_refs: vec![],
+                output_contract: Some(json!({"kind":"structured_json"})),
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": ".tandem/artifacts/collect-inputs.json"
+                    }
+                })),
+            },
+            WorkflowPlanStep {
+                step_id: "draft_report".to_string(),
+                kind: "write".to_string(),
+                objective: "Draft the report.".to_string(),
+                depends_on: vec!["collect_inputs".to_string()],
+                agent_role: "writer".to_string(),
+                input_refs: vec![json!({
+                    "from_step_id": "collect_inputs",
+                    "alias": "inputs"
+                })],
+                output_contract: Some(json!({"kind":"report_markdown"})),
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": "reports/final.md"
+                    }
+                })),
+            },
+        ]);
+
+        derive_workflow_step_file_contracts(&mut plan);
+
+        let collect_builder = plan.steps[0]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("collect builder");
+        assert_eq!(
+            collect_builder
+                .get("output_files")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec![".tandem/artifacts/collect-inputs.json"])
+        );
+        let draft_builder = plan.steps[1]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("draft builder");
+        assert_eq!(
+            draft_builder
+                .get("input_files")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec![".tandem/artifacts/collect-inputs.json"])
+        );
+        assert_eq!(
+            draft_builder
+                .get("output_files")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["reports/final.md"])
+        );
+    }
+
+    #[test]
+    fn derive_workflow_step_file_contracts_preserves_explicit_contract_overrides() {
+        let mut plan = test_plan_with_steps(vec![
+            WorkflowPlanStep {
+                step_id: "collect_inputs".to_string(),
+                kind: "collect".to_string(),
+                objective: "Collect inputs.".to_string(),
+                depends_on: vec![],
+                agent_role: "planner".to_string(),
+                input_refs: vec![],
+                output_contract: Some(json!({"kind":"structured_json"})),
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": ".tandem/artifacts/collect-inputs.json",
+                        "output_files": ["custom/inputs.json"]
+                    }
+                })),
+            },
+            WorkflowPlanStep {
+                step_id: "draft_report".to_string(),
+                kind: "write".to_string(),
+                objective: "Draft the report.".to_string(),
+                depends_on: vec!["collect_inputs".to_string()],
+                agent_role: "writer".to_string(),
+                input_refs: vec![json!({
+                    "from_step_id": "collect_inputs",
+                    "alias": "inputs"
+                })],
+                output_contract: Some(json!({"kind":"report_markdown"})),
+                metadata: Some(json!({
+                    "builder": {
+                        "input_files": ["docs/brief.md"]
+                    }
+                })),
+            },
+        ]);
+
+        derive_workflow_step_file_contracts(&mut plan);
+
+        let collect_builder = plan.steps[0]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("collect builder");
+        assert_eq!(
+            collect_builder
+                .get("output_files")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["custom/inputs.json"])
+        );
+        let draft_builder = plan.steps[1]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("draft builder");
+        assert_eq!(
+            draft_builder
+                .get("input_files")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["docs/brief.md"])
         );
     }
 

@@ -241,6 +241,33 @@ function joinCsv(values: string[]) {
   return values.join(", ");
 }
 
+function normalizeStringList(values: unknown) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((entry) => safeString(entry))
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function effectiveNodeOutputFiles(node: StudioNodeDraft) {
+  const explicit = normalizeStringList(node.outputFiles);
+  if (explicit.length) return explicit;
+  const outputPath = safeString(node.outputPath);
+  return outputPath ? [outputPath] : [];
+}
+
+function effectiveNodeInputFiles(node: StudioNodeDraft, nodes: StudioNodeDraft[]) {
+  const explicit = normalizeStringList(node.inputFiles);
+  if (explicit.length) return explicit;
+  const nodesById = new Map(nodes.map((entry) => [safeString(entry.nodeId), entry]));
+  return normalizeStringList(
+    syncInputRefs(node.dependsOn, node.inputRefs).flatMap((ref) => {
+      const upstream = nodesById.get(safeString(ref.fromStepId));
+      return upstream ? effectiveNodeOutputFiles(upstream) : [];
+    })
+  );
+}
+
 function slugify(value: string) {
   return String(value || "")
     .trim()
@@ -537,6 +564,12 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
         metadataBuilder?.research_stage ||
         row?.metadata?.studio?.research_stage
     ),
+    inputFiles: normalizeStringList(
+      row?.inputFiles ||
+        row?.input_files ||
+        metadataBuilder?.input_files ||
+        row?.metadata?.studio?.input_files
+    ),
     outputKind: safeString(
       row?.outputKind || row?.output_kind || row?.output_contract?.kind || "artifact"
     ),
@@ -545,6 +578,12 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
         row?.output_path ||
         metadataBuilder?.output_path ||
         row?.metadata?.studio?.output_path
+    ),
+    outputFiles: normalizeStringList(
+      row?.outputFiles ||
+        row?.output_files ||
+        metadataBuilder?.output_files ||
+        row?.metadata?.studio?.output_files
     ),
     taskKind: safeString(row?.taskKind || row?.task_kind || metadataBuilder?.task_kind),
     projectBacklogTasks: Boolean(
@@ -608,6 +647,8 @@ function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDra
     safeString(node.verificationCommand)
       ? `Expected verification command or rule: ${safeString(node.verificationCommand)}.`
       : "",
+    node.inputFiles.length ? `Declared input files: ${joinCsv(node.inputFiles)}.` : "",
+    node.outputFiles.length ? `Declared output files: ${joinCsv(node.outputFiles)}.` : "",
     "Execution rules:",
     canGlob || canRead
       ? `- Inspect the workspace before writing using ${[
@@ -1348,6 +1389,10 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
 
   const selectedNode =
     draft.nodes.find((node) => node.nodeId === selectedNodeId) || draft.nodes[0] || null;
+  const selectedNodeInputFiles = selectedNode
+    ? effectiveNodeInputFiles(selectedNode, draft.nodes)
+    : [];
+  const selectedNodeOutputFiles = selectedNode ? effectiveNodeOutputFiles(selectedNode) : [];
   const selectedAgent =
     draft.agents.find((agent) => agent.agentId === (selectedAgentId || selectedNode?.agentId)) ||
     draft.agents.find((agent) => agent.agentId === selectedNode?.agentId) ||
@@ -1727,6 +1772,8 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
           nodes: normalizedNodes.map((node) => {
             const agent = workingDraft.agents.find((entry) => entry.agentId === node.agentId);
             const outputPath = safeString(node.outputPath);
+            const inputFiles = effectiveNodeInputFiles(node, normalizedNodes);
+            const outputFiles = effectiveNodeOutputFiles(node);
             const codeLike = isCodeLikeNode(node);
             const researchStage = safeString(node.stageKind);
             const researchFinalize = researchStage === "research_finalize";
@@ -1837,13 +1884,17 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               },
               metadata: {
                 studio: {
+                  input_files: inputFiles.length ? inputFiles : undefined,
                   output_path: outputPath || undefined,
+                  output_files: outputFiles.length ? outputFiles : undefined,
                   research_stage: researchStage || undefined,
                 },
                 builder: {
                   title: safeString(node.title) || safeString(node.nodeId),
                   role: safeString(agent?.role) || "worker",
+                  input_files: inputFiles.length ? inputFiles : undefined,
                   output_path: outputPath || undefined,
+                  output_files: outputFiles.length ? outputFiles : undefined,
                   research_stage: researchStage || undefined,
                   write_required: !!outputPath,
                   required_tools: requiredTools,
@@ -2937,6 +2988,44 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                         })
                       }
                     />
+                  </label>
+                  <label className="grid gap-1 sm:col-span-2">
+                    <span className="text-xs text-slate-400">Input Files Contract</span>
+                    <textarea
+                      className="tcp-input min-h-[72px] text-sm"
+                      placeholder="Comma-separated relative paths this stage should read"
+                      value={joinCsv(selectedNode.inputFiles)}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          inputFiles: splitCsv((event.target as HTMLTextAreaElement).value),
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-slate-500">
+                      Effective contract:{" "}
+                      {selectedNodeInputFiles.length
+                        ? joinCsv(selectedNodeInputFiles)
+                        : "No file inputs inferred from upstream stages."}
+                    </span>
+                  </label>
+                  <label className="grid gap-1 sm:col-span-2">
+                    <span className="text-xs text-slate-400">Output Files Contract</span>
+                    <textarea
+                      className="tcp-input min-h-[72px] text-sm"
+                      placeholder="Comma-separated relative paths this stage must create"
+                      value={joinCsv(selectedNode.outputFiles)}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          outputFiles: splitCsv((event.target as HTMLTextAreaElement).value),
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-slate-500">
+                      Effective contract:{" "}
+                      {selectedNodeOutputFiles.length
+                        ? joinCsv(selectedNodeOutputFiles)
+                        : "No file outputs declared for this stage."}
+                    </span>
                   </label>
                   <label className="grid gap-1">
                     <span className="text-xs text-slate-400">Task Kind</span>

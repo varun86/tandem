@@ -115,6 +115,7 @@ pub(crate) fn augment_automation_attempt_evidence_with_validation(
     accepted_candidate_source: Option<&str>,
     blocker_category: Option<&str>,
     fallback_used: bool,
+    final_backend_actionability_state: &str,
 ) -> Value {
     let Some(mut object) = attempt_evidence.as_object().cloned() else {
         return attempt_evidence.clone();
@@ -170,13 +171,38 @@ pub(crate) fn augment_automation_attempt_evidence_with_validation(
     }
     object.insert("artifact".to_string(), Value::Object(artifact));
     object.insert(
+        "validation_basis".to_string(),
+        artifact_validation
+            .and_then(|value| value.get("validation_basis"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "accepted_candidate_source".to_string(),
+        accepted_candidate_source
+            .map(|value| Value::String(value.to_string()))
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
         "blocker_category".to_string(),
         blocker_category
             .map(|value| Value::String(value.to_string()))
             .unwrap_or(Value::Null),
     );
+    object.insert(
+        "final_backend_actionability_state".to_string(),
+        json!(final_backend_actionability_state),
+    );
     object.insert("fallback_used".to_string(), json!(fallback_used));
     Value::Object(object)
+}
+
+pub(crate) fn automation_backend_actionability_state(status: &str) -> &'static str {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "completed" | "done" | "passed" | "accepted_with_warnings" => "completed",
+        "needs_repair" => "needs_repair",
+        _ => "blocked",
+    }
 }
 
 fn automation_node_output_provenance(
@@ -262,6 +288,21 @@ pub(crate) fn web_research_unavailable_failure(raw: &str) -> bool {
         || lowered.contains("temporarily unavailable")
         || lowered.contains("timed out")
         || lowered.contains("timeout")
+}
+
+fn automation_provider_transport_failure(raw: &str) -> bool {
+    let lowered = raw.trim().to_ascii_lowercase();
+    lowered.contains("connect timeout")
+        || lowered.contains("connection timeout")
+        || lowered.contains("timed out")
+        || lowered.contains("timeout")
+        || lowered.contains("unauthorized")
+        || lowered.contains("authentication")
+        || lowered.contains("auth failed")
+        || lowered.contains("dns error")
+        || lowered.contains("connection refused")
+        || lowered.contains("network error")
+        || lowered.contains("provider stream")
 }
 
 pub(crate) fn web_research_unavailable(latest_web_research_failure: Option<&str>) -> bool {
@@ -429,6 +470,8 @@ pub(crate) fn build_automation_attempt_evidence(
     tool_telemetry: &Value,
     preflight: &Value,
     capability_resolution: &Value,
+    required_output_path: Option<&str>,
+    verified_output_resolution: Option<&super::AutomationVerifiedOutputResolution>,
     verified_output: Option<&(String, String)>,
 ) -> Value {
     let mut attempted_tools = Vec::new();
@@ -540,10 +583,35 @@ pub(crate) fn build_automation_attempt_evidence(
             "status": "not_required"
         })
     };
+    let offered_tools = preflight
+        .get("offered_tools")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let resolved_output_path_absolute =
+        verified_output_resolution.map(|resolution| resolution.path.to_string_lossy().to_string());
+    let transcript_recovery = if required_output_path.is_none() {
+        "not_attempted"
+    } else if verified_output_resolution.map(|resolution| resolution.resolution_kind)
+        == Some(super::AutomationVerifiedOutputResolutionKind::SessionTextRecovery)
+    {
+        "recovered"
+    } else if verified_output_resolution.is_none() {
+        "not_recoverable"
+    } else {
+        "not_attempted"
+    };
     json!({
         "attempt": attempt,
         "created_at_ms": now_ms(),
         "session_id": session_id,
+        "offered_tools": offered_tools,
+        "requested_output_path": required_output_path,
+        "resolved_output_path_absolute": resolved_output_path_absolute,
+        "transcript_recovery_result": transcript_recovery,
+        "validation_basis": Value::Null,
+        "accepted_candidate_source": Value::Null,
+        "blocker_category": Value::Null,
+        "final_backend_actionability_state": Value::Null,
         "preflight": preflight,
         "capability_resolution": capability_resolution,
         "tool_execution": {
@@ -588,6 +656,42 @@ pub(crate) fn automation_output_validated_artifact(output: &Value) -> Option<(St
     }
 }
 
+fn parse_status_json_with_tail_window(raw: &str) -> Option<Value> {
+    parse_status_json(raw).or_else(|| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let total_chars = trimmed.chars().count();
+        if total_chars <= 4000 {
+            return None;
+        }
+        let tail = trimmed.chars().skip(total_chars - 4000).collect::<String>();
+        parse_status_json(&tail)
+    })
+}
+
+fn automation_status_scan_window(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let head = trimmed.chars().take(1600).collect::<String>();
+    let total_chars = trimmed.chars().count();
+    if total_chars <= 1600 {
+        return head;
+    }
+    let tail = trimmed
+        .chars()
+        .skip(total_chars.saturating_sub(4000))
+        .collect::<String>();
+    if head == tail {
+        head
+    } else {
+        format!("{head}\n{tail}")
+    }
+}
+
 pub(crate) fn detect_automation_node_status(
     node: &AutomationFlowNode,
     session_text: &str,
@@ -606,7 +710,7 @@ pub(crate) fn detect_automation_node_status(
     // and research-brief validation. They produce structured JSON with three keys;
     // anything else triggers a targeted repair signal.
     if validator_kind == crate::AutomationOutputValidatorKind::StandupUpdate {
-        let parsed = parse_status_json(session_text);
+        let parsed = parse_status_json_with_tail_window(session_text);
         let has_required_keys = parsed
             .as_ref()
             .is_some_and(|v| v.get("yesterday").is_some() && v.get("today").is_some());
@@ -659,7 +763,7 @@ pub(crate) fn detect_automation_node_status(
         || has_required_tools
         || handoff_only_structured_json)
         && !research_repair_exhausted;
-    let parsed = parse_status_json(session_text);
+    let parsed = parse_status_json_with_tail_window(session_text);
     let approved = parsed
         .as_ref()
         .and_then(|value| value.get("approved"))
@@ -795,11 +899,7 @@ pub(crate) fn detect_automation_node_status(
     let output_text = verified_output
         .map(|(_, text)| text.as_str())
         .unwrap_or_else(|| session_text.trim());
-    let lowered = output_text
-        .chars()
-        .take(1600)
-        .collect::<String>()
-        .to_ascii_lowercase();
+    let lowered = automation_status_scan_window(output_text).to_ascii_lowercase();
     let structured_handoff_present = validator_kind
         == crate::AutomationOutputValidatorKind::StructuredJson
         && extract_structured_handoff_json(session_text).is_some();
@@ -809,8 +909,8 @@ pub(crate) fn detect_automation_node_status(
         .and_then(Value::as_str)
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
-    let has_structural_completion_signal =
-        explicit_status_present || verified_output.is_some() || structured_handoff_present;
+    let artifact_materialized = verified_output.is_some();
+    let status_signal_present = explicit_status_present || structured_handoff_present;
     // TODO(coding-hardening): Replace these content markers with structured node
     // status signals from the runtime/session wrapper. Prompt text should not be the
     // primary source of truth for blocked vs completed vs verify_failed decisions.
@@ -1102,7 +1202,7 @@ pub(crate) fn detect_automation_node_status(
             approved,
         );
     }
-    if !has_structural_completion_signal && !session_text.trim().is_empty() {
+    if !status_signal_present && !artifact_materialized && !session_text.trim().is_empty() {
         return (
             if validation_repairable || automation_node_is_code_workflow(node) {
                 "needs_repair".to_string()
@@ -1197,6 +1297,11 @@ pub(crate) fn detect_automation_node_failure_kind(
     }
     if automation_node_is_code_workflow(node) && verification_expected && !verification_ran {
         return Some("verification_missing".to_string());
+    }
+    if matches!(normalized_status.as_str(), "blocked" | "needs_repair")
+        && automation_provider_transport_failure(&reason)
+    {
+        return Some("provider_transport_failure".to_string());
     }
     if let Some(rejected_reason) = artifact_validation
         .and_then(|value| value.get("rejected_artifact_reason"))
@@ -1810,6 +1915,7 @@ pub(crate) fn wrap_automation_node_output(
                     .and_then(Value::as_str),
                 blocker_category.as_deref(),
                 fallback_used,
+                automation_backend_actionability_state(&status),
             )
         });
     let workflow_class = automation_node_workflow_class(node);

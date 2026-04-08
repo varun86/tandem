@@ -580,6 +580,8 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
             "resolved": {},
             "missing_capabilities": []
         }),
+        Some(".tandem/artifacts/research-sources.json"),
+        None,
         None,
     );
 
@@ -601,6 +603,25 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
         succeeded_tools
             .is_some_and(|rows| rows.iter().any(|value| value.as_str() == Some("websearch"))),
         true
+    );
+    assert_eq!(
+        attempt_evidence
+            .get("requested_output_path")
+            .and_then(Value::as_str),
+        Some(".tandem/artifacts/research-sources.json")
+    );
+    assert_eq!(
+        attempt_evidence
+            .get("transcript_recovery_result")
+            .and_then(Value::as_str),
+        Some("not_recoverable")
+    );
+    assert_eq!(
+        attempt_evidence
+            .get("offered_tools")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["glob", "read", "websearch", "write"])
     );
 }
 
@@ -657,5 +678,47 @@ fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_e
         )
         .as_deref(),
         Some("delivery_not_executed")
+    );
+}
+
+#[test]
+fn detect_automation_node_failure_kind_marks_provider_transport_failures() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research_brief".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Research the market and produce a brief.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+
+    assert_eq!(
+        detect_automation_node_failure_kind(
+            &node,
+            "blocked",
+            None,
+            Some("provider stream connect timeout after 90000 ms"),
+            Some(&json!({
+                "semantic_block_reason": "provider stream connect timeout after 90000 ms",
+                "unmet_requirements": [],
+                "verification": {
+                    "verification_failed": false
+                }
+            })),
+        )
+        .as_deref(),
+        Some("provider_transport_failure")
     );
 }

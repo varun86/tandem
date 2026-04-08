@@ -583,6 +583,113 @@ fn structured_json_node_passes_when_declared_workspace_files_are_written() {
 }
 
 #[test]
+fn explicit_output_files_override_legacy_must_write_files() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-explicit-output-files-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "draft_report".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Write report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "extract.json",
+                "must_write_files": ["legacy.md"],
+                "output_files": ["reports/final.md"]
+            }
+        })),
+    };
+    let artifact_text =
+        "{\"status\":\"completed\",\"summary\":\"Final report ready.\"}".to_string();
+    let final_report = "# Final report\n\nDone.\n".to_string();
+    std::fs::write(workspace_root.join("extract.json"), &artifact_text).expect("write artifact");
+    std::fs::create_dir_all(workspace_root.join("reports")).expect("create reports directory");
+    std::fs::write(workspace_root.join("reports/final.md"), &final_report)
+        .expect("write final report");
+    let mut session = Session::new(
+        Some("explicit output files".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"extract.json","content":artifact_text}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"reports/final.md","content":final_report}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+        ],
+    ));
+    let tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some(("extract.json".to_string(), artifact_text)),
+        &snapshot,
+    );
+
+    assert_eq!(rejected, None);
+    assert_eq!(
+        metadata
+            .get("validation_basis")
+            .and_then(|value| value.get("explicit_output_files"))
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["reports/final.md"])
+    );
+    assert!(metadata
+        .get("validation_basis")
+        .and_then(|value| value.get("must_write_file_statuses"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| {
+            value.get("path").and_then(Value::as_str) == Some("reports/final.md")
+                && value
+                    .get("materialized_by_current_attempt")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })));
+    assert!(metadata
+        .get("validation_basis")
+        .and_then(|value| value.get("must_write_file_statuses"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .all(|value| { value.get("path").and_then(Value::as_str) != Some("legacy.md") })));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
 fn research_workflow_status_blocks_after_repair_budget_is_exhausted() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -897,6 +1004,174 @@ fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
 }
 
 #[test]
+fn render_automation_repair_brief_adds_final_attempt_escalation() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research-brief".to_string(),
+        agent_id: "research".to_string(),
+        objective: "Write marketing-brief.md".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md"
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "research completed without required current web research",
+            "unmet_requirements": ["missing_successful_web_research"]
+        },
+        "artifact_validation": {
+            "blocking_classification": "tool_available_but_not_used",
+            "repair_attempt": 2,
+            "repair_attempts_remaining": 1
+        }
+    });
+
+    let brief =
+        render_automation_repair_brief(&node, Some(&prior_output), 3, 3).expect("repair brief");
+
+    assert!(brief.contains("FINAL ATTEMPT"));
+    assert!(brief.contains("marketing-brief.md"));
+    assert!(brief.contains("{\"status\":\"completed\"}"));
+    assert!(brief.contains("Do not ask follow-up questions."));
+}
+
+#[test]
+fn repair_attempt_with_concrete_read_and_changed_output_is_accepted() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-repair-read-changed-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(workspace_root.join("docs")).expect("create workspace");
+    std::fs::write(
+        workspace_root.join("docs/pricing.md"),
+        "# Pricing\n\n- Teams plan starts at $49 per seat.\n",
+    )
+    .expect("write source file");
+    let preexisting_output = "# Marketing Brief\n\nOld draft.\n".to_string();
+    std::fs::write(
+        workspace_root.join("marketing-brief.md"),
+        &preexisting_output,
+    )
+    .expect("write previous output");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research-brief".to_string(),
+        agent_id: "research".to_string(),
+        objective: "Write marketing-brief.md".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md",
+                "web_research_expected": true,
+                "source_coverage_required": true
+            }
+        })),
+    };
+    let final_output = "# Marketing Brief\n\n## Findings\nThe team plan starts at $49 per seat and the revised workflow now captures concrete pricing evidence from docs/pricing.md.\n\n## Files reviewed\n- docs/pricing.md\n".to_string();
+    std::fs::write(workspace_root.join("marketing-brief.md"), &final_output)
+        .expect("write repaired output");
+    let mut session = Session::new(
+        Some("repair attempt".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({"file_path":"docs/pricing.md"}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"marketing-brief.md","content":"# Marketing Brief\n\nWorking draft.\n"}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"marketing-brief.md","content":final_output}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+        ],
+    ));
+    let tool_telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    );
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "I repaired the artifact and rewrote the output file.",
+        &tool_telemetry,
+        Some(&preexisting_output),
+        Some(("marketing-brief.md".to_string(), final_output)),
+        &snapshot,
+    );
+
+    assert_eq!(rejected, None);
+    assert_eq!(
+        metadata.get("repair_succeeded").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        metadata
+            .get("validation_basis")
+            .and_then(|value| value.get("repair_promoted_after_read_and_output_change"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        metadata
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .map(|values| values.len()),
+        Some(0)
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn automation_output_enforcement_prefers_contract_over_legacy_builder_metadata() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -990,7 +1265,7 @@ fn automation_output_enforcement_backfills_research_contract_from_legacy_builder
 }
 
 #[test]
-fn structured_handoff_workspace_bootstrap_nodes_infer_local_file_tools_from_objective_paths() {
+fn structured_handoff_workspace_bootstrap_nodes_treat_reads_as_optional() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "execute_goal".to_string(),
@@ -1014,11 +1289,19 @@ fn structured_handoff_workspace_bootstrap_nodes_infer_local_file_tools_from_obje
 
     let enforcement = automation_node_output_enforcement(&node);
     assert!(enforcement.required_tools.iter().any(|tool| tool == "glob"));
-    assert!(enforcement.required_tools.iter().any(|tool| tool == "read"));
     assert!(enforcement
         .required_tools
         .iter()
         .any(|tool| tool == "write"));
+    assert!(!enforcement.required_tools.iter().any(|tool| tool == "read"));
+    assert_eq!(
+        enforcement.validation_profile.as_deref(),
+        Some("artifact_only")
+    );
+    assert!(!enforcement
+        .required_evidence
+        .iter()
+        .any(|evidence| evidence == "local_source_reads"));
 
     let capabilities = automation_tool_capability_ids(&node, "artifact_write");
     assert!(capabilities
@@ -1026,10 +1309,139 @@ fn structured_handoff_workspace_bootstrap_nodes_infer_local_file_tools_from_obje
         .any(|capability| capability == "workspace_discover"));
     assert!(capabilities
         .iter()
-        .any(|capability| capability == "workspace_read"));
-    assert!(capabilities
-        .iter()
         .any(|capability| capability == "artifact_write"));
+    assert!(!capabilities
+        .iter()
+        .any(|capability| capability == "workspace_read"));
+}
+
+#[test]
+fn bootstrap_workspace_output_nodes_require_inspection_but_not_concrete_reads() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "workspace-operator".to_string(),
+        objective: "Initialize any missing job-search workspace directories and files, read README.md if present, and update resume-overview.md, tracker/search-ledger/2026-04-07.json, tracker/seen-jobs.jsonl, and daily-recaps/2026-04-07-job-search-recap.md.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return a structured handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "daily-recaps/2026-04-07-job-search-recap.md"
+            }
+        })),
+    };
+
+    let requirements = automation_node_prewrite_requirements(
+        &node,
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+    )
+    .expect("prewrite requirements");
+    assert!(requirements.workspace_inspection_required);
+    assert!(!requirements.concrete_read_required);
+}
+
+#[test]
+fn bootstrap_required_files_are_inferred_from_objective_paths_without_filename_hardcoding() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-bootstrap-required-files-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "workspace-operator".to_string(),
+        objective: "Initialize any missing workspace files, read notes/existing-context.md if present, and update guides/setup-guide.md and tracker/jobs.jsonl.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return a structured handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "daily-recaps/2026-04-08-recap.md"
+            }
+        })),
+    };
+    let artifact_text =
+        "{\"status\":\"completed\",\"summary\":\"Bootstrap completed.\"}".to_string();
+    std::fs::create_dir_all(workspace_root.join("daily-recaps")).expect("create recap dir");
+    std::fs::write(
+        workspace_root.join("daily-recaps/2026-04-08-recap.md"),
+        &artifact_text,
+    )
+    .expect("write output");
+    let mut session = Session::new(
+        Some("bootstrap required files".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({"path":"daily-recaps/2026-04-08-recap.md","content":artifact_text}),
+            result: Some(json!({"ok": true})),
+            error: None,
+        }],
+    ));
+    let tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some((
+            "daily-recaps/2026-04-08-recap.md".to_string(),
+            artifact_text.clone(),
+        )),
+        &snapshot,
+    );
+
+    assert_eq!(rejected, None);
+    assert_eq!(
+        metadata.get("validation_outcome").and_then(Value::as_str),
+        Some("passed")
+    );
+    assert_eq!(
+        metadata
+            .get("validation_basis")
+            .and_then(|value| value.get("must_write_files"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        Vec::<Value>::new()
+    );
+    assert!(metadata
+        .get("validation_basis")
+        .and_then(|value| value.get("must_write_file_statuses"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.is_empty()));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
 }
 
 #[test]

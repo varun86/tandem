@@ -18,6 +18,7 @@ import { projectOrchestrationRun } from "../orchestrator/blackboardProjection";
 import {
   workflowActiveSessionCount,
   workflowArtifactValidation,
+  workflowBlockedNodeIds,
   workflowCompletedNodeCount,
   workflowContextHistoryEntries,
   workflowDerivedRunStatus,
@@ -32,12 +33,14 @@ import {
   workflowNodeToolTelemetry,
   workflowProjectionFromRunSnapshot,
   workflowRecentNodeEventSummaries,
+  workflowRunWasStalePaused,
   workflowSessionIds,
   workflowSessionLogEventEntries,
   workflowTaskInspectionDetails,
   workflowTelemetryDisplayEntries,
   workflowTelemetrySeedEvents,
   workflowBlockedNodeCount,
+  workflowNeedsRepairNodeIds,
 } from "../orchestration/workflowStability";
 import { useEngineStream } from "../stream/useEngineStream";
 import { MyAutomationsContent } from "./MyAutomationsContent";
@@ -1223,7 +1226,11 @@ export function MyAutomationsContainer({
   const failedRuns = runs.filter((run: any) => {
     const status = workflowDerivedRunStatus(run);
     return (
-      status === "failed" || status === "error" || status === "blocked" || status === "stalled"
+      status === "failed" ||
+      status === "error" ||
+      status === "blocked" ||
+      status === "stalled" ||
+      workflowRunWasStalePaused(run)
     );
   });
   const selectedRun = (runDetailQuery.data as any)?.run || null;
@@ -1339,13 +1346,6 @@ export function MyAutomationsContainer({
     validationOutcome: selectedBoardTaskValidationOutcome = "",
     artifactCandidates: selectedBoardTaskArtifactCandidates = [],
   } = selectedBoardTaskInspection as any;
-  const continueBlockedTask =
-    String(selectedBoardTask?.state || "").toLowerCase() === "blocked"
-      ? selectedBoardTask
-      : firstBlockedWorkflowTask;
-  const continueBlockedNodeId = String(continueBlockedTask?.id || "")
-    .replace(/^node-/, "")
-    .trim();
   const rawRunStatus = String(selectedRun?.status || "")
     .trim()
     .toLowerCase();
@@ -1354,20 +1354,6 @@ export function MyAutomationsContainer({
     rawRunStatus !== runStatus &&
     (rawRunStatus === "completed" || rawRunStatus === "done") &&
     workflowBlockedNodeCount(selectedRun) > 0;
-  const selectedBoardTaskNeedsWorkflowAction =
-    String(selectedBoardTask?.id || "").startsWith("node-") &&
-    ["blocked", "failed"].includes(
-      String(selectedBoardTask?.state || "")
-        .trim()
-        .toLowerCase()
-    );
-  const canRecoverWorkflowRun =
-    isWorkflowRun &&
-    !!selectedRunId &&
-    (["failed", "paused"].includes(runStatus) ||
-      workflowBlockedNodeCount(selectedRun) > 0 ||
-      selectedBoardTaskNeedsWorkflowAction);
-  const canContinueBlockedWorkflow = isWorkflowRun && !!selectedRunId && !!continueBlockedNodeId;
   const runRepairGuidanceEntries = useMemo(() => {
     const direct = selectedRun?.nodeRepairGuidance;
     const directEntries =
@@ -1501,6 +1487,45 @@ export function MyAutomationsContainer({
         .toLowerCase(),
     [selectedBoardTask]
   );
+  const serverBlockedNodeIds = useMemo(() => workflowBlockedNodeIds(selectedRun), [selectedRun]);
+  const serverNeedsRepairNodeIds = useMemo(
+    () => workflowNeedsRepairNodeIds(selectedRun),
+    [selectedRun]
+  );
+  const selectedBoardTaskAppearsBlocked = selectedBoardTaskStateNormalized === "blocked";
+  const selectedBoardTaskAppearsRetryable =
+    selectedBoardTaskAppearsBlocked || selectedBoardTaskStateNormalized === "failed";
+  const selectedBoardTaskBlockedOnServer =
+    !!selectedBoardTaskNodeId && serverBlockedNodeIds.includes(selectedBoardTaskNodeId);
+  const selectedBoardTaskNeedsRepairOnServer =
+    !!selectedBoardTaskNodeId && serverNeedsRepairNodeIds.includes(selectedBoardTaskNodeId);
+  const continueBlockedTask = selectedBoardTaskBlockedOnServer
+    ? selectedBoardTask
+    : workflowProjection.tasks.find((task: any) =>
+        serverBlockedNodeIds.includes(
+          String(task?.id || "")
+            .replace(/^node-/, "")
+            .trim()
+        )
+      ) || firstBlockedWorkflowTask;
+  const continueBlockedNodeId = selectedBoardTaskBlockedOnServer
+    ? selectedBoardTaskNodeId
+    : String(continueBlockedTask?.id || "")
+        .replace(/^node-/, "")
+        .trim();
+  const selectedBoardTaskNeedsWorkflowAction =
+    String(selectedBoardTask?.id || "").startsWith("node-") &&
+    (selectedBoardTaskBlockedOnServer ||
+      selectedBoardTaskNeedsRepairOnServer ||
+      selectedBoardTaskStateNormalized === "failed");
+  const canRecoverWorkflowRun =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    (["failed", "paused"].includes(runStatus) ||
+      serverBlockedNodeIds.length > 0 ||
+      selectedBoardTaskNeedsWorkflowAction);
+  const canContinueBlockedWorkflow =
+    isWorkflowRun && !!selectedRunId && serverBlockedNodeIds.length > 0 && !!continueBlockedNodeId;
   const selectedBoardTaskLeaseExpiresAtMs = useMemo(
     () => Number((selectedBoardTask as any)?.lease_expires_at_ms || 0) || 0,
     [selectedBoardTask]
@@ -1565,15 +1590,31 @@ export function MyAutomationsContainer({
     !!selectedRunId &&
     selectedBoardTaskIsWorkflowNode &&
     !!selectedBoardTaskNodeId &&
-    ["blocked", "failed"].includes(selectedBoardTaskStateNormalized);
+    (selectedBoardTaskBlockedOnServer ||
+      selectedBoardTaskNeedsRepairOnServer ||
+      selectedBoardTaskStateNormalized === "failed");
   const runDebuggerRetryNodeId =
-    canTaskRetry && selectedBoardTaskIsWorkflowNode ? selectedBoardTaskNodeId : "";
+    selectedBoardTaskStateNormalized === "failed"
+      ? selectedBoardTaskNodeId
+      : selectedBoardTaskBlockedOnServer || selectedBoardTaskNeedsRepairOnServer
+        ? selectedBoardTaskNodeId
+        : "";
   const canTaskContinue =
     isWorkflowRun &&
     !!selectedRunId &&
     selectedBoardTaskIsWorkflowNode &&
     !!selectedBoardTaskNodeId &&
-    selectedBoardTaskStateNormalized === "blocked";
+    selectedBoardTaskBlockedOnServer;
+  const selectedBoardTaskServerActionMessage =
+    selectedBoardTaskIsWorkflowNode &&
+    selectedBoardTaskNodeId &&
+    ((selectedBoardTaskAppearsBlocked && !selectedBoardTaskBlockedOnServer) ||
+      (selectedBoardTaskAppearsRetryable &&
+        selectedBoardTaskStateNormalized !== "failed" &&
+        !selectedBoardTaskBlockedOnServer &&
+        !selectedBoardTaskNeedsRepairOnServer))
+      ? "This node is not currently blocked on the server."
+      : "";
   const canTaskRequeue =
     isWorkflowRun &&
     !!selectedRunId &&
@@ -2058,6 +2099,8 @@ export function MyAutomationsContainer({
         continueBlockedNodeId,
         canRecoverWorkflowRun,
         runDebuggerRetryNodeId,
+        serverBlockedNodeIds,
+        serverNeedsRepairNodeIds,
         selectedContextRunId,
         runSummaryRows,
         workflowProjection,
@@ -2101,6 +2144,7 @@ export function MyAutomationsContainer({
         selectedBoardTaskResetOutputPaths,
         canTaskContinue,
         canTaskRetry,
+        selectedBoardTaskServerActionMessage,
         canTaskRequeue,
         canBacklogTaskClaim,
         canBacklogTaskRequeue,

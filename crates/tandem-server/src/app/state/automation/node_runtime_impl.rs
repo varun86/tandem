@@ -514,6 +514,9 @@ fn discover_automation_tools_for_capability(
     capability_id: &str,
     available_tool_names: &HashSet<String>,
 ) -> Vec<String> {
+    if available_tool_names.is_empty() {
+        return vec!["*".to_string()];
+    }
     let mut matches = available_tool_names
         .iter()
         .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))

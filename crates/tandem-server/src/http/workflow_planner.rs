@@ -675,7 +675,7 @@ pub(super) async fn workflow_plan_chat_message(
         ));
     }
     let host = workflow_planner_host::WorkflowPlannerHost { state: &state };
-    let revision = compiler_api::revise_workflow_plan_draft::<
+    let mut revision = compiler_api::revise_workflow_plan_draft::<
         crate::routines::types::RoutineMisfirePolicy,
         crate::AutomationFlowInputRef,
         crate::AutomationFlowOutputContract,
@@ -706,6 +706,7 @@ pub(super) async fn workflow_plan_chat_message(
             })),
         ),
     })?;
+    workflow_planner_host::normalize_workflow_plan_file_contracts(&mut revision.draft.current_plan);
     let plan_json =
         compiler_api::workflow_plan_to_json(&revision.draft.current_plan).map_err(|error| {
             (

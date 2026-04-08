@@ -64,6 +64,10 @@ pub(crate) fn normalize_workflow_step_metadata(step: &mut crate::WorkflowPlanSte
     );
 }
 
+pub(crate) fn normalize_workflow_plan_file_contracts(plan: &mut crate::WorkflowPlan) {
+    compiler_api::derive_workflow_step_file_contracts(plan);
+}
+
 pub(crate) async fn build_workflow_plan(
     state: &AppState,
     prompt: &str,
@@ -97,7 +101,7 @@ pub(crate) async fn build_workflow_plan(
         operator_preferences,
     );
 
-    let result = compiler_api::build_workflow_plan_with_planner(
+    let mut result = compiler_api::build_workflow_plan_with_planner(
         &host,
         request,
         PlannerBuildConfig {
@@ -121,6 +125,7 @@ pub(crate) async fn build_workflow_plan(
         ),
     )
     .await;
+    normalize_workflow_plan_file_contracts(&mut result.plan);
 
     Ok(result)
 }

@@ -369,6 +369,57 @@ fn mcp_servers_deduplicates_when_allowed_and_allowlist_overlap() {
 }
 
 #[test]
+fn missing_capabilities_from_collapsed_tool_resolution_are_detected() {
+    let node = email_delivery_node();
+    let available_tool_names = std::collections::HashSet::from(["mcp_list".to_string()]);
+    let resolution = automation_resolve_capabilities_with_schemas(
+        &node,
+        "structured_json",
+        &["mcp_list".to_string()],
+        &available_tool_names,
+        &[],
+    );
+
+    assert_eq!(
+        automation_capability_resolution_missing_capabilities(&resolution),
+        vec!["email_draft".to_string(), "email_send".to_string()]
+    );
+}
+
+#[test]
+fn retry_attempt_tool_failure_labels_are_cleared_before_reuse() {
+    let mut tool_telemetry = json!({
+        "latest_web_research_failure": "web research timed out",
+        "latest_email_delivery_failure": "smtp unauthorized",
+        "attempt_evidence": {
+            "evidence": {
+                "web_research": {
+                    "latest_failure": "dns error"
+                }
+            },
+            "delivery": {
+                "latest_failure": "unauthorized"
+            }
+        }
+    });
+
+    automation_reset_attempt_tool_failure_labels(&mut tool_telemetry);
+
+    assert!(tool_telemetry
+        .get("latest_web_research_failure")
+        .is_some_and(Value::is_null));
+    assert!(tool_telemetry
+        .get("latest_email_delivery_failure")
+        .is_some_and(Value::is_null));
+    assert!(tool_telemetry
+        .pointer("/attempt_evidence/evidence/web_research/latest_failure")
+        .is_some_and(Value::is_null));
+    assert!(tool_telemetry
+        .pointer("/attempt_evidence/delivery/latest_failure")
+        .is_some_and(Value::is_null));
+}
+
+#[test]
 fn email_send_detection_recognizes_compact_sendemail_names() {
     assert!(automation_tool_name_is_email_send(
         "mcp.composio_1.gmail_sendemail"
@@ -1079,6 +1130,70 @@ async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text
 
     let expected =
         workspace_root.join(".tandem/runs/run-session-json/artifacts/research-sources.json");
+    assert_eq!(resolved.map(|value| value.path), Some(expected.clone()));
+    let written = std::fs::read_to_string(expected).expect("read recovered artifact");
+    let parsed: serde_json::Value = serde_json::from_str(&written).expect("parse recovered json");
+    assert_eq!(parsed["sources"][0]["path"], "README.md");
+    assert_eq!(parsed["summary"], "Primary local sources identified.");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn reconcile_verified_output_path_unwraps_json_handoff_wrapper_from_session_text() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-session-text-json-wrapper-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-session-json-wrapper";
+    let output_path = ".tandem/artifacts/research-sources.json";
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let mut session = Session::new(Some("session text wrapper recovery".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        tandem_types::MessageRole::Assistant,
+        vec![tandem_types::MessagePart::Text {
+            text: "{\n  \"structured_handoff\": {\n    \"sources\": [\n      {\n        \"path\": \"README.md\",\n        \"reason\": \"project overview\"\n      }\n    ],\n    \"summary\": \"Primary local sources identified.\"\n  }\n}\n{\"status\":\"completed\"}".to_string(),
+        }],
+    ));
+
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+            node_id: "research_sources".to_string(),
+            agent_id: "researcher".to_string(),
+            objective: "Find and record local sources".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "citations".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("recover wrapped session text");
+
+    let expected = workspace_root
+        .join(".tandem/runs/run-session-json-wrapper/artifacts/research-sources.json");
     assert_eq!(resolved.map(|value| value.path), Some(expected.clone()));
     let written = std::fs::read_to_string(expected).expect("read recovered artifact");
     let parsed: serde_json::Value = serde_json::from_str(&written).expect("parse recovered json");

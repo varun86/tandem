@@ -5,6 +5,8 @@ type MutationLike = {
 
 type WorkflowRequiredActionsPanelProps = {
   runRepairGuidanceEntries: Array<{ nodeId: string; guidance: any }>;
+  blockedNodeIds: string[];
+  needsRepairNodeIds: string[];
   isWorkflowRun: boolean;
   selectedRunId: string;
   hasActiveSessions: boolean;
@@ -16,6 +18,8 @@ type WorkflowRequiredActionsPanelProps = {
 
 export function WorkflowRequiredActionsPanel({
   runRepairGuidanceEntries,
+  blockedNodeIds,
+  needsRepairNodeIds,
   isWorkflowRun,
   selectedRunId,
   hasActiveSessions,
@@ -24,19 +28,30 @@ export function WorkflowRequiredActionsPanel({
   workflowTaskContinueMutation,
   workflowTaskRequeueMutation,
 }: WorkflowRequiredActionsPanelProps) {
-  if (!runRepairGuidanceEntries.length) return null;
+  const normalizedBlockedNodeIds = Array.isArray(blockedNodeIds) ? blockedNodeIds : [];
+  const normalizedNeedsRepairNodeIds = Array.isArray(needsRepairNodeIds) ? needsRepairNodeIds : [];
+  const actionableEntries = runRepairGuidanceEntries.filter(({ nodeId, guidance }) => {
+    const normalizedStatus = String(guidance?.status || "")
+      .trim()
+      .toLowerCase();
+    return (
+      normalizedBlockedNodeIds.includes(nodeId) &&
+      ["blocked", "needs_repair"].includes(normalizedStatus)
+    );
+  });
+  if (!actionableEntries.length) return null;
 
   return (
     <div className="tcp-list-item overflow-visible">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="font-medium">Next Required Actions</div>
         <span className="border border-emerald-400/60 bg-emerald-400/10 text-emerald-200 tcp-badge">
-          {runRepairGuidanceEntries.length} node
-          {runRepairGuidanceEntries.length === 1 ? "" : "s"}
+          {actionableEntries.length} node
+          {actionableEntries.length === 1 ? "" : "s"}
         </span>
       </div>
       <div className="grid gap-2">
-        {runRepairGuidanceEntries.map(({ nodeId, guidance }) => {
+        {actionableEntries.map(({ nodeId, guidance }) => {
           const actions = Array.isArray(guidance?.requiredNextToolActions)
             ? guidance.requiredNextToolActions
             : [];
@@ -52,12 +67,14 @@ export function WorkflowRequiredActionsPanel({
             isWorkflowRun &&
             !!selectedRunId &&
             !hasActiveSessions &&
-            (["blocked", "failed", "needs_repair"].includes(normalizedStatus) ||
-              (normalizedStatus === "completed" && (actions.length > 0 || unmet.length > 0)));
+            (normalizedBlockedNodeIds.includes(nodeId) ||
+              normalizedNeedsRepairNodeIds.includes(nodeId) ||
+              normalizedStatus === "failed");
           const canGuidanceContinue =
             isWorkflowRun &&
             !!selectedRunId &&
             !hasActiveSessions &&
+            normalizedBlockedNodeIds.includes(nodeId) &&
             ["blocked", "needs_repair"].includes(normalizedStatus);
 
           return (
