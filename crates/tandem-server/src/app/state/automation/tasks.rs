@@ -24,21 +24,33 @@ pub async fn run_automation_v2_executor(state: AppState) {
 }
 
 async fn run_automation_v2_executor_single(state: AppState) {
+    let mut active = JoinSet::new();
     loop {
-        if state.is_automation_scheduler_stopping() {
-            break;
+        while let Some(result) = active.try_join_next() {
+            if let Err(error) = result {
+                tracing::warn!("automation single-run supervisor task join error: {error}");
+            }
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+
         if state.is_automation_scheduler_stopping() {
-            break;
+            if active.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
         }
+
         let _ = state
             .reap_stale_running_automation_runs(STALE_RUNNING_AUTOMATION_RUN_MS)
             .await;
-        let Some(run) = state.claim_next_queued_automation_v2_run().await else {
-            continue;
-        };
-        run_automation_v2_run(state.clone(), run).await;
+
+        if active.is_empty() {
+            if let Some(run) = state.claim_next_queued_automation_v2_run().await {
+                active.spawn(execute_run_and_release_wrapped(state.clone(), run));
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 

@@ -111,6 +111,74 @@ fn automation_text_has_workspace_tokens(text: &str) -> bool {
     })
 }
 
+fn automation_token_looks_like_workspace_file(token: &str) -> bool {
+    token.ends_with(".md")
+        || token.ends_with(".markdown")
+        || token.ends_with(".txt")
+        || token.ends_with(".json")
+        || token.ends_with(".jsonl")
+        || token.ends_with(".yaml")
+        || token.ends_with(".yml")
+        || token.ends_with(".csv")
+        || token.ends_with(".toml")
+        || token.ends_with(".ini")
+        || token.ends_with(".cfg")
+        || token.ends_with(".conf")
+        || token.ends_with(".env")
+        || token.ends_with(".xml")
+        || token.ends_with(".html")
+        || token.ends_with(".sql")
+}
+
+fn automation_extract_workspace_file_tokens(text: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    for token in text.split_whitespace() {
+        let trimmed = automation_trim_workspace_token(token);
+        if trimmed.is_empty() || trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            continue;
+        }
+        if trimmed.contains('/') {
+            let segments = trimmed
+                .split('/')
+                .map(automation_trim_workspace_token)
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>();
+            if segments.len() > 1
+                && segments
+                    .iter()
+                    .all(|segment| automation_token_looks_like_workspace_file(segment))
+            {
+                files.extend(segments.into_iter().map(str::to_string));
+                continue;
+            }
+        }
+        if automation_token_looks_like_workspace_file(trimmed) {
+            files.push(trimmed.to_string());
+        }
+    }
+    files
+}
+
+fn automation_optional_read_file_tokens(text: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    for clause in text.split(['\n', ';', ',']) {
+        let lowered = clause.to_ascii_lowercase();
+        let is_optional_read_clause = ["read", "inspect", "review", "open"]
+            .iter()
+            .any(|verb| lowered.contains(verb))
+            && ["if present", "if available"]
+                .iter()
+                .any(|marker| lowered.contains(marker));
+        if !is_optional_read_clause {
+            continue;
+        }
+        files.extend(automation_extract_workspace_file_tokens(clause));
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
 pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationFlowNode) -> bool {
     let combined = automation_node_workspace_intent_text(node);
     if !automation_text_has_workspace_tokens(&combined) {
@@ -171,38 +239,13 @@ pub(crate) fn automation_node_inferred_bootstrap_required_files(
         return Vec::new();
     }
 
-    let mut files = combined
-        .split_whitespace()
-        .filter_map(|token| {
-            let trimmed = automation_trim_workspace_token(token);
-            if trimmed.is_empty()
-                || trimmed.starts_with("http://")
-                || trimmed.starts_with("https://")
-            {
-                return None;
-            }
-            let looks_like_file = trimmed.ends_with(".md")
-                || trimmed.ends_with(".markdown")
-                || trimmed.ends_with(".txt")
-                || trimmed.ends_with(".json")
-                || trimmed.ends_with(".jsonl")
-                || trimmed.ends_with(".yaml")
-                || trimmed.ends_with(".yml")
-                || trimmed.ends_with(".csv")
-                || trimmed.ends_with(".toml")
-                || trimmed.ends_with(".ini")
-                || trimmed.ends_with(".cfg")
-                || trimmed.ends_with(".conf")
-                || trimmed.ends_with(".env")
-                || trimmed.ends_with(".xml")
-                || trimmed.ends_with(".html")
-                || trimmed.ends_with(".sql");
-            if looks_like_file {
-                Some(trimmed.to_string())
-            } else {
-                None
-            }
-        })
+    let optional_read_files = automation_optional_read_file_tokens(&combined)
+        .into_iter()
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let mut files = automation_extract_workspace_file_tokens(&combined)
+        .into_iter()
+        .filter(|path| !optional_read_files.contains(&path.to_ascii_lowercase()))
         .filter(|path| {
             let path_lower = path.to_ascii_lowercase();
             let optional_read_patterns = [
@@ -515,13 +558,36 @@ pub(crate) fn automation_node_output_enforcement(
         }
     }
 
+    let combined_intent_lowered = automation_node_workspace_intent_text(node).to_ascii_lowercase();
+    let has_bootstrap_or_missing_intent = [
+        "missing",
+        "initialize",
+        "bootstrap",
+        "directory",
+        "directories",
+        "folder",
+        "folders",
+        "workspace",
+        "if present",
+        "if available",
+    ]
+    .iter()
+    .any(|needle| combined_intent_lowered.contains(needle));
+
+    let is_bootstrap = !optional_workspace_reads
+        && !is_standup_update
+        && !is_local_research
+        && !is_external_research
+        && !code_patch_contract
+        && !is_research_contract
+        && has_bootstrap_or_missing_intent;
     if enforcement.prewrite_gates.is_empty() && automation_node_required_output_path(node).is_some()
     {
         if is_standup_update {
             enforcement
                 .prewrite_gates
                 .push("concrete_reads".to_string());
-        } else if optional_workspace_reads {
+        } else if optional_workspace_reads || is_bootstrap {
             enforcement
                 .prewrite_gates
                 .push("workspace_inspection".to_string());

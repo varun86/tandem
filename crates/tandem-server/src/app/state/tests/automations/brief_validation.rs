@@ -189,7 +189,7 @@ fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
 }
 
 #[test]
-fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
+fn brief_prewrite_requirements_follow_external_research_defaults() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
@@ -227,11 +227,8 @@ fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
     .expect("prewrite requirements");
     assert!(requirements.workspace_inspection_required);
     assert!(requirements.web_research_required);
-    assert!(requirements.concrete_read_required);
+    assert!(!requirements.concrete_read_required);
     assert!(requirements.successful_web_research_required);
     assert!(requirements.repair_on_unmet_requirements);
-    assert_eq!(
-        requirements.coverage_mode,
-        PrewriteCoverageMode::ResearchCorpus
-    );
+    assert_eq!(requirements.coverage_mode, PrewriteCoverageMode::None);
 }

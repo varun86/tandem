@@ -3660,7 +3660,7 @@ fn email_delivery_nodes_complete_after_email_tool_execution() {
 }
 
 #[test]
-fn infer_selected_mcp_servers_uses_enabled_servers_for_wildcard_allowlist() {
+fn infer_selected_mcp_servers_does_not_select_any_servers_for_wildcard_allowlist() {
     let selected = crate::app::state::automation::automation_infer_selected_mcp_servers(
         &[],
         &["*".to_string()],
@@ -3668,10 +3668,7 @@ fn infer_selected_mcp_servers_uses_enabled_servers_for_wildcard_allowlist() {
         false,
     );
 
-    assert_eq!(
-        selected,
-        vec!["gmail-main".to_string(), "slack-main".to_string()]
-    );
+    assert!(selected.is_empty());
 }
 
 #[test]
@@ -5873,7 +5870,7 @@ fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
 }
 
 #[test]
-fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
+fn brief_prewrite_requirements_follow_external_research_defaults() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
@@ -5911,13 +5908,67 @@ fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
     .expect("prewrite requirements");
     assert!(requirements.workspace_inspection_required);
     assert!(requirements.web_research_required);
-    assert!(requirements.concrete_read_required);
+    assert!(!requirements.concrete_read_required);
     assert!(requirements.successful_web_research_required);
     assert!(requirements.repair_on_unmet_requirements);
-    assert_eq!(
-        requirements.coverage_mode,
-        PrewriteCoverageMode::ResearchCorpus
-    );
+    assert_eq!(requirements.coverage_mode, PrewriteCoverageMode::None);
+}
+
+#[test]
+fn research_synthesis_prewrite_requirements_enable_repair_without_explicit_tools() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "final_research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Synthesize the final research brief".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("research_synthesis".to_string()),
+                required_tools: Vec::new(),
+                required_evidence: vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                ],
+                required_sections: vec!["citations".to_string()],
+                prewrite_gates: Vec::new(),
+                retry_on_missing: Vec::new(),
+                terminal_on: vec![
+                    "tool_unavailable".to_string(),
+                    "repair_budget_exhausted".to_string(),
+                ],
+                repair_budget: Some(5),
+                session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+            }),
+            schema: None,
+            summary_guidance: Some("Return the final research brief.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md"
+            }
+        })),
+    };
+
+    let requirements = automation_node_prewrite_requirements(
+        &node,
+        &[
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    )
+    .expect("prewrite requirements");
+    assert!(!requirements.concrete_read_required);
+    assert!(!requirements.successful_web_research_required);
+    assert!(requirements.repair_on_unmet_requirements);
 }
 
 #[test]

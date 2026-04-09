@@ -225,6 +225,10 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         .as_ref()
         .map(|contract| contract.kind.as_str())
         .unwrap_or("structured_json");
+    let validator_kind = automation_output_validator_kind(node);
+    let handoff_only_structured_json = validator_kind
+        == crate::AutomationOutputValidatorKind::StructuredJson
+        && automation_node_required_output_path(node).is_none();
     let normalized_upstream_inputs = upstream_inputs
         .iter()
         .map(|input| {
@@ -239,6 +243,14 @@ pub(crate) fn render_automation_v2_prompt_with_options(
                             output,
                         ),
                     );
+                }
+            }
+            if handoff_only_structured_json
+                && normalized_input.get("alias").and_then(Value::as_str)
+                    == Some("runtime_context_partition")
+            {
+                if let Some(output) = normalized_input.get_mut("output") {
+                    automation_prompt_strip_context_writes(output);
                 }
             }
             normalized_input
@@ -446,13 +458,9 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             );
         }
     }
-    let validator_kind = automation_output_validator_kind(node);
-    let handoff_only_structured_json = validator_kind
-        == crate::AutomationOutputValidatorKind::StructuredJson
-        && automation_node_required_output_path(node).is_none();
     if handoff_only_structured_json {
         sections.push(
-            "Structured Handoff Expectation:\n- Return the requested structured JSON handoff in the final response body.\n- The final response body should contain JSON only: the handoff JSON, then the final compact JSON status object.\n- Do not include headings, bullets, markdown fences, prose explanations, or follow-up questions.\n- Do not stop after tool calls alone; include a machine-readable JSON object or array with the requested fields."
+            "Structured Handoff Expectation:\n- Return the requested structured JSON handoff in the final response body.\n- The final response body should contain JSON only: the handoff JSON, then the final compact JSON status object.\n- Do not include headings, bullets, markdown fences, prose explanations, or follow-up questions.\n- Do not stop after tool calls alone; include a machine-readable JSON object or array with the requested fields.\n- Treat any `ctx:...` values or `step_context_bindings` metadata as internal context identifiers, not filesystem paths.\n- Do not call `write` unless this node explicitly declares a workflow output path."
                 .to_string(),
         );
     }
@@ -697,6 +705,32 @@ fn compact_automation_prompt_content(content: &Value, summary_only: bool) -> Val
         }
     }
     Value::Object(compact)
+}
+
+fn automation_prompt_strip_context_writes(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("context_writes");
+            for (key, child) in object.iter_mut() {
+                if matches!(key.as_str(), "text" | "raw_text" | "raw_assistant_text") {
+                    if let Some(raw) = child.as_str() {
+                        if let Ok(mut parsed) = serde_json::from_str::<Value>(raw) {
+                            automation_prompt_strip_context_writes(&mut parsed);
+                            *child = Value::String(parsed.to_string());
+                            continue;
+                        }
+                    }
+                }
+                automation_prompt_strip_context_writes(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                automation_prompt_strip_context_writes(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool) -> Value {

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn infer_selected_mcp_servers_uses_enabled_servers_for_wildcard_allowlist() {
+fn infer_selected_mcp_servers_does_not_select_any_servers_for_wildcard_allowlist() {
     let selected = crate::app::state::automation::automation_infer_selected_mcp_servers(
         &[],
         &["*".to_string()],
@@ -9,10 +9,7 @@ fn infer_selected_mcp_servers_uses_enabled_servers_for_wildcard_allowlist() {
         false,
     );
 
-    assert_eq!(
-        selected,
-        vec!["gmail-main".to_string(), "slack-main".to_string()]
-    );
+    assert!(selected.is_empty());
 }
 
 #[test]

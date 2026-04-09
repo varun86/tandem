@@ -213,6 +213,84 @@ fn mcp_list_is_only_added_when_servers_are_selected() {
 }
 
 #[test]
+fn handoff_only_structured_json_removes_write_tool() {
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        "/tmp",
+        vec!["read".to_string(), "write".to_string()],
+    );
+
+    assert!(requested.iter().any(|tool| tool == "read"));
+    assert!(!requested
+        .iter()
+        .any(|tool| matches!(tool.as_str(), "write" | "edit" | "apply_patch")));
+}
+
+#[test]
+fn structured_json_with_declared_output_keeps_write_tool() {
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": "artifacts/assess.json"
+        }
+    }));
+
+    let requested = normalize_automation_requested_tools(&node, "/tmp", vec!["read".to_string()]);
+
+    assert!(requested.iter().any(|tool| tool == "write"));
+}
+
+#[test]
+fn bootstrap_inference_skips_optional_slash_separated_input_files() {
+    let mut node = bare_node();
+    node.node_id = "collect_inputs".to_string();
+    node.objective = "Initialize any missing job-search workspace directories and files, read README.md/AGENTS.md/RESUME.md if present, and update resume-overview.md, resume-positioning.md, resume-state.json, sources/search-targets.md, tracker/search-ledger/2026-04-09.json, tracker/seen-jobs.jsonl, tracker/pipeline.md, and daily-recaps/2026-04-09-job-search-recap.md as needed before any search begins.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: Some("Return a structured handoff.".to_string()),
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/collect-inputs.json"
+        }
+    }));
+
+    let must_write_files = automation_node_must_write_files(&node);
+
+    assert!(!must_write_files.iter().any(|path| path == "README.md"));
+    assert!(!must_write_files.iter().any(|path| path == "AGENTS.md"));
+    assert!(!must_write_files.iter().any(|path| path == "RESUME.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "resume-overview.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "tracker/pipeline.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily-recaps/2026-04-09-job-search-recap.md"));
+}
+
+#[test]
 fn wildcard_tool_allowlist_does_not_select_mcp_servers() {
     let selected = automation_infer_selected_mcp_servers(
         &Vec::new(),
@@ -289,10 +367,10 @@ fn mcp_servers_explicit_allowed_list_returned_directly() {
 }
 
 #[test]
-fn mcp_servers_allowlist_wildcard_returns_all_enabled() {
+fn mcp_servers_allowlist_wildcard_does_not_select_any_servers() {
     let enabled = vec!["gmail".to_string(), "slack".to_string()];
     let result = automation_infer_selected_mcp_servers(&[], &["*".to_string()], &enabled, false);
-    assert_eq!(result, enabled);
+    assert!(result.is_empty());
 }
 
 #[test]

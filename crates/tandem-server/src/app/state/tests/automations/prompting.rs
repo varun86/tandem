@@ -493,10 +493,10 @@ fn code_patch_prompt_includes_code_agent_contract_instructions() {
         None,
     );
 
-    assert!(prompt.contains("Code Agent Contract:"));
-    assert!(prompt.contains("inspect -> patch -> apply -> test -> repair"));
-    assert!(prompt.contains("Do not claim completion until the patch has been applied"));
-    assert!(prompt.contains("Run the declared verification command after applying changes"));
+    assert!(prompt.contains("Coding Task Context:"));
+    assert!(prompt.contains("Verification expectation:"));
+    assert!(prompt.contains("Use `bash` for verification commands when tool access allows it."));
+    assert!(prompt.contains("Required Run Artifact:"));
 }
 
 #[test]
@@ -817,6 +817,117 @@ fn structured_json_prompt_requires_json_only_without_follow_up_questions() {
 
     assert!(prompt.contains("The final response body should contain JSON only"));
     assert!(prompt.contains("Do not include headings, bullets, markdown fences, prose explanations, or follow-up questions"));
+}
+
+#[test]
+fn handoff_only_structured_json_prompt_strips_internal_context_writes() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-json-context".to_string(),
+        name: "JSON Context".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "assess".to_string(),
+        agent_id: "research".to_string(),
+        objective: "Assess the workspace state".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return triage JSON.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "title": "Assess",
+                "role": "watcher",
+                "prompt": "Return a JSON triage handoff."
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "research".to_string(),
+        template_id: None,
+        display_name: "Research".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+    let upstream_inputs = vec![json!({
+        "alias": "runtime_context_partition",
+        "from_step_id": "planner",
+        "output": {
+            "content": {
+                "text": "{\"step_context_bindings\":{\"assess\":{\"context_writes\":[\"ctx:wfplan-123:assess:assess.artifact\"],\"summary\":\"triage context\"}}}"
+            }
+        }
+    })];
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-json-context",
+        &node,
+        1,
+        &agent,
+        &upstream_inputs,
+        &["glob".to_string(), "read".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(!prompt.contains("context_writes"));
+    assert!(!prompt.contains("ctx:wfplan-123:assess:assess.artifact"));
+    assert!(prompt.contains("internal context identifiers"));
+    assert!(prompt.contains(
+        "Do not call `write` unless this node explicitly declares a workflow output path."
+    ));
 }
 
 #[test]

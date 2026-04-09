@@ -498,6 +498,21 @@ pub(crate) fn automation_infer_selected_mcp_servers(
     enabled_server_names: &[String],
     requires_email_delivery: bool,
 ) -> Vec<String> {
+    automation_infer_selected_mcp_servers_with_source(
+        allowed_servers,
+        allowlist,
+        enabled_server_names,
+        requires_email_delivery,
+    )
+    .0
+}
+
+pub(crate) fn automation_infer_selected_mcp_servers_with_source(
+    allowed_servers: &[String],
+    allowlist: &[String],
+    enabled_server_names: &[String],
+    requires_email_delivery: bool,
+) -> (Vec<String>, &'static str) {
     let mut selected_servers = automation_normalize_server_list(allowed_servers);
     selected_servers.extend(automation_selected_mcp_servers_from_allowlist(
         allowlist,
@@ -506,12 +521,12 @@ pub(crate) fn automation_infer_selected_mcp_servers(
     selected_servers.sort();
     selected_servers.dedup();
     if !selected_servers.is_empty() {
-        return selected_servers;
+        return (selected_servers, "policy");
     }
     if requires_email_delivery {
-        return enabled_server_names.to_vec();
+        return (enabled_server_names.to_vec(), "email_fallback");
     }
-    Vec::new()
+    (Vec::new(), "none")
 }
 
 fn automation_add_mcp_list_when_scoped(
@@ -536,7 +551,7 @@ async fn sync_automation_allowed_mcp_servers(
         .filter(|server| server.enabled)
         .map(|server| server.name.clone())
         .collect::<Vec<_>>();
-    let selected_servers = automation_infer_selected_mcp_servers(
+    let (selected_servers, selected_source) = automation_infer_selected_mcp_servers_with_source(
         allowed_servers,
         allowlist,
         &enabled_server_names,
@@ -545,6 +560,7 @@ async fn sync_automation_allowed_mcp_servers(
     if selected_servers.is_empty() {
         return json!({
             "selected_servers": [],
+            "selected_source": "none",
             "servers": [],
             "remote_tools": [],
             "registered_tools": [],
@@ -663,6 +679,7 @@ async fn sync_automation_allowed_mcp_servers(
 
     json!({
         "selected_servers": selected_servers,
+        "selected_source": selected_source,
         "servers": server_rows,
         "remote_tools": all_remote_names,
         "registered_tools": all_registered_names,
@@ -2048,32 +2065,14 @@ fn build_standup_run_receipt(
 }
 
 fn automation_workspace_project_id(workspace_root: &str) -> String {
-    tandem_core::workspace_project_id(workspace_root)
-        .unwrap_or_else(|| "workspace-unknown".to_string())
+    node_runtime_impl::automation_workspace_project_id(workspace_root)
 }
 
 fn merge_automation_agent_allowlist(
     agent: &AutomationAgentProfile,
     template: Option<&tandem_orchestrator::AgentTemplate>,
 ) -> Vec<String> {
-    let mut allowlist = if agent.tool_policy.allowlist.is_empty() {
-        template
-            .map(|value| value.capabilities.tool_allowlist.clone())
-            .unwrap_or_default()
-    } else {
-        agent.tool_policy.allowlist.clone()
-    };
-    allowlist.sort();
-    allowlist.dedup();
-    allowlist
-}
-
-fn automation_node_output_extension(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_required_output_path(node)
-        .as_deref()
-        .and_then(|value| std::path::Path::new(value).extension())
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
+    node_runtime_impl::merge_automation_agent_allowlist(agent, template)
 }
 
 pub(crate) fn automation_node_output_contract_kind(node: &AutomationFlowNode) -> Option<String> {
@@ -2084,9 +2083,7 @@ pub(crate) fn automation_node_output_contract_kind(node: &AutomationFlowNode) ->
 }
 
 fn automation_node_task_kind(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "task_kind")
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_task_kind(node)
 }
 
 fn automation_node_knowledge_task_family(node: &AutomationFlowNode) -> String {
@@ -2140,103 +2137,41 @@ fn automation_node_knowledge_task_family(node: &AutomationFlowNode) -> String {
 }
 
 fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(Value::as_object)
-        .and_then(|builder| builder.get("project_backlog_tasks"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    node_runtime_impl::automation_node_projects_backlog_tasks(node)
 }
 
 fn automation_node_task_id(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "task_id")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_task_id(node)
 }
 
 fn automation_node_repo_root(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "repo_root")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_repo_root(node)
 }
 
 fn automation_node_write_scope(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "write_scope")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_write_scope(node)
 }
 
 fn automation_node_acceptance_criteria(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "acceptance_criteria")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_acceptance_criteria(node)
 }
 
 fn automation_node_task_dependencies(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "task_dependencies")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_task_dependencies(node)
 }
 
 fn automation_node_task_owner(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "task_owner")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    node_runtime_impl::automation_node_task_owner(node)
 }
 
 fn automation_node_is_code_workflow(node: &AutomationFlowNode) -> bool {
-    if automation_node_task_kind(node)
-        .as_deref()
-        .is_some_and(|kind| matches!(kind, "code_change" | "repo_fix" | "implementation"))
-    {
-        return true;
-    }
-    if node
-        .output_contract
-        .as_ref()
-        .and_then(|contract| contract.validator)
-        .is_some_and(|validator| validator == crate::AutomationOutputValidatorKind::CodePatch)
-    {
-        return true;
-    }
-    if automation_node_output_contract_kind(node).as_deref() == Some("code_patch") {
-        return true;
-    }
-    let Some(extension) = automation_node_output_extension(node) else {
-        return false;
-    };
-    let code_extensions = [
-        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "kts", "c", "cc", "cpp", "h",
-        "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh",
-    ];
-    code_extensions.contains(&extension.as_str())
+    node_runtime_impl::automation_node_is_code_workflow(node)
 }
 
 pub(crate) fn automation_output_validator_kind(
     node: &AutomationFlowNode,
 ) -> crate::AutomationOutputValidatorKind {
-    if let Some(validator) = node
-        .output_contract
-        .as_ref()
-        .and_then(|contract| contract.validator)
-    {
-        return validator;
-    }
-    if automation_node_is_code_workflow(node) {
-        return crate::AutomationOutputValidatorKind::CodePatch;
-    }
-    match node
-        .output_contract
-        .as_ref()
-        .map(|contract| contract.kind.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("brief") => crate::AutomationOutputValidatorKind::ResearchBrief,
-        Some("review") => crate::AutomationOutputValidatorKind::ReviewDecision,
-        Some("structured_json") => crate::AutomationOutputValidatorKind::StructuredJson,
-        _ => crate::AutomationOutputValidatorKind::GenericArtifact,
-    }
+    node_runtime_impl::automation_output_validator_kind(node)
 }
 
 fn path_looks_like_source_file(path: &str) -> bool {
@@ -2299,14 +2234,7 @@ fn workspace_has_git_repo(workspace_root: &str) -> bool {
 }
 
 fn automation_node_execution_mode(node: &AutomationFlowNode, workspace_root: &str) -> &'static str {
-    if !automation_node_is_code_workflow(node) {
-        return "artifact_write";
-    }
-    if workspace_has_git_repo(workspace_root) {
-        "git_patch"
-    } else {
-        "filesystem_patch"
-    }
+    node_runtime_impl::automation_node_execution_mode(node, workspace_root)
 }
 
 pub(crate) fn normalize_automation_requested_tools(
@@ -2314,6 +2242,9 @@ pub(crate) fn normalize_automation_requested_tools(
     workspace_root: &str,
     raw: Vec<String>,
 ) -> Vec<String> {
+    let handoff_only_structured_json = automation_output_validator_kind(node)
+        == crate::AutomationOutputValidatorKind::StructuredJson
+        && automation_node_required_output_path(node).is_none();
     let mut normalized = config::channels::normalize_allowed_tools(raw);
     let had_wildcard = normalized.iter().any(|tool| tool == "*");
     if had_wildcard {
@@ -2359,33 +2290,16 @@ pub(crate) fn normalize_automation_requested_tools(
     if automation_node_web_research_expected(node) {
         normalized.push("websearch".to_string());
     }
+    if handoff_only_structured_json {
+        normalized.retain(|tool| !matches!(tool.as_str(), "write" | "edit" | "apply_patch"));
+    }
     normalized.sort();
     normalized.dedup();
     normalized
 }
 
 fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
-    let tokens = automation_tool_name_tokens(tool_name);
-    tokens.iter().any(|token| {
-        matches!(
-            token.as_str(),
-            "email"
-                | "mail"
-                | "gmail"
-                | "outlook"
-                | "smtp"
-                | "imap"
-                | "inbox"
-                | "mailbox"
-                | "mailer"
-                | "exchange"
-                | "sendgrid"
-                | "mailgun"
-                | "postmark"
-                | "resend"
-                | "ses"
-        )
-    })
+    node_runtime_impl::automation_tool_name_is_email_delivery(tool_name)
 }
 
 fn discover_automation_tools_for_capability(
@@ -2444,6 +2358,13 @@ pub(crate) fn automation_node_prewrite_requirements(
     node: &AutomationFlowNode,
     requested_tools: &[String],
 ) -> Option<PrewriteRequirements> {
+    automation_node_prewrite_requirements_impl(node, requested_tools)
+}
+
+fn automation_node_prewrite_requirements_impl(
+    node: &AutomationFlowNode,
+    requested_tools: &[String],
+) -> Option<PrewriteRequirements> {
     let write_required = automation_node_required_output_path(node).is_some();
     if !write_required {
         return None;
@@ -2497,7 +2418,9 @@ pub(crate) fn automation_node_prewrite_requirements(
         web_research_required: web_research_required && !research_finalize,
         concrete_read_required,
         successful_web_research_required,
-        repair_on_unmet_requirements: brief_research_node || has_any_required_tools,
+        repair_on_unmet_requirements: brief_research_node
+            || has_any_required_tools
+            || !enforcement.retry_on_missing.is_empty(),
         coverage_mode: if brief_research_node {
             PrewriteCoverageMode::ResearchCorpus
         } else {
@@ -2631,14 +2554,7 @@ pub(crate) async fn resolve_automation_agent_model(
 }
 
 pub(crate) fn automation_node_inline_artifact_payload(node: &AutomationFlowNode) -> Option<Value> {
-    if node.node_id != "collect_inputs" {
-        return None;
-    }
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("inputs"))
-        .filter(|value| !value.is_null())
-        .cloned()
+    node_runtime_impl::automation_node_inline_artifact_payload(node)
 }
 
 pub(crate) fn write_automation_inline_artifact(
@@ -2674,97 +2590,15 @@ pub(crate) fn write_automation_inline_artifact(
     Ok((display_path, file_text))
 }
 
-fn automation_node_declared_output_path(node: &AutomationFlowNode) -> Option<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(Value::as_object)
-        .and_then(|builder| builder.get("output_path"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| automation_node_default_output_path(node))
-}
-
 pub(crate) fn automation_node_required_output_path_for_run(
     node: &AutomationFlowNode,
     run_id: Option<&str>,
 ) -> Option<String> {
-    let output_path = automation_node_declared_output_path(node)?;
-    run_id
-        .and_then(|run_id| automation_run_scoped_output_path(run_id, &output_path))
-        .or(Some(output_path))
+    node_runtime_impl::automation_node_required_output_path_for_run(node, run_id)
 }
 
 pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_required_output_path_for_run(node, None)
-}
-
-fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
-    let contract_kind = node
-        .output_contract
-        .as_ref()
-        .map(|contract| contract.kind.as_str())
-        .unwrap_or("structured_json");
-    let extension = match contract_kind {
-        "report_markdown" => {
-            let format = node
-                .metadata
-                .as_ref()
-                .and_then(|metadata| metadata.get("format"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if format.eq_ignore_ascii_case("simple_html") {
-                "html"
-            } else {
-                "md"
-            }
-        }
-        "approval_gate" => return None,
-        _ => "json",
-    };
-    let default_enabled = matches!(
-        node.node_id.as_str(),
-        "collect_inputs"
-            | "research_sources"
-            | "extract_pain_points"
-            | "cluster_topics"
-            | "analyze_findings"
-            | "compare_results"
-            | "compare_with_features"
-            | "generate_report"
-    );
-    if !default_enabled {
-        return None;
-    }
-    let slug = node
-        .node_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-    if slug.is_empty() {
-        return None;
-    }
-    // Human-readable deliverables (markdown/html) land in the workspace root under
-    // `outputs/` so they are visible to humans and discoverable by the standup system.
-    // JSON intermediates stay in `.tandem/artifacts/` — they are pipeline plumbing
-    // consumed by downstream nodes, not final deliverables.
-    // In both cases the run-scoping mechanism archives a copy into
-    // `.tandem/runs/<run-id>/artifacts/` for audit history.
-    if extension == "md" || extension == "html" {
-        Some(format!("outputs/{slug}.{extension}"))
-    } else {
-        Some(format!(".tandem/artifacts/{slug}.{extension}"))
-    }
+    node_runtime_impl::automation_node_required_output_path(node)
 }
 
 fn automation_node_allows_preexisting_output_reuse(node: &AutomationFlowNode) -> bool {
@@ -2824,6 +2658,7 @@ fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
                 inferred_files = ?inferred,
                 "automation bootstrap file inference is deprecated; set builder.must_write_files explicitly"
             );
+            files.extend(inferred);
         }
     }
     files.sort();
@@ -2958,14 +2793,6 @@ fn maybe_promote_legacy_workspace_artifact_for_run(
         resolve_automation_output_path_for_run(workspace_root, run_id, output_path)?;
     if legacy_path == run_scoped_path {
         return Ok(None);
-    }
-    if run_scoped_path.exists() && run_scoped_path.is_file() {
-        return Ok(Some(AutomationVerifiedOutputResolution {
-            path: run_scoped_path,
-            legacy_workspace_artifact_promoted_from: None,
-            materialized_by_current_attempt: true,
-            resolution_kind: AutomationVerifiedOutputResolutionKind::Direct,
-        }));
     }
     if !legacy_path.exists() || !legacy_path.is_file() {
         return Ok(None);
@@ -3193,39 +3020,18 @@ fn publish_automation_verified_outputs(
 }
 
 fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
-    enforcement_requires_external_sources(&automation_node_output_enforcement(node))
+    node_runtime_impl::automation_node_web_research_expected(node)
 }
 
 pub(crate) fn automation_node_required_tools(node: &AutomationFlowNode) -> Vec<String> {
-    automation_node_output_enforcement(node).required_tools
+    node_runtime_impl::automation_node_required_tools(node)
 }
 
 pub(crate) fn automation_node_execution_policy(
     node: &AutomationFlowNode,
     workspace_root: &str,
 ) -> Value {
-    let output_path = automation_node_required_output_path(node);
-    let code_workflow = automation_node_is_code_workflow(node);
-    let git_backed = workspace_has_git_repo(workspace_root);
-    let mode = automation_node_execution_mode(node, workspace_root);
-    let workflow_class = automation_node_workflow_class(node);
-    json!({
-        "mode": mode,
-        "workflow_class": workflow_class,
-        "code_workflow": code_workflow,
-        "git_backed": git_backed,
-        "declared_output_path": output_path,
-        "project_backlog_tasks": automation_node_projects_backlog_tasks(node),
-        "task_id": automation_node_task_id(node),
-        "task_kind": automation_node_task_kind(node),
-        "repo_root": automation_node_repo_root(node),
-        "write_scope": automation_node_write_scope(node),
-        "acceptance_criteria": automation_node_acceptance_criteria(node),
-        "task_dependencies": automation_node_task_dependencies(node),
-        "verification_state": automation_node_verification_state(node),
-        "task_owner": automation_node_task_owner(node),
-        "verification_command": automation_node_verification_command(node),
-    })
+    node_runtime_impl::automation_node_execution_policy(node, workspace_root)
 }
 
 fn resolve_automation_output_path(
@@ -3483,6 +3289,10 @@ async fn reconcile_automation_resolve_verified_output_path(
     let start_ms = now_ms() as u64;
 
     loop {
+        let candidates =
+            automation_output_path_candidates(workspace_root, run_id, node, output_path)?;
+        let session_written_candidates =
+            session_write_paths_for_output_candidates(session, workspace_root, run_id, &candidates);
         if let Some(resolved) = automation_resolve_verified_output_path(
             session,
             workspace_root,
@@ -3490,16 +3300,13 @@ async fn reconcile_automation_resolve_verified_output_path(
             node,
             output_path,
         )? {
-            let path_str = resolved.to_string_lossy().to_string();
-            let under_run_scope = path_str.contains(&format!(".tandem/runs/{}/", run_id));
+            let materialized_by_current_attempt = session_written_candidates
+                .iter()
+                .any(|candidate| candidate == &resolved);
             return Ok(Some(AutomationVerifiedOutputResolution {
                 path: resolved,
                 legacy_workspace_artifact_promoted_from: None,
-                materialized_by_current_attempt: if under_run_scope {
-                    true
-                } else {
-                    output_touched
-                },
+                materialized_by_current_attempt,
                 resolution_kind: AutomationVerifiedOutputResolutionKind::Direct,
             }));
         }
@@ -6797,9 +6604,15 @@ pub(crate) async fn execute_automation_v2_node(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let has_selected_mcp_servers = !selected_mcp_server_names.is_empty();
+    let selected_mcp_source = mcp_tool_diagnostics
+        .get("selected_source")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .to_string();
+    let has_selected_mcp_servers_policy =
+        !selected_mcp_server_names.is_empty() && selected_mcp_source == "policy";
     let requested_tools =
-        automation_add_mcp_list_when_scoped(requested_tools, has_selected_mcp_servers);
+        automation_add_mcp_list_when_scoped(requested_tools, has_selected_mcp_servers_policy);
     let effective_offered_tools =
         automation_expand_effective_offered_tools(&requested_tools, &available_tool_names);
     let execution_mode = automation_node_execution_mode(node, &workspace_root);
@@ -6810,7 +6623,7 @@ pub(crate) async fn execute_automation_v2_node(
         &available_tool_names,
         &available_tool_schemas,
     );
-    if automation_node_requires_email_delivery(node) || has_selected_mcp_servers {
+    if automation_node_requires_email_delivery(node) || has_selected_mcp_servers_policy {
         automation_merge_mcp_capability_diagnostics(
             &mut capability_resolution,
             &mcp_tool_diagnostics,

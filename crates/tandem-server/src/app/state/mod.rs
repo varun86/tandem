@@ -4693,14 +4693,30 @@ impl AppState {
                         .saturating_sub(automation::lifecycle::automation_last_activity_at_ms(run))
                         >= stale_after_ms
             })
-            .map(|run| run.run_id.clone())
+            .map(|run| {
+                (
+                    run.run_id.clone(),
+                    run.active_session_ids.clone(),
+                    run.active_instance_ids.clone(),
+                )
+            })
             .collect::<Vec<_>>();
         let mut reaped = 0usize;
-        for run_id in runs {
+        for (run_id, session_ids, instance_ids) in runs {
             let detail = format!(
                 "automation run paused after no provider activity for at least {}s",
                 stale_after_ms / 1000
             );
+            for session_id in &session_ids {
+                let _ = self.cancellations.cancel(session_id).await;
+            }
+            for instance_id in instance_ids {
+                let _ = self
+                    .agent_teams
+                    .cancel_instance(self, &instance_id, "paused by stale-run reaper")
+                    .await;
+            }
+            self.forget_automation_v2_sessions(&session_ids).await;
             if self
                 .update_automation_v2_run(&run_id, |row| {
                     row.status = AutomationRunStatus::Paused;

@@ -1,5 +1,22 @@
 use super::*;
 
+fn bare_node() -> AutomationFlowNode {
+    AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "n1".to_string(),
+        agent_id: "a1".to_string(),
+        objective: "do something".to_string(),
+        depends_on: vec![],
+        input_refs: vec![],
+        output_contract: None,
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    }
+}
+
 #[test]
 fn output_validator_defaults_follow_existing_runtime_heuristics() {
     let code = AutomationFlowNode {
@@ -394,6 +411,40 @@ fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() 
         Some(&artifact_validation),
     );
     assert_eq!(summary.outcome, "needs_repair");
+}
+
+#[test]
+fn node_with_bootstrap_intent_adds_workspace_inspection_prewrite_gate() {
+    let mut node = bare_node();
+    node.objective = "Initialize any missing directories or files if missing".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: Some(crate::AutomationOutputEnforcement {
+            validation_profile: Some("artifact_only".to_string()),
+            required_tools: Vec::new(),
+            required_evidence: Vec::new(),
+            required_sections: Vec::new(),
+            prewrite_gates: Vec::new(),
+            retry_on_missing: Vec::new(),
+            terminal_on: Vec::new(),
+            repair_budget: None,
+            session_text_recovery: None,
+        }),
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": "extract.json"
+        }
+    }));
+
+    let enforcement = super::super::automation::automation_node_output_enforcement(&node);
+    assert!(enforcement
+        .prewrite_gates
+        .iter()
+        .any(|gate| gate == "workspace_inspection"));
 }
 
 #[test]
@@ -1598,24 +1649,46 @@ fn bootstrap_required_files_are_inferred_from_objective_paths_without_filename_h
     };
     let artifact_text =
         "{\"status\":\"completed\",\"summary\":\"Bootstrap completed.\"}".to_string();
+    let setup_guide = "# Setup guide\n\nBootstrap complete.\n".to_string();
+    let jobs_ledger = "{\"jobs\":[]}\n".to_string();
     std::fs::create_dir_all(workspace_root.join("daily-recaps")).expect("create recap dir");
+    std::fs::create_dir_all(workspace_root.join("guides")).expect("create guides dir");
+    std::fs::create_dir_all(workspace_root.join("tracker")).expect("create tracker dir");
     std::fs::write(
         workspace_root.join("daily-recaps/2026-04-08-recap.md"),
         &artifact_text,
     )
     .expect("write output");
+    std::fs::write(workspace_root.join("guides/setup-guide.md"), &setup_guide)
+        .expect("write setup guide");
+    std::fs::write(workspace_root.join("tracker/jobs.jsonl"), &jobs_ledger)
+        .expect("write jobs ledger");
     let mut session = Session::new(
         Some("bootstrap required files".to_string()),
         Some(workspace_root.to_str().expect("workspace root").to_string()),
     );
     session.messages.push(tandem_types::Message::new(
         MessageRole::Assistant,
-        vec![MessagePart::ToolInvocation {
-            tool: "write".to_string(),
-            args: json!({"path":"daily-recaps/2026-04-08-recap.md","content":artifact_text}),
-            result: Some(json!({"ok": true})),
-            error: None,
-        }],
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"daily-recaps/2026-04-08-recap.md","content":artifact_text}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"guides/setup-guide.md","content":setup_guide}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"tracker/jobs.jsonl","content":jobs_ledger}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+        ],
     ));
     let tool_telemetry =
         summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
@@ -1645,13 +1718,30 @@ fn bootstrap_required_files_are_inferred_from_objective_paths_without_filename_h
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        Vec::<Value>::new()
+        vec![
+            Value::String("guides/setup-guide.md".to_string()),
+            Value::String("tracker/jobs.jsonl".to_string()),
+        ]
     );
     assert!(metadata
         .get("validation_basis")
         .and_then(|value| value.get("must_write_file_statuses"))
         .and_then(Value::as_array)
-        .is_some_and(|values| values.is_empty()));
+        .is_some_and(|values| {
+            values.iter().any(|value| {
+                value.get("path").and_then(Value::as_str) == Some("guides/setup-guide.md")
+                    && value
+                        .get("materialized_by_current_attempt")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            }) && values.iter().any(|value| {
+                value.get("path").and_then(Value::as_str) == Some("tracker/jobs.jsonl")
+                    && value
+                        .get("materialized_by_current_attempt")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+        }));
 
     let _ = std::fs::remove_dir_all(workspace_root);
 }

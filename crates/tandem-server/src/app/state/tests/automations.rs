@@ -654,7 +654,23 @@ fn runnable_write_scope_filter_allows_non_code_nodes_to_run_in_parallel() {
         output_contract: Some(AutomationFlowOutputContract {
             kind: "brief".to_string(),
             validator: None,
-            enforcement: None,
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("research_synthesis".to_string()),
+                required_tools: Vec::new(),
+                required_evidence: vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                ],
+                required_sections: vec![
+                    "citations".to_string(),
+                    "web_sources_reviewed".to_string(),
+                ],
+                prewrite_gates: Vec::new(),
+                retry_on_missing: Vec::new(),
+                terminal_on: Vec::new(),
+                repair_budget: None,
+                session_text_recovery: None,
+            }),
             schema: None,
             summary_guidance: None,
         }),
@@ -1512,11 +1528,10 @@ fn prompt_includes_email_delivery_metadata_for_notify_user() {
     assert!(
         prompt.contains("use the compiled upstream report/body as the email body source of truth")
     );
-    assert!(prompt.contains("Full Synthesis Requirement:"));
+    assert!(prompt.contains("For email delivery, use the compiled upstream report/body as the email body source of truth."));
     assert!(prompt.contains("Deterministic Delivery Body:"));
-    assert!(
-        prompt.contains("Source artifact: `.tandem/runs/run-email/artifacts/generate-report.html`")
-    );
+    assert!(prompt.contains("Source artifact:"));
+    assert!(prompt.contains("generate-report.html"));
     assert!(prompt.contains("<h1>Tandem Strategic Analysis</h1>"));
     assert!(prompt.contains(
         "Do not mark the node completed unless you actually execute an email draft or send tool."
@@ -2406,6 +2421,15 @@ async fn stale_running_automation_runs_are_paused_and_release_scheduler_capacity
         .await
         .expect("claim run");
     assert_eq!(claimed.status, AutomationRunStatus::Running);
+    let session_id = "session-stale-run-test";
+    let cancellation = state.cancellations.create(session_id).await;
+    state
+        .add_automation_v2_session(&run_id, session_id)
+        .await
+        .expect("attach session");
+    state
+        .set_automation_v2_session_mcp_servers(session_id, vec!["server-a".to_string()])
+        .await;
     {
         let scheduler = state.automation_scheduler.read().await;
         assert_eq!(scheduler.active_count(), 1);
@@ -2441,6 +2465,21 @@ async fn stale_running_automation_runs_are_paused_and_release_scheduler_capacity
         persisted.detail.as_deref(),
         Some("automation run paused after no provider activity for at least 120s")
     );
+    assert!(persisted.active_session_ids.is_empty());
+    assert!(persisted.latest_session_id.is_none());
+    assert!(cancellation.is_cancelled());
+    assert!(state
+        .automation_v2_session_runs
+        .read()
+        .await
+        .get(session_id)
+        .is_none());
+    assert!(state
+        .automation_v2_session_mcp_servers
+        .read()
+        .await
+        .get(session_id)
+        .is_none());
     {
         let scheduler = state.automation_scheduler.read().await;
         assert_eq!(scheduler.active_count(), 0);
@@ -3218,10 +3257,7 @@ fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        vec![
-            json!("citations_missing"),
-            json!("web_sources_reviewed_missing")
-        ]
+        vec![json!("citations_missing")]
     );
     assert_eq!(
         artifact_validation
@@ -3857,7 +3893,7 @@ fn generic_artifact_validation_rejects_stale_verified_output_on_retry() {
 }
 
 #[test]
-fn generic_artifact_validation_blocks_weak_report_markdown() {
+fn generic_artifact_validation_warns_on_weak_report_markdown() {
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-editorial-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace_root).expect("workspace dir");
@@ -3907,13 +3943,16 @@ fn generic_artifact_validation_blocks_weak_report_markdown() {
         &std::collections::BTreeSet::new(),
     );
 
+    assert_eq!(rejected, None);
     assert_eq!(
-        rejected.as_deref(),
-        Some("editorial artifact is missing expected markdown structure")
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("accepted_with_warnings")
     );
     assert_eq!(
         artifact_validation
-            .get("unmet_requirements")
+            .get("warning_requirements")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
@@ -3937,16 +3976,16 @@ fn generic_artifact_validation_blocks_weak_report_markdown() {
     assert_eq!(
         detect_automation_node_failure_kind(
             &node,
-            "blocked",
+            "completed",
             None,
             None,
             Some(&artifact_validation),
         ),
-        Some("editorial_quality_failed".to_string())
+        None
     );
     assert_eq!(
-        detect_automation_node_phase(&node, "blocked", Some(&artifact_validation)),
-        "editorial_validation"
+        detect_automation_node_phase(&node, "completed", Some(&artifact_validation)),
+        "completed"
     );
 
     let _ = std::fs::remove_dir_all(&workspace_root);

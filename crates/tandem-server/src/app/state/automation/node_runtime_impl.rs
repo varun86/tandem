@@ -36,12 +36,12 @@ fn resolve_standup_report_path_for_run(
     Some(template.replace("{{date}}", &date))
 }
 
-fn automation_workspace_project_id(workspace_root: &str) -> String {
+pub(crate) fn automation_workspace_project_id(workspace_root: &str) -> String {
     tandem_core::workspace_project_id(workspace_root)
         .unwrap_or_else(|| "workspace-unknown".to_string())
 }
 
-fn merge_automation_agent_allowlist(
+pub(crate) fn merge_automation_agent_allowlist(
     agent: &AutomationAgentProfile,
     template: Option<&tandem_orchestrator::AgentTemplate>,
 ) -> Vec<String> {
@@ -486,7 +486,7 @@ pub(crate) fn automation_node_requires_email_delivery(node: &AutomationFlowNode)
     mentions_email_channel && mentions_delivery_action
 }
 
-fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
+pub(crate) fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
     let tokens = automation_tool_name_tokens(tool_name);
     tokens.iter().any(|token| {
         matches!(
@@ -566,56 +566,7 @@ pub(crate) fn automation_node_prewrite_requirements(
     node: &AutomationFlowNode,
     requested_tools: &[String],
 ) -> Option<PrewriteRequirements> {
-    let write_required = automation_node_required_output_path(node).is_some();
-    if !write_required {
-        return None;
-    }
-    let enforcement = automation_node_output_enforcement(node);
-    let required_tools = enforcement.required_tools.clone();
-    let web_research_expected = enforcement_requires_external_sources(&enforcement);
-    let validation_profile = enforcement
-        .validation_profile
-        .as_deref()
-        .unwrap_or("artifact_only");
-    let workspace_inspection_required = requested_tools
-        .iter()
-        .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list" | "read"));
-    let web_research_required =
-        web_research_expected && requested_tools.iter().any(|tool| tool == "websearch");
-    let brief_research_node = validation_profile == "local_research";
-    let research_finalize = validation_profile == "research_synthesis";
-    let has_required_read = required_tools.iter().any(|tool| tool == "read");
-    let has_required_websearch = required_tools.iter().any(|tool| tool == "websearch");
-    let has_any_required_tools = !required_tools.is_empty();
-    let concrete_read_required = !research_finalize
-        && ((brief_research_node || validation_profile == "local_research")
-            || has_required_read
-            || enforcement
-                .prewrite_gates
-                .iter()
-                .any(|gate| gate == "concrete_reads"))
-        && requested_tools.iter().any(|tool| tool == "read");
-    let successful_web_research_required = !research_finalize
-        && ((validation_profile == "external_research")
-            || has_required_websearch
-            || enforcement
-                .prewrite_gates
-                .iter()
-                .any(|gate| gate == "successful_web_research"))
-        && web_research_expected
-        && requested_tools.iter().any(|tool| tool == "websearch");
-    Some(PrewriteRequirements {
-        workspace_inspection_required: workspace_inspection_required && !research_finalize,
-        web_research_required: web_research_required && !research_finalize,
-        concrete_read_required,
-        successful_web_research_required,
-        repair_on_unmet_requirements: brief_research_node || has_any_required_tools,
-        coverage_mode: if brief_research_node {
-            PrewriteCoverageMode::ResearchCorpus
-        } else {
-            PrewriteCoverageMode::None
-        },
-    })
+    super::automation_node_prewrite_requirements_impl(node, requested_tools)
 }
 
 fn validation_requirement_is_warning(profile: &str, requirement: &str) -> bool {
@@ -706,14 +657,22 @@ fn resolve_automation_agent_model(
 }
 
 pub(crate) fn automation_node_inline_artifact_payload(node: &AutomationFlowNode) -> Option<Value> {
-    if node.node_id != "collect_inputs" {
-        return None;
+    if node.node_id == "collect_inputs" {
+        if let Some(value) = node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("inputs"))
+            .filter(|value| !value.is_null())
+            .cloned()
+        {
+            return Some(value);
+        }
+        return Some(json!({
+            "inputs": {},
+            "status": "completed"
+        }));
     }
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("inputs"))
-        .filter(|value| !value.is_null())
-        .cloned()
+    None
 }
 
 pub(crate) fn write_automation_inline_artifact(
