@@ -580,6 +580,7 @@ impl EngineLoop {
                     } else if web_research_requested
                         && has_web_research_tools(&all_tools)
                         && !has_web_research_tools(&candidate_tools)
+                        && required_write_retry_count == 0
                     {
                         candidate_tools = all_tools.clone();
                         retrieval_fallback_reason = Some("missing_web_tools_for_research_prompt");
@@ -1448,9 +1449,14 @@ impl EngineLoop {
                                     continue;
                                 }
                             }
+                            let progress_made_in_cycle = productive_workspace_inspection_total > 0
+                                || productive_concrete_read_total > 0
+                                || productive_web_research_total > 0
+                                || successful_web_research_total > 0;
                             if should_retry_nonproductive_required_tool_cycle(
                                 requested_write_required,
                                 write_tool_attempted_in_cycle,
+                                progress_made_in_cycle,
                                 required_tool_retry_count,
                             ) {
                                 required_tool_retry_count += 1;
@@ -1863,9 +1869,14 @@ impl EngineLoop {
                         ));
                         continue;
                     }
+                    let progress_made_in_cycle = productive_workspace_inspection_total > 0
+                        || productive_concrete_read_total > 0
+                        || productive_web_research_total > 0
+                        || successful_web_research_total > 0;
                     if should_retry_nonproductive_required_tool_cycle(
                         requested_write_required,
                         false,
+                        progress_made_in_cycle,
                         required_tool_retry_count,
                     ) {
                         required_tool_retry_count += 1;
@@ -4463,8 +4474,15 @@ fn is_write_invalid_args_failure_kind(reason: RequiredToolFailureKind) -> bool {
 fn should_retry_nonproductive_required_tool_cycle(
     requested_write_required: bool,
     write_tool_attempted_in_cycle: bool,
+    progress_made_in_cycle: bool,
     required_tool_retry_count: usize,
 ) -> bool {
+    if write_tool_attempted_in_cycle {
+        return required_tool_retry_count == 0 && !requested_write_required;
+    }
+    if progress_made_in_cycle {
+        return required_tool_retry_count < 2;
+    }
     required_tool_retry_count == 0 && (!requested_write_required || !write_tool_attempted_in_cycle)
 }
 
@@ -5135,8 +5153,33 @@ fn normalize_tool_args_with_mode(
         if let Some(path) = extract_file_path_arg(&args) {
             args = set_file_path_arg(args, path);
         } else if normalized_tool == "write" || normalized_tool == "edit" {
-            if let Some(inferred) = infer_required_output_target_path_from_text(latest_user_text)
-                .or_else(|| infer_required_output_target_path_from_text(latest_assistant_context))
+            // Check if the model explicitly provided a non-trivial path argument that was
+            // rejected by sanitization. In that case, do NOT silently recover with a
+            // heuristic path — that creates garbage files. Return a terminal error so the
+            // model can retry with a correct path.
+            //
+            // We exclude trivial/placeholder paths ("./", ".", "") because those indicate
+            // the model didn't actually know the path and recovery is appropriate.
+            let model_explicit_path_value = args
+                .as_object()
+                .and_then(|obj| obj.get("path"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|p| !p.is_empty());
+            let path_is_trivial_placeholder = model_explicit_path_value
+                .is_some_and(|p| matches!(p, "./" | "." | ".." | "/" | "~"));
+            let model_explicitly_set_nontrivial_path = model_explicit_path_value
+                .is_some_and(|p| p.len() > 2)
+                && !path_is_trivial_placeholder;
+            if model_explicitly_set_nontrivial_path {
+                args_source = "rejected".to_string();
+                args_integrity = "rejected_path".to_string();
+                missing_terminal = true;
+                missing_terminal_reason = Some("WRITE_PATH_REJECTED".to_string());
+            } else if let Some(inferred) =
+                infer_required_output_target_path_from_text(latest_user_text).or_else(|| {
+                    infer_required_output_target_path_from_text(latest_assistant_context)
+                })
             {
                 args_source = "recovered_from_context".to_string();
                 args_integrity = "recovered".to_string();
@@ -6326,6 +6369,17 @@ fn is_malformed_tool_path_token(token: &str) -> bool {
     }
     // Glob patterns are not concrete file paths for read/write/edit.
     if token.contains('*') || token.contains('?') {
+        return true;
+    }
+    // Context object IDs from runtime_context_partition bindings are not file paths.
+    // These look like "ctx:wfplan-...:assess:assess.artifact" and the model sometimes
+    // confuses them for filesystem paths.
+    if lower.starts_with("ctx:") {
+        return true;
+    }
+    // Colon-separated identifiers that look like context bindings (e.g. "routine:assess:artifact")
+    // but aren't Windows drive paths (which are caught above).
+    if token.matches(':').count() >= 2 {
         return true;
     }
     false
@@ -9118,20 +9172,23 @@ Call: todowrite(task_id=3, status="in_progress")
     #[test]
     fn write_required_node_retries_after_empty_glob() {
         assert!(should_retry_nonproductive_required_tool_cycle(
-            true, false, 0
+            true, false, true, 0
+        ));
+        assert!(should_retry_nonproductive_required_tool_cycle(
+            true, false, true, 1
         ));
         assert!(!should_retry_nonproductive_required_tool_cycle(
-            true, false, 1
+            true, false, true, 2
         ));
     }
 
     #[test]
     fn write_required_node_does_not_take_preparatory_retry_after_write_attempt() {
         assert!(!should_retry_nonproductive_required_tool_cycle(
-            true, true, 0
+            true, true, true, 0
         ));
         assert!(should_retry_nonproductive_required_tool_cycle(
-            false, true, 0
+            false, true, false, 0
         ));
     }
 

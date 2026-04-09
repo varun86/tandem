@@ -710,7 +710,8 @@ pub(crate) fn detect_automation_node_status(
     // and research-brief validation. They produce structured JSON with three keys;
     // anything else triggers a targeted repair signal.
     if validator_kind == crate::AutomationOutputValidatorKind::StandupUpdate {
-        let parsed = parse_status_json_with_tail_window(session_text);
+        let parsed = extract_recoverable_json_artifact(session_text)
+            .or_else(|| parse_status_json_with_tail_window(session_text));
         let has_required_keys = parsed
             .as_ref()
             .is_some_and(|v| v.get("yesterday").is_some() && v.get("today").is_some());
@@ -778,9 +779,19 @@ pub(crate) fn detect_automation_node_status(
     let tool_mode_required_unsatisfied = session_text.contains("TOOL_MODE_REQUIRED_NOT_SATISFIED");
     if tool_mode_required_unsatisfied && parsed.is_none() {
         let reason = if session_text.contains("WRITE_REQUIRED_NOT_SATISFIED") {
-            automation_node_required_output_path(node)
-                .map(|path| {
-                    format!("required output `{path}` was not created in the current attempt")
+            // Prefer the rejected_artifact_reason from artifact_validation — it was computed
+            // with the correct run-scoped path (e.g. `.tandem/runs/<id>/artifacts/…`).
+            // Falling back to automation_node_required_output_path(node) returns the legacy
+            // `.tandem/artifacts/…` path which mismatches what the model was told to write.
+            artifact_validation
+                .and_then(|v| v.get("rejected_artifact_reason"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    automation_node_required_output_path(node).map(|path| {
+                        format!("required output `{path}` was not created in the current attempt")
+                    })
                 })
                 .unwrap_or_else(|| {
                     "required output was not created in the current attempt".to_string()
