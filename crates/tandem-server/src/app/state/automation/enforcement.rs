@@ -56,7 +56,7 @@ fn automation_node_legacy_web_research_expected(node: &AutomationFlowNode) -> bo
         .unwrap_or(false)
 }
 
-fn automation_node_prefers_mcp_servers(node: &AutomationFlowNode) -> bool {
+pub(crate) fn automation_node_prefers_mcp_servers(node: &AutomationFlowNode) -> bool {
     automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("preferred_mcp_servers"))
         .and_then(Value::as_array)

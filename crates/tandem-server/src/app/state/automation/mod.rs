@@ -4727,7 +4727,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             .unwrap_or(false)
             || executed_has_read
             || (use_upstream_evidence && !discovered_relevant_paths.is_empty());
-        if connector_discovery_required && !executed_has_mcp_list {
+        if connector_discovery_required
+            && !executed_has_mcp_list
+            && !enforcement::automation_node_prefers_mcp_servers(node)
+        {
             unmet_requirements.push("mcp_discovery_missing".to_string());
         }
         if automation_node_is_outbound_action(node)
@@ -5450,7 +5453,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         if (requires_websearch || requires_successful_web_research) && !web_research_succeeded {
             unmet_requirements.push("missing_successful_web_research".to_string());
         }
-        if connector_discovery_required && !executed_has_mcp_list {
+        if connector_discovery_required
+            && !executed_has_mcp_list
+            && !enforcement::automation_node_prefers_mcp_servers(node)
+        {
             unmet_requirements.push("mcp_discovery_missing".to_string());
         }
         unmet_requirements.sort();
