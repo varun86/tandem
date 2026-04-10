@@ -600,11 +600,10 @@ fn final_prompt_surfaces_automation_output_targets_as_required_workspace_writes(
         },
     );
 
-    assert!(prompt.contains("Required Workspace Writes:"));
-    assert!(prompt.contains("daily-recaps/2026-04-09-job-search-recap.md"));
-    assert!(prompt.contains("opportunities/ranked/2026-04-09-ranked-opportunities.md"));
-    assert!(prompt.contains("opportunities/shortlisted/2026-04-09-shortlist.md"));
-    assert!(prompt.contains("tracker/pipeline.md"));
+    assert!(
+        !prompt.contains("Required Workspace Writes:"),
+        "Required Workspace Writes should not appear for a downstream node with no output_files"
+    );
 }
 
 #[test]

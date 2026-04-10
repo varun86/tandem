@@ -2850,28 +2850,6 @@ pub(crate) fn automation_node_must_write_files_for_automation(
         .into_iter()
         .map(|path| automation_runtime_placeholder_replace(&path, runtime_values))
         .collect::<Vec<_>>();
-    let objective_text = format!(
-        "{}\n{}",
-        node.objective,
-        node.metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("builder"))
-            .and_then(Value::as_object)
-            .and_then(|builder| builder.get("prompt"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    );
-    files.extend(
-        automation
-            .output_targets
-            .iter()
-            .filter(|output_target| {
-                automation_output_target_matches_node_objective(output_target, &objective_text)
-            })
-            .map(|output_target| {
-                automation_runtime_placeholder_replace(output_target, runtime_values)
-            }),
-    );
     files.sort();
     files.dedup();
     files

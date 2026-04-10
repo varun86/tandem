@@ -447,21 +447,17 @@ fn automation_output_targets_fill_in_final_node_workspace_writes() {
         }),
     );
 
-    assert!(must_write_files
-        .iter()
-        .any(|path| path == "daily-recaps/2026-04-09-job-search-recap.md"));
-    assert!(must_write_files
-        .iter()
-        .any(|path| path == "opportunities/ranked/2026-04-09-ranked-opportunities.md"));
-    assert!(must_write_files
-        .iter()
-        .any(|path| path == "opportunities/shortlisted/2026-04-09-shortlist.md"));
-    assert!(must_write_files
-        .iter()
-        .any(|path| path == "tracker/pipeline.md"));
+    assert!(
+        must_write_files.is_empty(),
+        "must_write_files should only include node's own output_files, not automation output_targets. Got: {must_write_files:?}"
+    );
     assert!(!must_write_files
         .iter()
-        .any(|path| path == "tracker/search-ledger/2026-04-09.json"));
+        .any(|path| path.contains("daily-recaps")));
+    assert!(!must_write_files
+        .iter()
+        .any(|path| path.contains("opportunities")));
+    assert!(!must_write_files.iter().any(|path| path.contains("tracker")));
 }
 
 #[test]
