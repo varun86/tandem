@@ -299,13 +299,12 @@ pub(crate) fn render_automation_v2_prompt_with_options(
                     );
                 }
             }
-            if handoff_only_structured_json
-                && normalized_input.get("alias").and_then(Value::as_str)
-                    == Some("runtime_context_partition")
-            {
-                if let Some(output) = normalized_input.get_mut("output") {
-                    automation_prompt_strip_context_writes(output);
-                }
+            if let Some(output) = normalized_input.get_mut("output") {
+                // Strip context-write IDs (e.g. `ctx:wfplan-...:node:artifact`) from ALL
+                // upstream inputs for ALL node types. These internal engine references
+                // look like file paths but are never valid write targets; models that see
+                // them try to write to them, causing WRITE_PATH_REJECTED failures.
+                automation_prompt_strip_context_writes(output);
             }
             automation_prompt_apply_runtime_placeholders_to_value(&normalized_input, runtime_values)
         })

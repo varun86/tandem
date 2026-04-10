@@ -229,12 +229,27 @@ pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationF
 pub(crate) fn automation_node_inferred_bootstrap_required_files(
     node: &AutomationFlowNode,
 ) -> Vec<String> {
-    if node.output_contract.as_ref().is_some_and(|contract| {
-        matches!(
-            contract.kind.trim().to_ascii_lowercase().as_str(),
-            "brief" | "report_markdown" | "text_summary" | "citations"
-        )
-    }) {
+    // Analysis and synthesis nodes with upstream dependencies consume files
+    // from prior stages — they must never be required to create workspace files
+    // whose names are inferred from objective text. This eliminates the class of
+    // false `required_workspace_files_missing` blocks on report/analysis nodes.
+    //
+    // We check the output contract kind rather than `depends_on` alone, because
+    // chained bootstrap nodes (structured_json with initialize/create intent)
+    // legitimately write workspace files even when they have dependencies.
+    let contract_kind = node
+        .output_contract
+        .as_ref()
+        .map(|c| c.kind.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_report_or_synthesis_contract = matches!(
+        contract_kind.as_str(),
+        "brief" | "report_markdown" | "text_summary" | "citations"
+    );
+    if !node.depends_on.is_empty() && is_report_or_synthesis_contract {
+        return Vec::new();
+    }
+    if is_report_or_synthesis_contract {
         return Vec::new();
     }
     let combined = automation_node_workspace_intent_text(node);

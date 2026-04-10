@@ -1098,15 +1098,18 @@ pub(crate) fn detect_automation_node_status(
             approved,
         );
     }
-    let mentions_missing_file_evidence = lowered.contains("file contents were not")
-        || lowered.contains("could not safely cite exact file-derived claims")
-        || lowered.contains("could not be confirmed from file contents")
-        || lowered.contains("path-level evidence")
-        || lowered.contains("based on filenames not content")
-        || lowered.contains("partially blocked")
-        || lowered.contains("provisional")
-        || lowered.contains("this brief is blocked")
-        || lowered.contains("brief is blocked");
+    // When the model explicitly completed and wrote the artifact, content-body
+    // phrase scanning is not authoritative — the artifact is the source of truth.
+    let mentions_missing_file_evidence = !explicit_status_is_completed
+        && (lowered.contains("file contents were not")
+            || lowered.contains("could not safely cite exact file-derived claims")
+            || lowered.contains("could not be confirmed from file contents")
+            || lowered.contains("path-level evidence")
+            || lowered.contains("based on filenames not content")
+            || lowered.contains("partially blocked")
+            || lowered.contains("provisional")
+            || lowered.contains("this brief is blocked")
+            || lowered.contains("brief is blocked"));
     let artifact_semantic_block = artifact_validation
         .and_then(|value| value.get("semantic_block_reason"))
         .and_then(Value::as_str)
@@ -1222,6 +1225,12 @@ pub(crate) fn detect_automation_node_status(
             Some(reason),
             approved,
         );
+    }
+    // If the artifact exists on disk but the session text has no parseable status JSON,
+    // accept as completed. The artifact is the authoritative output — a missing compact
+    // status in the text is a prompt-compliance gap, not a runtime failure.
+    if artifact_materialized && !status_signal_present {
+        return ("completed".to_string(), explicit_reason, approved);
     }
     if !status_signal_present && !artifact_materialized && !session_text.trim().is_empty() {
         return (
