@@ -4680,27 +4680,45 @@ impl AppState {
         }
     }
 
+    async fn automation_run_last_activity_at_ms(&self, run: &AutomationV2RunRecord) -> u64 {
+        let mut last_activity_at_ms = automation::lifecycle::automation_last_activity_at_ms(run);
+        for session_id in &run.active_session_ids {
+            if let Some(session) = self.storage.get_session(session_id).await {
+                last_activity_at_ms = last_activity_at_ms.max(
+                    session
+                        .time
+                        .updated
+                        .timestamp_millis()
+                        .max(0)
+                        .try_into()
+                        .unwrap_or_default(),
+                );
+            }
+        }
+        last_activity_at_ms
+    }
+
     pub async fn reap_stale_running_automation_runs(&self, stale_after_ms: u64) -> usize {
         let now = now_ms();
-        let runs = self
+        let candidate_runs = self
             .automation_v2_runs
             .read()
             .await
             .values()
-            .filter(|run| {
-                run.status == AutomationRunStatus::Running
-                    && now
-                        .saturating_sub(automation::lifecycle::automation_last_activity_at_ms(run))
-                        >= stale_after_ms
-            })
-            .map(|run| {
-                (
+            .filter(|run| run.status == AutomationRunStatus::Running)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut runs = Vec::new();
+        for run in candidate_runs {
+            let last_activity_at_ms = self.automation_run_last_activity_at_ms(&run).await;
+            if now.saturating_sub(last_activity_at_ms) >= stale_after_ms {
+                runs.push((
                     run.run_id.clone(),
                     run.active_session_ids.clone(),
                     run.active_instance_ids.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
+                ));
+            }
+        }
         let mut reaped = 0usize;
         for (run_id, session_ids, instance_ids) in runs {
             let detail = format!(

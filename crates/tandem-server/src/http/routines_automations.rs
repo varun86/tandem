@@ -97,11 +97,23 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
     }))
 }
 
-fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> Value {
+async fn automation_v2_run_with_context_links(
+    state: &crate::app::state::AppState,
+    run: &crate::AutomationV2RunRecord,
+) -> Value {
     let mut normalized_run = run.clone();
     let blocked_node_ids = automation_v2_blocked_node_ids(&normalized_run);
-    let last_activity_at_ms =
+    let mut last_activity_at_ms =
         crate::app::state::automation::lifecycle::automation_last_activity_at_ms(&normalized_run);
+    for session_id in &normalized_run.active_session_ids {
+        if let Some(session) = state.storage.get_session(session_id).await {
+            let updated_ms: i64 = session.time.updated.timestamp_millis().max(0);
+            let updated_ms_u64: u64 = updated_ms.try_into().unwrap_or_default();
+            if updated_ms_u64 > last_activity_at_ms {
+                last_activity_at_ms = updated_ms_u64;
+            }
+        }
+    }
     normalized_run.checkpoint.blocked_nodes = blocked_node_ids.clone();
     if let Some(automation) = normalized_run.automation_snapshot.clone() {
         for node in &automation.flow.nodes {
@@ -2569,7 +2581,7 @@ pub(super) async fn automations_v2_run_now(
     Ok(Json(json!({
         "ok": true,
         "dry_run": dry_run,
-        "run": automation_v2_run_with_context_links(&run),
+        "run": automation_v2_run_with_context_links(&state, &run).await,
         "contextRunID": context_run_id,
         "linked_context_run_id": context_run_id,
     })))
@@ -2768,10 +2780,10 @@ pub(super) async fn automations_v2_runs(
                     .await;
         }
     }
-    let runs = rows
-        .iter()
-        .map(automation_v2_run_with_context_links)
-        .collect::<Vec<_>>();
+    let mut runs = Vec::with_capacity(rows.len());
+    for run in &rows {
+        runs.push(automation_v2_run_with_context_links(&state, run).await);
+    }
     Json(json!({ "automationID": id, "runs": runs, "count": rows.len() }))
 }
 
@@ -2788,10 +2800,10 @@ pub(super) async fn automations_v2_runs_all(
                     .await;
         }
     }
-    let runs = rows
-        .iter()
-        .map(automation_v2_run_with_context_links)
-        .collect::<Vec<_>>();
+    let mut runs = Vec::with_capacity(rows.len());
+    for run in &rows {
+        runs.push(automation_v2_run_with_context_links(&state, run).await);
+    }
     Json(json!({ "runs": runs, "count": rows.len() }))
 }
 
@@ -2813,7 +2825,7 @@ pub(super) async fn automations_v2_run_get(
     }
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     Ok(Json(json!({
-        "run": automation_v2_run_with_context_links(&run),
+        "run": automation_v2_run_with_context_links(&state, &run).await,
         "contextRunID": context_run_id,
         "linked_context_run_id": context_run_id,
     })))
@@ -2892,12 +2904,9 @@ pub(super) async fn automations_v2_run_pause(
             )
         })?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_resume(
@@ -2945,12 +2954,9 @@ pub(super) async fn automations_v2_run_resume(
             )
         })?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_cancel(
@@ -3016,12 +3022,9 @@ pub(super) async fn automations_v2_run_cancel(
             )
         })?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_gate_decide(
@@ -3198,12 +3201,9 @@ pub(super) async fn automations_v2_run_gate_decide(
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let _ = node;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_recover(
@@ -3287,6 +3287,13 @@ pub(super) async fn automations_v2_run_recover(
             run.stop_reason = None;
             run.checkpoint.awaiting_gate = None;
             clear_automation_run_execution_handles(run);
+            if run.pause_reason.as_deref() == Some("stale_no_provider_activity")
+                && reset_nodes.is_empty()
+            {
+                for node_id in run.checkpoint.pending_nodes.clone() {
+                    run.checkpoint.node_attempts.remove(&node_id);
+                }
+            }
             if !reset_nodes.is_empty() {
                 for node_id in &reset_nodes {
                     run.checkpoint.node_outputs.remove(node_id);
@@ -3330,12 +3337,9 @@ pub(super) async fn automations_v2_run_recover(
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_repair(
@@ -3554,13 +3558,9 @@ pub(super) async fn automations_v2_run_repair(
     )
     .await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "automation": stored_automation,
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "automation": stored_automation, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 async fn automation_v2_reset_task_subtree(
@@ -4010,14 +4010,9 @@ pub(super) async fn automations_v2_run_task_continue(
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "node_id": node_id,
-        "reset_nodes": vec![node_id],
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "node_id": node_id, "reset_nodes": vec![node_id], "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_task_retry(
@@ -4045,15 +4040,9 @@ pub(super) async fn automations_v2_run_task_retry(
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "node_id": node_id,
-        "reset_nodes": reset_nodes,
-        "cleared_outputs": cleared_outputs,
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "node_id": node_id, "reset_nodes": reset_nodes, "cleared_outputs": cleared_outputs, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_task_requeue(
@@ -4081,15 +4070,9 @@ pub(super) async fn automations_v2_run_task_requeue(
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
-    Ok(Json(json!({
-        "ok": true,
-        "run": automation_v2_run_with_context_links(&updated),
-        "node_id": node_id,
-        "reset_nodes": reset_nodes,
-        "cleared_outputs": cleared_outputs,
-        "contextRunID": context_run_id,
-        "linked_context_run_id": context_run_id,
-    })))
+    Ok(Json(
+        json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "node_id": node_id, "reset_nodes": reset_nodes, "cleared_outputs": cleared_outputs, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
+    ))
 }
 
 pub(super) async fn automations_v2_run_backlog_task_claim(

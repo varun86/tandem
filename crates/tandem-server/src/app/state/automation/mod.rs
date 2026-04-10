@@ -6676,6 +6676,32 @@ pub async fn clear_automation_subtree_outputs(
     Ok(cleared)
 }
 
+pub(crate) async fn run_automation_node_prompt_with_timeout<F>(
+    state: &AppState,
+    session_id: &str,
+    node: &AutomationFlowNode,
+    future: F,
+) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let timeout_ms = node
+        .timeout_ms
+        .filter(|value| *value > 0)
+        .unwrap_or(600_000);
+    match tokio::time::timeout(Duration::from_millis(timeout_ms), future).await {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = state.cancellations.cancel(session_id).await;
+            anyhow::bail!(
+                "automation node `{}` timed out after {} ms",
+                node.node_id,
+                timeout_ms
+            );
+        }
+    }
+}
+
 pub(crate) async fn execute_automation_v2_node(
     state: &AppState,
     run_id: &str,
@@ -7215,14 +7241,17 @@ pub(crate) async fn execute_automation_v2_node(
         write_required: required_output_path.as_ref().map(|_| true),
         prewrite_requirements: automation_node_prewrite_requirements(node, &requested_tools),
     };
-    let result = state
-        .engine_loop
-        .run_prompt_async_with_context(
+    let result = run_automation_node_prompt_with_timeout(
+        state,
+        &session_id,
+        node,
+        state.engine_loop.run_prompt_async_with_context(
             session_id.clone(),
             req,
             Some(format!("automation-v2:{run_id}")),
-        )
-        .await;
+        ),
+    )
+    .await;
 
     state
         .engine_loop
