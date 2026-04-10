@@ -10,6 +10,8 @@ For the operational path after prompting, use [Creating And Running Workflows An
 
 For a compact, agent-facing checklist that covers MCP discovery, clarifying questions, workflow import, apply, repair, and provenance, start with [Agent Workflow Operating Manual](./agent-workflow-operating-manual/).
 
+If the engine is not installed or authenticated yet, the same manual also covers first-time setup. That path points agents to the install, control panel, first-run, and engine-authentication docs before they try to compile or run workflows.
+
 If you want the shortest end-to-end checklist for an agent, start with [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/).
 
 For provider and model routing choices, use [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/).

@@ -5,6 +5,30 @@ description: A compact, agent-facing checklist for discovering MCP tools, creati
 
 Use this page when an agent needs to build or revise a Tandem workflow without guessing at hidden tools or undocumented runtime behavior.
 
+## First-time engine setup
+
+If Tandem is not installed or the engine is not authenticated yet, help the user get to a working engine first. Do not jump into workflow compilation until the engine is reachable and the token source is clear.
+
+Use the smallest setup path that matches the user’s environment:
+
+- **CLI only or headless engine:** install the CLI binaries, generate a token, and start `tandem-engine serve`.
+- **Packaged control panel:** install the panel, run `tandem panel init`, and use the token the panel writes into its environment.
+- **Desktop app:** open the desktop app, verify the local engine/sidecar is running, and confirm the workspace and provider are configured.
+
+If the user is on a clean machine, point them to:
+
+- [Install CLI Binaries](./install-cli-binaries/)
+- [Control Panel (Web Admin)](./control-panel/)
+- [First Run Checklist](./first-run/)
+- [Engine Authentication For Agents](./engine-authentication-for-agents/)
+
+Token rules:
+
+- For direct engine access, use `TANDEM_API_TOKEN` or `--api-token` with `tandem-engine serve`.
+- For the packaged control panel flow, use the `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` created by `tandem panel init`.
+- Do not scan arbitrary files or shell history for secrets.
+- Before workflow work begins, verify the engine with a health check such as `GET /global/health`.
+
 ## Operating order
 
 1. Call `mcp_list` first.
