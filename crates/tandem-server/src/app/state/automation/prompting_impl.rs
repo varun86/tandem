@@ -580,16 +580,28 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         let requested_has_webfetch = requested_tools
             .iter()
             .any(|tool| matches!(tool.as_str(), "webfetch" | "webfetch_html"));
+        let next_step_hint = automation_node_required_output_path(node).map(|p| {
+            format!(
+                "Next Step:\n- Call `websearch` now (2–3 focused queries), optionally `webfetch` top result URLs for details, then call `write` to create `{}` before ending this attempt.\n- Do not end the attempt without at least one productive tool call when a run artifact is required.",
+                p
+            )
+        });
         if requested_has_websearch {
             sections.push(
                 "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Use `webfetch` on concrete result URLs when search snippets are not enough.\n- Include only evidence you can support from local files or current web findings.\n- If `websearch` returns an authorization-required or unavailable result, treat external research as unavailable for this run, continue with local file reads, and note the web-research limitation instead of stopping."
                     .to_string(),
             );
+            if let Some(hint) = next_step_hint {
+                sections.push(hint);
+            }
         } else if requested_has_webfetch {
             sections.push(
                 "External Research Expectation:\n- `websearch` is not available in this run.\n- Use `webfetch` only for concrete URLs already present in local sources or upstream handoffs.\n- If you cannot validate externally without search, record that limitation in the structured handoff and finish the node.\n- Do not ask the user for clarification or permission to continue; return the required JSON handoff for this run."
                     .to_string(),
             );
+            if let Some(hint) = next_step_hint {
+                sections.push(hint);
+            }
         } else {
             sections.push(
                 "External Research Expectation:\n- No web research tool is available in this run.\n- Record the web-research limitation clearly in the structured handoff, continue with any allowed local reads, and finish without asking follow-up questions."
