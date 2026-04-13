@@ -3340,6 +3340,25 @@ async fn automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_
             .and_then(Value::as_str),
         Some(context_run_id)
     );
+    assert_eq!(
+        payload
+            .get("run")
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str),
+        Some("cancelled")
+    );
+    assert!(payload
+        .get("run")
+        .and_then(|value| value.get("activeSessionIDs"))
+        .and_then(Value::as_array)
+        .map(|values| values.is_empty())
+        .unwrap_or(true));
+    assert!(payload
+        .get("run")
+        .and_then(|value| value.get("activeInstanceIDs"))
+        .and_then(Value::as_array)
+        .map(|values| values.is_empty())
+        .unwrap_or(true));
 
     let cancelled = state
         .get_automation_v2_run(&run.run_id)
@@ -3437,6 +3456,25 @@ async fn automations_v2_run_pause_clears_active_sessions_and_instances() {
             .and_then(Value::as_str),
         Some(context_run_id)
     );
+    assert_eq!(
+        payload
+            .get("run")
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str),
+        Some("paused")
+    );
+    assert!(payload
+        .get("run")
+        .and_then(|value| value.get("activeSessionIDs"))
+        .and_then(Value::as_array)
+        .map(|values| values.is_empty())
+        .unwrap_or(true));
+    assert!(payload
+        .get("run")
+        .and_then(|value| value.get("activeInstanceIDs"))
+        .and_then(Value::as_array)
+        .map(|values| values.is_empty())
+        .unwrap_or(true));
 
     let paused = state
         .get_automation_v2_run(&run.run_id)
