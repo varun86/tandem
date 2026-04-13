@@ -1370,11 +1370,39 @@ export function MyAutomationsContainer({
   const rawRunStatus = String(selectedRun?.status || "")
     .trim()
     .toLowerCase();
-  const runStatus = workflowDerivedRunStatus(selectedRun);
-  const runStatusDerivedFromBlockedNodes =
-    rawRunStatus !== runStatus &&
+  const baseRunStatus = workflowDerivedRunStatus(selectedRun);
+  const projectionTaskStates = workflowProjection.tasks.map((task: any) =>
+    String(task?.state || "")
+      .trim()
+      .toLowerCase()
+  );
+  let runStatus = baseRunStatus;
+  let runStatusDerivedNote = "";
+  if (
+    rawRunStatus !== baseRunStatus &&
     (rawRunStatus === "completed" || rawRunStatus === "done") &&
-    workflowBlockedNodeCount(selectedRun) > 0;
+    workflowBlockedNodeCount(selectedRun) > 0
+  ) {
+    runStatusDerivedNote = "derived from blocked nodes";
+  }
+  if (
+    isWorkflowRun &&
+    (rawRunStatus === "completed" || rawRunStatus === "done") &&
+    projectionTaskStates.some((state: string) => !["done", "validated"].includes(state))
+  ) {
+    if (projectionTaskStates.includes("failed")) {
+      runStatus = "failed";
+    } else if (projectionTaskStates.includes("blocked")) {
+      runStatus = "blocked";
+    } else if (
+      projectionTaskStates.some((state: string) =>
+        ["created", "pending", "runnable", "assigned", "in_progress"].includes(state)
+      )
+    ) {
+      runStatus = "running";
+    }
+    runStatusDerivedNote = "derived from projected task board";
+  }
   const runRepairGuidanceEntries = useMemo(() => {
     const direct = selectedRun?.nodeRepairGuidance;
     const directEntries =
@@ -1744,8 +1772,8 @@ export function MyAutomationsContainer({
   const runSummaryRows = useMemo(() => {
     const rows: Array<{ label: string; value: string }> = [];
     rows.push({ label: "status", value: runStatus || "unknown" });
-    if (runStatusDerivedFromBlockedNodes) {
-      rows.push({ label: "status note", value: "derived from blocked nodes" });
+    if (runStatusDerivedNote) {
+      rows.push({ label: "status note", value: runStatusDerivedNote });
     }
     rows.push({ label: "artifacts", value: String(runArtifacts.length) });
     if (isWorkflowRun) {
@@ -1782,7 +1810,7 @@ export function MyAutomationsContainer({
     isWorkflowRun,
     runArtifacts.length,
     runStatus,
-    runStatusDerivedFromBlockedNodes,
+    runStatusDerivedNote,
     selectedRun,
     workflowContextEvents.length,
     workflowContextPatches.length,
@@ -2122,7 +2150,7 @@ export function MyAutomationsContainer({
         selectedRun,
         isWorkflowRun,
         runStatus,
-        runStatusDerivedFromBlockedNodes,
+        runStatusDerivedNote,
         canContinueBlockedWorkflow,
         continueBlockedNodeId,
         canRecoverWorkflowRun,

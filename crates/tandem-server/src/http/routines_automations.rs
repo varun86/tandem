@@ -97,6 +97,28 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
     }))
 }
 
+fn spawn_automation_v2_run_cleanup(
+    state: AppState,
+    session_ids: Vec<String>,
+    instance_ids: Vec<String>,
+    instance_cancel_reason: &'static str,
+) {
+    if session_ids.is_empty() && instance_ids.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        for session_id in session_ids {
+            let _ = state.cancellations.cancel(&session_id).await;
+        }
+        for instance_id in instance_ids {
+            let _ = state
+                .agent_teams
+                .cancel_instance(&state, &instance_id, instance_cancel_reason)
+                .await;
+        }
+    });
+}
+
 async fn automation_v2_run_with_context_links(
     state: &crate::app::state::AppState,
     run: &crate::AutomationV2RunRecord,
@@ -150,11 +172,22 @@ async fn automation_v2_run_with_context_links(
         }
     }
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
+    if let Some(derived_status) = automation_v2_projected_backlog_status_override(state, run) {
+        normalized_run.status = derived_status;
+    }
     let mut payload = serde_json::to_value(&normalized_run).unwrap_or_else(|_| json!({}));
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("contextRunID".to_string(), json!(context_run_id.clone()));
         obj.insert("linked_context_run_id".to_string(), json!(context_run_id));
         obj.insert("blockedNodeIDs".to_string(), json!(blocked_node_ids));
+        if normalized_run.status != run.status {
+            obj.insert("stored_status".to_string(), json!(run.status));
+            obj.insert("storedStatus".to_string(), json!(run.status));
+            obj.insert(
+                "statusDerivedNote".to_string(),
+                json!("derived from projected task board"),
+            );
+        }
         obj.insert(
             "last_activity_at_ms".to_string(),
             json!(last_activity_at_ms),
@@ -174,6 +207,48 @@ async fn automation_v2_run_with_context_links(
         );
     }
     payload
+}
+
+fn automation_v2_projected_backlog_status_override(
+    state: &crate::app::state::AppState,
+    run: &crate::AutomationV2RunRecord,
+) -> Option<AutomationRunStatus> {
+    if !matches!(run.status, AutomationRunStatus::Completed) {
+        return None;
+    }
+    let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
+    let blackboard = super::context_runs::load_projected_context_blackboard(state, &context_run_id);
+    let projected_statuses = blackboard
+        .tasks
+        .into_iter()
+        .filter(|task| task.task_type == "automation_backlog_item")
+        .map(|task| task.status)
+        .collect::<Vec<_>>();
+    if projected_statuses.is_empty() {
+        return None;
+    }
+    use crate::http::context_types::ContextBlackboardTaskStatus as TaskStatus;
+    if projected_statuses
+        .iter()
+        .any(|status| matches!(status, TaskStatus::Failed))
+    {
+        return Some(AutomationRunStatus::Failed);
+    }
+    if projected_statuses
+        .iter()
+        .any(|status| matches!(status, TaskStatus::Blocked))
+    {
+        return Some(AutomationRunStatus::Blocked);
+    }
+    if projected_statuses.iter().any(|status| {
+        matches!(
+            status,
+            TaskStatus::Pending | TaskStatus::Runnable | TaskStatus::InProgress
+        )
+    }) {
+        return Some(AutomationRunStatus::Running);
+    }
+    None
 }
 
 fn automation_v2_with_manual_trigger_record(
@@ -2894,36 +2969,19 @@ pub(super) async fn automations_v2_run_pause(
     }
     let reason = reason_or_default(input.reason, "paused by operator");
     let session_ids = current.active_session_ids.clone();
+    let instance_ids = current.active_instance_ids.clone();
     let _ = state
         .update_automation_v2_run(&run_id, |run| {
-            run.status = AutomationRunStatus::Pausing;
+            run.status = AutomationRunStatus::Paused;
             run.pause_reason = Some(reason.clone());
+            run.active_session_ids.clear();
+            run.active_instance_ids.clear();
             crate::record_automation_lifecycle_event(
                 run,
                 "run_pause_requested",
                 Some(reason.clone()),
                 None,
             );
-        })
-        .await;
-    let latest = state.get_automation_v2_run(&run_id).await;
-    if let Some(run) = latest {
-        for session_id in run.active_session_ids {
-            let _ = state.cancellations.cancel(&session_id).await;
-        }
-        for instance_id in run.active_instance_ids {
-            let _ = state
-                .agent_teams
-                .cancel_instance(&state, &instance_id, "paused by operator")
-                .await;
-        }
-    }
-    state.forget_automation_v2_sessions(&session_ids).await;
-    let updated = state
-        .update_automation_v2_run(&run_id, |run| {
-            run.status = AutomationRunStatus::Paused;
-            run.active_session_ids.clear();
-            run.active_instance_ids.clear();
             crate::record_automation_lifecycle_event(
                 run,
                 "run_paused",
@@ -2931,15 +2989,20 @@ pub(super) async fn automations_v2_run_pause(
                 None,
             );
         })
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    json!({"error":"Run update failed", "code":"AUTOMATION_V2_RUN_UPDATE_FAILED"}),
-                ),
-            )
-        })?;
+        .await;
+    state.forget_automation_v2_sessions(&session_ids).await;
+    spawn_automation_v2_run_cleanup(
+        state.clone(),
+        session_ids,
+        instance_ids,
+        "paused by operator",
+    );
+    let updated = state.get_automation_v2_run(&run_id).await.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error":"Run update failed", "code":"AUTOMATION_V2_RUN_UPDATE_FAILED"})),
+        )
+    })?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     Ok(Json(
         json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),
@@ -3023,15 +3086,7 @@ pub(super) async fn automations_v2_run_cancel(
         ));
     }
     let session_ids = current.active_session_ids.clone();
-    for session_id in current.active_session_ids.clone() {
-        let _ = state.cancellations.cancel(&session_id).await;
-    }
-    for instance_id in current.active_instance_ids.clone() {
-        let _ = state
-            .agent_teams
-            .cancel_instance(&state, &instance_id, "cancelled by operator")
-            .await;
-    }
+    let instance_ids = current.active_instance_ids.clone();
     state.forget_automation_v2_sessions(&session_ids).await;
     let reason = reason_or_default(input.reason, "cancelled by operator");
     let updated = state
@@ -3058,6 +3113,12 @@ pub(super) async fn automations_v2_run_cancel(
                 ),
             )
         })?;
+    spawn_automation_v2_run_cleanup(
+        state.clone(),
+        session_ids,
+        instance_ids,
+        "cancelled by operator",
+    );
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     Ok(Json(
         json!({ "ok": true, "run": automation_v2_run_with_context_links(&state, &updated).await, "contextRunID": context_run_id, "linked_context_run_id": context_run_id }),

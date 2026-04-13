@@ -18,7 +18,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     selectedRun,
     isWorkflowRun,
     runStatus,
-    runStatusDerivedFromBlockedNodes,
+    runStatusDerivedNote,
     canContinueBlockedWorkflow,
     continueBlockedNodeId,
     canRecoverWorkflowRun,
@@ -182,8 +182,8 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
           </div>
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
             <span className={statusColor(runStatus)}>{runStatus || "unknown"}</span>
-            {runStatusDerivedFromBlockedNodes ? (
-              <span className="tcp-subtle">derived from blocked nodes</span>
+            {runStatusDerivedNote ? (
+              <span className="tcp-subtle">{runStatusDerivedNote}</span>
             ) : null}
             {canContinueBlockedWorkflow ? (
               <button

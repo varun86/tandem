@@ -764,6 +764,7 @@ async fn create_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -787,6 +788,7 @@ async fn create_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Review),
                     gate: None,
                     metadata: Some(json!({
@@ -810,6 +812,7 @@ async fn create_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Approval),
                     gate: Some(crate::AutomationApprovalGate {
                         required: true,
@@ -914,6 +917,7 @@ async fn create_branched_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -937,6 +941,7 @@ async fn create_branched_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -960,6 +965,7 @@ async fn create_branched_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -989,6 +995,7 @@ async fn create_branched_test_automation_v2(
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -1761,6 +1768,7 @@ async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
                 output_contract: None,
                 retry_policy: None,
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({
@@ -1889,6 +1897,36 @@ async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
                         .any(|dep| dep.as_str() == Some("backlog-plan-backlog-task-BACKLOG-101"))
                 })
     }));
+
+    let run_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/automations/v2/runs/{}", run.run_id))
+                .body(Body::empty())
+                .expect("run request"),
+        )
+        .await
+        .expect("run response");
+    assert_eq!(run_resp.status(), StatusCode::OK);
+    let run_body = to_bytes(run_resp.into_body(), usize::MAX)
+        .await
+        .expect("run body");
+    let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+    let run_record = run_payload.get("run").expect("run record");
+    assert_eq!(
+        run_record.get("stored_status").and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        run_record.get("status").and_then(Value::as_str),
+        Some("running")
+    );
+    assert_eq!(
+        run_record.get("statusDerivedNote").and_then(Value::as_str),
+        Some("derived from projected task board")
+    );
 }
 
 #[tokio::test]
@@ -1937,6 +1975,7 @@ async fn automation_v2_backlog_task_claim_and_requeue_routes_work() {
                 output_contract: None,
                 retry_policy: None,
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({
@@ -4705,6 +4744,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
                     }),
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -4729,6 +4769,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -5075,6 +5116,7 @@ async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state
                 }),
                 retry_policy: None,
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({
@@ -5368,6 +5410,7 @@ async fn automation_v2_code_workflow_smoke_exposes_verify_failed_state() {
                 output_contract: None,
                 retry_policy: None,
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({
@@ -5557,6 +5600,7 @@ async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state
                 }),
                 retry_policy: None,
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({
@@ -5743,6 +5787,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
                     }),
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
@@ -5765,6 +5810,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
                     output_contract: None,
                     retry_policy: None,
                     timeout_ms: None,
+                    max_tool_calls: None,
                     stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                     gate: None,
                     metadata: Some(json!({
