@@ -310,3 +310,88 @@ pub(crate) fn extract_recoverable_json_from_session(session: &Session) -> Option
     }
     None
 }
+
+pub(crate) fn extract_recoverable_json_artifact_prefer_standup(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    let mut candidates = Vec::<String>::new();
+
+    for candidate in std::iter::once(trimmed.to_string())
+        .chain(extract_markdown_json_blocks(trimmed))
+        .chain(extract_loose_json_blocks(trimmed))
+    {
+        let normalized = candidate.trim().to_string();
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        candidates.push(normalized);
+    }
+
+    let standup_candidate = candidates.clone().into_iter().find_map(|candidate| {
+        let value = serde_json::from_str::<Value>(&candidate).ok()?;
+        if automation_json_looks_like_status_payload(&value) {
+            return None;
+        }
+        let has_yesterday = value.get("yesterday").is_some();
+        let has_today = value.get("today").is_some();
+        if has_yesterday && has_today {
+            Some(value)
+        } else {
+            None
+        }
+    });
+
+    standup_candidate.or_else(|| {
+        candidates.into_iter().find_map(|candidate| {
+            let value = serde_json::from_str::<Value>(&candidate).ok()?;
+            if automation_json_looks_like_status_payload(&value) {
+                None
+            } else {
+                Some(value)
+            }
+        })
+    })
+}
+
+pub(crate) fn detect_glob_loop(tool_telemetry: &Value) -> Option<String> {
+    let tool_call_counts = tool_telemetry.get("tool_call_counts")?;
+    let counts = tool_call_counts.as_object()?;
+    let read_count = counts.get("read").and_then(Value::as_u64).unwrap_or(0);
+    let write_count = counts.get("write").and_then(Value::as_u64).unwrap_or(0);
+    let mut total_calls: u64 = 0;
+    for (tool_name, count) in counts {
+        if let Some(c) = count.as_u64() {
+            total_calls += c;
+            let normalized = tool_name.to_ascii_lowercase();
+            if normalized == "glob" && c >= 10 && read_count == 0 {
+                return Some(format!(
+                    "Agent called `glob` {} times without reading any files. \
+                     Switch to `read` to examine file contents instead of continuing to glob.",
+                    c
+                ));
+            }
+            if (normalized.contains("discover") || normalized.contains("find"))
+                && c >= 15
+                && read_count == 0
+            {
+                return Some(format!(
+                    "Agent called `{}` {} times without reading files. \
+                     Use `read` to examine discovered files instead of continuing discovery.",
+                    tool_name, c
+                ));
+            }
+        }
+    }
+    if total_calls >= 30 && write_count == 0 && read_count == 0 {
+        return Some(format!(
+            "Agent made {} tool calls without writing or reading any files. \
+             Use `read` on relevant files and produce the required output.",
+            total_calls
+        ));
+    }
+    None
+}

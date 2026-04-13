@@ -360,6 +360,7 @@ fn build_pack_builder_automation(
                 }),
                 retry_policy: Some(json!({ "max_attempts": 3 })),
                 timeout_ms: None,
+                max_tool_calls: None,
                 stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
                 gate: None,
                 metadata: Some(json!({

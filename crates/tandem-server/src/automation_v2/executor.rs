@@ -1405,6 +1405,41 @@ pub async fn run_automation_v2_run(
             break;
         }
     }
+    let final_run = state.get_automation_v2_run(&run_id).await;
+    if let Some(run) = final_run {
+        let elapsed_ms = run
+            .started_at_ms
+            .map(|started| now_ms().saturating_sub(started));
+        let completed_count = run.checkpoint.completed_nodes.len();
+        let pending_count = run.checkpoint.pending_nodes.len();
+        let blocked_count = run.checkpoint.blocked_nodes.len();
+        let node_count = automation.flow.nodes.len();
+        let failed_count = run
+            .checkpoint
+            .node_outputs
+            .iter()
+            .filter(|(_, output)| {
+                output
+                    .get("failure_kind")
+                    .and_then(Value::as_str)
+                    .is_some_and(|k| k == "run_failed" || k == "verification_failed")
+            })
+            .count();
+        tracing::info!(
+            run_id = %run_id,
+            automation_id = %run.automation_id,
+            final_status = ?run.status,
+            elapsed_ms = elapsed_ms,
+            completed_nodes = completed_count,
+            pending_nodes = pending_count,
+            blocked_nodes = blocked_count,
+            total_nodes = node_count,
+            failed_nodes = failed_count,
+            total_tokens = run.total_tokens,
+            estimated_cost_usd = run.estimated_cost_usd,
+            "automation run finished"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,10 @@ pub(crate) mod assessment;
 pub(crate) mod capability_impl;
 pub(crate) mod enforcement;
 pub(crate) mod extraction;
-pub(crate) use extraction::{extract_recoverable_json_artifact, extract_session_text_output};
+pub(crate) use extraction::{
+    detect_glob_loop, extract_recoverable_json_artifact,
+    extract_recoverable_json_artifact_prefer_standup, extract_session_text_output,
+};
 pub(crate) mod legacy_defaults;
 pub(crate) mod lifecycle;
 pub(crate) mod node_output;
@@ -6438,7 +6441,11 @@ pub(crate) fn automation_node_max_attempts(node: &AutomationFlowNode) -> u32 {
     if let Some(value) = explicit {
         return value;
     }
-    if automation_output_validator_kind(node) == crate::AutomationOutputValidatorKind::ResearchBrief
+    let validator_kind = automation_output_validator_kind(node);
+    if validator_kind == crate::AutomationOutputValidatorKind::StandupUpdate {
+        return 3;
+    }
+    if validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief
         || !automation_node_required_tools(node).is_empty()
     {
         5
@@ -6672,7 +6679,11 @@ where
     let timeout_ms = node
         .timeout_ms
         .filter(|value| *value > 0)
-        .unwrap_or(600_000);
+        .unwrap_or_else(|| match automation_output_validator_kind(node) {
+            crate::AutomationOutputValidatorKind::StandupUpdate => 120_000,
+            crate::AutomationOutputValidatorKind::StructuredJson => 180_000,
+            _ => 600_000,
+        });
     match tokio::time::timeout(Duration::from_millis(timeout_ms), future).await {
         Ok(result) => result,
         Err(_) => {

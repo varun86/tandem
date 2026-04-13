@@ -4881,6 +4881,83 @@ impl AppState {
         recovered
     }
 
+    pub async fn auto_resume_stale_reaped_runs(&self) -> usize {
+        let candidate_runs = self
+            .automation_v2_runs
+            .read()
+            .await
+            .values()
+            .filter(|run| run.status == AutomationRunStatus::Paused)
+            .filter(|run| run.stop_kind == Some(AutomationStopKind::StaleReaped))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut resumed = 0usize;
+        for run in candidate_runs {
+            let auto_resume_count = run
+                .checkpoint
+                .lifecycle_history
+                .iter()
+                .filter(|event| event.event == "run_auto_resumed")
+                .count();
+            if auto_resume_count >= 2 {
+                continue;
+            }
+            let automation = self.get_automation_v2(&run.automation_id).await;
+            let automation = match automation.or(run.automation_snapshot.clone()) {
+                Some(a) => a,
+                None => continue,
+            };
+            let has_repairable_nodes = automation.flow.nodes.iter().any(|node| {
+                if run.checkpoint.completed_nodes.contains(&node.node_id) {
+                    return false;
+                }
+                if run.checkpoint.node_outputs.contains_key(&node.node_id) {
+                    let status = run.checkpoint.node_outputs[&node.node_id]
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    if status != "needs_repair" {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+                let attempts = run
+                    .checkpoint
+                    .node_attempts
+                    .get(&node.node_id)
+                    .copied()
+                    .unwrap_or(0);
+                let max_attempts = automation_node_max_attempts(node);
+                attempts < max_attempts
+            });
+            if !has_repairable_nodes {
+                continue;
+            }
+            if self
+                .update_automation_v2_run(&run.run_id, |row| {
+                    row.status = AutomationRunStatus::Queued;
+                    row.pause_reason = None;
+                    row.detail = None;
+                    row.stop_kind = None;
+                    row.stop_reason = None;
+                    automation::record_automation_lifecycle_event(
+                        row,
+                        "run_auto_resumed",
+                        Some("auto_resume_after_stale_reap".to_string()),
+                        None,
+                    );
+                })
+                .await
+                .is_some()
+            {
+                resumed += 1;
+            }
+        }
+        resumed
+    }
+
     pub fn is_automation_scheduler_stopping(&self) -> bool {
         self.automation_scheduler_stopping.load(Ordering::Relaxed)
     }
@@ -5030,7 +5107,59 @@ impl AppState {
         self.sync_automation_scheduler_for_run_transition(previous_status, &out)
             .await;
         let _ = self.persist_automation_v2_runs().await;
+        let _ = self.persist_automation_v2_run_status_json(&out).await;
         Some(out)
+    }
+
+    async fn persist_automation_v2_run_status_json(
+        &self,
+        run: &AutomationV2RunRecord,
+    ) -> anyhow::Result<()> {
+        let default_workspace = self.workspace_index.snapshot().await.root.clone();
+        let automation = run.automation_snapshot.as_ref();
+        let workspace_root = if let Some(ref a) = automation {
+            if let Some(ref wr) = a.workspace_root {
+                if !wr.trim().is_empty() {
+                    wr.trim().to_string()
+                } else {
+                    a.metadata
+                        .as_ref()
+                        .and_then(|m| m.get("workspace_root"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| default_workspace.clone())
+                }
+            } else {
+                a.metadata
+                    .as_ref()
+                    .and_then(|m| m.get("workspace_root"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_workspace.clone())
+            }
+        } else {
+            default_workspace
+        };
+        let run_dir = PathBuf::from(&workspace_root)
+            .join(".tandem")
+            .join("runs")
+            .join(&run.run_id);
+        let status_path = run_dir.join("status.json");
+        let status_json = json!({
+            "run_id": run.run_id,
+            "automation_id": run.automation_id,
+            "status": run.status,
+            "detail": run.detail,
+            "completed_nodes": run.checkpoint.completed_nodes,
+            "pending_nodes": run.checkpoint.pending_nodes,
+            "blocked_nodes": run.checkpoint.blocked_nodes,
+            "node_attempts": run.checkpoint.node_attempts,
+            "last_failure": run.checkpoint.last_failure,
+            "updated_at_ms": run.updated_at_ms,
+        });
+        fs::create_dir_all(&run_dir).await?;
+        fs::write(&status_path, serde_json::to_string_pretty(&status_json)?).await?;
+        Ok(())
     }
 
     pub async fn set_automation_v2_run_scheduler_metadata(

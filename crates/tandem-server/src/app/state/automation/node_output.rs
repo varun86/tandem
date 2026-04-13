@@ -705,12 +705,33 @@ pub(crate) fn detect_automation_node_status(
         .unwrap_or(false);
     let validator_kind = automation_output_validator_kind(node);
 
+    // --- Glob-loop circuit breaker ---
+    // If the agent made many discovery (glob/find) calls without ever reading a file,
+    // treat this as an unproductive loop and fire a targeted repair signal so the
+    // next attempt knows to switch from exploring to reading.
+    // We skip this when the output already materialized (artifact_validation says the
+    // file was written) — the write proves the agent got past the discovery phase.
+    if verified_output.is_none() {
+        if let Some(reason) = detect_glob_loop(tool_telemetry) {
+            return (
+                if research_repair_exhausted {
+                    "blocked".to_string()
+                } else {
+                    "needs_repair".to_string()
+                },
+                Some(reason),
+                None,
+            );
+        }
+    }
+
     // --- StandupUpdate fast path ---
     // Standup participants bypass all text-marker matching, approval-gate logic,
     // and research-brief validation. They produce structured JSON with three keys;
     // anything else triggers a targeted repair signal.
     if validator_kind == crate::AutomationOutputValidatorKind::StandupUpdate {
-        let parsed = extract_recoverable_json_artifact(session_text)
+        let parsed = extract_recoverable_json_artifact_prefer_standup(session_text)
+            .or_else(|| extract_recoverable_json_artifact(session_text))
             .or_else(|| parse_status_json_with_tail_window(session_text));
         let has_required_keys = parsed
             .as_ref()
@@ -747,7 +768,8 @@ pub(crate) fn detect_automation_node_status(
             },
             Some(
                 "standup update is missing required JSON keys: `yesterday` and `today` \
-                 must be present in the returned JSON object"
+                 must be present in the returned JSON object. Return a bare JSON object \
+                 (not wrapped in markdown) with exactly these keys at the top level."
                     .to_string(),
             ),
             None,

@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Desktop splash dismissal recovery**: The Windows startup splash now waits for both backend-ready and React-visible signals before dismissing, so a fully loaded engine can no longer leave the app stuck on the ready screen.
 
+### Added
+
+- **Automation engine stability overhaul** (Phases 5–8):
+  - **Glob-loop circuit breaker**: Added `detect_glob_loop()` that fires a repair signal when `glob` is called ≥10 times without any `read`, or when total tool calls exceed 30 without any write. This prevents nodes from stalling indefinitely in discovery loops.
+  - **Standup JSON extraction hardening**: Added `extract_recoverable_json_artifact_prefer_standup()` that prioritizes extracting JSON with `yesterday`/`today` keys from markdown fences, prose-prefixed text, or multi-object responses.
+  - **Per-node tool-call budget**: Added `max_tool_calls: Option<u32>` field to `AutomationFlowNode` for future use.
+  - **Persistent run status**: Added `persist_automation_v2_run_status_json()` that writes run status to `{workspace_root}/.tandem/runs/{run_id}/status.json` after every update, making debugging possible without server access.
+  - **Auto-resume after stale reap**: Added `auto_resume_stale_reaped_runs()` that automatically re-queues paused stale runs with repairable nodes (up to 2 times per run), integrated into both single and multi scheduler loops.
+  - **Reduced default node timeouts**: `StandupUpdate` nodes now default to 120s timeout (was 600s); `StructuredJson` nodes to 180s.
+  - **Standup node max attempts**: StandupUpdate nodes now explicitly default to 3 attempts.
+  - **Structured run diagnostics**: Added `tracing::info!` at the end of each automation run with run ID, final status, elapsed time, node counts, and resource usage.
+
 ## [0.4.24] - Released 2026-04-13
 
 ### Added

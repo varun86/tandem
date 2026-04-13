@@ -402,6 +402,8 @@ pub struct AutomationFlowNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_calls: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_kind: Option<AutomationNodeStageKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<AutomationApprovalGate>,
@@ -454,6 +456,7 @@ where
             output_contract: value.output_contract.map(Into::into),
             retry_policy: value.retry_policy,
             timeout_ms: value.timeout_ms,
+            max_tool_calls: None,
             stage_kind: value.stage_kind.map(Into::into),
             gate: value.gate.map(Into::into),
             metadata: value.metadata,

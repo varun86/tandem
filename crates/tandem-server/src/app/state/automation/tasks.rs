@@ -44,6 +44,8 @@ async fn run_automation_v2_executor_single(state: AppState) {
             .reap_stale_running_automation_runs(STALE_RUNNING_AUTOMATION_RUN_MS)
             .await;
 
+        let _ = state.auto_resume_stale_reaped_runs().await;
+
         if active.is_empty() {
             if let Some(run) = state.claim_next_queued_automation_v2_run().await {
                 active.spawn(execute_run_and_release_wrapped(state.clone(), run));
@@ -74,6 +76,8 @@ async fn run_automation_v2_executor_multi(state: AppState) {
         let _ = state
             .reap_stale_running_automation_runs(STALE_RUNNING_AUTOMATION_RUN_MS)
             .await;
+
+        let _ = state.auto_resume_stale_reaped_runs().await;
 
         let capacity = {
             let scheduler = state.automation_scheduler.read().await;

@@ -486,6 +486,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         }),
         retry_policy: None,
         timeout_ms: None,
+        max_tool_calls: None,
         stage_kind: Some(AutomationNodeStageKind::Workstream),
         gate: None,
         metadata: split_research_stage_metadata(
@@ -535,6 +536,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         }),
         retry_policy: None,
         timeout_ms: None,
+        max_tool_calls: None,
         stage_kind: Some(AutomationNodeStageKind::Workstream),
         gate: None,
         metadata: split_research_stage_metadata(
@@ -594,6 +596,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         }),
         retry_policy: None,
         timeout_ms: None,
+        max_tool_calls: None,
         stage_kind: Some(AutomationNodeStageKind::Workstream),
         gate: None,
         metadata: split_research_stage_metadata(
