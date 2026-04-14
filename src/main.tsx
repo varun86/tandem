@@ -22,7 +22,37 @@ declare global {
   interface Window {
     __tandemAppReady?: boolean;
     __tandemDesktopVisible?: boolean;
+    __tandemStartupError?: string;
   }
+}
+
+const STARTUP_ERROR_EVENT = "tandem-startup-error";
+const DESKTOP_VISIBLE_EVENT = "tandem-desktop-visible";
+
+function publishDesktopVisible() {
+  if (window.__tandemDesktopVisible) {
+    return;
+  }
+  window.__tandemDesktopVisible = true;
+  window.dispatchEvent(new window.Event(DESKTOP_VISIBLE_EVENT));
+}
+
+function reportStartupError(reason: unknown) {
+  const message =
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === "string"
+        ? reason
+        : "Unknown startup failure";
+
+  window.__tandemStartupError = message;
+  window.dispatchEvent(
+    new window.CustomEvent(STARTUP_ERROR_EVENT, {
+      detail: {
+        message,
+      },
+    })
+  );
 }
 
 class AppErrorBoundary extends React.Component<
@@ -37,10 +67,10 @@ class AppErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error) {
     console.error("[Startup] Unhandled UI error:", error);
+    reportStartupError(error);
     window.__tandemAppReady = true;
-    window.__tandemDesktopVisible = true;
     window.dispatchEvent(new window.Event("tandem-app-ready"));
-    window.dispatchEvent(new window.Event("tandem-desktop-visible"));
+    publishDesktopVisible();
   }
 
   render() {
@@ -77,6 +107,14 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
+window.addEventListener("error", (event) => {
+  reportStartupError(event.error ?? event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportStartupError(event.reason);
+});
+
 // Apply theme ASAP (before React renders) so pre-app UI and initial paint match user preference.
 (() => {
   try {
@@ -96,7 +134,31 @@ class AppErrorBoundary extends React.Component<
 })();
 
 function startApp() {
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  const rootElement = document.getElementById("root");
+  if (!rootElement) {
+    throw new Error("Missing #root container");
+  }
+
+  const markVisibleIfRootPainted = () => {
+    if (rootElement.childElementCount > 0 || rootElement.innerHTML.trim().length > 0) {
+      publishDesktopVisible();
+    }
+  };
+
+  const rootObserver = new window.MutationObserver(() => {
+    markVisibleIfRootPainted();
+    if (window.__tandemDesktopVisible) {
+      rootObserver.disconnect();
+    }
+  });
+
+  rootObserver.observe(rootElement, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+
+  ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
       <AppErrorBoundary>
         <ThemeProvider>
@@ -110,10 +172,23 @@ function startApp() {
     </React.StrictMode>
   );
 
+  window.requestAnimationFrame(() => {
+    markVisibleIfRootPainted();
+  });
+  window.setTimeout(() => {
+    markVisibleIfRootPainted();
+  }, 250);
+
   // Language sync is best-effort and must never block initial UI mount.
   void bootstrapLanguagePreference().catch(() => {
     // Continue booting with i18next default detection on any sync failure.
   });
 }
 
-startApp();
+try {
+  startApp();
+} catch (error) {
+  console.error("[Startup] Failed before React mounted:", error);
+  reportStartupError(error);
+  throw error;
+}

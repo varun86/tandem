@@ -2,7 +2,12 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.4.25 (Unreleased)
+## v0.4.26 (Unreleased)
+
+- **Installed desktop startup recovery**: Tauri-packaged builds now dismiss the splash based on actual React DOM mount, not just frontend-ready events, so the app can no longer stay stuck on the "engine ready" splash after the backend has fully started.
+- **Frontend boot failure visibility**: Desktop startup now surfaces JavaScript boot errors directly on the splash screen instead of hanging indefinitely behind a seemingly successful backend startup state.
+
+## v0.4.25 (Released 2026-04-14)
 
 - **LLM workspace search acceleration**: The built-in `grep` tool now uses the ripgrep library stack (`grep-searcher`, `grep-regex`, `grep-matcher`) for faster repository search while keeping the same tool name, schema, and output shape.
 - **Parallel search streaming**: `grep` now streams partial match chunks through engine events while it searches, so the harness can show results sooner without changing the final tool output.

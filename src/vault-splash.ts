@@ -12,6 +12,7 @@ const MAX_PIN_LENGTH = 4;
 const APP_READY_EVENT = "tandem-app-ready";
 const DESKTOP_VISIBLE_EVENT = "tandem-desktop-visible";
 const DESKTOP_STARTUP_PROGRESS_EVENT = "desktop-startup-progress";
+const STARTUP_ERROR_EVENT = "tandem-startup-error";
 
 let currentPin = "";
 let confirmPin = "";
@@ -24,6 +25,7 @@ let backendFailed = false;
 let sawBackendProgress = false;
 let desktopVisible = false;
 let splashDismissed = false;
+let uiStartupFailed = false;
 
 type VaultStatus = "not_created" | "locked" | "unlocked";
 type DesktopStartupStatus = "starting" | "ready" | "failed";
@@ -83,8 +85,30 @@ function dismissSplashScreen() {
   window.setTimeout(() => splash.remove(), 500);
 }
 
+function setSplashError(message: string) {
+  uiStartupFailed = true;
+  clearUnlockWatchdog();
+  loadingSection.style.display = "flex";
+  pinSection.classList.remove("visible");
+  updateProgressBars(100);
+  loadingText.style.color = "var(--error-red)";
+  loadingText.textContent = message;
+}
+
+function rootHasRenderableContent(root: HTMLElement) {
+  return root.childElementCount > 0 || root.innerHTML.trim().length > 0;
+}
+
+function markDesktopVisible() {
+  if (desktopVisible) {
+    return;
+  }
+  desktopVisible = true;
+  attemptDismissSplash();
+}
+
 function attemptDismissSplash() {
-  if (backendFailed) return;
+  if (backendFailed || uiStartupFailed) return;
   if (desktopVisible && backendReady) {
     dismissSplashScreen();
   }
@@ -251,11 +275,19 @@ window.addEventListener(
 window.addEventListener(
   DESKTOP_VISIBLE_EVENT,
   () => {
-    desktopVisible = true;
-    attemptDismissSplash();
+    markDesktopVisible();
   },
   { once: true }
 );
+
+window.addEventListener(STARTUP_ERROR_EVENT, (event) => {
+  const detail = event instanceof window.CustomEvent ? event.detail : null;
+  const message =
+    typeof detail?.message === "string" && detail.message.trim().length > 0
+      ? detail.message.trim()
+      : "Tandem failed to start";
+  setSplashError(`Desktop UI failed to start: ${message}`);
+});
 
 // Get DOM elements
 const loadingSection = document.getElementById("loading-section")!;
@@ -271,6 +303,27 @@ const progressBars = Array.from(document.querySelectorAll<HTMLElement>(".progres
 // Theme + matrix start (must happen before we begin interactions)
 applySplashTheme();
 startMatrixRain();
+
+const root = document.getElementById("root");
+if (root instanceof HTMLElement) {
+  if (rootHasRenderableContent(root)) {
+    markDesktopVisible();
+  } else {
+    const rootObserver = new window.MutationObserver(() => {
+      if (!rootHasRenderableContent(root)) {
+        return;
+      }
+      rootObserver.disconnect();
+      markDesktopVisible();
+    });
+
+    rootObserver.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+}
 
 void (async () => {
   try {

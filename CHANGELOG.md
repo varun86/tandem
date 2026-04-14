@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.25] - Unreleased
+## [0.4.26] - Unreleased
+
+### Fixed
+
+- **Installed desktop startup recovery**: Tauri-packaged builds now dismiss the splash based on actual React DOM mount, not just frontend-ready events, so the app can no longer stay stuck on the "engine ready" splash after the backend has fully started.
+- **Frontend boot failure visibility**: Desktop startup now surfaces JavaScript boot errors directly on the splash screen instead of hanging indefinitely behind a seemingly successful backend startup state.
+
+## [0.4.25] - Released 2026-04-14
 
 ### Changed
 
