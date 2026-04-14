@@ -1,0 +1,65 @@
+name: Workflow Generated Coverage
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 4 * * *"
+
+jobs:
+  generated-variation-nightly:
+    name: Generated Variation Nightly
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build tandem-server workflow test binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p tandem-server --lib --tests --no-run --message-format=json > tandem-server-test-messages.json
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          exe = None
+          for line in pathlib.Path("tandem-server-test-messages.json").read_text().splitlines():
+              try:
+                  msg = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+              if msg.get("reason") != "compiler-artifact":
+                  continue
+              if not msg.get("profile", {}).get("test"):
+                  continue
+              target = msg.get("target", {})
+              if target.get("name") == "tandem_server" and msg.get("executable"):
+                  exe = msg["executable"]
+          if not exe:
+              raise SystemExit("no tandem_server test binary found")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"TEST_BIN={exe}\n")
+          PY
+
+      - name: Run generated workflow variation seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$TEST_BIN" 'app::state::tests::automations::prompting::generated_prompt_variation_suite_preserves_contract_inference' --exact --nocapture
+
+      - name: Write nightly summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Workflow Generated Coverage"
+            echo
+            echo "- Lane: non-blocking nightly/manual"
+            echo "- Seed suite: \`generated_prompt_variation_suite_preserves_contract_inference\`"
+            echo "- Next step: promote stable generated cases into deterministic deep-gate coverage"
+          } >> "$GITHUB_STEP_SUMMARY"

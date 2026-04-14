@@ -322,6 +322,24 @@ Short rule:
 - prefer the narrowest replay test that protects the bug class
 - if the escaped bug is release-relevant, add that replay to the deep gate or targeted release subset
 
+## Generated variation lane
+
+The non-blocking generated-variation lane is defined in:
+
+- [`.github/workflows/workflow-generated-coverage.yml`](../.github/workflows/workflow-generated-coverage.yml)
+
+Use it to exercise constrained workflow-spec variation outside the blocking PR path.
+
+Current seed:
+
+```bash
+cargo test -p tandem-server generated_prompt_variation_suite_preserves_contract_inference -- --nocapture
+```
+
+Design notes:
+
+- [Workflow Generated Variation Coverage](./WORKFLOW_GENERATED_VARIATIONS.md)
+
 Desktop/CLI runtime contract closure tests:
 
 ```bash

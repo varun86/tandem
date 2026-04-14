@@ -511,6 +511,282 @@ fn bootstrap_prompt_allows_required_workspace_writes_beyond_run_artifact() {
 }
 
 #[test]
+fn generated_prompt_variation_suite_preserves_contract_inference() {
+    struct GeneratedPromptCase {
+        name: &'static str,
+        node: AutomationFlowNode,
+        requested_tools: Vec<String>,
+        allowed_servers: Vec<String>,
+        expected_present: Vec<&'static str>,
+        expected_absent: Vec<&'static str>,
+    }
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-generated-prompt-variations".to_string(),
+        name: "Generated Prompt Variations".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let cases = vec![
+        GeneratedPromptCase {
+            name: "filesystem-bootstrap",
+            node: AutomationFlowNode {
+                node_id: "collect_inputs".to_string(),
+                agent_id: "worker".to_string(),
+                objective: "Filesystem-only initialization: resolve current_date/current_time, ensure run folders exist, and write run-context.md."
+                    .to_string(),
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "structured_json".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                max_tool_calls: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": ".tandem/artifacts/collect-inputs.json",
+                        "output_files": ["run-context.md"]
+                    }
+                })),
+            },
+            requested_tools: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            allowed_servers: Vec::new(),
+            expected_present: vec![
+                "Required Workspace Writes:",
+                "run-context.md",
+                "Execution Policy:",
+            ],
+            expected_absent: vec![
+                "External Research Expectation:",
+                "Call `websearch` now",
+                "MCP Discovery:",
+            ],
+        },
+        GeneratedPromptCase {
+            name: "web-grounded-brief",
+            node: AutomationFlowNode {
+                node_id: "research_web".to_string(),
+                agent_id: "researcher".to_string(),
+                objective: "Research the current external workflow testing landscape and write a grounded brief."
+                    .to_string(),
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "brief".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                max_tool_calls: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": ".tandem/artifacts/web-brief.md",
+                        "web_research_expected": true,
+                        "source_coverage_required": true
+                    }
+                })),
+            },
+            requested_tools: vec![
+                "glob".to_string(),
+                "read".to_string(),
+                "websearch".to_string(),
+                "write".to_string(),
+            ],
+            allowed_servers: Vec::new(),
+            expected_present: vec![
+                "External Research Expectation:",
+                "Call `websearch` now",
+                "Artifact Delivery Order:",
+            ],
+            expected_absent: vec!["Required Workspace Writes:"],
+        },
+        GeneratedPromptCase {
+            name: "mcp-grounded-citations",
+            node: AutomationFlowNode {
+                node_id: "research_sources".to_string(),
+                agent_id: "researcher".to_string(),
+                objective: "Ground the run in Tandem docs using tandem-mcp before producing a citations handoff."
+                    .to_string(),
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "citations".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                max_tool_calls: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": ".tandem/artifacts/research-sources.json",
+                        "preferred_mcp_servers": ["tandem-mcp"]
+                    }
+                })),
+            },
+            requested_tools: vec![
+                "mcp_list".to_string(),
+                "mcp.tandem_mcp.search_docs".to_string(),
+                "write".to_string(),
+            ],
+            allowed_servers: vec!["tandem-mcp".to_string()],
+            expected_present: vec![
+                "MCP Discovery:",
+                "Allowed MCP servers",
+                "Call `mcp_list`",
+                "Artifact Delivery Order:",
+            ],
+            expected_absent: vec!["External Research Expectation:"],
+        },
+        GeneratedPromptCase {
+            name: "code-change-with-verification",
+            node: AutomationFlowNode {
+                node_id: "implement_fix".to_string(),
+                agent_id: "engineer".to_string(),
+                objective: "Inspect the code, patch the smallest root cause, rerun verification, and write a handoff."
+                    .to_string(),
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(AutomationFlowOutputContract {
+                    kind: "report_markdown".to_string(),
+                    validator: None,
+                    enforcement: None,
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                max_tool_calls: None,
+                stage_kind: None,
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "task_kind": "code_change",
+                        "verification_command": "cargo test",
+                        "output_path": ".tandem/artifacts/code-loop.md"
+                    }
+                })),
+            },
+            requested_tools: vec![
+                "read".to_string(),
+                "edit".to_string(),
+                "write".to_string(),
+                "bash".to_string(),
+            ],
+            allowed_servers: Vec::new(),
+            expected_present: vec![
+                "Prefer `edit` for existing-file changes.",
+                "cargo test",
+                "Required Run Artifact:",
+            ],
+            expected_absent: vec!["External Research Expectation:"],
+        },
+    ];
+
+    for case in cases {
+        let agent = AutomationAgentProfile {
+            agent_id: case.node.agent_id.clone(),
+            template_id: None,
+            display_name: "Generated Agent".to_string(),
+            avatar_url: None,
+            model_policy: None,
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: case.requested_tools.clone(),
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: case.allowed_servers.clone(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        };
+
+        let prompt = render_automation_v2_prompt(
+            &automation,
+            "/tmp",
+            &format!("run-{}", case.name),
+            &case.node,
+            1,
+            &agent,
+            &[],
+            &case.requested_tools,
+            None,
+            None,
+            None,
+        );
+
+        for expected in case.expected_present {
+            assert!(
+                prompt.contains(expected),
+                "case={} missing expected prompt fragment {:?}\n{}",
+                case.name,
+                expected,
+                prompt
+            );
+        }
+        for forbidden in case.expected_absent {
+            assert!(
+                !prompt.contains(forbidden),
+                "case={} unexpectedly contained prompt fragment {:?}\n{}",
+                case.name,
+                forbidden,
+                prompt
+            );
+        }
+    }
+}
+
+#[test]
 fn prompt_resolves_reserved_runtime_placeholders_for_run() {
     let automation = AutomationV2Spec {
         automation_id: "automation-runtime-placeholders".to_string(),
