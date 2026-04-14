@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.27] - Released 2026-04-14
+
+### Fixed
+
+- **Packaged desktop startup diagnostics**: The Tauri desktop app now boots through a lightweight startup loader before importing the full React workspace, so installed builds surface chunk-load and top-level frontend boot failures instead of hanging on the splash after the engine is ready.
+- **Desktop startup signal hardening**: Frontend startup visibility and failure reporting now use shared bootstrap signals, making installed-build render failures observable on the splash screen rather than silently stalling behind a successful backend launch.
+
 ## [0.4.26] - Released 2026-04-14
 
 ### Fixed

@@ -2,6 +2,11 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.27 (Released 2026-04-14)
+
+- **Packaged desktop startup diagnostics**: The Tauri desktop app now boots through a lightweight startup loader before importing the full React workspace, so installed builds surface chunk-load and top-level frontend boot failures instead of hanging on the splash after the engine is ready.
+- **Desktop startup signal hardening**: Frontend startup visibility and failure reporting now use shared bootstrap signals, making installed-build render failures observable on the splash screen rather than silently stalling behind a successful backend launch.
+
 ## v0.4.26 (Released 2026-04-14)
 
 - **Installed desktop startup recovery**: Tauri-packaged builds now dismiss the splash based on actual React DOM mount, not just frontend-ready events, so the app can no longer stay stuck on the "engine ready" splash after the backend has fully started.
