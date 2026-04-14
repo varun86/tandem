@@ -170,6 +170,8 @@ jobs:
           "$TEST_BIN" 'app::state::tests::automations::integration::external_web_research_flow_completes_with_websearch_and_write' --exact --nocapture
           "$TEST_BIN" 'app::state::tests::automations::integration::analyze_findings_dual_write_flow_completes_with_artifact_and_workspace_file' --exact --nocapture
           "$TEST_BIN" 'app::state::tests::automations::integration::compare_results_synthesis_flow_completes_with_upstream_evidence' --exact --nocapture
+          "$TEST_BIN" 'app::state::tests::automations::integration::delivery_flow_completes_with_validated_artifact_body_and_email_send' --exact --nocapture
+          "$TEST_BIN" 'app::state::tests::automations::integration::code_loop_flow_repairs_after_missing_verification_and_completes' --exact --nocapture
           "$TEST_BIN" 'app::state::tests::automations::integration::repair_retry_after_needs_repair_completes_on_second_attempt' --exact --nocapture
           "$TEST_BIN" 'app::state::tests::automations::integration::restart_recovery_preserves_queued_and_paused_runs' --exact --nocapture
           "$TEST_BIN" 'http::tests::global::automations_v2_run_recover_from_stale_pause_clears_pending_outputs_and_attempts' --exact --nocapture

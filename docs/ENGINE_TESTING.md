@@ -271,12 +271,46 @@ target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_poli
 target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::local_research_flow_completes_with_read_and_write_artifact' --exact --nocapture
 target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::mcp_grounded_research_flow_completes_with_mcp_tool_usage' --exact --nocapture
 target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::external_web_research_flow_completes_with_websearch_and_write' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::analyze_findings_dual_write_flow_completes_with_artifact_and_workspace_file' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::compare_results_synthesis_flow_completes_with_upstream_evidence' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::delivery_flow_completes_with_validated_artifact_body_and_email_send' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::code_loop_flow_repairs_after_missing_verification_and_completes' --exact --nocapture
 target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::repair_retry_after_needs_repair_completes_on_second_attempt' --exact --nocapture
 target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::restart_recovery_preserves_queued_and_paused_runs' --exact --nocapture
 target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_recover_from_stale_pause_clears_pending_outputs_and_attempts' --exact --nocapture
 target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_pause_clears_active_sessions_and_instances' --exact --nocapture
 target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_ids' --exact --nocapture
 ```
+
+## Release-candidate workflow checklist
+
+Before bumping a version or cutting a workflow-runtime release candidate:
+
+1. Fast gate is green.
+   - At minimum:
+
+```bash
+cargo test -p tandem-server --lib --tests --no-run --message-format=json
+```
+
+2. Deep gate is green.
+   - Run the focused workflow subset above, including:
+     - replay regressions for the latest escaped failures
+     - synthesis integrations
+     - delivery integration
+     - code-loop integration
+
+3. Targeted replay coverage exists for every workflow-runtime bug fixed since the last release.
+   - Do not ship a runtime fix that only exists in code without a replay regression.
+
+4. If the release includes workflow enforcement, prompting, validation, or repair logic changes:
+   - rerun the exact named tests touched by that change locally before tagging
+   - do not rely on generic `cargo test` alone
+
+5. If a release candidate is blocked by an unrelated compile failure outside the touched workflow path:
+   - keep the `tandem-server --no-run` baseline green
+   - record the unrelated blocker explicitly in the release notes or handoff
+   - do not mark workflow coverage restored unless the focused workflow subset is also green
 
 Desktop/CLI runtime contract closure tests:
 

@@ -344,6 +344,78 @@ fn compare_results_node(node_id: &str, output_path: &str) -> AutomationFlowNode 
     }
 }
 
+fn delivery_node(node_id: &str, recipient: &str) -> AutomationFlowNode {
+    AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: node_id.to_string(),
+        agent_id: "operator".to_string(),
+        objective: format!(
+            "Send the finalized report to {} using the validated artifact body as the delivery source of truth.",
+            recipient
+        ),
+        depends_on: vec!["generate_report".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "generate_report".to_string(),
+            alias: "final_report".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": recipient,
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    }
+}
+
+fn code_loop_node(node_id: &str, output_path: &str) -> AutomationFlowNode {
+    AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: node_id.to_string(),
+        agent_id: "engineer".to_string(),
+        objective:
+            "Inspect the code, patch the smallest root cause, rerun verification, and write a concise implementation handoff."
+                .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: Some(json!({
+            "max_attempts": 2
+        })),
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "task_kind": "code_change",
+                "verification_command": "cargo test",
+                "output_path": output_path
+            }
+        })),
+    }
+}
+
 fn automation_with_single_node(
     automation_id: &str,
     node: AutomationFlowNode,
@@ -1465,6 +1537,435 @@ async fn compare_results_synthesis_flow_completes_with_upstream_evidence() {
     let written =
         std::fs::read_to_string(artifact_dir.join("compare-results.md")).expect("written artifact");
     assert_eq!(written, artifact_text);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn delivery_flow_completes_with_validated_artifact_body_and_email_send() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-delivery-integration-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(workspace_root.join("reports")).expect("create workspace");
+    let report_path = "reports/final-report.md";
+    let report_text = "# Final Report\n\n## Highlights\n- Deterministic workflow contracts reduced repair churn.\n- Replay coverage caught escaped bugs before release.\n\n## Recommendation\nShip the gated workflow coverage bundle.\n";
+    std::fs::write(workspace_root.join(report_path), report_text).expect("seed report");
+
+    let state = ready_test_state().await;
+    let node = delivery_node("notify_release_owner", "release-owner@example.com");
+    let automation = automation_with_single_node(
+        "automation-delivery",
+        node.clone(),
+        &workspace_root,
+        vec![
+            "read".to_string(),
+            "mcp.composio_1.gmail_send_email".to_string(),
+        ],
+    );
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+
+    let session = assistant_session_with_tool_invocations(
+        "delivery-validation",
+        &workspace_root,
+        vec![
+            (
+                "read",
+                json!({"path": report_path}),
+                json!({"output": report_text}),
+                None,
+            ),
+            (
+                "mcp.composio_1.gmail_send_email",
+                json!({
+                    "to": "release-owner@example.com",
+                    "subject": "Workflow release candidate",
+                    "html_body": "<h1>Final Report</h1><p>Deterministic workflow contracts reduced repair churn.</p>"
+                }),
+                json!({
+                    "output": "Email sent",
+                    "metadata": {
+                        "delivery_status": "sent",
+                        "message_id": "msg_123"
+                    }
+                }),
+                None,
+            ),
+        ],
+    );
+    let requested_tools = vec![
+        "read".to_string(),
+        "mcp.composio_1.gmail_send_email".to_string(),
+    ];
+    let tool_telemetry = summarize_automation_tool_activity(&node, &session, &requested_tools);
+    assert_eq!(
+        tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["read", "mcp.composio_1.gmail_send_email"])
+    );
+    assert_eq!(
+        tool_telemetry
+            .get("workspace_inspection_used")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        tool_telemetry
+            .get("email_delivery_attempted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        tool_telemetry
+            .get("email_delivery_succeeded")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let session_text = format!(
+        "Sent the validated report to release-owner@example.com.\n\n{}",
+        serde_json::to_string(&json!({
+            "status": "completed",
+            "approved": true,
+            "report_path": report_path
+        }))
+        .expect("status json")
+    );
+    let status = detect_automation_node_status(&node, &session_text, None, &tool_telemetry, None);
+    assert_eq!(status.0, "completed");
+    assert_eq!(status.1, None);
+    assert_eq!(status.2, Some(true));
+
+    let output = wrap_automation_node_output(
+        &node,
+        &session,
+        &requested_tools,
+        &session.id,
+        Some(&run.run_id),
+        &session_text,
+        None,
+        None,
+    );
+    persist_validated_output(
+        &state,
+        &run.run_id,
+        &node.node_id,
+        output,
+        AutomationRunStatus::Completed,
+        1,
+    )
+    .await;
+
+    let persisted = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("persisted run");
+    let output = persisted
+        .checkpoint
+        .node_outputs
+        .get("notify_release_owner")
+        .expect("node output");
+    assert_eq!(
+        output.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(output.get("approved").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        output
+            .pointer("/tool_telemetry/email_delivery_attempted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        output
+            .pointer("/tool_telemetry/email_delivery_succeeded")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        output
+            .pointer("/tool_telemetry/executed_tools")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["read", "mcp.composio_1.gmail_send_email"])
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn code_loop_flow_repairs_after_missing_verification_and_completes() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-code-loop-integration-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(workspace_root.join("src")).expect("create workspace");
+    std::fs::write(
+        workspace_root.join("src/lib.rs"),
+        "pub fn release_note_title() -> &'static str {\n    \"old title\"\n}\n",
+    )
+    .expect("seed source");
+
+    let state = ready_test_state().await;
+    let node = code_loop_node("implement_release_fix", ".tandem/artifacts/code-loop.md");
+    let automation = automation_with_single_node(
+        "automation-code-loop",
+        node.clone(),
+        &workspace_root,
+        vec![
+            "read".to_string(),
+            "apply_patch".to_string(),
+            "write".to_string(),
+            "bash".to_string(),
+        ],
+    );
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let output_path = automation_node_required_output_path_for_run(&node, Some(&run.run_id))
+        .expect("required output path");
+    let workspace_snapshot_before = automation_workspace_root_file_snapshot(
+        workspace_root.to_str().expect("workspace root string"),
+    );
+    let handoff_text = "# Implementation Handoff\n\n## Files changed\n- `src/lib.rs`\n\n## Summary\nUpdated the release note title helper to use the repaired title string.\n\n## Verification\n- `cargo test`\n";
+
+    let artifact_dir = workspace_root
+        .join(".tandem/runs")
+        .join(&run.run_id)
+        .join("artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+    std::fs::write(artifact_dir.join("code-loop.md"), handoff_text).expect("write artifact");
+    std::fs::write(
+        workspace_root.join("src/lib.rs"),
+        "pub fn release_note_title() -> &'static str {\n    \"repaired title\"\n}\n",
+    )
+    .expect("write patched source");
+
+    let first_session = assistant_session_with_tool_invocations(
+        "code-loop-attempt-1",
+        &workspace_root,
+        vec![
+            (
+                "read",
+                json!({"path":"src/lib.rs"}),
+                json!({"output":"pub fn release_note_title() -> &'static str { \"old title\" }\n"}),
+                None,
+            ),
+            (
+                "apply_patch",
+                json!({"patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-pub fn release_note_title() -> &'static str {\n-    \"old title\"\n-}\n+pub fn release_note_title() -> &'static str {\n+    \"repaired title\"\n+}\n*** End Patch\n"}),
+                json!({"ok": true}),
+                None,
+            ),
+            (
+                "write",
+                json!({"path":output_path,"content":handoff_text}),
+                json!({"ok": true}),
+                None,
+            ),
+        ],
+    );
+    let requested_tools = vec![
+        "read".to_string(),
+        "apply_patch".to_string(),
+        "write".to_string(),
+        "bash".to_string(),
+    ];
+    let first_telemetry =
+        summarize_automation_tool_activity(&node, &first_session, &requested_tools);
+    assert_eq!(
+        first_telemetry
+            .get("verification_expected")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        first_telemetry
+            .get("verification_ran")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let first_session_text =
+        "Patched the code and wrote the handoff.\n\n{\"status\":\"completed\"}";
+    let (first_accepted_output, first_artifact_validation, first_rejected) =
+        validate_automation_artifact_output(
+            &node,
+            &first_session,
+            workspace_root.to_str().expect("workspace root string"),
+            first_session_text,
+            &first_telemetry,
+            None,
+            Some((output_path.clone(), handoff_text.to_string())),
+            &workspace_snapshot_before,
+        );
+    assert!(first_rejected.is_none());
+    assert_eq!(
+        first_artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("passed")
+    );
+    let first_status = detect_automation_node_status(
+        &node,
+        first_session_text,
+        first_accepted_output.as_ref(),
+        &first_telemetry,
+        Some(&first_artifact_validation),
+    );
+    assert_eq!(first_status.0, "needs_repair");
+    assert_eq!(
+        first_status.1.as_deref(),
+        Some("coding task completed without running the declared verification command")
+    );
+
+    let second_session = assistant_session_with_tool_invocations(
+        "code-loop-attempt-2",
+        &workspace_root,
+        vec![
+            (
+                "read",
+                json!({"path":"src/lib.rs"}),
+                json!({"output":"pub fn release_note_title() -> &'static str { \"repaired title\" }\n"}),
+                None,
+            ),
+            (
+                "apply_patch",
+                json!({"patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-pub fn release_note_title() -> &'static str {\n-    \"repaired title\"\n-}\n+pub fn release_note_title() -> &'static str {\n+    \"repaired title\"\n+}\n*** End Patch\n"}),
+                json!({"ok": true}),
+                None,
+            ),
+            (
+                "bash",
+                json!({"command":"cargo test"}),
+                json!({
+                    "output": "test result: ok. 1 passed; 0 failed;",
+                    "metadata": {
+                        "exit_code": 0
+                    }
+                }),
+                None,
+            ),
+            (
+                "write",
+                json!({"path":output_path,"content":handoff_text}),
+                json!({"ok": true}),
+                None,
+            ),
+        ],
+    );
+    let second_telemetry =
+        summarize_automation_tool_activity(&node, &second_session, &requested_tools);
+    assert_eq!(
+        second_telemetry
+            .get("verification_ran")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        second_telemetry
+            .get("verification_failed")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        second_telemetry
+            .get("latest_verification_command")
+            .and_then(Value::as_str),
+        Some("cargo test")
+    );
+
+    let second_session_text =
+        "Patched the code, reran verification, and finalized the handoff.\n\n{\"status\":\"completed\"}";
+    let (accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &second_session,
+        workspace_root.to_str().expect("workspace root string"),
+        second_session_text,
+        &second_telemetry,
+        Some(handoff_text),
+        Some((output_path.clone(), handoff_text.to_string())),
+        &workspace_snapshot_before,
+    );
+    assert!(rejected.is_none());
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("passed")
+    );
+    let status = detect_automation_node_status(
+        &node,
+        second_session_text,
+        accepted_output.as_ref(),
+        &second_telemetry,
+        Some(&artifact_validation),
+    );
+    assert_eq!(status.0, "done");
+
+    let output = wrap_automation_node_output(
+        &node,
+        &second_session,
+        &requested_tools,
+        &second_session.id,
+        Some(&run.run_id),
+        second_session_text,
+        accepted_output.clone(),
+        Some(artifact_validation.clone()),
+    );
+    persist_validated_output(
+        &state,
+        &run.run_id,
+        &node.node_id,
+        output,
+        AutomationRunStatus::Completed,
+        2,
+    )
+    .await;
+
+    let persisted = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Completed);
+    assert_eq!(
+        persisted
+            .checkpoint
+            .node_attempts
+            .get("implement_release_fix"),
+        Some(&2)
+    );
+    let output = persisted
+        .checkpoint
+        .node_outputs
+        .get("implement_release_fix")
+        .expect("node output");
+    assert_eq!(output.get("status").and_then(Value::as_str), Some("done"));
+    assert_eq!(
+        output
+            .pointer("/tool_telemetry/verification_ran")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        output
+            .pointer("/tool_telemetry/latest_verification_command")
+            .and_then(Value::as_str),
+        Some("cargo test")
+    );
+
+    let written_handoff =
+        std::fs::read_to_string(artifact_dir.join("code-loop.md")).expect("written artifact");
+    assert_eq!(written_handoff, handoff_text);
+    let patched_source =
+        std::fs::read_to_string(workspace_root.join("src/lib.rs")).expect("patched source");
+    assert!(patched_source.contains("repaired title"));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
