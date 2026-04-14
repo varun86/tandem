@@ -36,6 +36,7 @@
 
 ## Developer and automation docs
 
+- /tandem-wow-demo-playbook/ - How agents should turn Tandem docs and engine contracts into showcase workflow and automation payloads.
 - /mcp-automated-agents/ - Automated agent workflows and MCP patterns.
 - /agent-workflow-mission-quickstart/ - Short checklist for agents creating, running, and maintaining Tandem workflows or missions.
 - /choosing-providers-and-models-for-agents/ - How agents should choose providers, defaults, and per-stage model overrides.
@@ -71,6 +72,7 @@
 - Want the shortest reliable checklist? Start with `/agent-workflow-mission-quickstart/`.
 - Need help picking providers or model policies? Use `/choosing-providers-and-models-for-agents/`.
 - Want to generate strong workflow or mission specs? Start with `/prompting-workflows-and-missions/`.
+- Want a ready-made showcase payload playbook? Start with `/tandem-wow-demo-playbook/`.
 - Want to know which engine path to call next? Use `/creating-and-running-workflows-and-missions/`.
 - Need the token and auth pattern first? Use `/engine-authentication-for-agents/`.
 - Want low-level behavior? Use the `/reference/` pages and `/protocol-matrix/`.
