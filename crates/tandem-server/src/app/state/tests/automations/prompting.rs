@@ -506,6 +506,8 @@ fn bootstrap_prompt_allows_required_workspace_writes_beyond_run_artifact() {
     ));
     assert!(!prompt.contains("Use only declared workflow artifact paths."));
     assert!(!prompt.contains("Only write declared workflow artifact files."));
+    assert!(!prompt.contains("External Research Expectation:"));
+    assert!(!prompt.contains("Call `websearch` now"));
 }
 
 #[test]

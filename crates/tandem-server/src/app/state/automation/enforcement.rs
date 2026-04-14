@@ -56,6 +56,9 @@ fn automation_node_legacy_web_research_expected(node: &AutomationFlowNode) -> bo
     {
         return explicit;
     }
+    if node.node_id == "collect_inputs" {
+        return false;
+    }
     let intent = automation_node_workspace_intent_text(node).to_ascii_lowercase();
     intent.contains("web")
         || intent.contains("online")

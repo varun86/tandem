@@ -125,6 +125,46 @@ fn research_required_next_tool_actions_include_workspace_file_write_guidance() {
 }
 
 #[test]
+fn collect_inputs_nodes_do_not_infer_web_research_from_current_date_language() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "collect_inputs".to_string(),
+        agent_id: "worker".to_string(),
+        objective: "Filesystem-only initialization: resolve current_date/current_time, create missing workspace directories if needed, and write the run context artifact without using web research."
+            .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/collect-inputs.json"
+            }
+        })),
+    };
+
+    let enforcement = crate::app::state::automation::automation_node_output_enforcement(&node);
+    assert!(!enforcement
+        .required_tools
+        .iter()
+        .any(|tool| tool == "websearch"));
+    assert!(!enforcement
+        .required_evidence
+        .iter()
+        .any(|evidence| evidence == "external_sources"));
+}
+
+#[test]
 fn summarize_automation_tool_activity_recovers_tools_from_synthetic_summary() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
