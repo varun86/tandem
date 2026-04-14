@@ -58,7 +58,14 @@ export default defineConfig({
         },
         {
           label: "Developer Guide & SDKs",
-          items: ["sdk/typescript", "sdk/python", "mcp-automated-agents", "webmcp-for-agents"],
+          items: [
+            "automation-composer-workflows",
+            "automation-examples-for-teams",
+            "sdk/typescript",
+            "sdk/python",
+            "mcp-automated-agents",
+            "webmcp-for-agents",
+          ],
         },
         {
           label: "Reference Architecture",
