@@ -23,6 +23,11 @@ tandem-engine serve --api-token $(tandem-engine token generate)
 <CardGrid>
   <LinkCard title="TypeScript SDK" href="./typescript/" description="@frumu/tandem-client — Node.js 18+" />
   <LinkCard title="Python SDK" href="./python/" description="tandem-client — Python 3.10+" />
+  <LinkCard
+    title="AI-First Workflow Composer"
+    href="../automation-composer-workflows/"
+    description="Prompt-first automation authoring with clarification, preview, and direct run support."
+  />
 </CardGrid>
 
 ## Guides
@@ -32,6 +37,11 @@ tandem-engine serve --api-token $(tandem-engine token generate)
     title="Scheduling Automations"
     href="./scheduling-automations/"
     description="Create recurring routines, legacy automations, V2 automations, and planner-backed schedules."
+  />
+  <LinkCard
+    title="Automation Examples For Teams"
+    href="../automation-examples-for-teams/"
+    description="Copy-ready workflow examples for wizard, TypeScript, and Python agent builders."
   />
   <LinkCard
     title="Engine Authentication For Agents"

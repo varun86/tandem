@@ -11,6 +11,8 @@ Use this guide when an agent or operator needs to answer:
 
 This page is operational. For prompt-writing guidance, see [Prompting Workflows And Missions](./prompting-workflows-and-missions/).
 
+For a concrete showcase pattern that agents can copy when building demo payloads, see [Tandem Wow Demo Playbook](./tandem-wow-demo-playbook/).
+
 ## The short decision map
 
 ### Use a workflow plan when
@@ -325,6 +327,15 @@ That gives you:
 - the authoring rules
 - the runtime scheduling path
 
+## Automation examples you can copy immediately
+
+- [Automation Examples For Teams](./automation-examples-for-teams/) — curated, real-world patterns for:
+  - control-panel wizard creation
+  - TypeScript `client.automationsV2` workflows
+  - Python `client.automations_v2` workflows
+
+- For code-first and SDK-first examples: use the same page via the **Agent quickindex** links at the top.
+
 ## See also
 
 - [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/)
@@ -336,3 +347,5 @@ That gives you:
 - [Connected-Agent Handoffs](./connected-agent-handoffs/)
 - [Scheduling Workflows And Automations](./sdk/scheduling-automations/)
 - [Engine Authentication For Agents](./engine-authentication-for-agents/)
+- [Automation Examples For Teams](./automation-examples-for-teams/) — Walkthrough and API examples for immediate workflow adoption.
+- [Build an Automation With the AI Assistant](./automation-composer-workflows/) — prompt-first authoring, clarification, preview, and run-now.

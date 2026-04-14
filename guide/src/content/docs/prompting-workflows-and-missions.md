@@ -258,6 +258,9 @@ When you or another LLM writes Tandem workflow or mission prompts:
 - start from the contract, not the stage name
 - write for repeatability, not just one successful demo run
 - prefer artifact-backed handoffs over long rolling prose context
+
+If you are specifically generating a showcase payload that needs to teach other agents how Tandem works, use [Tandem Wow Demo Playbook](./tandem-wow-demo-playbook/) as the first reference. That page shows how to combine the core docs into a small, readable, reusable demo.
+
 - keep each stage narrow enough that failure and retry are understandable
 - tell the stage how the next stage will consume the output
 - assume the engine owns scheduling, validation, and policy gates

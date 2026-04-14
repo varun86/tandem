@@ -283,3 +283,4 @@ For new work:
 - [TypeScript SDK](./typescript/)
 - [Python SDK](./python/)
 - [MCP Automated Agents](../mcp-automated-agents/)
+- [Automation Examples For Teams](../automation-examples-for-teams/) — Reusable examples for wizard, SDK, and MCP-final-step workflows.

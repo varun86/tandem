@@ -15,6 +15,20 @@ Requires **Python 3.10+**.
 
 For recurring jobs and scheduled automations, see [Scheduling Workflows And Automations](./scheduling-automations/).
 
+For agent-focused automation authoring, also start here:
+
+- [Automation Examples For Teams](../automation-examples-for-teams/) — practical TypeScript + Python examples.
+- [Build an Automation With the AI Assistant](../automation-composer-workflows/) — prompt-first authoring and clarification flow.
+- [Agent Workflow And Mission Quickstart](../agent-workflow-mission-quickstart/)
+- [Creating And Running Workflows And Missions](../creating-and-running-workflows-and-missions/)
+
+## Agent quick links in this page
+
+Use these when you just want copy-paste blocks:
+
+- Simple DAG example + immediate run checks: `Todo digest + notify` in the **automations_v2** section.
+- Complex file-to-artifact-to-MCP workflow: `Repo risk radar` in the **automations_v2** section.
+
 ## Engine prerequisite
 
 The SDK talks to a running `tandem-engine` over HTTP/SSE. Install and start the engine first:
@@ -369,9 +383,36 @@ await client.routines.pause_run(run_id)
 await client.routines.resume_run(run_id)
 ```
 
+### Conversational authoring flow
+
+Use `workflow_plans` when the user is still shaping the DAG in chat and may need a clarification turn.
+
+Use `automations_v2` when the structure is already known and you want a direct payload builder.
+
+```python
+draft = await client.workflow_plans.chat_start(
+    prompt="Build a release checklist automation",
+    plan_source="control-panel-composer",
+)
+
+revised = await client.workflow_plans.chat_message(
+    plan_id=draft.plan.plan_id or "",
+    message="Add a Slack notification step at the end.",
+)
+
+applied = await client.workflow_plans.apply(
+    plan_id=revised.plan.plan_id,
+    creator_id="demo-operator",
+)
+
+await client.automations_v2.run_now(applied.automation_id or "")
+```
+
 ### `client.automations_v2`
 
 Use V2 for persistent multi-agent DAG flows with per-agent model selection.
+
+Agent-ready pattern (manual run, artifact + MCP handoff):
 
 ```python
 automation = await client.automations_v2.create({
@@ -419,6 +460,139 @@ automation = await client.automations_v2.create({
 runs = await client.automations_v2.list_runs(automation.automation_id or "", limit=20)
 await client.automations_v2.pause_run(runs.runs[0].run_id or "")
 await client.automations_v2.resume_run(runs.runs[0].run_id or "")
+```
+
+For the exact same pattern with immediate run + result checks, use:
+
+```python
+created = await client.automations_v2.create(
+    {
+        "name": "Todo digest + notify",
+        "status": "active",
+        "schedule": {
+            "type": "manual",
+            "timezone": "UTC",
+            "misfire_policy": {"type": "run_once"},
+        },
+        "workspace_root": "/workspace/repos/my-repo",
+        "agents": [
+            {
+                "agent_id": "reader",
+                "display_name": "Reader",
+                "skills": [],
+                "tool_policy": {"allowlist": ["read", "write"]},
+                "mcp_policy": {"allowed_servers": [], "allowed_tools": []},
+                "approval_policy": "auto",
+            },
+            {
+                "agent_id": "notifier",
+                "display_name": "Notifier",
+                "skills": [],
+                "tool_policy": {"allowlist": ["read"]},
+                "mcp_policy": {"allowed_servers": ["slack"], "allowed_tools": ["send_message"]},
+                "approval_policy": "auto",
+            },
+        ],
+        "flow": {
+            "nodes": [
+                {
+                    "node_id": "collect_todos",
+                    "agent_id": "reader",
+                    "objective": "Find TODO and FIXME items under src/ and docs/ with file + line context.",
+                },
+                {
+                    "node_id": "write_report",
+                    "agent_id": "reader",
+                    "depends_on": ["collect_todos"],
+                    "objective": "Create docs/todo_digest.md with grouped findings and severity ranking.",
+                },
+                {
+                    "node_id": "notify_team",
+                    "agent_id": "notifier",
+                    "depends_on": ["write_report"],
+                    "objective": "Use MCP to send a short summary to team and include path docs/todo_digest.md.",
+                },
+            ]
+        },
+        "creator_id": "demo-operator",
+    }
+)
+
+automation_id = created.automation_id
+await client.automations_v2.run_now(automation_id)
+runs = await client.automations_v2.list_runs(automation_id, 5)
+print([(r.run_id, r.status) for r in runs.runs])
+```
+
+For a complex workflow that reads files first, writes a staged artifact, then performs a final MCP action:
+
+```python
+complex_automation = await client.automations_v2.create(
+    {
+        "name": "Repo risk radar",
+        "status": "active",
+        "schedule": {
+            "type": "interval",
+            "interval_seconds": 12 * 60 * 60,
+            "timezone": "UTC",
+            "misfire_policy": {"type": "run_once"},
+        },
+        "workspace_root": "/workspace/repos/my-repo",
+        "agents": [
+            {
+                "agent_id": "scanner",
+                "display_name": "Scanner",
+                "tool_policy": {"allowlist": ["read"]},
+                "mcp_policy": {"allowed_servers": [], "allowed_tools": []},
+                "approval_policy": "auto",
+            },
+            {
+                "agent_id": "analyst",
+                "display_name": "Analyst",
+                "tool_policy": {"allowlist": ["read", "write"]},
+                "mcp_policy": {"allowed_servers": [], "allowed_tools": []},
+                "approval_policy": "auto",
+            },
+            {
+                "agent_id": "notifier",
+                "display_name": "Notifier",
+                "tool_policy": {"allowlist": ["read"]},
+                "mcp_policy": {"allowed_servers": ["slack"], "allowed_tools": ["send_message"]},
+                "approval_policy": "auto",
+            },
+        ],
+        "flow": {
+            "nodes": [
+                {
+                    "node_id": "scan_sources",
+                    "agent_id": "scanner",
+                    "objective": "Find TODO/FIXME patterns in src/, docs/, and README files. Output the top findings in working notes as JSON.",
+                },
+                {
+                    "node_id": "build_risk_report",
+                    "agent_id": "analyst",
+                    "depends_on": ["scan_sources"],
+                    "objective": "Create docs/todo_digest.md with risk tiers, rationale, and exact file references.",
+                },
+                {
+                    "node_id": "notify_and_link",
+                    "agent_id": "notifier",
+                    "depends_on": ["build_risk_report"],
+                    "objective": "Send a short Slack summary and include docs/todo_digest.md as the handoff path.",
+                },
+            ]
+        },
+        "creator_id": "demo-operator",
+    }
+)
+
+complex_run = await client.automations_v2.run_now(complex_automation.automation_id)
+complex_status = await client.automations_v2.get_run(complex_run.run_id)
+print({
+    "automation_id": complex_automation.automation_id,
+    "run_id": complex_run.run_id,
+    "status": complex_status.run.status,
+})
 ```
 
 ### `client.automations` (Legacy Compatibility Path)

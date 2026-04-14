@@ -14,6 +14,8 @@ If the engine is not installed or authenticated yet, the same manual also covers
 
 If you want the shortest end-to-end checklist for an agent, start with [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/).
 
+If you want a showcase payload that demonstrates tight tool isolation, skip behavior, or approval boundaries, use [Tandem Wow Demo Playbook](./tandem-wow-demo-playbook/).
+
 For provider and model routing choices, use [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/).
 
 ## What You Get

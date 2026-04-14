@@ -117,14 +117,19 @@ The web app intentionally pushes motion a bit further than the Tauri app while k
 
 The left nav `Automations` page (`#/automations`) now uses task-focused tabs:
 
-- `Overview`
-- `Routines`
-- `Automations`
-- `Templates`
-- `Runs & Approvals`
+- `Create`
+- `Calendar`
+- `List`
+- `Tasks`
 - `Optimize`
+- `Active Teams`
+- `AI Composer` when the feature flag is enabled
 
 A built-in walkthrough wizard can be launched from the page header and also auto-opens for first-time empty workspaces.
+
+The optional composer tab is designed for prompt-first workflow authoring. It reuses the existing planner chat transport, so the UI can draft an automation, ask a clarification question, preview the resulting `automationsV2` payload, and then create or run it directly.
+
+Enable it with `?composer=1` or `#composer=true` when the workspace has the feature flag turned on.
 
 Legacy `#/agents` links continue to redirect for backwards compatibility.
 
@@ -134,6 +139,7 @@ Deep-link query state is supported on `#/automations`:
 - `wizard`
 - `flow` (`routine` or `advanced`)
 - `step`
+- `composer` (`1`, `true`, `on`, or `yes`)
 
 ## Studio Workflow Builder
 
@@ -157,7 +163,11 @@ Planner previews also surface project-scoped knowledge defaults and rollout guar
 
 When you are authoring staged workflows or missions, use [Prompting Workflows And Missions](./prompting-workflows-and-missions/) as the recommended guide for turning human intent into reliable Tandem prompts and handoffs.
 
+If you want the prompt-first automation builder specifically, start with [Build an Automation With the AI Assistant](./automation-composer-workflows/).
+
 If an external agent needs to create or run those missions through the engine APIs, also use [Creating And Running Workflows And Missions](./creating-and-running-workflows-and-missions/) and [Engine Authentication For Agents](./engine-authentication-for-agents/).
+
+For a copy-paste, proof-style runbook for this exact path, see [Automation Examples For Teams](./automation-examples-for-teams/).
 
 Saved workflows auto-migrate to `workflow_structure_version = 2` while preserving automation IDs and original research node IDs used by downstream nodes.
 

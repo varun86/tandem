@@ -13,6 +13,20 @@ Requires **Node.js 18+** (uses native `fetch` and `ReadableStream`).
 
 For recurring jobs and scheduled automations, see [Scheduling Workflows And Automations](./scheduling-automations/).
 
+For agent-focused automation authoring, also start here:
+
+- [Automation Examples For Teams](../automation-examples-for-teams/) — practical TypeScript + Python examples.
+- [Build an Automation With the AI Assistant](../automation-composer-workflows/) — prompt-first authoring and clarification flow.
+- [Agent Workflow And Mission Quickstart](../agent-workflow-mission-quickstart/)
+- [Creating And Running Workflows And Missions](../creating-and-running-workflows-and-missions/)
+
+## Agent quick links in this page
+
+Use these when you just want copy-paste blocks:
+
+- Simple DAG example + immediate run checks: `Todo digest + notify` in the **AutomationsV2** section.
+- Complex file-to-artifact-to-MCP workflow: `Repo risk radar` in the **AutomationsV2** section.
+
 ## Engine prerequisite
 
 The SDK talks to a running `tandem-engine` over HTTP/SSE. Install and start the engine first:
@@ -356,9 +370,36 @@ await client.routines.pauseRun(runId);
 await client.routines.resumeRun(runId);
 ```
 
+### Conversational authoring flow
+
+Use `workflowPlans` when the user wants Tandem to shape the DAG through conversation and may need one or more clarification turns.
+
+Use `automationsV2` when the workflow shape is already known and you want deterministic payload construction.
+
+```typescript
+const draft = await client.workflowPlans.chatStart({
+  prompt: "Build a release checklist automation",
+  planSource: "control-panel-composer",
+});
+
+const revised = await client.workflowPlans.chatMessage({
+  planId: draft.plan.plan_id!,
+  message: "Add a Slack notification step at the end.",
+});
+
+const applied = await client.workflowPlans.apply({
+  planId: revised.plan.plan_id,
+  creatorId: "demo-operator",
+});
+
+await client.automationsV2.runNow(applied.automation?.automation_id);
+```
+
 ### `client.automationsV2`
 
 Use V2 for persistent multi-agent DAG flows with per-agent model selection.
+
+Agent-ready pattern (manual run, artifact + MCP handoff):
 
 ```typescript
 await client.automationsV2.create({
@@ -416,6 +457,138 @@ await client.automationsV2.create({
 const runs = await client.automationsV2.listRuns("automation-v2-id", 20);
 await client.automationsV2.pauseRun(runs.runs[0].run_id!);
 await client.automationsV2.resumeRun(runs.runs[0].run_id!);
+```
+
+For the exact same pattern with immediate run + result checks, use:
+
+```typescript
+const created = await client.automationsV2.create({
+  name: "Todo digest + notify",
+  status: "active",
+  schedule: {
+    type: "manual",
+    timezone: "UTC",
+    misfire_policy: { type: "run_once" },
+  },
+  workspace_root: "/workspace/repos/my-repo",
+  agents: [
+    {
+      agent_id: "reader",
+      display_name: "Reader",
+      skills: [],
+      tool_policy: { allowlist: ["read", "write"] },
+      mcp_policy: { allowed_servers: [], allowed_tools: [] },
+      approval_policy: "auto",
+    },
+    {
+      agent_id: "notifier",
+      display_name: "Notifier",
+      skills: [],
+      tool_policy: { allowlist: ["read"] },
+      mcp_policy: { allowed_servers: ["slack"], allowed_tools: ["send_message"] },
+      approval_policy: "auto",
+    },
+  ],
+  flow: {
+    nodes: [
+      {
+        node_id: "collect_todos",
+        agent_id: "reader",
+        objective: "Find TODO and FIXME items under src/ and docs/ with file + line context.",
+      },
+      {
+        node_id: "write_report",
+        agent_id: "reader",
+        depends_on: ["collect_todos"],
+        objective: "Create docs/todo_digest.md with grouped findings and severity ranking.",
+      },
+      {
+        node_id: "notify_team",
+        agent_id: "notifier",
+        depends_on: ["write_report"],
+        objective: "Use MCP to send a short summary to team and include path docs/todo_digest.md.",
+      },
+    ],
+  },
+  creator_id: "demo-operator",
+});
+
+const automationId = created.automation?.automation_id;
+await client.automationsV2.runNow(automationId);
+const runs = await client.automationsV2.listRuns(automationId, 5);
+console.log(runs.runs.map((r) => ({ runId: r.run_id, status: r.status })));
+```
+
+For a complex workflow that reads files first, writes a staged artifact, then performs a final MCP action:
+
+```typescript
+const complexAutomation = await client.automationsV2.create({
+  name: "Repo risk radar",
+  status: "active",
+  schedule: {
+    type: "interval",
+    interval_seconds: 12 * 60 * 60,
+    timezone: "UTC",
+    misfire_policy: { type: "run_once" },
+  },
+  workspace_root: "/workspace/repos/my-repo",
+  agents: [
+    {
+      agent_id: "scanner",
+      display_name: "Scanner",
+      tool_policy: { allowlist: ["read"] },
+      mcp_policy: { allowed_servers: [], allowed_tools: [] },
+      approval_policy: "auto",
+    },
+    {
+      agent_id: "analyst",
+      display_name: "Analyst",
+      tool_policy: { allowlist: ["read", "write"] },
+      mcp_policy: { allowed_servers: [], allowed_tools: [] },
+      approval_policy: "auto",
+    },
+    {
+      agent_id: "notifier",
+      display_name: "Notifier",
+      tool_policy: { allowlist: ["read"] },
+      mcp_policy: { allowed_servers: ["slack"], allowed_tools: ["send_message"] },
+      approval_policy: "auto",
+    },
+  ],
+  flow: {
+    nodes: [
+      {
+        node_id: "scan_sources",
+        agent_id: "scanner",
+        objective:
+          "Find TODO/FIXME patterns in src/, docs/, and README files. Output the top findings in working notes as JSON.",
+      },
+      {
+        node_id: "build_risk_report",
+        agent_id: "analyst",
+        depends_on: ["scan_sources"],
+        objective:
+          "Create docs/todo_digest.md with risk tiers, rationale, and exact file references.",
+      },
+      {
+        node_id: "notify_and_link",
+        agent_id: "notifier",
+        depends_on: ["build_risk_report"],
+        objective:
+          "Send a short Slack summary and include docs/todo_digest.md as the handoff path.",
+      },
+    ],
+  },
+  creator_id: "demo-operator",
+});
+
+const complexRun = await client.automationsV2.runNow(complexAutomation.automation?.automation_id);
+const complexStatus = await client.automationsV2.getRun(complexRun?.run_id!);
+console.log({
+  automationId: complexAutomation.automation?.automation_id,
+  runId: complexRun?.run_id,
+  status: complexStatus?.run?.status,
+});
 ```
 
 ### `client.automations` (Legacy Compatibility Path)
