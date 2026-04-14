@@ -7,6 +7,25 @@ Use this page when you want an agent to generate a demo payload that clearly sho
 
 This is not a general product overview. It is a build recipe for agents that need to turn docs into a working showcase.
 
+## Human intent to engine payload
+
+If an agent starts from a natural-language goal, the safest path is:
+
+1. Ask the docs MCP for the best starting page or how-to answer.
+2. Read the Tandem docs pages for the right abstraction.
+3. Choose the smallest Tandem shape that fits the goal.
+4. Turn the chosen shape into JSON.
+5. Hand that JSON directly to the matching SDK method.
+6. Run the created automation once and inspect the result.
+
+Use these handoffs:
+
+- raw automation JSON -> `client.automationsV2.create(...)` or `client.automations_v2.create(...)`
+- workflow-plan bundle JSON -> `client.workflowPlans.importPreview(...)` / `client.workflowPlans.importPlan(...)` or the Python equivalents
+- planner conversation -> `client.workflowPlans.chatStart(...)` -> `chatMessage(...)` -> `apply(...)`
+
+If the payload is already a full automation object, do not route it through planner chat first.
+
 ## Start here
 
 Before writing anything, have the agent read:
@@ -117,6 +136,38 @@ Tell the agent to extract these facts from the docs before it drafts a payload:
 - which artifact path should hold the result
 
 If the answer is not in the docs, the agent should stop and narrow the scope instead of inventing a schema.
+
+## JSON handoff examples
+
+For a raw automation payload generated from human intent:
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const payload = JSON.parse(await readFile("./demo-automation.json", "utf8"));
+const created = await client.automationsV2.create(payload as any);
+await client.automationsV2.runNow(created.automation?.automation_id ?? created.automation_id);
+```
+
+```python
+import json
+from pathlib import Path
+
+payload = json.loads(Path("./demo-automation.json").read_text())
+created = await client.automations_v2.create(payload)
+await client.automations_v2.run_now(created.automation_id or "")
+```
+
+For a workflow-plan bundle:
+
+```ts
+const preview = await client.workflowPlans.importPreview({ bundle: planBundle });
+const imported = await client.workflowPlans.importPlan({
+  bundle: preview.bundle ?? planBundle,
+});
+```
+
+This is the bridge that lets an agent move from intent to a runnable Tandem object without guessing which API surface to use.
 
 ## Reusable prompt template
 

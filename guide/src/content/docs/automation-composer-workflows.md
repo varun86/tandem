@@ -61,6 +61,35 @@ The generated structure should be easy to inspect and reason about:
 
 That means you can safely preview, validate, and recreate the same payload from SDK code later.
 
+## From prompt to SDK call
+
+The important bridge is not just that Tandem can draft a payload. It is that the same payload can be passed directly into the engine.
+
+For raw automation JSON, the equivalent SDK call is:
+
+```ts
+const created = await client.automationsV2.create(generatedPayload as any);
+await client.automationsV2.runNow(created.automation?.automation_id ?? created.automation_id);
+```
+
+```python
+created = await client.automations_v2.create(generated_payload)
+await client.automations_v2.run_now(created.automation_id or "")
+```
+
+For planner bundle JSON, use the workflow-plan import surface instead:
+
+```ts
+const preview = await client.workflowPlans.importPreview({ bundle: planBundle });
+await client.workflowPlans.importPlan({ bundle: preview.bundle ?? planBundle });
+```
+
+That distinction matters:
+
+- use `automationsV2.create` for a full automation object
+- use `workflowPlans.importPreview` / `workflowPlans.importPlan` for a workflow-plan bundle
+- use `workflowPlans.chatStart` / `chatMessage` / `apply` only when the agent is still shaping the plan in conversation
+
 ## Simple example: digest + notify
 
 This is the most direct proof of value: read files, write a report, then notify through MCP.
