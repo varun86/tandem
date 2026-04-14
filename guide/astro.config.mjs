@@ -59,7 +59,6 @@ export default defineConfig({
         {
           label: "Developer Guide & SDKs",
           items: [
-            "tandem-wow-demo-playbook",
             "automation-composer-workflows",
             "automation-examples-for-teams",
             "sdk/typescript",
