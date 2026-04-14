@@ -1,109 +1,10 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import "@fontsource/geist-sans/400.css";
-import "@fontsource/geist-sans/700.css";
-import "@fontsource/geist-sans/900.css";
-import "@fontsource-variable/geist-mono";
-import App from "./App";
-import "./index.css";
-import "./i18n"; // Initialize i18n
-import { bootstrapLanguagePreference } from "./i18n/languageSync";
-import { ThemeProvider } from "@/hooks/useTheme";
-import { UpdaterProvider } from "@/hooks/useUpdater";
-import { MemoryIndexingProvider } from "@/contexts/MemoryIndexingContext";
-import { DEFAULT_THEME_ID, getThemeById } from "@/lib/themes";
-import type { ThemeId } from "@/types/theme";
-import {
-  applyCustomBackgroundFromMirror,
-  readCustomBackgroundMirror,
-} from "@/lib/customBackground";
+import { reportStartupError, publishDesktopVisible } from "@/lib/startupSignals";
 
 declare global {
   interface Window {
     __tandemAppReady?: boolean;
     __tandemDesktopVisible?: boolean;
     __tandemStartupError?: string;
-  }
-}
-
-const STARTUP_ERROR_EVENT = "tandem-startup-error";
-const DESKTOP_VISIBLE_EVENT = "tandem-desktop-visible";
-
-function publishDesktopVisible() {
-  if (window.__tandemDesktopVisible) {
-    return;
-  }
-  window.__tandemDesktopVisible = true;
-  window.dispatchEvent(new window.Event(DESKTOP_VISIBLE_EVENT));
-}
-
-function reportStartupError(reason: unknown) {
-  const message =
-    reason instanceof Error
-      ? reason.message
-      : typeof reason === "string"
-        ? reason
-        : "Unknown startup failure";
-
-  window.__tandemStartupError = message;
-  window.dispatchEvent(
-    new window.CustomEvent(STARTUP_ERROR_EVENT, {
-      detail: {
-        message,
-      },
-    })
-  );
-}
-
-class AppErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  state: { hasError: boolean; error: Error | null } = { hasError: false, error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error) {
-    console.error("[Startup] Unhandled UI error:", error);
-    reportStartupError(error);
-    window.__tandemAppReady = true;
-    window.dispatchEvent(new window.Event("tandem-app-ready"));
-    publishDesktopVisible();
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex h-screen w-screen items-center justify-center app-background p-6 text-text">
-          <div className="w-full max-w-lg rounded-2xl border border-border bg-surface-elevated p-6 shadow-2xl">
-            <div className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-text-subtle">
-              Tandem failed to start
-            </div>
-            <h1 className="text-2xl font-bold text-text">Something went wrong while loading</h1>
-            <p className="mt-3 text-sm leading-6 text-text-muted">
-              The app hit an unexpected error before the main workspace could render. Reloading
-              usually clears the issue.
-            </p>
-            {this.state.error ? (
-              <pre className="mt-4 max-h-40 overflow-auto rounded-lg border border-border bg-surface px-4 py-3 text-xs text-text-subtle">
-                {this.state.error.message}
-              </pre>
-            ) : null}
-            <button
-              type="button"
-              className="mt-6 inline-flex items-center rounded-lg bg-primary px-4 py-2 font-medium text-white transition-colors hover:bg-primary-hover"
-              onClick={() => window.location.reload()}
-            >
-              Reload app
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
   }
 }
 
@@ -115,80 +16,40 @@ window.addEventListener("unhandledrejection", (event) => {
   reportStartupError(event.reason);
 });
 
-// Apply theme ASAP (before React renders) so pre-app UI and initial paint match user preference.
-(() => {
-  try {
-    const stored = localStorage.getItem("tandem.themeId") as ThemeId | null;
-    const theme = getThemeById(stored ?? DEFAULT_THEME_ID);
-    for (const [name, value] of Object.entries(theme.cssVars)) {
-      if (value == null) continue;
-      document.documentElement.style.setProperty(name, value);
-    }
-    document.documentElement.dataset.theme = theme.id;
+const rootElement = document.getElementById("root");
 
-    // Apply custom background ASAP (best-effort; may be reconciled from backend after mount).
-    applyCustomBackgroundFromMirror(readCustomBackgroundMirror());
-  } catch {
-    // ignore (e.g. storage disabled)
-  }
-})();
-
-function startApp() {
-  const rootElement = document.getElementById("root");
-  if (!rootElement) {
-    throw new Error("Missing #root container");
-  }
-
-  const markVisibleIfRootPainted = () => {
-    if (rootElement.childElementCount > 0 || rootElement.innerHTML.trim().length > 0) {
-      publishDesktopVisible();
-    }
-  };
-
-  const rootObserver = new window.MutationObserver(() => {
-    markVisibleIfRootPainted();
-    if (window.__tandemDesktopVisible) {
-      rootObserver.disconnect();
-    }
-  });
-
-  rootObserver.observe(rootElement, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
-
-  ReactDOM.createRoot(rootElement).render(
-    <React.StrictMode>
-      <AppErrorBoundary>
-        <ThemeProvider>
-          <UpdaterProvider>
-            <MemoryIndexingProvider>
-              <App />
-            </MemoryIndexingProvider>
-          </UpdaterProvider>
-        </ThemeProvider>
-      </AppErrorBoundary>
-    </React.StrictMode>
-  );
-
-  window.requestAnimationFrame(() => {
-    markVisibleIfRootPainted();
-  });
-  window.setTimeout(() => {
-    markVisibleIfRootPainted();
-  }, 250);
-
-  // Language sync is best-effort and must never block initial UI mount.
-  void bootstrapLanguagePreference().catch(() => {
-    // Continue booting with i18next default detection on any sync failure.
-  });
+if (!rootElement) {
+  reportStartupError("Missing #root container");
+  throw new Error("Missing #root container");
 }
 
-try {
-  startApp();
-} catch (error) {
-  console.error("[Startup] Failed before React mounted:", error);
+const markVisibleIfRootPainted = () => {
+  if (rootElement.childElementCount > 0 || rootElement.innerHTML.trim().length > 0) {
+    publishDesktopVisible();
+  }
+};
+
+const rootObserver = new window.MutationObserver(() => {
+  markVisibleIfRootPainted();
+  if (window.__tandemDesktopVisible) {
+    rootObserver.disconnect();
+  }
+});
+
+rootObserver.observe(rootElement, {
+  childList: true,
+  subtree: true,
+  characterData: true,
+});
+
+window.requestAnimationFrame(() => {
+  markVisibleIfRootPainted();
+});
+window.setTimeout(() => {
+  markVisibleIfRootPainted();
+}, 250);
+
+void import("./app-entry").catch((error) => {
+  console.error("[Startup] Failed to load desktop app bundle:", error);
   reportStartupError(error);
-  throw error;
-}
+});
