@@ -38,6 +38,58 @@ fn extract_event_session_id(properties: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn extract_event_correlation_id(properties: &Value) -> Option<String> {
+    properties
+        .get("correlationID")
+        .or_else(|| properties.get("correlationId"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+async fn apply_provider_usage_to_routine_run(
+    state: &AppState,
+    run_id: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+) {
+    let rate = state.token_cost_per_1k_usd.max(0.0);
+    let delta_cost = (total_tokens as f64 / 1000.0) * rate;
+    let mut guard = state.routine_runs.write().await;
+    if let Some(run) = guard.get_mut(run_id) {
+        run.prompt_tokens = run.prompt_tokens.saturating_add(prompt_tokens);
+        run.completion_tokens = run.completion_tokens.saturating_add(completion_tokens);
+        run.total_tokens = run.total_tokens.saturating_add(total_tokens);
+        run.estimated_cost_usd += delta_cost;
+        run.updated_at_ms = now_ms();
+    }
+    drop(guard);
+    let _ = state.persist_routine_runs().await;
+}
+
+async fn apply_provider_usage_to_automation_v2_run(
+    state: &AppState,
+    run_id: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+) {
+    let rate = state.token_cost_per_1k_usd.max(0.0);
+    let delta_cost = (total_tokens as f64 / 1000.0) * rate;
+    let mut guard = state.automation_v2_runs.write().await;
+    if let Some(run) = guard.get_mut(run_id) {
+        run.prompt_tokens = run.prompt_tokens.saturating_add(prompt_tokens);
+        run.completion_tokens = run.completion_tokens.saturating_add(completion_tokens);
+        run.total_tokens = run.total_tokens.saturating_add(total_tokens);
+        run.estimated_cost_usd += delta_cost;
+        run.updated_at_ms = now_ms();
+    }
+    drop(guard);
+    let _ = state.persist_automation_v2_runs().await;
+}
+
 fn event_tenant_context_value(event: &EngineEvent) -> Value {
     event
         .properties
@@ -511,14 +563,6 @@ pub async fn run_usage_aggregator(state: AppState) {
                 if event.event_type != "provider.usage" {
                     continue;
                 }
-                let session_id = event
-                    .properties
-                    .get("sessionID")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if session_id.is_empty() {
-                    continue;
-                }
                 let prompt_tokens = event
                     .properties
                     .get("promptTokens")
@@ -534,6 +578,38 @@ pub async fn run_usage_aggregator(state: AppState) {
                     .get("totalTokens")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
+                if let Some(correlation_id) = extract_event_correlation_id(&event.properties) {
+                    if let Some(run_id) = correlation_id.strip_prefix("routine:") {
+                        apply_provider_usage_to_routine_run(
+                            &state,
+                            run_id,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        )
+                        .await;
+                        continue;
+                    }
+                    if let Some(run_id) = correlation_id.strip_prefix("automation-v2:") {
+                        apply_provider_usage_to_automation_v2_run(
+                            &state,
+                            run_id,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+                let session_id = event
+                    .properties
+                    .get("sessionID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if session_id.is_empty() {
+                    continue;
+                }
                 state
                     .apply_provider_usage_to_runs(
                         session_id,

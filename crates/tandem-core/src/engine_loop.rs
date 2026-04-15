@@ -1898,6 +1898,7 @@ impl EngineLoop {
                         "provider.usage",
                         json!({
                             "sessionID": session_id,
+                            "correlationID": correlation_ref,
                             "messageID": user_message_id,
                             "promptTokens": usage.prompt_tokens,
                             "completionTokens": usage.completion_tokens,

@@ -308,7 +308,7 @@ async fn channels_put_unknown_channel_returns_not_found() {
         .method("PUT")
         .uri("/channels/unknown")
         .header("content-type", "application/json")
-        .body(Body::from(json!({ "bot_token": "x" }.to_string())))
+        .body(Body::from(json!({ "bot_token": "x" }).to_string()))
         .expect("request");
     let resp = app.clone().oneshot(req).await.expect("response");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);

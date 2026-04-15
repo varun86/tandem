@@ -2362,3 +2362,65 @@ async fn restart_recovery_preserves_queued_and_paused_runs() {
     let _ = std::fs::remove_dir_all(&paused_workspace);
     let _ = std::fs::remove_dir_all(&queued_workspace);
 }
+
+#[tokio::test]
+async fn provider_usage_is_attributed_from_correlation_id_without_session_mapping() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-usage-correlation-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let mut state = ready_test_state().await;
+    state.token_cost_per_1k_usd = 12.5;
+
+    let usage_aggregator = tokio::spawn(run_usage_aggregator(state.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let automation = automation_with_single_node(
+        "automation-usage-correlation",
+        brief_research_node("usage_node", ".tandem/artifacts/usage.md", false),
+        &workspace_root,
+        vec!["read".to_string()],
+    );
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+
+    state.event_bus.publish(EngineEvent::new(
+        "provider.usage",
+        json!({
+            "sessionID": "session-unused",
+            "correlationID": format!("automation-v2:{}", run.run_id),
+            "messageID": "message-usage",
+            "promptTokens": 11,
+            "completionTokens": 19,
+            "totalTokens": 30,
+        }),
+    ));
+
+    let updated = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(run) = state.get_automation_v2_run(&run.run_id).await {
+                if run.total_tokens == 30 {
+                    return run;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("usage attribution timeout");
+
+    assert_eq!(updated.prompt_tokens, 11);
+    assert_eq!(updated.completion_tokens, 19);
+    assert_eq!(updated.total_tokens, 30);
+    assert!(updated.estimated_cost_usd > 0.0);
+    assert!(
+        (updated.estimated_cost_usd - 0.375).abs() < 0.000_001,
+        "expected estimated cost to be derived from usage"
+    );
+
+    usage_aggregator.abort();
+    let _ = usage_aggregator.await;
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
