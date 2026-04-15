@@ -1117,6 +1117,10 @@ fn structured_json_prompt_surfaces_explicit_output_files_for_analyze_findings() 
     assert!(prompt.contains("Required Workspace Writes:"));
     assert!(prompt.contains("reports/pain-points-analysis.md"));
     assert!(prompt.contains(
+        "Write the required run artifact to `.tandem/runs/run-analyze-findings/artifacts/analyze-findings.json`"
+    ));
+    assert!(!prompt.contains(".tandem/artifacts/analyze-findings.json"));
+    assert!(prompt.contains(
         "Use only approved write targets for this node: the declared run artifact plus these required workspace files"
     ));
     assert!(prompt.contains(

@@ -2981,6 +2981,72 @@ fn repair_brief_detects_activity_despite_empty_telemetry() {
 }
 
 #[test]
+fn analyze_findings_final_attempt_repair_brief_stays_run_scoped() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "analyze_findings".to_string(),
+        agent_id: "analyst".to_string(),
+        objective: "Write analyze-findings.json".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/analyze-findings.json"
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "required output was not created",
+            "unmet_requirements": ["current_attempt_output_missing"]
+        },
+        "tool_telemetry": {
+            "requested_tools": ["glob", "read", "write"],
+            "executed_tools": []
+        },
+        "artifact_validation": {
+            "blocking_classification": "execution_error",
+            "repair_attempt": 2,
+            "repair_attempts_remaining": 1,
+            "required_next_tool_actions": [
+                "Retry after provider connectivity recovers."
+            ],
+            "validation_basis": {
+                "authority": "filesystem_and_receipts",
+                "current_attempt_has_recorded_activity": true,
+                "current_attempt_output_materialized": false,
+                "current_attempt_has_read": true,
+                "workspace_inspection_satisfied": true
+            }
+        }
+    });
+
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 3, 3, Some("run-123"))
+        .expect("repair brief");
+
+    assert!(brief.contains("FINAL ATTEMPT"));
+    assert!(brief.contains(".tandem/runs/run-123/artifacts/analyze-findings.json"));
+    assert!(!brief.contains(".tandem/artifacts/analyze-findings.json"));
+    assert!(brief.contains("Blocking classification: artifact_write_missing."));
+    assert!(brief.contains(
+        "Required next tool actions: write the required run artifact to the declared output path."
+    ));
+}
+
+#[test]
 fn repair_attempt_with_concrete_read_and_changed_output_is_accepted() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-repair-read-changed-output-{}",
