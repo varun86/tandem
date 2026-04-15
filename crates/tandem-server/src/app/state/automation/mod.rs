@@ -2617,6 +2617,8 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
         Some("connector-backed work completed without discovering available MCP tools".to_string())
     } else if has_unmet("missing_successful_web_research") {
         Some("research completed without required current web research".to_string())
+    } else if has_unmet("required_source_paths_not_read") {
+        Some("research completed without reading the exact required source files".to_string())
     } else if has_unmet("no_concrete_reads") || has_unmet("concrete_read_required") {
         Some(
             "research completed without concrete file reads or required source coverage"
@@ -4643,6 +4645,28 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let current_read_paths = session_read_paths(session, workspace_root);
     let current_discovered_relevant_paths =
         session_discovered_relevant_paths(session, workspace_root);
+    let required_source_read_paths =
+        enforcement::automation_node_required_source_read_paths_for_automation(
+            automation,
+            node,
+            workspace_root,
+            runtime_values,
+        );
+    let missing_required_source_read_paths = required_source_read_paths
+        .iter()
+        .filter(|path| !current_read_paths.iter().any(|read| read == *path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(object) = validation_basis.as_object_mut() {
+        object.insert(
+            "required_source_read_paths".to_string(),
+            json!(required_source_read_paths),
+        );
+        object.insert(
+            "missing_required_source_read_paths".to_string(),
+            json!(missing_required_source_read_paths),
+        );
+    }
     let use_upstream_evidence = automation_node_uses_upstream_validation_evidence(node);
     let explicit_input_files = automation_node_explicit_input_files(node);
     let explicit_output_files = automation_node_explicit_output_files(node);
@@ -5151,6 +5175,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         if has_research_contract && (requested_has_read || requires_local_source_reads) {
             let missing_concrete_reads =
                 !optional_workspace_reads && requires_local_source_reads && !executed_has_read;
+            let missing_named_source_reads = !missing_required_source_read_paths.is_empty();
             let files_reviewed_backed = selected_assessment.is_some_and(|assessment| {
                 !assessment.reviewed_paths.is_empty()
                     && assessment.reviewed_paths.len()
@@ -5191,6 +5216,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             if missing_concrete_reads {
                 unmet_requirements.push("no_concrete_reads".to_string());
             }
+            if missing_named_source_reads {
+                unmet_requirements.push("required_source_paths_not_read".to_string());
+            }
             if missing_citations {
                 unmet_requirements.push("citations_missing".to_string());
             }
@@ -5220,6 +5248,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             }
             let has_path_hygiene_failure = path_hygiene_failure.is_some();
             if missing_concrete_reads
+                || missing_named_source_reads
                 || missing_citations
                 || missing_file_coverage
                 || missing_web_sources_reviewed
@@ -5229,6 +5258,8 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 semantic_block_reason = Some(if has_path_hygiene_failure {
                     "research artifact contains non-concrete paths (wildcards or directory placeholders) in source audit"
                         .to_string()
+                } else if missing_named_source_reads {
+                    "research completed without reading the exact required source files".to_string()
                 } else if missing_concrete_reads {
                     "research completed without concrete file reads or required source coverage"
                         .to_string()
@@ -5248,17 +5279,24 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         if !has_research_contract && has_required_tools {
             let missing_concrete_reads =
                 !optional_workspace_reads && requires_read && !executed_has_read;
+            let missing_named_source_reads = !missing_required_source_read_paths.is_empty();
             let missing_web_research =
                 requires_websearch && requires_external_sources && !web_research_succeeded;
             if missing_concrete_reads {
                 unmet_requirements.push("no_concrete_reads".to_string());
             }
+            if missing_named_source_reads {
+                unmet_requirements.push("required_source_paths_not_read".to_string());
+            }
             if missing_web_research {
                 unmet_requirements.push("missing_successful_web_research".to_string());
             }
-            if missing_concrete_reads || missing_web_research {
-                semantic_block_reason =
-                    Some("artifact finalized without using required tools".to_string());
+            if missing_concrete_reads || missing_named_source_reads || missing_web_research {
+                semantic_block_reason = Some(if missing_named_source_reads {
+                    "artifact finalized without reading the exact required source files".to_string()
+                } else {
+                    "artifact finalized without using required tools".to_string()
+                });
             }
         }
         let strict_quality_mode = enforcement::automation_node_is_strict_quality(node);
@@ -5563,6 +5601,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             && !executed_has_read
         {
             unmet_requirements.push("no_concrete_reads".to_string());
+        }
+        if !missing_required_source_read_paths.is_empty() {
+            unmet_requirements.push("required_source_paths_not_read".to_string());
         }
         if !optional_workspace_reads && requires_concrete_reads && !executed_has_read {
             unmet_requirements.push("concrete_read_required".to_string());

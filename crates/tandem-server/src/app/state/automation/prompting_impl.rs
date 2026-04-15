@@ -382,7 +382,7 @@ fn automation_prompt_render_concrete_source_coverage(
     let mut sections = Vec::new();
     if !paths.is_empty() {
         sections.push(format!(
-            "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- After reading a concrete source, carry its exact text forward in `structured_handoff.source_material` as `{{path, content}}` entries so downstream nodes can reuse the source without rereading it.\n- Concrete files for this node:\n{}",
+            "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- Similar backup or copy filenames do not satisfy the requirement when the workflow names an exact source file.\n- After reading a concrete source, carry its exact text forward in `structured_handoff.source_material` as `{{path, content}}` entries so downstream nodes can reuse the source without rereading it.\n- Concrete files for this node:\n{}",
             automation_prompt_render_path_bullets(&paths)
         ));
     }

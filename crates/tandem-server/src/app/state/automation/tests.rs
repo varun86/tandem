@@ -409,6 +409,69 @@ fn source_of_truth_files_disable_optional_workspace_reads() {
 }
 
 #[test]
+fn required_source_read_paths_focus_on_exact_named_source_files() {
+    let mut node = bare_node();
+    node.node_id = "assess".to_string();
+    node.objective = "Analyze the local RESUME.md file and use it as the source of truth for skills. Never edit, rewrite, rename, move, or delete RESUME.md. If resume_overview.md is missing, create it.".to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "input_files": ["/home/evan/job-hunt/RESUME.md"],
+            "output_files": ["resume_overview.md", "daily_results_{current_date}.md"]
+        }
+    }));
+    let automation = AutomationV2Spec {
+        automation_id: "automation-source-reads".to_string(),
+        name: "Source Reads".to_string(),
+        description: Some("Only read from RESUME.md and keep it untouched.".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![node.clone()],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/home/evan/job-hunt".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let required_paths =
+        super::enforcement::automation_node_required_source_read_paths_for_automation(
+            &automation,
+            &node,
+            "/home/evan/job-hunt",
+            Some(&AutomationPromptRuntimeValues {
+                current_date: "2026-04-15".to_string(),
+                current_time: "1446".to_string(),
+                current_timestamp: "2026-04-15 14:46".to_string(),
+            }),
+        );
+
+    assert_eq!(required_paths, vec!["RESUME.md".to_string()]);
+}
+
+#[test]
 fn explicit_output_files_skip_read_only_source_of_truth_files() {
     let mut node = bare_node();
     node.node_id = "compare_with_features".to_string();

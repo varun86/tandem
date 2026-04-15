@@ -105,6 +105,21 @@ fn automation_node_workspace_intent_text(node: &AutomationFlowNode) -> String {
     .join("\n")
 }
 
+fn automation_node_workspace_intent_text_with_runtime(
+    node: &AutomationFlowNode,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> String {
+    [
+        super::automation_runtime_placeholder_replace(&node.objective, runtime_values),
+        automation_node_legacy_builder(node)
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str)
+            .map(|prompt| super::automation_runtime_placeholder_replace(prompt, runtime_values))
+            .unwrap_or_default(),
+    ]
+    .join("\n")
+}
+
 fn automation_trim_workspace_token(token: &str) -> &str {
     token
         .trim()
@@ -269,7 +284,11 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
             .iter()
             .any(|pattern| lowered.contains(pattern))
                 || lowered.match_indices(&lowered_file).any(|(file_pos, _)| {
-                    let prefix = &lowered[..file_pos];
+                    let sentence_start = lowered[..file_pos]
+                        .rfind(['.', '!', '?', '\n', ';'])
+                        .map(|index| index + 1)
+                        .unwrap_or(0);
+                    let prefix = &lowered[sentence_start..file_pos];
                     [
                         "never edit",
                         "do not edit",
@@ -379,6 +398,41 @@ pub(crate) fn automation_node_read_only_source_of_truth_files(
 ) -> Vec<String> {
     let combined = automation_node_workspace_intent_text(node);
     automation_read_only_file_tokens(&combined)
+}
+
+pub(crate) fn automation_node_required_source_read_paths_for_automation(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let combined = automation_node_workspace_intent_text_with_runtime(node, runtime_values);
+    let mut files = automation_read_only_file_tokens(&combined);
+    files.extend(
+        automation_node_legacy_builder(node)
+            .and_then(|builder| builder.get("input_files"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flat_map(|rows| rows.iter())
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| super::automation_runtime_placeholder_replace(value, runtime_values)),
+    );
+    files.extend(
+        automation_read_only_source_of_truth_files_for_automation(automation)
+            .into_iter()
+            .map(|value| super::automation_runtime_placeholder_replace(&value, runtime_values)),
+    );
+    files.sort();
+    files.dedup();
+    let mut normalized = files
+        .into_iter()
+        .filter_map(|path| super::normalize_workspace_display_path(workspace_root, &path))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
 }
 
 pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationFlowNode) -> bool {

@@ -600,6 +600,8 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
         Some("structured handoff was not returned in the final response".to_string())
     } else if has_unmet("workspace_inspection_required") {
         Some("structured handoff completed without required workspace inspection".to_string())
+    } else if has_unmet("required_source_paths_not_read") {
+        Some("research completed without reading the exact required source files".to_string())
     } else if has_unmet("no_concrete_reads") || has_unmet("concrete_read_required") {
         Some(
             "research completed without concrete file reads or required source coverage"

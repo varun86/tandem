@@ -298,6 +298,113 @@ fn structured_handoff_nodes_require_concrete_reads_without_output_path() {
 }
 
 #[test]
+fn structured_handoff_blocks_when_exact_named_source_read_fails_but_copy_is_discovered() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-structured-handoff-exact-source-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    std::fs::write(workspace_root.join("RESUME copy 2.md"), "# Copy\n").expect("write copy");
+    let resume_path = workspace_root.join("RESUME.md");
+    let copy_path = workspace_root.join("RESUME copy 2.md");
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "assess".to_string(),
+        agent_id: "triage".to_string(),
+        objective: format!(
+            "Analyze the local `{}` file and use it as the source of truth for skills. Never edit, rewrite, rename, move, or delete `{}`. If `resume_overview.md` is missing, create it.",
+            resume_path.display(),
+            resume_path.display()
+        ),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("local_research".to_string()),
+                required_tools: vec!["glob".to_string(), "read".to_string()],
+                required_evidence: vec!["local_source_reads".to_string()],
+                required_sections: Vec::new(),
+                prewrite_gates: vec!["concrete_reads".to_string()],
+                retry_on_missing: vec![
+                    "local_source_reads".to_string(),
+                    "concrete_reads".to_string(),
+                ],
+                terminal_on: Vec::new(),
+                repair_budget: Some(3),
+                session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+            }),
+            schema: None,
+            summary_guidance: Some("Return a structured handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(
+        Some("structured-handoff-exact-source".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "glob".to_string(),
+                args: json!({"pattern":"*.md"}),
+                result: Some(json!({"output": copy_path.display().to_string()})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({"path": resume_path.display().to_string()}),
+                result: None,
+                error: Some("read failed: No such file or directory (os error 2)".to_string()),
+            },
+        ],
+    ));
+    let requested_tools = vec!["glob".to_string(), "read".to_string()];
+    let tool_telemetry = summarize_automation_tool_activity(&node, &session, &requested_tools);
+    let (_accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root string"),
+        "{\"structured_handoff\":{\"assessment\":{\"has_resume_md\":false,\"proceed_downstream\":false}},\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        None,
+        &std::collections::BTreeSet::new(),
+    );
+
+    assert_eq!(
+        rejected.as_deref(),
+        Some("research completed without reading the exact required source files")
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str() == Some("required_source_paths_not_read"))));
+    assert_eq!(
+        artifact_validation
+            .pointer("/validation_basis/missing_required_source_read_paths/0")
+            .and_then(Value::as_str),
+        Some("RESUME.md")
+    );
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
 fn wrap_automation_node_output_includes_parsed_structured_handoff() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

@@ -565,7 +565,7 @@ pub(crate) fn classify_research_validation_state(
         && unmet_requirements.iter().any(|value| {
             matches!(
                 value.as_str(),
-                "no_concrete_reads" | "concrete_read_required"
+                "no_concrete_reads" | "concrete_read_required" | "required_source_paths_not_read"
             )
         }))
         || (web_research_expected
@@ -634,12 +634,18 @@ pub(crate) fn research_required_next_tool_actions(
     if requested_has_read
         && (!executed_has_read
             || has_unmet("no_concrete_reads")
+            || has_unmet("required_source_paths_not_read")
             || has_unmet("files_reviewed_not_backed_by_read"))
     {
         if unreviewed_relevant_paths.is_empty() {
             if has_unmet("citations_missing") || has_unmet("research_citations_missing") {
                 actions.push(
                     "No additional unreviewed files detected. If citations are missing, either: (a) re-read upstream handoff sources with `read` to extract specific proof points, or (b) add explicit `Files not reviewed` section listing sources that could not be verified with reasons.".to_string(),
+                );
+            } else if has_unmet("required_source_paths_not_read") {
+                actions.push(
+                    "Use `read` on the exact source file paths named in the workflow prompt before finalizing. Similar backup or copy filenames do not satisfy the requirement."
+                        .to_string(),
                 );
             } else {
                 actions.push(
@@ -1551,6 +1557,7 @@ pub(crate) fn detect_automation_node_failure_kind(
         == crate::AutomationOutputValidatorKind::ResearchBrief
         && (has_unmet("no_concrete_reads")
             || has_unmet("concrete_read_required")
+            || has_unmet("required_source_paths_not_read")
             || has_unmet("missing_successful_web_research")
             || has_unmet("citations_missing")
             || has_unmet("web_sources_reviewed_missing")
@@ -1561,6 +1568,7 @@ pub(crate) fn detect_automation_node_failure_kind(
     let required_tools_blocked = has_required_tools
         && (has_unmet("no_concrete_reads")
             || has_unmet("concrete_read_required")
+            || has_unmet("required_source_paths_not_read")
             || has_unmet("missing_successful_web_research"));
     let editorial_requirements_blocked = has_unmet("editorial_substance_missing")
         || has_unmet("markdown_structure_missing")
@@ -1632,7 +1640,10 @@ pub(crate) fn detect_automation_node_failure_kind(
         if handoff_only_structured_json && has_unmet("structured_handoff_missing") {
             return Some("structured_handoff_missing".to_string());
         }
-        if has_unmet("no_concrete_reads") || has_unmet("concrete_read_required") {
+        if has_unmet("no_concrete_reads")
+            || has_unmet("concrete_read_required")
+            || has_unmet("required_source_paths_not_read")
+        {
             if automation_output_validator_kind(node)
                 == crate::AutomationOutputValidatorKind::ResearchBrief
             {
@@ -2048,6 +2059,7 @@ pub(crate) fn detect_automation_node_phase(
                     && normalized_status == "blocked"
                     && (has_unmet("no_concrete_reads")
                         || has_unmet("concrete_read_required")
+                        || has_unmet("required_source_paths_not_read")
                         || has_unmet("missing_successful_web_research")
                         || has_unmet("citations_missing")
                         || has_unmet("web_sources_reviewed_missing")

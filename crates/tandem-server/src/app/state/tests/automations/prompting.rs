@@ -710,6 +710,7 @@ fn bootstrap_prompt_keeps_source_of_truth_reads_visible_with_optional_workspace_
 
     assert!(prompt.contains("Concrete Source Coverage:"));
     assert!(prompt.contains("RESUME.md"));
+    assert!(prompt.contains("Similar backup or copy filenames do not satisfy the requirement"));
     assert!(prompt.contains("Read-Only Source Files:"));
     assert!(prompt.contains("Required Workspace Writes:"));
     assert!(prompt.contains("resume_overview.md"));
@@ -2213,6 +2214,7 @@ fn assess_prompt_surfaces_concrete_source_coverage_for_named_workspace_files() {
     assert!(prompt.contains("Concrete Source Coverage:"));
     assert!(prompt.contains("Read the concrete workspace file paths named in the objective"));
     assert!(prompt.contains("glob`, `grep`, and `codesearch` can help discover files"));
+    assert!(prompt.contains("Similar backup or copy filenames do not satisfy the requirement"));
     assert!(prompt.contains("/home/evan/job-hunt/resume_overview.md"));
     assert!(prompt.contains("/home/evan/job-hunt/RESUME.md"));
 }
