@@ -873,6 +873,27 @@ pub fn workflow_plan_mentions_web_research_tools(prompt: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
+pub fn workflow_plan_mentions_email_delivery(prompt: &str) -> bool {
+    let lowered = prompt.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return false;
+    }
+    let explicit_email = lowered.contains("email")
+        || lowered.contains("mail ")
+        || lowered.contains("mailing")
+        || lowered.contains("inbox")
+        || lowered.contains("send a draft")
+        || lowered.contains("send a reply")
+        || lowered.contains("send an email")
+        || lowered.contains("send email");
+    let delivery_context = lowered.contains("send")
+        || lowered.contains("deliver")
+        || lowered.contains("notify")
+        || lowered.contains("reply")
+        || lowered.contains("draft");
+    explicit_email && delivery_context
+}
+
 pub fn workflow_plan_should_surface_mcp_discovery(
     prompt: &str,
     allowed_mcp_servers: &[String],
@@ -2418,6 +2439,22 @@ Here is the planner response:
         ));
         assert!(!workflow_plan_mentions_web_research_tools(
             "Summarize the local workspace docs."
+        ));
+    }
+
+    #[test]
+    fn workflow_plan_mentions_email_delivery_only_for_explicit_email_workflows() {
+        assert!(workflow_plan_mentions_email_delivery(
+            "Use email to send the final report."
+        ));
+        assert!(workflow_plan_mentions_email_delivery(
+            "Draft an email update and send it to the team."
+        ));
+        assert!(!workflow_plan_mentions_email_delivery(
+            "Create or append to a daily results file."
+        ));
+        assert!(!workflow_plan_mentions_email_delivery(
+            "Publish the report to a markdown file."
         ));
     }
 }

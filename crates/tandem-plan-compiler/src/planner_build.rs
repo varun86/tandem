@@ -20,8 +20,9 @@ use crate::workflow_plan::{
     infer_read_only_source_paths, manual_schedule, normalize_and_validate_planner_plan,
     normalize_operator_preferences, normalize_prompt, normalize_string_list, plan_save_options,
     plan_title, planner_diagnostics, planner_llm_provider_unconfigured_hint, planner_model_spec,
-    schedule_from_value, truncate_text, workflow_plan_mentions_web_research_tools,
-    workflow_plan_should_surface_mcp_discovery, PlannerPlanMode, PlannerPlanNormalizationContext,
+    schedule_from_value, truncate_text, workflow_plan_mentions_email_delivery,
+    workflow_plan_mentions_web_research_tools, workflow_plan_should_surface_mcp_discovery,
+    PlannerPlanMode, PlannerPlanNormalizationContext,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -550,10 +551,7 @@ where
         explicit_output_targets,
         "the requested output paths",
     );
-    let lower_prompt = prompt.to_ascii_lowercase();
-    let wants_delivery = ["send", "email", "deliver", "publish", "post ", "notify"]
-        .iter()
-        .any(|needle| lower_prompt.contains(needle));
+    let wants_delivery = workflow_plan_mentions_email_delivery(prompt);
     let wants_web_research = workflow_plan_mentions_web_research_tools(prompt);
 
     let mut steps = Vec::new();
@@ -1136,6 +1134,10 @@ Replace `YYYY-MM-DD` with the actual resolved date for the run.";
                 .any(|step| step.objective.contains("websearch")
                     || step.objective.contains("webfetch")),
             "fallback plan should preserve explicit web search tooling"
+        );
+        assert!(
+            !plan.steps.iter().any(|step| step.step_id == "notify_user"),
+            "file-only workflows should not add a delivery notification step"
         );
     }
 }
