@@ -26,6 +26,22 @@ function formatCompactNumber(value: number) {
   );
 }
 
+function formatUsd(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function normalizeStatusKey(value: any) {
+  return String(value || "")
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+}
+
 export function DashboardPage(props: AppPageProps) {
   const { api, client, navigate, providerStatus } = props;
   const [selectedWorkflowContextRunId, setSelectedWorkflowContextRunId] = useState("");
@@ -45,6 +61,11 @@ export function DashboardPage(props: AppPageProps) {
     queryKey: ["dashboard", "routines"],
     queryFn: () => client.routines.list().catch(() => ({ routines: [] })),
     refetchInterval: 20000,
+  });
+  const automationRuns = useQuery({
+    queryKey: ["dashboard", "automation-v2-runs"],
+    queryFn: () => api("/api/engine/automations/v2/runs?limit=200").catch(() => ({ runs: [] })),
+    refetchInterval: 15000,
   });
   const swarm = useQuery({
     queryKey: ["dashboard", "swarm"],
@@ -75,6 +96,7 @@ export function DashboardPage(props: AppPageProps) {
 
   const sessionRows = toArray(sessions.data, "sessions");
   const routineRows = toArray(routines.data, "routines");
+  const automationRunRows = toArray(automationRuns.data, "runs");
   const workflowContextRows = toArray(workflowContexts.data, "runs").filter((run: any) =>
     visibleContextRunTypes.has(
       String(run?.run_type || "")
@@ -86,6 +108,25 @@ export function DashboardPage(props: AppPageProps) {
   const swarmStatus = String(swarm.data?.status || "unknown");
   const swarmRunning = ["planning", "awaiting_approval", "running", "executing"].includes(
     swarmStatus.toLowerCase()
+  );
+  const liveAutomationRunRows = automationRunRows.filter((run: any) =>
+    ["queued", "running", "pausing", "awaiting_approval", "blocked"].includes(
+      normalizeStatusKey(run?.status)
+    )
+  );
+  const trackedAutomationRunRows = automationRunRows.filter((run: any) => {
+    const totalTokens = Number(run?.total_tokens || 0);
+    const estimatedCostUsd = Number(run?.estimated_cost_usd || 0);
+    return totalTokens > 0 || estimatedCostUsd > 0;
+  });
+  const automationTokenTotals = automationRunRows.reduce(
+    (acc: { prompt: number; completion: number; total: number; cost: number }, run: any) => ({
+      prompt: acc.prompt + Number(run?.prompt_tokens || 0),
+      completion: acc.completion + Number(run?.completion_tokens || 0),
+      total: acc.total + Number(run?.total_tokens || 0),
+      cost: acc.cost + Number(run?.estimated_cost_usd || 0),
+    }),
+    { prompt: 0, completion: 0, total: 0, cost: 0 }
   );
   const activeWorkflowContexts = workflowContextRows.filter((run: any) =>
     ["queued", "planning", "running", "awaiting_approval"].includes(
@@ -104,22 +145,29 @@ export function DashboardPage(props: AppPageProps) {
         helper: "Latest active conversation surfaces",
       },
       {
-        label: "Automations",
-        value: routineRows.length,
+        label: "Stored runs",
+        value: automationRunRows.length,
         tone: "ok" as const,
-        helper: "Configured routines and schedules",
+        helper: "Persisted automation-v2 history",
       },
       {
-        label: "Swarm status",
-        value: swarmRunning ? 1 : 0,
-        tone: swarmRunning ? ("warn" as const) : ("ghost" as const),
-        helper: swarmStatus,
+        label: "Live runs",
+        value: liveAutomationRunRows.length,
+        tone: liveAutomationRunRows.length ? ("warn" as const) : ("ghost" as const),
+        helper: "Queued, running, blocked, awaiting approval",
       },
       {
-        label: "Provider ready",
-        value: providerStatus.ready ? 1 : 0,
-        tone: providerStatus.ready ? ("ok" as const) : ("warn" as const),
-        helper: providerStatus.ready ? providerStatus.defaultModel : "Needs setup",
+        label: "Tracked tokens",
+        value: automationTokenTotals.total,
+        tone: automationTokenTotals.total ? ("info" as const) : ("ghost" as const),
+        helper: `${trackedAutomationRunRows.length} runs with usage`,
+      },
+      {
+        label: "Estimated spend",
+        value: automationTokenTotals.cost,
+        tone: automationTokenTotals.cost ? ("ok" as const) : ("ghost" as const),
+        helper: "Summed from stored run records",
+        format: formatUsd,
       },
       {
         label: "Context runs",
@@ -132,13 +180,13 @@ export function DashboardPage(props: AppPageProps) {
     ],
     [
       activeWorkflowContexts.length,
-      providerStatus.defaultModel,
-      providerStatus.ready,
-      routineRows.length,
+      automationRunRows.length,
+      automationTokenTotals.cost,
+      automationTokenTotals.total,
+      liveAutomationRunRows.length,
       sessionRows.length,
-      swarmRunning,
-      swarmStatus,
       workflowContextRows.length,
+      trackedAutomationRunRows.length,
     ]
   );
 
@@ -150,8 +198,8 @@ export function DashboardPage(props: AppPageProps) {
             <div className="tcp-page-eyebrow">Overview</div>
             <h1 className="tcp-page-title">Command center</h1>
             <p className="tcp-subtle mt-2 max-w-3xl">
-              A higher-signal home screen with animated state, quick entry points, and a clearer
-              read on what the system is doing right now.
+              A higher-signal home screen with animated state and a clearer read on what the system
+              is doing right now.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge tone={healthy ? "ok" : "warn"}>
@@ -167,30 +215,6 @@ export function DashboardPage(props: AppPageProps) {
               )}
             </div>
           </div>
-          <div className="grid gap-3">
-            <Toolbar className="justify-start">
-              <button className="tcp-btn-primary w-full sm:w-auto" onClick={() => navigate("chat")}>
-                <i data-lucide="message-square"></i>
-                Chat session
-              </button>
-              <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("orchestrator")}>
-                <i data-lucide="sparkles"></i>
-                Plan work
-              </button>
-              <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("automations")}>
-                <i data-lucide="bot"></i>
-                Automations
-              </button>
-              <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("coding")}>
-                <i data-lucide="code"></i>
-                Coding workflows
-              </button>
-              <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("settings")}>
-                <i data-lucide="settings"></i>
-                Configure runtime
-              </button>
-            </Toolbar>
-          </div>
         </div>
 
         <div className="mt-5">
@@ -202,11 +226,15 @@ export function DashboardPage(props: AppPageProps) {
                   <Badge tone={stat.tone}>{stat.helper}</Badge>
                 </div>
                 <strong>
-                  <MotionNumber value={stat.value} format={formatCompactNumber} />
+                  <MotionNumber value={stat.value} format={stat.format ?? formatCompactNumber} />
                 </strong>
               </div>
             ))}
           </div>
+          <p className="tcp-subtle mt-3 text-xs">
+            Usage totals are aggregated from stored automation-v2 run history, so they reflect real
+            executions instead of inferred activity.
+          </p>
 
           <div className="mt-4 dashboard-bars">
             <div className="dashboard-bar-row">
@@ -236,12 +264,26 @@ export function DashboardPage(props: AppPageProps) {
             <div className="dashboard-bar-row">
               <div className="dashboard-bar-meta">
                 <span>Automation activity</span>
-                <span className="dashboard-bar-count">{routineRows.length} routines</span>
+                <span className="dashboard-bar-count">{liveAutomationRunRows.length} live</span>
               </div>
               <div className="dashboard-bar-track">
                 <span
-                  className={`dashboard-bar-fill ${routineRows.length ? "scheduled" : "manual"}`}
-                  style={{ width: `${Math.min(100, Math.max(12, routineRows.length * 12))}%` }}
+                  className={`dashboard-bar-fill ${
+                    liveAutomationRunRows.length ? "running" : "manual"
+                  }`}
+                  style={{
+                    width: `${
+                      automationRunRows.length
+                        ? Math.min(
+                            100,
+                            Math.max(
+                              12,
+                              (liveAutomationRunRows.length / automationRunRows.length) * 100
+                            )
+                          )
+                        : 12
+                    }%`,
+                  }}
                 ></span>
               </div>
             </div>
