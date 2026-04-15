@@ -108,6 +108,247 @@ fn standup_filler_repair_reason(tool_telemetry: &Value) -> String {
     )
 }
 
+fn automation_structured_handoff_source_material(session: &Session) -> Option<Value> {
+    let workspace_root = session
+        .workspace_root
+        .as_deref()
+        .unwrap_or(session.directory.as_str());
+    let mut source_material = Vec::<Value>::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool,
+                args,
+                result,
+                error,
+            } = part
+            else {
+                continue;
+            };
+            if !tool.eq_ignore_ascii_case("read")
+                || error.as_ref().is_some_and(|value| !value.trim().is_empty())
+            {
+                continue;
+            }
+            let Some(args) = super::tool_args_object(args) else {
+                continue;
+            };
+            let Some(raw_path) = super::automation_write_arg_path(&args) else {
+                continue;
+            };
+            let Some(content) = automation_tool_result_output_text(result.as_ref()) else {
+                continue;
+            };
+            if content.trim().is_empty() {
+                continue;
+            }
+            let normalized_path = super::normalize_workspace_display_path(workspace_root, raw_path)
+                .unwrap_or_else(|| raw_path.trim().to_string());
+            let fingerprint = format!(
+                "{}:{}",
+                normalized_path.to_ascii_lowercase(),
+                crate::sha256_hex(&[content.as_str()])
+            );
+            if !seen.insert(fingerprint) {
+                continue;
+            }
+            source_material.push(json!({
+                "path": normalized_path,
+                "content": content,
+                "tool": "read",
+            }));
+        }
+    }
+    if source_material.is_empty() {
+        None
+    } else {
+        Some(Value::Array(source_material))
+    }
+}
+
+fn automation_attach_structured_handoff_source_material(
+    structured_handoff: &mut Value,
+    source_material: &Value,
+) {
+    let Some(source_rows) = source_material.as_array() else {
+        return;
+    };
+    if source_rows.is_empty() {
+        return;
+    }
+    let Some(object) = structured_handoff.as_object_mut() else {
+        return;
+    };
+    let entry = object
+        .entry("source_material".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(existing_rows) = entry.as_array_mut() else {
+        *entry = source_material.clone();
+        return;
+    };
+    for row in source_rows {
+        if !existing_rows.iter().any(|existing| existing == row) {
+            existing_rows.push(row.clone());
+        }
+    }
+}
+
+fn automation_read_only_source_of_truth_name_variants(
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::<String>::new();
+    for path in enforcement::automation_node_read_only_source_of_truth_files(node) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        names.insert(trimmed.to_ascii_lowercase());
+        if let Some(filename) = std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|value| value.to_str())
+        {
+            names.insert(filename.to_ascii_lowercase());
+        }
+        if let Some(normalized) = super::normalize_workspace_display_path(workspace_root, trimmed) {
+            names.insert(normalized.to_ascii_lowercase());
+            if let Some(filename) = std::path::Path::new(&normalized)
+                .file_name()
+                .and_then(|value| value.to_str())
+            {
+                names.insert(filename.to_ascii_lowercase());
+            }
+        }
+    }
+    names
+}
+
+fn automation_path_references_read_only_source_of_truth(
+    raw_path: &str,
+    read_only_names: &std::collections::HashSet<String>,
+    workspace_root: &str,
+) -> bool {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut candidates = vec![trimmed.to_ascii_lowercase()];
+    if let Some(filename) = std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(|value| value.to_str())
+    {
+        candidates.push(filename.to_ascii_lowercase());
+    }
+    if let Some(normalized) = super::normalize_workspace_display_path(workspace_root, trimmed) {
+        candidates.push(normalized.to_ascii_lowercase());
+        if let Some(filename) = std::path::Path::new(&normalized)
+            .file_name()
+            .and_then(|value| value.to_str())
+        {
+            candidates.push(filename.to_ascii_lowercase());
+        }
+    }
+    candidates
+        .into_iter()
+        .any(|candidate| read_only_names.contains(&candidate))
+}
+
+fn automation_value_references_read_only_source_of_truth(
+    value: &Value,
+    read_only_names: &std::collections::HashSet<String>,
+    workspace_root: &str,
+) -> bool {
+    match value {
+        Value::String(text) => automation_path_references_read_only_source_of_truth(
+            text,
+            read_only_names,
+            workspace_root,
+        ),
+        Value::Object(object) => object
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| {
+                automation_path_references_read_only_source_of_truth(
+                    path,
+                    read_only_names,
+                    workspace_root,
+                )
+            }),
+        _ => false,
+    }
+}
+
+fn automation_sanitize_read_only_source_of_truth_writes(
+    value: &mut Value,
+    read_only_names: &std::collections::HashSet<String>,
+    workspace_root: &str,
+) {
+    const WRITE_TARGET_KEYS: &[&str] = &[
+        "must_write_files",
+        "workspace_writes_needed",
+        "required_workspace_writes",
+        "write_targets",
+        "approved_write_targets",
+        "required_write_targets",
+    ];
+    match value {
+        Value::Object(object) => {
+            for key in WRITE_TARGET_KEYS {
+                if let Some(child) = object.get_mut(*key) {
+                    match child {
+                        Value::Array(rows) => {
+                            rows.retain(|row| {
+                                !automation_value_references_read_only_source_of_truth(
+                                    row,
+                                    read_only_names,
+                                    workspace_root,
+                                )
+                            });
+                        }
+                        Value::String(text) => {
+                            if automation_path_references_read_only_source_of_truth(
+                                text,
+                                read_only_names,
+                                workspace_root,
+                            ) {
+                                *child = Value::Null;
+                            }
+                        }
+                        Value::Object(_) => {
+                            if automation_value_references_read_only_source_of_truth(
+                                child,
+                                read_only_names,
+                                workspace_root,
+                            ) {
+                                *child = Value::Null;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for child in object.values_mut() {
+                automation_sanitize_read_only_source_of_truth_writes(
+                    child,
+                    read_only_names,
+                    workspace_root,
+                );
+            }
+        }
+        Value::Array(rows) => {
+            for child in rows.iter_mut() {
+                automation_sanitize_read_only_source_of_truth_writes(
+                    child,
+                    read_only_names,
+                    workspace_root,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn augment_automation_attempt_evidence_with_validation(
     attempt_evidence: &Value,
     artifact_validation: Option<&Value>,
@@ -1941,14 +2182,34 @@ pub(crate) fn wrap_automation_node_output(
         .map(|(_, text)| text.as_str())
         .unwrap_or_else(|| session_text.trim());
     let validator_kind = automation_output_validator_kind(node);
-    let structured_handoff = if validator_kind
-        == crate::AutomationOutputValidatorKind::StructuredJson
-        && verified_output.is_none()
-    {
-        extract_structured_handoff_json(session_text)
-    } else {
-        None
-    };
+    let workspace_root = session
+        .workspace_root
+        .as_deref()
+        .unwrap_or(session.directory.as_str());
+    let read_only_source_of_truth_names =
+        automation_read_only_source_of_truth_name_variants(node, workspace_root);
+    let structured_source_material = automation_structured_handoff_source_material(session);
+    let mut structured_handoff =
+        if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson {
+            verified_output
+                .as_ref()
+                .and_then(|(_, text)| extract_structured_handoff_json(text))
+                .or_else(|| extract_structured_handoff_json(session_text))
+        } else {
+            None
+        };
+    if let Some(handoff) = structured_handoff.as_mut() {
+        if let Some(source_material) = structured_source_material.as_ref() {
+            automation_attach_structured_handoff_source_material(handoff, source_material);
+        }
+        if !read_only_source_of_truth_names.is_empty() {
+            automation_sanitize_read_only_source_of_truth_writes(
+                handoff,
+                &read_only_source_of_truth_names,
+                workspace_root,
+            );
+        }
+    }
     let structured_primary_text = structured_handoff
         .as_ref()
         .and_then(|value| serde_json::to_string_pretty(value).ok());

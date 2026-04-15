@@ -419,4 +419,58 @@ mod tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn normalize_upstream_research_output_paths_normalizes_source_material_entries() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-upstream-source-material-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        std::fs::write(
+            workspace_root.join("RESUME.md"),
+            "# Resume\n\nKeep the source text intact.\n",
+        )
+        .expect("write resume");
+
+        let output = json!({
+            "content": {
+                "structured_handoff": {
+                    "source_material": [
+                        {
+                            "path": workspace_root.join("RESUME.md").to_string_lossy().to_string(),
+                            "content": "Keep the source text intact.",
+                            "tool": "read"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let normalized = normalize_upstream_research_output_paths(
+            workspace_root.to_str().expect("workspace root string"),
+            Some("run_1"),
+            &output,
+        );
+        let source_material = normalized
+            .pointer("/content/structured_handoff/source_material")
+            .and_then(Value::as_array)
+            .expect("source material");
+        assert_eq!(
+            source_material
+                .first()
+                .and_then(|value| value.get("path"))
+                .and_then(Value::as_str),
+            Some("RESUME.md")
+        );
+        assert_eq!(
+            source_material
+                .first()
+                .and_then(|value| value.get("content"))
+                .and_then(Value::as_str),
+            Some("Keep the source text intact.")
+        );
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
 }

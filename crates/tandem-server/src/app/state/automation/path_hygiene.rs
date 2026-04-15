@@ -235,6 +235,7 @@ pub(crate) fn normalize_upstream_research_output_paths(
             "citations_local",
             "citations_external",
             "sources_reviewed",
+            "source_material",
         ] {
             if let Some(value) = handoff.get_mut(key) {
                 normalize_structured_handoff_field(workspace_root, &base_dirs, run_id, key, value);
@@ -258,6 +259,7 @@ pub(crate) fn normalize_upstream_research_output_paths(
                     "citations_local",
                     "citations_external",
                     "sources_reviewed",
+                    "source_material",
                 ] {
                     if let Some(value) = map.get_mut(key) {
                         normalize_structured_handoff_field(

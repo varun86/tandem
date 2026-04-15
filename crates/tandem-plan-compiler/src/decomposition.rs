@@ -581,4 +581,33 @@ mod tests {
         assert!(sections.contains("phase_id"));
         assert!(sections.contains("one primary objective"));
     }
+
+    #[test]
+    fn decomposition_profile_requires_phases_for_resume_job_search_prompt() {
+        let prompt = "Analyze the local `RESUME.md` file and use it as the source of truth for skills, role targets, seniority, technologies, and geography preferences.
+
+This workflow must stay simple and deterministic.
+
+## Core rules
+
+- Never edit, rewrite, rename, move, or delete `RESUME.md`
+- Only read from `RESUME.md`
+- If `resume_overview.md` does not exist, create it
+- If `resume_overview.md` already exists, reuse it and do not regenerate it unless it is missing
+- Use the `websearch` tool to find relevant job boards and recruitment sites in Europe where jobs are posted for the skills found in `RESUME.md`
+- Save all results to a daily timestamped results file
+- This workflow may run many times in one day, so it must append new findings to the same daily file instead of creating many separate files for the same date";
+
+        let explicit_output_targets = crate::workflow_plan::infer_explicit_output_targets(prompt);
+        let profile =
+            derive_workflow_decomposition_profile(prompt, &[], &explicit_output_targets, true);
+
+        assert!(profile.requires_phased_dag);
+        assert!(profile.recommended_phase_count >= 2);
+        assert!(profile.complexity_score >= 25);
+        assert!(profile
+            .signals
+            .iter()
+            .any(|signal| signal.contains("output_targets")));
+    }
 }

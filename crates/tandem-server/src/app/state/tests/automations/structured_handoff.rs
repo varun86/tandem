@@ -367,3 +367,197 @@ fn wrap_automation_node_output_includes_parsed_structured_handoff() {
         .and_then(Value::as_str)
         .is_some_and(|text| text.contains("\"priority_paths\"")));
 }
+
+#[test]
+fn wrap_automation_node_output_attaches_source_material_from_reads() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-structured-handoff-source-material-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    std::fs::write(
+        workspace_root.join("RESUME.md"),
+        "# Resume\n\nKeep the source text intact.\n",
+    )
+    .expect("write resume");
+
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research-discover-sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Discover source corpus".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return a structured handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(
+        Some("structured-handoff-source-material".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.workspace_root = Some(
+        workspace_root
+            .to_str()
+            .expect("workspace root string")
+            .to_string(),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "read".to_string(),
+            args: json!({"path":"RESUME.md"}),
+            result: Some(json!({"output":"# Resume\n\nKeep the source text intact.\n"})),
+            error: None,
+        }],
+    ));
+
+    let output: Value = wrap_automation_node_output(
+        &node,
+        &session,
+        &["read".to_string()],
+        "sess-structured-handoff-source-material",
+        Some("run-structured-handoff-source-material"),
+        "{\n  \"status\": \"completed\",\n  \"source_summary\": \"resume reviewed\"\n}\n",
+        None,
+        Some(json!({})),
+    );
+
+    let structured_handoff = output
+        .get("content")
+        .and_then(|value| value.get("structured_handoff"))
+        .and_then(Value::as_object)
+        .expect("structured handoff");
+    let source_material = structured_handoff
+        .get("source_material")
+        .and_then(Value::as_array)
+        .expect("source material");
+    assert_eq!(source_material.len(), 1);
+    assert_eq!(
+        source_material[0].get("path").and_then(Value::as_str),
+        Some("RESUME.md")
+    );
+    assert!(source_material[0]
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("Keep the source text intact.")));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
+fn wrap_automation_node_output_strips_read_only_files_from_write_targets() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-structured-handoff-write-targets-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    std::fs::write(
+        workspace_root.join("RESUME.md"),
+        "# Resume\n\nKeep the source text intact.\n",
+    )
+    .expect("write resume");
+
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "assess".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Read RESUME.md as the source of truth and keep RESUME.md untouched while creating resume_overview.md and daily_results_2026-04-15.md.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return a structured triage handoff.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(
+        Some("structured-handoff-write-targets".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.workspace_root = Some(
+        workspace_root
+            .to_str()
+            .expect("workspace root string")
+            .to_string(),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "read".to_string(),
+            args: json!({"path":"RESUME.md"}),
+            result: Some(json!({"output":"# Resume\n\nKeep the source text intact.\n"})),
+            error: None,
+        }],
+    ));
+
+    let output: Value = wrap_automation_node_output(
+        &node,
+        &session,
+        &["read".to_string()],
+        "sess-structured-handoff-write-targets",
+        Some("run-structured-handoff-write-targets"),
+        "{\n  \"status\": \"completed\",\n  \"workspace_writes_needed\": [\"RESUME.md\", \"resume_overview.md\"],\n  \"actions\": {\n    \"workspace_writes_needed\": [\"RESUME.md\", \"daily_results_2026-04-15.md\"]\n  }\n}\n",
+        None,
+        Some(json!({})),
+    );
+
+    let structured_handoff = output
+        .get("content")
+        .and_then(|value| value.get("structured_handoff"))
+        .and_then(Value::as_object)
+        .expect("structured handoff");
+    let top_level_writes = structured_handoff
+        .get("workspace_writes_needed")
+        .and_then(Value::as_array)
+        .expect("workspace_writes_needed");
+    assert!(!top_level_writes
+        .iter()
+        .any(|value| value.as_str() == Some("RESUME.md")));
+    assert!(top_level_writes
+        .iter()
+        .any(|value| value.as_str() == Some("resume_overview.md")));
+
+    let nested_writes = structured_handoff
+        .get("actions")
+        .and_then(Value::as_object)
+        .and_then(|actions| actions.get("workspace_writes_needed"))
+        .and_then(Value::as_array)
+        .expect("nested workspace_writes_needed");
+    assert!(!nested_writes
+        .iter()
+        .any(|value| value.as_str() == Some("RESUME.md")));
+    assert!(nested_writes
+        .iter()
+        .any(|value| value.as_str() == Some("daily_results_2026-04-15.md")));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}

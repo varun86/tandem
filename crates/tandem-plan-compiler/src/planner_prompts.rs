@@ -43,13 +43,14 @@ fn workflow_plan_teaching_library_sections() -> String {
         "- connector-backed work: prefer the selected MCP inventory for source-specific systems such as Reddit, GitHub issues, Slack, or Jira, and clarify when no relevant connector is available\n",
         "- code changes: prefer `code_patch` plus an inspect -> patch -> apply -> test -> repair loop, and reserve `write` for brand-new files\n",
         "- recap and synthesis files: prefer `report_markdown`, `structured_json`, or `text_summary` for markdown/json/text deliverables even when they merge prior findings into a final artifact\n",
-        "- monitor-pattern plans: when the user describes a recurring awareness task (checking email, watching for changes, monitoring a data source, scanning for new items), generate a triage-first plan\n",
-        "  - first step must be an `assess` step that uses MCP tools to check the data source and outputs structured JSON: {\"has_work\": true/false, \"summary\": \"...\", \"items\": [...]}\n",
-        "  - set metadata.triage_gate: true on the assess step so the engine skips downstream nodes when has_work is false\n",
-        "  - subsequent steps depend on the assess step and can be as complex as needed; do not limit the plan to two steps\n",
-        "  - the assess step should use a cheap model: set metadata.builder.triage_model: true\n",
-        "  - if a node names concrete workspace files, require at least one `read` on a concrete file path before the node is complete; discovery tools like `glob`, `grep`, or `codesearch` do not count as source coverage\n",
-        "  - do not add a triage step for non-recurring or non-awareness tasks\n",
+            "- monitor-pattern plans: when the user describes a recurring awareness task (checking email, watching for changes, monitoring a data source, scanning for new items), generate a triage-first plan\n",
+            "  - first step must be an `assess` step that uses MCP tools to check the data source and outputs structured JSON: {\"has_work\": true/false, \"summary\": \"...\", \"items\": [...]}\n",
+            "  - set metadata.triage_gate: true on the assess step so the engine skips downstream nodes when has_work is false\n",
+            "  - subsequent steps depend on the assess step and can be as complex as needed; do not limit the plan to two steps\n",
+            "  - the assess step should use a cheap model: set metadata.builder.triage_model: true\n",
+            "  - if a node names concrete workspace files, require at least one `read` on a concrete file path before the node is complete; discovery tools like `glob`, `grep`, or `codesearch` do not count as source coverage\n",
+            "  - when a node reads a source-of-truth file, carry the exact file text forward in structured handoff data such as `source_material` instead of turning that file into a write target\n",
+            "  - do not add a triage step for non-recurring or non-awareness tasks\n",
     )
     .to_string()
 }
@@ -77,5 +78,6 @@ mod tests {
         assert!(sections.contains("triage_gate"));
         assert!(sections.contains("concrete workspace files"));
         assert!(sections.contains("read-only or source of truth"));
+        assert!(sections.contains("source_material"));
     }
 }

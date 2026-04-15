@@ -378,13 +378,13 @@ fn automation_prompt_render_concrete_source_coverage(
     let mut sections = Vec::new();
     if !paths.is_empty() {
         sections.push(format!(
-            "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- Concrete files for this node:\n{}",
+            "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- After reading a concrete source, carry its exact text forward in `structured_handoff.source_material` as `{{path, content}}` entries so downstream nodes can reuse the source without rereading it.\n- Concrete files for this node:\n{}",
             automation_prompt_render_path_bullets(&paths)
         ));
     }
     if !read_only_paths.is_empty() {
         sections.push(format!(
-            "Read-Only Source Files:\n- Treat these named files as input-only source-of-truth files unless the explicit output contract names them as write targets.\n- Do not write, rewrite, rename, move, or delete them while satisfying this node.\n- Read-only files for this node:\n{}",
+            "Read-Only Source Files:\n- Treat these named files as input-only source-of-truth files unless the explicit output contract names them as write targets.\n- Do not write, rewrite, rename, move, or delete them while satisfying this node.\n- If you need their content, include it in `structured_handoff.source_material` and keep the file itself out of every write-target list, repair plan, or workspace write summary.\n- Read-only files for this node:\n{}",
             automation_prompt_render_path_bullets(&read_only_paths)
         ));
     }

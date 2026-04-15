@@ -411,6 +411,7 @@ fn prompt_separates_read_only_source_of_truth_files_from_write_targets() {
     assert!(prompt.contains("resume_overview.md"));
     assert!(prompt.contains("daily_results_2026-04-15.md"));
     assert!(prompt.contains("Treat these named files as input-only source-of-truth files"));
+    assert!(prompt.contains("structured_handoff.source_material"));
 }
 
 #[test]
