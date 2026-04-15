@@ -23,6 +23,7 @@
 //! `/deny <tool_call_id>`, `/schedule ...`, `/help [topic]`
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,10 +32,11 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
+use crate::channel_registry::{
+    command_capability, registered_channels, slash_command_capabilities, ChannelCommandCapability,
+    ChannelRuntimeDiagnostics,
+};
 use crate::config::{ChannelSecurityProfile, ChannelsConfig};
-use crate::discord::DiscordChannel;
-use crate::slack::SlackChannel;
-use crate::telegram::TelegramChannel;
 use crate::traits::{Channel, ChannelMessage, SendMessage};
 
 #[derive(Debug)]
@@ -1045,6 +1047,14 @@ fn parse_config_command(rest: &str) -> Option<ConfigCommand> {
 /// Start all configured channel listeners. Returns a `JoinSet` that the caller
 /// can `.abort_all()` on shutdown.
 pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
+    let diagnostics = crate::channel_registry::new_channel_runtime_diagnostics();
+    start_channel_listeners_with_diagnostics(config, diagnostics).await
+}
+
+pub async fn start_channel_listeners_with_diagnostics(
+    config: ChannelsConfig,
+    diagnostics: ChannelRuntimeDiagnostics,
+) -> JoinSet<()> {
     let initial_map = load_session_map().await;
     info!(
         "tandem-channels: loaded {} persisted session mappings",
@@ -1055,37 +1065,34 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
     let mut security_profiles = HashMap::new();
     let mut set = JoinSet::new();
 
-    if let Some(tg) = config.telegram {
-        security_profiles.insert("telegram".to_string(), tg.security_profile);
-        let channel = Arc::new(TelegramChannel::new(tg));
+    let mut registry_seen = HashSet::new();
+    for spec in registered_channels() {
+        if !registry_seen.insert(spec.name) {
+            error!("channel registry has duplicate entry for {}", spec.name);
+            continue;
+        }
+        let Some(channel) = (spec.constructor)(&config) else {
+            continue;
+        };
+        security_profiles.insert(
+            spec.name.to_string(),
+            spec.security_profile(&config).unwrap_or_default(),
+        );
         let map = session_map.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
         let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(channel, base_url, api_token, map, profiles));
-        info!("tandem-channels: Telegram listener started");
-    }
-
-    if let Some(dc) = config.discord {
-        security_profiles.insert("discord".to_string(), dc.security_profile);
-        let channel = Arc::new(DiscordChannel::new(dc));
-        let map = session_map.clone();
-        let base_url = config.server_base_url.clone();
-        let api_token = config.api_token.clone();
-        let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(channel, base_url, api_token, map, profiles));
-        info!("tandem-channels: Discord listener started");
-    }
-
-    if let Some(sl) = config.slack {
-        security_profiles.insert("slack".to_string(), sl.security_profile);
-        let channel = Arc::new(SlackChannel::new(sl));
-        let map = session_map.clone();
-        let base_url = config.server_base_url.clone();
-        let api_token = config.api_token.clone();
-        let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(channel, base_url, api_token, map, profiles));
-        info!("tandem-channels: Slack listener started");
+        let channel_name = spec.name.to_string();
+        info!("tandem-channels: {} listener started", spec.status_label);
+        set.spawn(supervise(
+            channel,
+            base_url,
+            api_token,
+            map,
+            profiles,
+            diagnostics.clone(),
+            channel_name,
+        ));
     }
 
     set
@@ -1096,23 +1103,80 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
 // ---------------------------------------------------------------------------
 
 /// Runs a channel listener with exponential-backoff restart on failure.
+async fn set_channel_diagnostic_state(
+    diagnostics: &ChannelRuntimeDiagnostics,
+    channel_name: &str,
+    update: impl FnOnce(&mut crate::channel_registry::ChannelRuntimeDiagnostic),
+) {
+    let mut diagnostics = diagnostics.write().await;
+    let entry = diagnostics
+        .entry(channel_name.to_string())
+        .or_insert_with(Default::default);
+    update(entry);
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 async fn supervise(
     channel: Arc<dyn Channel>,
     base_url: String,
     api_token: String,
     session_map: SessionMap,
     security_profiles: ChannelSecurityMap,
+    diagnostics: ChannelRuntimeDiagnostics,
+    channel_name: String,
 ) {
     let mut backoff_secs: u64 = 1;
+    set_channel_diagnostic_state(&diagnostics, &channel_name, |entry| {
+        entry.state = "stopped";
+        entry.last_error = None;
+        entry.last_error_code = None;
+    })
+    .await;
     loop {
         let (tx, mut rx) = mpsc::channel::<ChannelMessage>(64);
+        set_channel_diagnostic_state(&diagnostics, &channel_name, |entry| {
+            entry.state = "starting";
+            entry.listener_start_count = entry.listener_start_count.saturating_add(1);
+            entry.last_error = None;
+            entry.last_error_code = None;
+            entry.last_reconnect_at = Some(now_unix_ms());
+        })
+        .await;
 
         let channel_listen = channel.clone();
+        let diagnostics_for_listener = diagnostics.clone();
+        let channel_name_for_listener = channel_name.clone();
         let listen_handle = tokio::spawn(async move {
-            if let Err(e) = channel_listen.listen(tx).await {
-                error!("channel listener error: {e}");
-            }
+            let result = channel_listen.listen(tx).await;
+            let code = if result.is_ok() {
+                None
+            } else {
+                Some("listener_error")
+            };
+            let error_message = result.err().map(|error| error.to_string());
+            set_channel_diagnostic_state(
+                &diagnostics_for_listener,
+                &channel_name_for_listener,
+                |entry| {
+                    entry.last_error = error_message.clone();
+                    entry.last_error_code = code;
+                    if error_message.is_some() {
+                        entry.state = "stopped";
+                    }
+                },
+            )
+            .await;
         });
+        set_channel_diagnostic_state(&diagnostics, &channel_name, |entry| {
+            entry.state = "running";
+        })
+        .await;
 
         while let Some(msg) = rx.recv().await {
             let ch = channel.clone();
@@ -1127,9 +1191,29 @@ async fn supervise(
 
         listen_handle.abort();
 
-        if channel.health_check().await {
+        let listen_ok = if let Ok(_) = listen_handle.await {
+            true
+        } else {
+            set_channel_diagnostic_state(&diagnostics, &channel_name, |entry| {
+                entry.state = "stopped";
+                entry.last_error = Some("listener task panicked".to_string());
+                entry.last_error_code = Some("listener_panic");
+            })
+            .await;
+            false
+        };
+
+        if listen_ok && channel.health_check().await {
             backoff_secs = 1;
         } else {
+            set_channel_diagnostic_state(&diagnostics, &channel_name, |entry| {
+                entry.state = "retrying";
+                entry.last_error = Some(
+                    "listener exited and health check failed; attempting reconnect".to_string(),
+                );
+                entry.last_error_code = Some("startup_error");
+            })
+            .await;
             warn!(
                 "channel '{}' unhealthy — restarting in {}s",
                 channel.name(),
@@ -3296,27 +3380,44 @@ fn blocked_command_reason(
     if security_profile != ChannelSecurityProfile::PublicDemo {
         return None;
     }
+    let command_name = slash_command_name(cmd);
+    let Some(capability) = command_capability(command_name) else {
+        return None;
+    };
+    if capability.enabled_for(security_profile) {
+        None
+    } else {
+        capability.public_demo_reason
+    }
+}
+
+fn slash_command_name(cmd: &SlashCommand) -> &'static str {
     match cmd {
-        SlashCommand::Providers
-        | SlashCommand::Models { .. }
-        | SlashCommand::Model { .. }
-        | SlashCommand::Schedule { .. }
-        | SlashCommand::Automations { .. }
-        | SlashCommand::Runs { .. }
-        | SlashCommand::Workspace { .. }
-        | SlashCommand::Mcp { .. }
-        | SlashCommand::Packs { .. }
-        | SlashCommand::Config { .. }
-        | SlashCommand::Tools { .. }
-        | SlashCommand::Approve { .. }
-        | SlashCommand::Deny { .. }
-        | SlashCommand::Answer { .. } => Some(
-            "Public demo channels do not expose operator controls, workspace access, MCP access, or runtime reconfiguration.",
-        ),
-        SlashCommand::Todos | SlashCommand::Requests => Some(
-            "Public demo channels keep internal execution and approval queues hidden to avoid leaking runtime details.",
-        ),
-        _ => None,
+        SlashCommand::New { .. } => "new",
+        SlashCommand::ListSessions => "sessions",
+        SlashCommand::Resume { .. } => "resume",
+        SlashCommand::Rename { .. } => "rename",
+        SlashCommand::Status => "status",
+        SlashCommand::Run => "run",
+        SlashCommand::Cancel => "cancel",
+        SlashCommand::Todos => "todos",
+        SlashCommand::Requests => "requests",
+        SlashCommand::Answer { .. } => "answer",
+        SlashCommand::Providers => "providers",
+        SlashCommand::Models { .. } => "models",
+        SlashCommand::Model { .. } => "model",
+        SlashCommand::Help { .. } => "help",
+        SlashCommand::Approve { .. } => "approve",
+        SlashCommand::Deny { .. } => "deny",
+        SlashCommand::Schedule { .. } => "schedule",
+        SlashCommand::Automations { .. } => "automations",
+        SlashCommand::Runs { .. } => "runs",
+        SlashCommand::Memory { .. } => "memory",
+        SlashCommand::Workspace { .. } => "workspace",
+        SlashCommand::Tools { .. } => "tools",
+        SlashCommand::Mcp { .. } => "mcp",
+        SlashCommand::Packs { .. } => "packs",
+        SlashCommand::Config { .. } => "config",
     }
 }
 
@@ -3393,54 +3494,60 @@ fn help_text(topic: Option<&str>, security_profile: ChannelSecurityProfile) -> S
             if security_profile == ChannelSecurityProfile::PublicDemo {
                 public_demo_help_text()
             } else {
-                "🤖 *Tandem Commands*\n\
-Core session commands:\n\
-/new [name] — start a fresh session\n\
-/sessions — list your recent sessions\n\
-/resume <id or name> — switch to a previous session\n\
-/rename <name> — rename the current session\n\
-/status — show current session info\n\
-/run — show active run state\n\
-/cancel — cancel the active run\n\
-\n\
-Session ops:\n\
-/todos — list current session todos\n\
-/requests — list pending tool/question requests\n\
-/answer <question_id> <text> — answer a pending question\n\
-/approve <tool_call_id> — approve a pending tool call\n\
-/deny <tool_call_id> — deny a pending tool call\n\
-\n\
-Model controls:\n\
-/providers — list available providers\n\
-/models [provider] — list models by provider\n\
-/model <model_id> — set model for current default provider\n\
-\n\
-Workflow planning:\n\
-/schedule help — show workflow-plan commands for scheduling and automation setup\n\
-\n\
-Operator commands:\n\
-/automations — list saved automations\n\
-/runs — list recent automation runs\n\
-/memory — list recent memory entries\n\
-/workspace — show current workspace binding\n\
-/mcp — list MCP servers\n\
-/packs — list installed packs\n\
-/config — show runtime config summary\n\
-\n\
-Help:\n\
-/help — show this message\n\
-/help automations — automation command guide\n\
-/help runs — automation run command guide\n\
-/help memory — memory command guide\n\
-/help workspace — workspace command guide\n\
-/help mcp — MCP command guide\n\
-/help packs — pack command guide\n\
-/help config — config command guide\n\
-/help schedule — explain workflow-planning commands"
-                    .to_string()
+                registry_driven_help_text(security_profile)
             }
         }
     }
+}
+
+fn registry_driven_help_text(security_profile: ChannelSecurityProfile) -> String {
+    use std::collections::BTreeMap;
+
+    let mut groups: BTreeMap<&'static str, Vec<&'static ChannelCommandCapability>> =
+        BTreeMap::new();
+    for capability in slash_command_capabilities()
+        .iter()
+        .filter(|capability| capability.enabled_for(security_profile))
+    {
+        groups
+            .entry(capability.audience)
+            .or_default()
+            .push(*capability);
+    }
+
+    let mut lines = vec!["🤖 *Tandem Commands*".to_string()];
+    for (audience, commands) in groups {
+        let heading = match audience {
+            "session" => "Core session commands",
+            "approval" => "Session ops",
+            "model" => "Model controls",
+            "automation" => "Workflow planning and automation",
+            "operator" => "Operator commands",
+            "meta" => "Help",
+            _ => "Commands",
+        };
+        if !commands.is_empty() {
+            lines.push(format!("{heading}:"));
+            for capability in commands {
+                let command = if capability.args.is_empty() {
+                    format!("/{name}", name = capability.name)
+                } else {
+                    format!(
+                        "/{name} {args}",
+                        name = capability.name,
+                        args = capability.args
+                    )
+                };
+                lines.push(format!("{} — {}", command, capability.description));
+            }
+            lines.push(String::new());
+        }
+    }
+    let mut trailing_empty = lines.last().map(|line| line.is_empty()).unwrap_or(false);
+    if trailing_empty {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 fn disabled_help_text(topic: &str, reason: &str) -> String {

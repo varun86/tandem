@@ -17,7 +17,7 @@ import {
 import { ThemePicker } from "../ui/ThemePicker.tsx";
 import { APP_NAV_ROUTES } from "../app/routes";
 import { providerHints } from "../app/store.js";
-import { ACA_CORE_NAV_ROUTE_IDS } from "../app/navigation";
+import { ACA_CORE_NAV_ROUTE_IDS, getDefaultNavigationVisibility } from "../app/navigation";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 import type { RouteId } from "../app/routes";
@@ -728,7 +728,7 @@ const NAV_ROUTE_DESCRIPTIONS: Record<string, string> = {
   agents: "Reusable agent roles and workflow drafts.",
   orchestrator: "Task board planning, approvals, and execution.",
   memory: "Searchable memory records and operational context.",
-  feed: "Global event stream and pack-aware actions.",
+  runs: "Live operations overview with queue state and per-run inspection.",
   settings: "Provider defaults, themes, and runtime diagnostics.",
 };
 
@@ -1959,25 +1959,28 @@ export function SettingsPage({
     [mcpTransport]
   );
   const navigationVisibility = navigation?.routeVisibility || {};
+  const defaultNavigationVisibility = getDefaultNavigationVisibility(!!navigation?.acaMode);
   const navigationRows = APP_NAV_ROUTES.map(([routeId, label, icon]) => {
     const typedRouteId = routeId as RouteId;
     const enabled = navigationVisibility[typedRouteId] !== false;
     const pinned = !!navigation?.acaMode && ACA_CORE_NAV_ROUTE_IDS.has(typedRouteId);
+    const defaultVisible = defaultNavigationVisibility[typedRouteId] !== false;
     return {
       routeId,
       label,
       icon,
       enabled,
       pinned,
+      defaultVisible,
       description:
         NAV_ROUTE_DESCRIPTIONS[routeId] ||
         `Open the ${String(label || routeId).toLowerCase()} section.`,
     };
   });
   const visibleNavigationCount = navigationRows.filter((row) => row.enabled).length;
-  const hiddenOptionalNavigationCount = navigationRows.filter(
-    (row) => !row.enabled && !row.pinned
-  ).length;
+  const defaultNavigationRows = navigationRows.filter((row) => row.defaultVisible);
+  const advancedNavigationRows = navigationRows.filter((row) => !row.defaultVisible);
+  const hiddenAdvancedNavigationCount = advancedNavigationRows.filter((row) => !row.enabled).length;
 
   useEffect(() => {
     const root = rootRef.current;
@@ -2065,35 +2068,54 @@ export function SettingsPage({
                     <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <div className="font-medium">Core sections</div>
+                          <div className="font-medium">Default sections</div>
                           <div className="tcp-subtle mt-1 text-xs">
-                            Dashboard, Chat, Coding, and Settings stay visible in ACA mode.
+                            These sections are part of the standard control panel and start on by
+                            default.
                           </div>
                         </div>
-                        <Badge tone="ok">{navigation?.acaMode ? "Pinned on" : "Standard"}</Badge>
+                        <Badge tone="ok">
+                          {defaultNavigationRows.filter((row) => row.enabled).length}/
+                          {defaultNavigationRows.length} shown
+                        </Badge>
                       </div>
                       <div className="mt-3 grid gap-2">
-                        {navigationRows
-                          .filter((row) => row.pinned)
-                          .map((row) => (
-                            <div
-                              key={row.routeId}
-                              className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-3"
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-lime-500/30 bg-lime-500/10 text-lime-200">
-                                  <i data-lucide={row.icon}></i>
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="font-medium">{row.label}</div>
-                                  <div className="tcp-subtle truncate text-xs">
-                                    {row.description}
-                                  </div>
-                                </div>
+                        {defaultNavigationRows.map((row) => (
+                          <button
+                            key={row.routeId}
+                            type="button"
+                            className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
+                              row.enabled
+                                ? "border-lime-500/40 bg-lime-500/10 hover:border-lime-400/70"
+                                : "border-slate-700/60 bg-slate-900/20 hover:border-slate-500/70"
+                            }`}
+                            onClick={() =>
+                              navigation?.setRouteVisibility(row.routeId as RouteId, !row.enabled)
+                            }
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
+                                  row.enabled
+                                    ? "border-lime-500/30 bg-lime-500/10 text-lime-200"
+                                    : "border-slate-700/70 bg-slate-950/30 text-slate-300"
+                                }`}
+                              >
+                                <i data-lucide={row.icon}></i>
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-medium">{row.label}</div>
+                                <div className="tcp-subtle truncate text-xs">{row.description}</div>
                               </div>
-                              <Badge tone="ok">Pinned</Badge>
                             </div>
-                          ))}
+                            <div className="flex items-center gap-2">
+                              {row.pinned ? <Badge tone="ok">Pinned</Badge> : null}
+                              <Badge tone={row.enabled ? "ok" : "ghost"}>
+                                {row.enabled ? "Shown" : "Hidden"}
+                              </Badge>
+                            </div>
+                          </button>
+                        ))}
                       </div>
                     </div>
 
@@ -2102,51 +2124,47 @@ export function SettingsPage({
                         <div>
                           <div className="font-medium">Advanced / experimental sections</div>
                           <div className="tcp-subtle mt-1 text-xs">
-                            Show extra workflow, planning, and automation surfaces only when needed.
+                            Only routes that ship hidden by default live here.
                           </div>
                         </div>
-                        <Badge tone={hiddenOptionalNavigationCount > 0 ? "warn" : "ok"}>
-                          {hiddenOptionalNavigationCount} hidden
+                        <Badge tone={hiddenAdvancedNavigationCount > 0 ? "warn" : "ok"}>
+                          {hiddenAdvancedNavigationCount} hidden
                         </Badge>
                       </div>
                       <div className="mt-3 grid gap-2">
-                        {navigationRows
-                          .filter((row) => !row.pinned)
-                          .map((row) => (
-                            <button
-                              key={row.routeId}
-                              type="button"
-                              className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
-                                row.enabled
-                                  ? "border-lime-500/40 bg-lime-500/10 hover:border-lime-400/70"
-                                  : "border-slate-700/60 bg-slate-900/20 hover:border-slate-500/70"
-                              }`}
-                              onClick={() =>
-                                navigation?.setRouteVisibility(row.routeId as RouteId, !row.enabled)
-                              }
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span
-                                  className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
-                                    row.enabled
-                                      ? "border-lime-500/30 bg-lime-500/10 text-lime-200"
-                                      : "border-slate-700/70 bg-slate-950/30 text-slate-300"
-                                  }`}
-                                >
-                                  <i data-lucide={row.icon}></i>
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="font-medium">{row.label}</div>
-                                  <div className="tcp-subtle truncate text-xs">
-                                    {row.description}
-                                  </div>
-                                </div>
+                        {advancedNavigationRows.map((row) => (
+                          <button
+                            key={row.routeId}
+                            type="button"
+                            className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
+                              row.enabled
+                                ? "border-lime-500/40 bg-lime-500/10 hover:border-lime-400/70"
+                                : "border-slate-700/60 bg-slate-900/20 hover:border-slate-500/70"
+                            }`}
+                            onClick={() =>
+                              navigation?.setRouteVisibility(row.routeId as RouteId, !row.enabled)
+                            }
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
+                                  row.enabled
+                                    ? "border-lime-500/30 bg-lime-500/10 text-lime-200"
+                                    : "border-slate-700/70 bg-slate-950/30 text-slate-300"
+                                }`}
+                              >
+                                <i data-lucide={row.icon}></i>
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-medium">{row.label}</div>
+                                <div className="tcp-subtle truncate text-xs">{row.description}</div>
                               </div>
-                              <Badge tone={row.enabled ? "ok" : "ghost"}>
-                                {row.enabled ? "Shown" : "Hidden"}
-                              </Badge>
-                            </button>
-                          ))}
+                            </div>
+                            <Badge tone={row.enabled ? "ok" : "ghost"}>
+                              {row.enabled ? "Shown" : "Hidden"}
+                            </Badge>
+                          </button>
+                        ))}
                       </div>
                     </div>
 

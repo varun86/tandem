@@ -9,6 +9,9 @@ This release trims the control panel down to the core path so new users can get 
 - **Control panel simplification**: Planner, Studio, Orchestrator, and other experimental surfaces are now hidden by default so new users land on the core experience first.
 - **Automation cleanup**: The Automations view now focuses on Create, Calendar, Library, and Run History, with Calendar kept visible as the scheduling surface and the non-functional dry-run affordances removed from the automation views and mission builder.
 - **Brand icon polish**: Tandem now uses a clean default icon asset in the shell and settings preview, so the logo no longer gets clipped by the rounded frame.
+- **Workflow compiler hardening**: Fallback plans now stay concrete, preserve exact filenames, and keep explicit `websearch` / `webfetch` instructions visible in the step that uses them.
+- **Read-only source protection**: Source-of-truth files are snapshotted and restored on failure, preventing workflows from deleting or repurposing files like `RESUME.md`.
+- **Channel registry and diagnostics**: Built-in channel listeners are discovered through a registry, surfaced with runtime diagnostics, and validated so unknown channel names return `404` instead of behaving like hidden fallthrough cases.
 
 ## v0.4.28 (Released 2026-04-14)
 

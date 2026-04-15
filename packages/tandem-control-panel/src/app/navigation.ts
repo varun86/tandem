@@ -18,7 +18,6 @@ export function getDefaultNavigationVisibility(acaMode: boolean): NavigationVisi
     "studio",
     "coding",
     "memory",
-    "feed",
     "marketplace",
     "orchestrator",
     "experiments",

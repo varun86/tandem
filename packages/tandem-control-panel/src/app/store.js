@@ -12,7 +12,7 @@ export const ROUTES = [
   ["agents", "Agents", "users"],
   ["orchestrator", "Task Board", "workflow"],
   ["memory", "Memory", "database"],
-  ["feed", "Live Feed", "radio"],
+  ["runs", "Runs", "activity"],
   ["settings", "Settings", "settings"],
   // Legacy routes kept for backwards compat (not in primary nav)
   ["packs", "Packs", "package"],
@@ -41,7 +41,7 @@ export const NAV_ROUTES = ROUTES.filter(([id]) =>
     "agents",
     "orchestrator",
     "memory",
-    "feed",
+    "runs",
     "settings",
   ].includes(id)
 );

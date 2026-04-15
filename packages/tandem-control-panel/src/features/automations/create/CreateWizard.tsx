@@ -315,6 +315,7 @@ export function CreateWizard({
   defaultProvider,
   defaultModel,
   onNavigationLockChange,
+  onCreated,
 }: {
   client: any;
   api: (path: string, init?: RequestInit) => Promise<any>;
@@ -323,6 +324,7 @@ export function CreateWizard({
   defaultProvider: string;
   defaultModel: string;
   onNavigationLockChange?: (lock: NavigationLockState | null) => void;
+  onCreated?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>(1);
@@ -667,6 +669,7 @@ export function CreateWizard({
       setArtifactPreviewKey("SKILL.md");
       setInstallStatus("");
       setStep(1);
+      onCreated?.();
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);

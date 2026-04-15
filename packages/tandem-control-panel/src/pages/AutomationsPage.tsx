@@ -1024,7 +1024,7 @@ function workflowNodeModelPolicyWithOverride(
 
 // ─── Library (combined routines + packs) ───────────────────────────────────
 
-function MyAutomations({
+export function MyAutomations({
   client,
   toast,
   navigate,
@@ -1033,6 +1033,7 @@ function MyAutomations({
   onSelectRunId,
   onOpenRunningView,
   onOpenAdvancedEdit,
+  defaultRunningSectionsOpen,
 }: {
   client: any;
   toast: any;
@@ -1042,6 +1043,11 @@ function MyAutomations({
   onSelectRunId: (runId: string) => void;
   onOpenRunningView: () => void;
   onOpenAdvancedEdit: (automation: any) => void;
+  defaultRunningSectionsOpen?: {
+    active?: boolean;
+    issues?: boolean;
+    history?: boolean;
+  };
 }) {
   const statusColor = (status: string) => {
     const normalizedStatus = String(status || "").toLowerCase();
@@ -1078,6 +1084,7 @@ function MyAutomations({
       onSelectRunId={onSelectRunId}
       onOpenRunningView={onOpenRunningView}
       onOpenAdvancedEdit={onOpenAdvancedEdit}
+      defaultRunningSectionsOpen={defaultRunningSectionsOpen}
       automationWizardConfig={AUTOMATION_WIZARD_CONFIG}
       helperFns={{
         toArray,

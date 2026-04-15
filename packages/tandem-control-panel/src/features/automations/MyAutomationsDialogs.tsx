@@ -1,6 +1,7 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { motion } from "motion/react";
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
+import { renderIcons } from "../../app/icons.js";
 import { ScheduleBuilder } from "./ScheduleBuilder";
 import { ScopeInspector } from "./ScopeInspector";
 import { WatchConditionEditor } from "./WatchConditionEditor";
@@ -8,15 +9,28 @@ import { ScopePolicyEditor } from "./ScopePolicyEditor";
 import { HandoffConfigEditor } from "./HandoffConfigEditor";
 import { HandoffPanel } from "./HandoffPanel";
 
+function useDialogIconRender(active: boolean) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    if (rootRef.current) renderIcons(rootRef.current);
+  }, [active]);
+
+  return rootRef;
+}
+
 export function LegacyAutomationEditDialog({
   editDraft,
   setEditDraft,
   updateAutomationMutation,
 }: any) {
+  const dialogRef = useDialogIconRender(!!editDraft);
   if (!editDraft) return null;
 
   return (
     <motion.div
+      ref={dialogRef}
       className="tcp-confirm-overlay"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -271,10 +285,23 @@ export function WorkflowAutomationEditDialog({
   automationsV2List = [],
   client,
 }: any) {
+  const dialogRef = useDialogIconRender(!!workflowEditDraft);
   if (!workflowEditDraft) return null;
+
+  const selectedExecutionMode =
+    automationWizardConfig.executionModes.find(
+      (mode: any) => mode.id === workflowEditDraft.executionMode
+    ) || automationWizardConfig.executionModes[0];
+  const executionModeNotes: Record<string, string> = {
+    single: "One focused operator handles the full workflow from start to finish.",
+    team: "A planner coordinates a small set of specialized agents. This is best when the work has multiple steps but still needs tight sequencing and review.",
+    swarm:
+      "Tandem fans work out into parallel sub-tasks. Use this when breadth and throughput matter more than one tightly coordinated thread.",
+  };
 
   return (
     <motion.div
+      ref={dialogRef}
       className="tcp-confirm-overlay"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -382,29 +409,72 @@ export function WorkflowAutomationEditDialog({
                   />
                 </div>
               </div>
+              <div className="grid gap-2">
+                <label className="text-xs text-slate-400">Agent type</label>
+                <div className="grid gap-2">
+                  {automationWizardConfig.executionModes.map((mode: any) => {
+                    const selected = workflowEditDraft.executionMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        className={`tcp-list-item text-left ${
+                          selected ? "border-amber-400/60 bg-amber-400/10" : ""
+                        }`}
+                        onClick={() =>
+                          setWorkflowEditDraft((current: any) =>
+                            current ? { ...current, executionMode: mode.id } : current
+                          )
+                        }
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <div className="text-xl leading-none">{mode.icon}</div>
+                            <div className="grid gap-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-100">
+                                  {mode.label}
+                                </span>
+                                {mode.id === "team" ? (
+                                  <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-amber-200">
+                                    Recommended
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="text-sm text-slate-300">{mode.desc}</div>
+                              <div className="text-xs text-slate-500">{mode.bestFor}</div>
+                            </div>
+                          </div>
+                          <span
+                            className={`mt-1 h-3 w-3 rounded-full border ${
+                              selected
+                                ? "border-amber-300 bg-amber-300 shadow-[0_0_0_3px_rgba(251,191,36,0.12)]"
+                                : "border-slate-600 bg-transparent"
+                            }`}
+                            aria-hidden="true"
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="rounded-lg border border-slate-800/70 bg-slate-950/30 px-3 py-3 text-xs text-slate-400">
+                  <div className="font-medium uppercase tracking-[0.16em] text-slate-500">
+                    Execution behavior
+                  </div>
+                  <div className="mt-1 text-sm text-slate-300">{selectedExecutionMode?.label}</div>
+                  <div className="mt-1">
+                    {executionModeNotes[selectedExecutionMode?.id || "single"] ||
+                      executionModeNotes.single}
+                  </div>
+                </div>
+              </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="grid gap-1">
-                  <label className="text-xs text-slate-400">Execution mode</label>
-                  <select
-                    className="tcp-select"
-                    value={workflowEditDraft.executionMode}
-                    onInput={(e) =>
-                      setWorkflowEditDraft((current: any) =>
-                        current
-                          ? {
-                              ...current,
-                              executionMode: (e.target as HTMLSelectElement).value as any,
-                            }
-                          : current
-                      )
-                    }
-                  >
-                    {automationWizardConfig.executionModes.map((mode: any) => (
-                      <option key={mode.id} value={mode.id}>
-                        {mode.label}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="text-xs text-slate-400">Execution mode key</label>
+                  <div className="tcp-input flex h-10 items-center text-sm text-slate-300">
+                    {workflowEditDraft.executionMode}
+                  </div>
                 </div>
                 <div className="grid gap-1">
                   <label className="text-xs text-slate-400">Max parallel agents</label>
@@ -426,6 +496,11 @@ export function WorkflowAutomationEditDialog({
                     }
                     disabled={workflowEditDraft.executionMode !== "swarm"}
                   />
+                  <div className="text-xs text-slate-500">
+                    {workflowEditDraft.executionMode === "swarm"
+                      ? "Only used for swarm runs, where Tandem fans tasks out in parallel."
+                      : "Single Agent and Agent Team ignore this value because they stay on tighter coordination paths."}
+                  </div>
                 </div>
               </div>
             </AccordionSection>
@@ -882,10 +957,12 @@ export function DeleteAutomationDialog({
   setDeleteConfirm,
   automationActionMutation,
 }: any) {
+  const dialogRef = useDialogIconRender(!!deleteConfirm);
   if (!deleteConfirm) return null;
 
   return (
     <motion.div
+      ref={dialogRef}
       className="tcp-confirm-overlay"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}

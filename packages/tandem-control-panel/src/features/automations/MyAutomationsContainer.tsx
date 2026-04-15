@@ -55,6 +55,7 @@ export function MyAutomationsContainer({
   onSelectRunId,
   onOpenRunningView,
   onOpenAdvancedEdit,
+  defaultRunningSectionsOpen,
   helperFns,
   automationWizardConfig,
 }: any) {
@@ -2130,6 +2131,7 @@ export function MyAutomationsContainer({
       state={{
         rootRef,
         viewMode,
+        defaultRunningSectionsOpen,
         calendarEvents,
         workflowAutomationCount,
         automationsV2,

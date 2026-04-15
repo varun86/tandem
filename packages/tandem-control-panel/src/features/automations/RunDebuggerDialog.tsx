@@ -108,7 +108,6 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     onFocusNode,
     onToggleArtifact,
     onCopyFullDebugContext,
-    onNavigateFeed,
     workflowTaskContinueMutation,
     workflowTaskRetryMutation,
     workflowTaskRequeueMutation,
@@ -1125,10 +1124,6 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
           </div>
         </div>
         <div className="tcp-confirm-actions mt-3">
-          <button className="tcp-btn" onClick={onNavigateFeed}>
-            <i data-lucide="radio"></i>
-            Open Live Feed
-          </button>
           <button className="tcp-btn" onClick={() => onSelectRunId("")}>
             <i data-lucide="x"></i>
             Close

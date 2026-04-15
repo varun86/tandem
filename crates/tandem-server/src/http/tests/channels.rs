@@ -298,3 +298,46 @@ async fn channels_put_normalizes_empty_allowed_users_to_wildcard() {
         Some(vec![Value::String("*".to_string())])
     );
 }
+
+#[tokio::test]
+async fn channels_put_unknown_channel_returns_not_found() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri("/channels/unknown")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({ "bot_token": "x" }.to_string())))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn channels_delete_unknown_channel_returns_not_found() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri("/channels/unknown")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn channels_verify_unknown_channel_returns_not_found() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/channels/unknown/verify")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

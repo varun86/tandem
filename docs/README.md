@@ -23,6 +23,7 @@ For end-user onboarding journeys (install, first run, desktop/CLI paths), use:
 - [Workflow Automation Runtime](./WORKFLOW_RUNTIME.md) - How Tandem's workflow runtime produces verifiable, trustworthy artifacts across multi-stage AI pipelines.
 - [Workflow Bug Replay Guide](./WORKFLOW_BUG_REPLAY.md) - How to turn live workflow failures into deterministic replay regressions and release gates.
 - [Workflow Generated Variation Coverage](./WORKFLOW_GENERATED_VARIATIONS.md) - Constrained generator design and nightly workflow-variation coverage.
+- [Channel Lifecycle and Diagnostics](./CHANNELS_LIFECYCLE_AND_DIAGNOSTICS.md) - Registry-based channel runtime lifecycle, endpoint behavior, and required config keys.
 
 ## SDK & Development
 

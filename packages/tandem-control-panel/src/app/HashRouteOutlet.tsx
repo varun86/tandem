@@ -12,8 +12,8 @@ import { PacksPage } from "../pages/PacksPage";
 import { OrchestratorPage } from "../pages/OrchestratorPage";
 import { FilesPage } from "../pages/FilesPage";
 import { MemoryPage } from "../pages/MemoryPage";
+import { RunsPage } from "../pages/RunsPage";
 import { TeamsPage } from "../pages/TeamsPage";
-import { FeedPage } from "../pages/FeedPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { ensureRouteId } from "./routes";
 
@@ -55,8 +55,8 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
       return <MemoryPage {...pageProps} />;
     case "teams-detail":
       return <TeamsPage {...pageProps} />;
-    case "feed":
-      return <FeedPage {...pageProps} />;
+    case "runs":
+      return <RunsPage {...pageProps} />;
     case "settings":
       return <SettingsPage {...pageProps} />;
     case "dashboard":

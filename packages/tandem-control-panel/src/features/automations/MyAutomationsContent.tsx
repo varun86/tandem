@@ -13,11 +13,11 @@ import {
 } from "../../../lib/automations/workflow-list.js";
 
 export function MyAutomationsContent({ state, actions, helpers }: any) {
-  const [runningSectionsOpen, setRunningSectionsOpen] = useState({
-    active: false,
-    issues: false,
-    history: false,
-  });
+  const [runningSectionsOpen, setRunningSectionsOpen] = useState(() => ({
+    active: !!state?.defaultRunningSectionsOpen?.active,
+    issues: !!state?.defaultRunningSectionsOpen?.issues,
+    history: !!state?.defaultRunningSectionsOpen?.history,
+  }));
   const {
     rootRef,
     viewMode,
@@ -997,7 +997,6 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           onToggleArtifact: (key: string) =>
             setSelectedRunArtifactKey((current: string) => (current === key ? "" : key)),
           onCopyFullDebugContext,
-          onNavigateFeed: () => navigate("feed"),
           workflowTaskContinueMutation,
           workflowTaskRetryMutation,
           workflowTaskRequeueMutation,

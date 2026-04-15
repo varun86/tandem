@@ -386,14 +386,14 @@ export function DashboardPage(props: AppPageProps) {
                 <div className="tcp-list-item">
                   <div className="font-medium inline-flex items-center gap-2">
                     <i data-lucide="database"></i>
-                    Memory & feed
+                    Memory & runs
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button className="tcp-btn h-8 px-3 text-xs" onClick={() => navigate("memory")}>
                       Open memory
                     </button>
-                    <button className="tcp-btn h-8 px-3 text-xs" onClick={() => navigate("feed")}>
-                      Open live feed
+                    <button className="tcp-btn h-8 px-3 text-xs" onClick={() => navigate("runs")}>
+                      Open runs
                     </button>
                   </div>
                 </div>

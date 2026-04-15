@@ -665,6 +665,9 @@ export function AutomationComposerPanel({
         queryClient.invalidateQueries({ queryKey: ["automations"] }),
         queryClient.invalidateQueries({ queryKey: ["studio", "automations"] }),
       ]);
+      if (!runAfterCreate) {
+        onShowAutomations();
+      }
       if (runAfterCreate && automationId) {
         try {
           await runNowMutation.mutateAsync(automationId);

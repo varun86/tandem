@@ -7,15 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.29] - Released 2026-04-15
 
+### Added
+
+- **Registry-backed channel lifecycle diagnostics**: Added a channel registry plus lifecycle diagnostics coverage so built-in channel listeners are discovered from the registry, surfaced with runtime state/error codes, and validated through the `/channels/*` endpoints instead of relying on hardcoded channel names.
+
 ### Changed
 
 - **Control panel simplification**: Planner, Studio, Orchestrator, and other experimental surfaces are now hidden by default so new users land on the core experience first.
 - **Automation surface cleanup**: The Automations view now centers on Create, Calendar, Library, and Run History, keeping Calendar visible as the scheduling surface while removing clutter from the primary path.
+- **Workflow compiler prompt guidance**: Planner prompts now preserve exact source-file and output-file names, and keep explicit tools like `websearch` and `webfetch` visible in the step that uses them.
 
 ### Fixed
 
 - **Brand icon rendering**: Tandem now uses the default icon asset in the shell and settings preview, and the rounded avatar frame no longer clips the logo.
 - **Automation dry run cleanup**: Removed the non-functional dry-run affordances from the calendar cards, scope inspector, and mission builder so the available actions better reflect what actually works today.
+- **Read-only source-of-truth protection**: The workflow runtime now snapshots protected inputs and restores them on failure, preventing source files like `RESUME.md` from being used as scratch space or left deleted after a bad attempt.
+- **Concrete fallback workflow plans**: Fallback plan generation now keeps complex prompts grounded in concrete files and tools, so workflows that mention `RESUME.md`, `resume_overview.md`, `job_search_results_YYYY-MM-DD.md`, or web research no longer collapse into a generic triage scaffold.
+- **Planner decomposition fidelity**: The decomposition scorer now treats explicit web research as a stronger planning signal, helping complex prompts expand into phase-aware microtask DAGs instead of single generic steps.
+- **Channel endpoint validation**: Unknown channel names now return `404` from the channel config/status/verify routes, and listener supervision now reports restart and failure state through diagnostics instead of dropping the signal on the floor.
 
 ## [0.4.28] - Released 2026-04-14
 

@@ -17,6 +17,7 @@
 //! }
 //! ```
 
+pub mod channel_registry;
 pub mod config;
 pub mod discord;
 pub mod dispatcher;
@@ -24,4 +25,9 @@ pub mod slack;
 pub mod telegram;
 pub mod traits;
 
-pub use dispatcher::start_channel_listeners;
+pub use channel_registry::{
+    command_capabilities_for_channel, command_capabilities_for_profile, command_capability,
+    find_channel, new_channel_runtime_diagnostics, registered_channels, slash_command_capabilities,
+    ChannelCommandCapability, ChannelRuntimeDiagnostic, ChannelRuntimeDiagnostics, ChannelSpec,
+};
+pub use dispatcher::{start_channel_listeners, start_channel_listeners_with_diagnostics};

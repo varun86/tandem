@@ -195,7 +195,7 @@ export function AutomationsPageTabs({
                         editingAutomation={advancedEditAutomation}
                         onShowAutomations={() => {
                           setAdvancedEditAutomation(null);
-                          setTab("calendar");
+                          setTab("list");
                         }}
                         onShowRuns={() => {
                           setAdvancedEditAutomation(null);
@@ -213,6 +213,10 @@ export function AutomationsPageTabs({
                         defaultProvider={providerStatus.defaultProvider}
                         defaultModel={providerStatus.defaultModel}
                         onNavigationLockChange={onNavigationLockChange}
+                        onCreated={() => {
+                          setAdvancedEditAutomation(null);
+                          setTab("list");
+                        }}
                       />
                     )}
                   </>

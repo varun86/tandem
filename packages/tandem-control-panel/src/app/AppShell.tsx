@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MOTION_TOKENS, prefersReducedMotion } from "./themes.js";
 import { renderIcons } from "./icons.js";
 import { GlowLayer, IconButton, StatusPulse } from "../ui/index.tsx";
+import { TandemLogoAnimation } from "../ui/TandemLogoAnimation";
 import type { NavigationLockState } from "../pages/pageTypes";
 
 const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
@@ -47,9 +48,9 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     title: "Memory",
     subtitle: "Searchable memory records and operational context snapshots.",
   },
-  feed: {
-    title: "Live Feed",
-    subtitle: "Global event stream with pack-aware actions and debugging detail.",
+  runs: {
+    title: "Runs",
+    subtitle: "Live operations overview with queue state and per-run inspection.",
   },
   settings: {
     title: "Settings",
@@ -582,31 +583,8 @@ export function AppShell({
                   : { duration: MOTION_TOKENS.duration.normal, ease: MOTION_TOKENS.easing.standard }
               }
             >
-              <div className="flex items-start gap-3">
-                <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
-                  <motion.div
-                    className="absolute inset-0 border-[3px] border-transparent border-t-amber-500 border-r-amber-500"
-                    animate={reducedMotion ? undefined : { rotate: 360 }}
-                    transition={
-                      reducedMotion
-                        ? undefined
-                        : { repeat: Infinity, ease: "linear", duration: 1.1 }
-                    }
-                  />
-                  <motion.div
-                    className="absolute inset-2 border-[3px] border-transparent border-l-amber-300 border-b-amber-300 opacity-70"
-                    animate={reducedMotion ? undefined : { rotate: -360 }}
-                    transition={
-                      reducedMotion
-                        ? undefined
-                        : { repeat: Infinity, ease: "linear", duration: 1.7 }
-                    }
-                  />
-                  <i
-                    data-lucide="loader-circle"
-                    className="relative z-10 h-5 w-5 text-amber-300"
-                  ></i>
-                </div>
+              <div className="flex items-center gap-3">
+                <TandemLogoAnimation className="h-12 w-12 shrink-0" mode="compact" />
                 <div className="min-w-0">
                   <h3 className="tcp-confirm-title">{navigationLock.title}</h3>
                   <p className="tcp-confirm-message">{navigationLock.message}</p>

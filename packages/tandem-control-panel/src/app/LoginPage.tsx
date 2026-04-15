@@ -33,7 +33,7 @@ export function LoginPage({
           <div className="tcp-page-eyebrow">Tandem Control</div>
           <h1 className="tcp-page-title max-w-3xl">Sign in to continue.</h1>
           <p className="tcp-subtle max-w-2xl text-base">
-            Enter your engine token to access chat, task board, automations, memory, live feed, and
+            Enter your engine token to access chat, task board, automations, runs, memory, and
             settings.
           </p>
         </section>

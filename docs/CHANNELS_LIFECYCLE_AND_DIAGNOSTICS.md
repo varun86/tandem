@@ -1,0 +1,52 @@
+# Channel Lifecycle and Diagnostics
+
+This document summarizes how the channel surface is initialized and managed in v1 of
+the registry-backed channel implementation.
+
+## Lifecycle
+
+- `AppState::restart_channel_listeners` rebuilds the runtime listener set from the effective config.
+- Channels are discovered from the shared registry (`tandem_channels::registered_channels()`), so
+  startup and status/update paths are no longer hardcoded to specific names.
+- For each built-in channel, the server stores:
+  - `enabled` from config presence.
+  - `connected` after startup attempts.
+  - A live diagnostics snapshot under `meta`.
+- Listener supervision errors are surfaced in `/channels/status` through:
+  - `state` (running, retrying, stopped, etc.)
+  - `last_error` (string in top-level `ChannelStatus` + in diagnostics)
+  - `last_error_code` (`listener_error`, `startup_error`, etc.)
+  - `last_reconnect_at` (ms epoch)
+  - `listener_start_count`
+
+## Endpoints
+
+- `GET /channels/config`
+  - Returns the normalized config snapshot for each registry-built channel.
+  - Never returns raw tokens; includes `token_masked`, `has_token`, and channel defaults.
+- `GET /channels/status`
+  - Returns one object entry per registered channel.
+  - Unknown/unsupported channel names are not included.
+- `PUT /channels/{name}` and `DELETE /channels/{name}`
+  - Validate `{name}` against the registry.
+  - Unknown names return `404`.
+- `POST /channels/{name}/verify`
+  - Currently supports Discord verify checks.
+  - Unknown channel names or unsupported channels return `404`.
+
+## Built-in config keys (backward compatible)
+
+The v1 surface remains `telegram`, `discord`, and `slack` in config under `channels`.
+
+- Telegram: `channels.telegram`
+  - required for startup: `bot_token`
+  - optional: `allowed_users`, `mention_only`, `style_profile`, `model_provider_id`, `model_id`, `security_profile`
+  - env fallback: `TANDEM_TELEGRAM_BOT_TOKEN`
+- Discord: `channels.discord`
+  - required for startup: `bot_token`
+  - optional: `guild_id`, `allowed_users`, `mention_only`, `model_provider_id`, `model_id`, `security_profile`
+  - env fallback: `TANDEM_DISCORD_BOT_TOKEN`
+- Slack: `channels.slack`
+  - required for startup: `bot_token`, `channel_id`
+  - optional: `allowed_users`, `mention_only`, `model_provider_id`, `model_id`, `security_profile`
+  - env fallback: `TANDEM_SLACK_BOT_TOKEN`, `TANDEM_SLACK_CHANNEL_ID`

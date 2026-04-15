@@ -18,7 +18,10 @@ use tandem_types::{EngineEvent, HostRuntimeContext, MessagePart, ModelSpec, Tena
 use tokio::fs;
 use tokio::sync::RwLock;
 
-use tandem_channels::config::{ChannelsConfig, DiscordConfig, SlackConfig, TelegramConfig};
+use tandem_channels::{
+    channel_registry::registered_channels,
+    config::{ChannelsConfig, DiscordConfig, SlackConfig, TelegramConfig},
+};
 use tandem_core::{resolve_shared_paths, PromptContextHook, PromptContextHookContext};
 use tandem_memory::db::MemoryDatabase;
 use tandem_providers::ChatMessage;
@@ -157,10 +160,20 @@ struct EffectiveAppConfig {
     pub memory_consolidation: tandem_providers::MemoryConsolidationConfig,
 }
 
-#[derive(Default)]
 pub struct ChannelRuntime {
     pub listeners: Option<tokio::task::JoinSet<()>>,
     pub statuses: std::collections::HashMap<String, ChannelStatus>,
+    pub diagnostics: tandem_channels::channel_registry::ChannelRuntimeDiagnostics,
+}
+
+impl Default for ChannelRuntime {
+    fn default() -> Self {
+        Self {
+            listeners: None,
+            statuses: std::collections::HashMap::new(),
+            diagnostics: tandem_channels::new_channel_runtime_diagnostics(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -424,7 +437,50 @@ impl AppState {
 
     pub async fn channel_statuses(&self) -> std::collections::HashMap<String, ChannelStatus> {
         let runtime = self.channels_runtime.lock().await;
-        runtime.statuses.clone()
+        let mut status = runtime.statuses.clone();
+        let diagnostics = runtime.diagnostics.read().await;
+        for spec in registered_channels() {
+            let entry = status
+                .entry(spec.name.to_string())
+                .or_insert(ChannelStatus {
+                    enabled: false,
+                    connected: false,
+                    last_error: None,
+                    active_sessions: 0,
+                    meta: json!({}),
+                });
+            let mut meta = entry.meta.as_object().cloned().unwrap_or_default();
+            if let Some(diag) = diagnostics.get(spec.name) {
+                entry.last_error = diag.last_error.clone().or_else(|| entry.last_error.clone());
+                meta.insert("state".to_string(), Value::String(diag.state.to_string()));
+                meta.insert(
+                    "last_error_code".to_string(),
+                    diag.last_error_code
+                        .map(|code| Value::String(code.to_string()))
+                        .unwrap_or(Value::Null),
+                );
+                meta.insert(
+                    "last_reconnect_at".to_string(),
+                    diag.last_reconnect_at
+                        .map(|value| Value::Number(value.into()))
+                        .unwrap_or(Value::Null),
+                );
+                meta.insert(
+                    "listener_start_count".to_string(),
+                    Value::Number(serde_json::Number::from(diag.listener_start_count)),
+                );
+            } else {
+                meta.insert("state".to_string(), Value::String("stopped".to_string()));
+                meta.insert("last_error_code".to_string(), Value::Null);
+                meta.insert("last_reconnect_at".to_string(), Value::Null);
+                meta.insert(
+                    "listener_start_count".to_string(),
+                    Value::Number(0u64.into()),
+                );
+            }
+            entry.meta = Value::Object(meta);
+        }
+        status
     }
 
     pub async fn restart_channel_listeners(&self) -> anyhow::Result<()> {
@@ -432,47 +488,44 @@ impl AppState {
         let parsed: EffectiveAppConfig = serde_json::from_value(effective).unwrap_or_default();
         self.configure_web_ui(parsed.web_ui.enabled, parsed.web_ui.path_prefix.clone());
 
+        let diagnostics = tandem_channels::new_channel_runtime_diagnostics();
+
         let mut runtime = self.channels_runtime.lock().await;
         if let Some(listeners) = runtime.listeners.as_mut() {
             listeners.abort_all();
         }
         runtime.listeners = None;
+        runtime.diagnostics = diagnostics.clone();
         runtime.statuses.clear();
+        let channels_config_value = serde_json::to_value(&parsed.channels)
+            .ok()
+            .and_then(|channels| channels.as_object().cloned());
 
         let mut status_map = std::collections::HashMap::new();
-        status_map.insert(
-            "telegram".to_string(),
-            ChannelStatus {
-                enabled: parsed.channels.telegram.is_some(),
-                connected: false,
-                last_error: None,
-                active_sessions: 0,
-                meta: serde_json::json!({}),
-            },
-        );
-        status_map.insert(
-            "discord".to_string(),
-            ChannelStatus {
-                enabled: parsed.channels.discord.is_some(),
-                connected: false,
-                last_error: None,
-                active_sessions: 0,
-                meta: serde_json::json!({}),
-            },
-        );
-        status_map.insert(
-            "slack".to_string(),
-            ChannelStatus {
-                enabled: parsed.channels.slack.is_some(),
-                connected: false,
-                last_error: None,
-                active_sessions: 0,
-                meta: serde_json::json!({}),
-            },
-        );
+        for spec in registered_channels() {
+            let enabled = channels_config_value
+                .as_ref()
+                .and_then(|channels| channels.get(spec.config_key))
+                .and_then(Value::as_object)
+                .is_some();
+            status_map.insert(
+                spec.name.to_string(),
+                ChannelStatus {
+                    enabled,
+                    connected: false,
+                    last_error: None,
+                    active_sessions: 0,
+                    meta: serde_json::json!({}),
+                },
+            );
+        }
 
         if let Some(channels_cfg) = build_channels_config(self, &parsed.channels).await {
-            let listeners = tandem_channels::start_channel_listeners(channels_cfg).await;
+            let listeners = tandem_channels::start_channel_listeners_with_diagnostics(
+                channels_cfg,
+                diagnostics.clone(),
+            )
+            .await;
             runtime.listeners = Some(listeners);
             for status in status_map.values_mut() {
                 if status.enabled {

@@ -18,6 +18,13 @@ export function useHashRoute(options: HashRouteOptions = {}) {
     canNavigateRef.current = options.canNavigate;
   }, [options.canNavigate]);
 
+  useEffect(() => {
+    const canonical = routeFromHash(routeRef.current);
+    if (window.location.hash !== `#/${canonical}`) {
+      setHashRoute(canonical);
+    }
+  }, []);
+
   const commitRoute = useCallback((next: RouteId, source: "navigate" | "hashchange") => {
     const current = routeRef.current;
     if (next === current) {
