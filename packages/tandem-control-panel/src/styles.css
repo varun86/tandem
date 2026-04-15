@@ -137,6 +137,7 @@
 
   .tcp-rail-icon {
     position: relative;
+    isolation: isolate;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -166,10 +167,18 @@
   .tcp-rail-icon-indicator {
     position: absolute;
     inset: 0;
+    z-index: 0;
+    pointer-events: none;
     border-radius: 0;
     border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
     background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-elevated) 90%);
     box-shadow: var(--shadow-offset);
+  }
+
+  .tcp-rail-icon > i,
+  .tcp-rail-icon > svg {
+    position: relative;
+    z-index: 1;
   }
 
   .tcp-rail-icon svg,
