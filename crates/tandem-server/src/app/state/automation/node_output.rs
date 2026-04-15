@@ -590,6 +590,8 @@ pub(crate) fn research_required_next_tool_actions(
     web_research_expected: bool,
     unmet_requirements: &[String],
     missing_required_source_read_paths: &[String],
+    upstream_read_paths: &[String],
+    upstream_citations: &[String],
     unreviewed_relevant_paths: &[String],
     latest_web_research_failure: Option<&str>,
 ) -> Vec<String> {
@@ -615,10 +617,24 @@ pub(crate) fn research_required_next_tool_actions(
         );
     }
     if has_unmet("upstream_evidence_not_synthesized") {
-        actions.push(
-            "Synthesize the upstream evidence into the final artifact using the concrete terminology, proof points, objections, risks, and citations already available upstream."
-                .to_string(),
-        );
+        let anchor_target = source_evidence_anchor_target(upstream_read_paths, upstream_citations);
+        let upstream_artifact_summary = upstream_read_paths
+            .iter()
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !upstream_artifact_summary.is_empty() {
+            actions.push(format!(
+                "Read and synthesize the strongest upstream artifacts before finalizing: {}. Rewrite the final report as a substantive multi-section synthesis that reuses the concrete terminology, named entities, objections, risks, and proof points already present upstream, and mention at least {} distinct upstream evidence anchors in the body.",
+                upstream_artifact_summary.join(", "),
+                anchor_target.max(1)
+            ));
+        } else {
+            actions.push(
+                "Synthesize the upstream evidence into the final artifact using the concrete terminology, proof points, objections, risks, and citations already available upstream."
+                    .to_string(),
+            );
+        }
     }
     if has_unmet("current_attempt_output_missing") {
         actions.push(

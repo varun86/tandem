@@ -3009,6 +3009,76 @@ fn render_automation_repair_brief_includes_exact_missing_required_source_reads()
 }
 
 #[test]
+fn render_automation_repair_brief_includes_upstream_paths_for_synthesis_repairs() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Write the final report.".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "final artifact does not adequately synthesize the available upstream evidence",
+            "unmet_requirements": [
+                "upstream_evidence_not_synthesized"
+            ]
+        },
+        "tool_telemetry": {
+            "requested_tools": ["read", "write"],
+            "executed_tools": ["read", "write"]
+        },
+        "artifact_validation": {
+            "blocking_classification": "artifact_contract_unmet",
+            "required_next_tool_actions": [
+                "Read and synthesize the strongest upstream artifacts before finalizing: .tandem/runs/run-1/artifacts/collect-inputs.json, .tandem/runs/run-1/artifacts/analyze-findings.md. Rewrite the final report as a substantive multi-section synthesis that reuses the concrete terminology, named entities, objections, risks, and proof points already present upstream, and mention at least 2 distinct upstream evidence anchors in the body."
+            ],
+            "validation_basis": {
+                "authority": "filesystem_and_receipts",
+                "current_attempt_output_materialized": true,
+                "current_attempt_has_recorded_activity": true,
+                "current_attempt_has_read": true,
+                "current_attempt_has_web_research": false,
+                "workspace_inspection_satisfied": true,
+                "upstream_read_paths": [
+                    ".tandem/runs/run-1/artifacts/collect-inputs.json",
+                    ".tandem/runs/run-1/artifacts/analyze-findings.md"
+                ]
+            }
+        }
+    });
+
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 2, 5, Some("run-123"))
+        .expect("repair brief");
+
+    assert!(brief.contains(
+        "Upstream read paths available for synthesis: .tandem/runs/run-1/artifacts/collect-inputs.json, .tandem/runs/run-1/artifacts/analyze-findings.md"
+    ));
+    assert!(
+        brief.contains("Read and synthesize the strongest upstream artifacts before finalizing")
+    );
+}
+
+#[test]
 fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

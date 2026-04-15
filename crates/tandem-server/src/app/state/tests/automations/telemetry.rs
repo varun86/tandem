@@ -26,6 +26,8 @@ fn research_required_next_tool_actions_summarize_missing_reads_and_websearch() {
         true,
         &unmet_requirements,
         &Vec::new(),
+        &Vec::new(),
+        &Vec::new(),
         &unreviewed_relevant_paths,
         None,
     );
@@ -63,6 +65,8 @@ fn research_required_next_tool_actions_surface_websearch_authorization() {
         &unmet_requirements,
         &Vec::new(),
         &Vec::new(),
+        &Vec::new(),
+        &Vec::new(),
         Some("web research authorization required"),
     );
 
@@ -93,6 +97,8 @@ fn research_required_next_tool_actions_surface_generic_websearch_unavailability(
         &unmet_requirements,
         &Vec::new(),
         &Vec::new(),
+        &Vec::new(),
+        &Vec::new(),
         Some("web research unavailable"),
     );
 
@@ -115,6 +121,8 @@ fn research_required_next_tool_actions_include_workspace_file_write_guidance() {
         &executed_tools,
         false,
         &unmet_requirements,
+        &Vec::new(),
+        &Vec::new(),
         &Vec::new(),
         &Vec::new(),
         None,
@@ -142,12 +150,43 @@ fn research_required_next_tool_actions_surface_exact_required_source_reads() {
         &unmet_requirements,
         &missing_required_source_read_paths,
         &Vec::new(),
+        &Vec::new(),
+        &Vec::new(),
         None,
     );
 
     assert!(actions
         .iter()
         .any(|value| value.contains("exact required source files before finalizing: RESUME.md")));
+}
+
+#[test]
+fn research_required_next_tool_actions_surface_upstream_synthesis_sources() {
+    let requested_tools = vec![json!("read"), json!("write")];
+    let executed_tools = vec![json!("read"), json!("write")];
+    let unmet_requirements = vec!["upstream_evidence_not_synthesized".to_string()];
+    let upstream_read_paths = vec![
+        ".tandem/artifacts/collect-inputs.json".to_string(),
+        ".tandem/artifacts/research-sources.json".to_string(),
+    ];
+    let upstream_citations = vec!["https://example.com/source-1".to_string()];
+
+    let actions = research_required_next_tool_actions(
+        &requested_tools,
+        &executed_tools,
+        false,
+        &unmet_requirements,
+        &Vec::new(),
+        &upstream_read_paths,
+        &upstream_citations,
+        &Vec::new(),
+        None,
+    );
+
+    assert!(actions.iter().any(|value| {
+        value.contains(".tandem/artifacts/collect-inputs.json")
+            && value.contains("at least 2 distinct upstream evidence anchors")
+    }));
 }
 
 #[test]

@@ -73,6 +73,12 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let upstream_read_paths = validation_basis
+        .as_ref()
+        .and_then(|value| value.get("upstream_read_paths"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let knowledge_preflight = output
         .get("knowledge_preflight")
         .cloned()
@@ -96,6 +102,7 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         "blockingClassification": blocking_classification,
         "requiredNextToolActions": required_next_tool_actions,
         "validationBasis": validation_basis,
+        "upstreamReadPaths": upstream_read_paths,
         "requiredSourceReadPaths": required_source_read_paths,
         "missingRequiredSourceReadPaths": missing_required_source_read_paths,
         "knowledgePreflight": knowledge_preflight,
@@ -4442,6 +4449,41 @@ mod tests {
                 .and_then(|values| values.get(1))
                 .and_then(Value::as_str),
             Some("docs/resume.md")
+        );
+    }
+
+    #[test]
+    fn automation_v2_node_repair_guidance_includes_upstream_synthesis_paths() {
+        let output = json!({
+            "status": "needs_repair",
+            "validator_summary": {
+                "reason": "final artifact does not adequately synthesize the available upstream evidence",
+                "unmet_requirements": ["upstream_evidence_not_synthesized"]
+            },
+            "artifact_validation": {
+                "blocking_classification": "artifact_contract_unmet",
+                "required_next_tool_actions": [
+                    "Read and synthesize the strongest upstream artifacts before finalizing: .tandem/runs/run-1/artifacts/collect-inputs.json, .tandem/runs/run-1/artifacts/analyze-findings.md. Rewrite the final report as a substantive multi-section synthesis that reuses the concrete terminology, named entities, objections, risks, and proof points already present upstream, and mention at least 2 distinct upstream evidence anchors in the body."
+                ],
+                "validation_basis": {
+                    "authority": "filesystem_and_receipts",
+                    "upstream_read_paths": [
+                        ".tandem/runs/run-1/artifacts/collect-inputs.json",
+                        ".tandem/runs/run-1/artifacts/analyze-findings.md"
+                    ]
+                }
+            }
+        });
+
+        let guidance = automation_v2_node_repair_guidance(&output).expect("guidance");
+
+        assert_eq!(
+            guidance
+                .get("upstreamReadPaths")
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some(".tandem/runs/run-1/artifacts/collect-inputs.json")
         );
     }
 
