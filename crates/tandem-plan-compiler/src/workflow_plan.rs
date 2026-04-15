@@ -531,8 +531,161 @@ pub fn normalize_string_list(raw: Vec<String>) -> Vec<String> {
     values
 }
 
+fn prompt_token_has_context(prompt: &str, token: &str, needles: &[&str]) -> bool {
+    let lowered_prompt = prompt.to_ascii_lowercase();
+    let lowered_token = token.to_ascii_lowercase();
+    if lowered_token.is_empty() {
+        return false;
+    }
+    let mut clauses = Vec::new();
+    let mut current = String::new();
+    let mut chars = lowered_prompt.chars().peekable();
+    while let Some(ch) = chars.next() {
+        current.push(ch);
+        let is_boundary = match ch {
+            '\n' | ';' | '!' | '?' => true,
+            '.' => chars.peek().is_none_or(|next| next.is_whitespace()),
+            _ => false,
+        };
+        if is_boundary {
+            let clause = current.trim();
+            if !clause.is_empty() {
+                clauses.push(clause.to_string());
+            }
+            current.clear();
+        }
+    }
+    let trailing = current.trim();
+    if !trailing.is_empty() {
+        clauses.push(trailing.to_string());
+    }
+    clauses.into_iter().any(|clause| {
+        clause.contains(&lowered_token) && needles.iter().any(|needle| clause.contains(needle))
+    })
+}
+
+fn prompt_contains_write_intent(prompt: &str, token: &str) -> bool {
+    let lowered_prompt = prompt.to_ascii_lowercase();
+    let lowered_token = token.to_ascii_lowercase();
+    if lowered_token.is_empty() {
+        return false;
+    }
+    let direct_patterns = [
+        format!("write {}", lowered_token),
+        format!("save {}", lowered_token),
+        format!("create {}", lowered_token),
+        format!("create or append to {}", lowered_token),
+        format!("create or append {}", lowered_token),
+        format!("append to {}", lowered_token),
+        format!("append {}", lowered_token),
+        format!("update {}", lowered_token),
+        format!("generate {}", lowered_token),
+        format!("produce {}", lowered_token),
+        format!("emit {}", lowered_token),
+        format!("store {}", lowered_token),
+        format!("export {}", lowered_token),
+        format!("publish {}", lowered_token),
+        format!("record {}", lowered_token),
+        format!("materialize {}", lowered_token),
+        format!("output {}", lowered_token),
+        format!("artifact {}", lowered_token),
+        format!("report {}", lowered_token),
+        format!("file {}", lowered_token),
+    ];
+    if direct_patterns
+        .iter()
+        .any(|pattern| lowered_prompt.contains(pattern))
+    {
+        return true;
+    }
+
+    let existence_patterns = [
+        format!("if {} does not exist", lowered_token),
+        format!("if {} does not already exist", lowered_token),
+        format!("if {} is missing", lowered_token),
+        format!("when {} does not exist", lowered_token),
+        format!("when {} is missing", lowered_token),
+    ];
+    if existence_patterns
+        .iter()
+        .any(|pattern| lowered_prompt.contains(pattern))
+    {
+        return [
+            "create it",
+            "create one",
+            "create the file",
+            "write it",
+            "save it",
+            "append it",
+        ]
+        .iter()
+        .any(|pattern| lowered_prompt.contains(pattern));
+    }
+
+    prompt_token_has_context(
+        prompt,
+        token,
+        &[
+            "write",
+            "save",
+            "create",
+            "create or append",
+            "append",
+            "update",
+            "generate",
+            "produce",
+            "emit",
+            "store",
+            "export",
+            "publish",
+            "record",
+            "materialize",
+            "output",
+            "artifact",
+            "report",
+            "file",
+        ],
+    )
+}
+
+fn prompt_contains_read_only_intent(prompt: &str, token: &str) -> bool {
+    let lowered_prompt = prompt.to_ascii_lowercase();
+    let lowered_token = token.to_ascii_lowercase();
+    if lowered_token.is_empty() {
+        return false;
+    }
+    [
+        format!("read {}", lowered_token),
+        format!("inspect {}", lowered_token),
+        format!("review {}", lowered_token),
+        format!("open {}", lowered_token),
+        format!("never edit {}", lowered_token),
+        format!("do not edit {}", lowered_token),
+        format!("don't edit {}", lowered_token),
+        format!("do not modify {}", lowered_token),
+        format!("don't modify {}", lowered_token),
+        format!("do not rewrite {}", lowered_token),
+        format!("don't rewrite {}", lowered_token),
+        format!("do not rename {}", lowered_token),
+        format!("don't rename {}", lowered_token),
+        format!("do not move {}", lowered_token),
+        format!("don't move {}", lowered_token),
+        format!("do not delete {}", lowered_token),
+        format!("don't delete {}", lowered_token),
+        format!("{} as the source of truth", lowered_token),
+        format!("{} as source of truth", lowered_token),
+        format!("{} is the source of truth", lowered_token),
+        format!("{} is source of truth", lowered_token),
+        format!("keep {} untouched", lowered_token),
+        format!("leave {} untouched", lowered_token),
+        format!("must remain untouched {}", lowered_token),
+    ]
+    .iter()
+    .any(|pattern| lowered_prompt.contains(pattern))
+}
+
 pub fn infer_explicit_output_targets(prompt: &str) -> Vec<String> {
-    let mut targets = Vec::new();
+    let mut targets = BTreeSet::new();
     for raw_token in prompt.split_whitespace() {
         let token = raw_token
             .trim_matches(|ch: char| {
@@ -541,6 +694,7 @@ pub fn infer_explicit_output_targets(prompt: &str) -> Vec<String> {
                     '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':'
                 )
             })
+            .trim_end_matches(|ch: char| matches!(ch, '.' | '!' | '?'))
             .trim();
         if token.is_empty() || token.contains("://") {
             continue;
@@ -554,13 +708,17 @@ pub fn infer_explicit_output_targets(prompt: &str) -> Vec<String> {
             || token.starts_with("./")
             || token.starts_with("../")
             || token.contains('/');
-        if looks_like_path && has_extension {
-            targets.push(token.to_string());
+        if !has_extension {
+            continue;
+        }
+        if prompt_contains_read_only_intent(prompt, token) {
+            continue;
+        }
+        if looks_like_path || prompt_contains_write_intent(prompt, token) {
+            targets.insert(token.to_string());
         }
     }
-    targets.sort();
-    targets.dedup();
-    targets
+    targets.into_iter().collect()
 }
 
 pub fn workflow_plan_mentions_connector_backed_sources(prompt: &str) -> bool {
@@ -2057,6 +2215,34 @@ Here is the planner response:
                     .to_string()
             ]
         );
+    }
+
+    #[test]
+    fn infer_explicit_output_targets_extracts_bare_filenames_from_write_clauses() {
+        let prompt = "Read RESUME.md as the source of truth for skills. If resume_overview.md does not exist, create it. Create or append to daily_results_2026-04-15.md in the workspace root and keep the source-of-truth file untouched.";
+
+        let targets = infer_explicit_output_targets(prompt);
+
+        assert_eq!(
+            targets,
+            vec![
+                "daily_results_2026-04-15.md".to_string(),
+                "resume_overview.md".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn infer_explicit_output_targets_skips_read_only_source_of_truth_files() {
+        let prompt = "Analyze RESUME.md as the source of truth, then create resume_overview.md and save daily_results_2026-04-15.md.";
+
+        let targets = infer_explicit_output_targets(prompt);
+
+        assert!(!targets.iter().any(|path| path == "RESUME.md"));
+        assert!(targets.iter().any(|path| path == "resume_overview.md"));
+        assert!(targets
+            .iter()
+            .any(|path| path == "daily_results_2026-04-15.md"));
     }
 
     #[test]

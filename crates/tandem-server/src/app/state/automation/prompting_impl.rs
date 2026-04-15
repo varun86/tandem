@@ -23,7 +23,10 @@ fn automation_prompt_render_path_bullets(paths: &[String]) -> String {
         .join("\n")
 }
 
-fn automation_prompt_infer_concrete_workspace_paths(text: &str) -> Vec<String> {
+fn automation_prompt_extract_workspace_paths(
+    text: &str,
+    allow_bare_filenames: bool,
+) -> Vec<String> {
     let mut paths = Vec::new();
     for raw_token in text.split_whitespace() {
         let token = raw_token
@@ -46,8 +49,62 @@ fn automation_prompt_infer_concrete_workspace_paths(text: &str) -> Vec<String> {
             || token.starts_with("./")
             || token.starts_with("../")
             || token.contains('/');
-        if looks_like_path && has_extension {
+        if has_extension && (looks_like_path || allow_bare_filenames) {
             paths.push(token.to_string());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn automation_prompt_infer_concrete_workspace_paths(text: &str) -> Vec<String> {
+    automation_prompt_extract_workspace_paths(text, false)
+}
+
+fn automation_prompt_file_is_read_only(clause: &str, file: &str) -> bool {
+    let lowered_clause = clause.to_ascii_lowercase();
+    let lowered_file = file.to_ascii_lowercase();
+    if lowered_file.is_empty() {
+        return false;
+    }
+    [
+        format!("read {}", lowered_file),
+        format!("inspect {}", lowered_file),
+        format!("review {}", lowered_file),
+        format!("open {}", lowered_file),
+        format!("never edit {}", lowered_file),
+        format!("do not edit {}", lowered_file),
+        format!("don't edit {}", lowered_file),
+        format!("do not modify {}", lowered_file),
+        format!("don't modify {}", lowered_file),
+        format!("do not rewrite {}", lowered_file),
+        format!("don't rewrite {}", lowered_file),
+        format!("do not rename {}", lowered_file),
+        format!("don't rename {}", lowered_file),
+        format!("do not move {}", lowered_file),
+        format!("don't move {}", lowered_file),
+        format!("do not delete {}", lowered_file),
+        format!("don't delete {}", lowered_file),
+        format!("{} as the source of truth", lowered_file),
+        format!("{} as source of truth", lowered_file),
+        format!("{} is the source of truth", lowered_file),
+        format!("{} is source of truth", lowered_file),
+        format!("keep {} untouched", lowered_file),
+        format!("leave {} untouched", lowered_file),
+        format!("must remain untouched {}", lowered_file),
+    ]
+    .iter()
+    .any(|pattern| lowered_clause.contains(pattern))
+}
+
+fn automation_prompt_infer_read_only_workspace_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for clause in text.split(['\n', ';']) {
+        for path in automation_prompt_extract_workspace_paths(clause, true) {
+            if automation_prompt_file_is_read_only(clause, &path) {
+                paths.push(path);
+            }
         }
     }
     paths.sort();
@@ -266,11 +323,10 @@ fn automation_prompt_render_concrete_source_coverage(
     node: &AutomationFlowNode,
     runtime_values: Option<&AutomationPromptRuntimeValues>,
 ) -> Option<String> {
-    if automation_node_allows_optional_workspace_reads(node) {
-        return None;
-    }
-
     let mut paths = automation_prompt_infer_concrete_workspace_paths(
+        &automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
+    );
+    let mut read_only_paths = automation_prompt_infer_read_only_workspace_paths(
         &automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
     );
     if let Some(builder) = node
@@ -281,6 +337,9 @@ fn automation_prompt_render_concrete_source_coverage(
     {
         if let Some(prompt) = builder.get("prompt").and_then(Value::as_str) {
             paths.extend(automation_prompt_infer_concrete_workspace_paths(
+                &automation_prompt_apply_runtime_placeholders(prompt, runtime_values),
+            ));
+            read_only_paths.extend(automation_prompt_infer_read_only_workspace_paths(
                 &automation_prompt_apply_runtime_placeholders(prompt, runtime_values),
             ));
         }
@@ -295,16 +354,34 @@ fn automation_prompt_render_concrete_source_coverage(
             );
         }
     }
+    if automation_node_allows_optional_workspace_reads(node) {
+        paths.clear();
+    }
     paths.sort();
     paths.dedup();
+    read_only_paths.sort();
+    read_only_paths.dedup();
     if paths.is_empty() {
-        return None;
+        if read_only_paths.is_empty() {
+            return None;
+        }
     }
 
-    Some(format!(
-        "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- Concrete files for this node:\n{}",
-        automation_prompt_render_path_bullets(&paths)
-    ))
+    let mut sections = Vec::new();
+    if !paths.is_empty() {
+        sections.push(format!(
+            "Concrete Source Coverage:\n- Read the concrete workspace file paths named in the objective before concluding this node.\n- `glob`, `grep`, and `codesearch` can help discover files, but they do not satisfy the concrete file-read requirement.\n- Concrete files for this node:\n{}",
+            automation_prompt_render_path_bullets(&paths)
+        ));
+    }
+    if !read_only_paths.is_empty() {
+        sections.push(format!(
+            "Read-Only Source Files:\n- Treat these named files as input-only source-of-truth files unless the explicit output contract names them as write targets.\n- Do not write, rewrite, rename, move, or delete them while satisfying this node.\n- Read-only files for this node:\n{}",
+            automation_prompt_render_path_bullets(&read_only_paths)
+        ));
+    }
+
+    Some(sections.join("\n\n"))
 }
 
 pub(crate) fn render_automation_v2_prompt(

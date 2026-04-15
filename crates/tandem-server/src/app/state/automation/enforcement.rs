@@ -202,6 +202,78 @@ fn automation_optional_read_file_tokens(text: &str) -> Vec<String> {
     files
 }
 
+fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    for clause in text.split(['\n', ';']) {
+        let lowered = clause.to_ascii_lowercase();
+        let is_read_only_clause = [
+            "never edit",
+            "do not edit",
+            "don't edit",
+            "do not modify",
+            "don't modify",
+            "do not rewrite",
+            "don't rewrite",
+            "do not rename",
+            "don't rename",
+            "do not move",
+            "don't move",
+            "do not delete",
+            "don't delete",
+            "read only",
+            "read-only",
+            "only read",
+            "source of truth",
+            "source-of-truth",
+            "keep untouched",
+            "leave untouched",
+            "must remain untouched",
+        ]
+        .iter()
+        .any(|marker| lowered.contains(marker));
+        if !is_read_only_clause {
+            continue;
+        }
+        for file in automation_extract_workspace_file_tokens(clause) {
+            let lowered_file = file.to_ascii_lowercase();
+            let is_read_only_file = [
+                format!("read {}", lowered_file),
+                format!("inspect {}", lowered_file),
+                format!("review {}", lowered_file),
+                format!("open {}", lowered_file),
+                format!("{} as the source of truth", lowered_file),
+                format!("{} as source of truth", lowered_file),
+                format!("{} is the source of truth", lowered_file),
+                format!("{} is source of truth", lowered_file),
+                format!("keep {} untouched", lowered_file),
+                format!("leave {} untouched", lowered_file),
+                format!("must remain untouched {}", lowered_file),
+                format!("never edit {}", lowered_file),
+                format!("do not edit {}", lowered_file),
+                format!("don't edit {}", lowered_file),
+                format!("do not modify {}", lowered_file),
+                format!("don't modify {}", lowered_file),
+                format!("do not rewrite {}", lowered_file),
+                format!("don't rewrite {}", lowered_file),
+                format!("do not rename {}", lowered_file),
+                format!("don't rename {}", lowered_file),
+                format!("do not move {}", lowered_file),
+                format!("don't move {}", lowered_file),
+                format!("do not delete {}", lowered_file),
+                format!("don't delete {}", lowered_file),
+            ]
+            .iter()
+            .any(|pattern| lowered.contains(pattern));
+            if is_read_only_file {
+                files.push(file);
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
 pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationFlowNode) -> bool {
     let combined = automation_node_workspace_intent_text(node);
     if !automation_text_has_workspace_tokens(&combined) {
@@ -278,9 +350,14 @@ pub(crate) fn automation_node_inferred_bootstrap_required_files(
         .into_iter()
         .map(|path| path.to_ascii_lowercase())
         .collect::<std::collections::HashSet<_>>();
+    let read_only_files = automation_read_only_file_tokens(&combined)
+        .into_iter()
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
     let mut files = automation_extract_workspace_file_tokens(&combined)
         .into_iter()
         .filter(|path| !optional_read_files.contains(&path.to_ascii_lowercase()))
+        .filter(|path| !read_only_files.contains(&path.to_ascii_lowercase()))
         .filter(|path| {
             let path_lower = path.to_ascii_lowercase();
             let optional_read_patterns = [

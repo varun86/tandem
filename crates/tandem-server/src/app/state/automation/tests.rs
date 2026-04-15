@@ -377,6 +377,30 @@ fn bootstrap_inference_skips_optional_slash_separated_input_files() {
 }
 
 #[test]
+fn bootstrap_inference_skips_read_only_source_of_truth_files() {
+    let mut node = bare_node();
+    node.node_id = "collect_inputs".to_string();
+    node.objective = "Read RESUME.md as the source of truth for skills, role targets, and geography preferences. If resume_overview.md does not exist, create it. Create or append daily_results_2026-04-15.md in the workspace root and keep RESUME.md untouched.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: Some("Return a structured handoff.".to_string()),
+    });
+
+    let must_write_files = automation_node_must_write_files(&node);
+
+    assert!(!must_write_files.iter().any(|path| path == "RESUME.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "resume_overview.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily_results_2026-04-15.md"));
+}
+
+#[test]
 fn bootstrap_inference_applies_to_dependent_workspace_bootstrap_nodes() {
     let mut node = bare_node();
     node.node_id = "execute_goal".to_string();
