@@ -194,36 +194,6 @@ fn automation_attach_structured_handoff_source_material(
     }
 }
 
-fn automation_read_only_source_of_truth_name_variants(
-    node: &AutomationFlowNode,
-    workspace_root: &str,
-) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::<String>::new();
-    for path in enforcement::automation_node_read_only_source_of_truth_files(node) {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        names.insert(trimmed.to_ascii_lowercase());
-        if let Some(filename) = std::path::Path::new(trimmed)
-            .file_name()
-            .and_then(|value| value.to_str())
-        {
-            names.insert(filename.to_ascii_lowercase());
-        }
-        if let Some(normalized) = super::normalize_workspace_display_path(workspace_root, trimmed) {
-            names.insert(normalized.to_ascii_lowercase());
-            if let Some(filename) = std::path::Path::new(&normalized)
-                .file_name()
-                .and_then(|value| value.to_str())
-            {
-                names.insert(filename.to_ascii_lowercase());
-            }
-        }
-    }
-    names
-}
-
 fn automation_path_references_read_only_source_of_truth(
     raw_path: &str,
     read_only_names: &std::collections::HashSet<String>,
@@ -2141,7 +2111,8 @@ pub(crate) fn detect_automation_node_phase(
     }
 }
 
-pub(crate) fn wrap_automation_node_output(
+pub(crate) fn wrap_automation_node_output_with_automation(
+    automation: &AutomationV2Spec,
     node: &AutomationFlowNode,
     session: &Session,
     requested_tools: &[String],
@@ -2187,7 +2158,7 @@ pub(crate) fn wrap_automation_node_output(
         .as_deref()
         .unwrap_or(session.directory.as_str());
     let read_only_source_of_truth_names =
-        automation_read_only_source_of_truth_name_variants(node, workspace_root);
+        enforcement::automation_read_only_source_of_truth_name_variants_for_automation(automation);
     let structured_source_material = automation_structured_handoff_source_material(session);
     let mut structured_handoff =
         if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson {
@@ -2344,4 +2315,63 @@ pub(crate) fn wrap_automation_node_output(
         artifact_validation,
         provenance,
     })
+}
+
+pub(crate) fn wrap_automation_node_output(
+    node: &AutomationFlowNode,
+    session: &Session,
+    requested_tools: &[String],
+    session_id: &str,
+    run_id: Option<&str>,
+    session_text: &str,
+    verified_output: Option<(String, String)>,
+    artifact_validation: Option<Value>,
+) -> Value {
+    let automation = AutomationV2Spec {
+        automation_id: "wrapped-node-output".to_string(),
+        name: "Wrapped Node Output".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![node.clone()],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "system".to_string(),
+        workspace_root: session.workspace_root.clone(),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    wrap_automation_node_output_with_automation(
+        &automation,
+        node,
+        session,
+        requested_tools,
+        session_id,
+        run_id,
+        session_text,
+        verified_output,
+        artifact_validation,
+    )
 }

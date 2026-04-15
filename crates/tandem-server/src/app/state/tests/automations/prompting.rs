@@ -993,6 +993,126 @@ fn generated_prompt_variation_suite_preserves_contract_inference() {
 }
 
 #[test]
+fn later_nodes_inherit_automation_wide_read_only_source_truth_guidance() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-global-read-only".to_string(),
+        name: "Global Read Only".to_string(),
+        description: Some(
+            "Analyze RESUME.md and use it as the source of truth. Never edit, rewrite, rename, move, or delete RESUME.md."
+                .to_string(),
+        ),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                node_id: "assess".to_string(),
+                agent_id: "worker".to_string(),
+                objective: "Read RESUME.md as the source of truth and confirm whether resume_overview.md already exists.".to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: None,
+                retry_policy: None,
+                timeout_ms: None,
+                max_tool_calls: None,
+                stage_kind: None,
+                gate: None,
+                metadata: None,
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/home/evan/job-hunt".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "worker".to_string(),
+        objective:
+            "Create or append daily_results_2026-04-15.md in the workspace root and return a short append-safe report."
+                .to_string(),
+        depends_on: vec!["assess".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_files": ["daily_results_2026-04-15.md"]
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "worker".to_string(),
+        template_id: None,
+        display_name: "Worker".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/home/evan/job-hunt",
+        "run-global-read-only",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Read-Only Source Files:"));
+    assert!(prompt.contains("RESUME.md"));
+    assert!(prompt.contains("daily_results_2026-04-15.md"));
+    assert!(!prompt.contains("Use only approved write targets for this node: the declared run artifact plus these required workspace files: `RESUME.md`"));
+}
+
+#[test]
 fn prompt_resolves_reserved_runtime_placeholders_for_run() {
     let automation = AutomationV2Spec {
         automation_id: "automation-runtime-placeholders".to_string(),

@@ -238,6 +238,10 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
             let lowered_file = file.to_ascii_lowercase();
             let is_read_only_file = [
                 format!("read {}", lowered_file),
+                format!("only read {}", lowered_file),
+                format!("only read from {}", lowered_file),
+                format!("read only {}", lowered_file),
+                format!("read only from {}", lowered_file),
                 format!("inspect {}", lowered_file),
                 format!("review {}", lowered_file),
                 format!("open {}", lowered_file),
@@ -263,7 +267,27 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
                 format!("don't delete {}", lowered_file),
             ]
             .iter()
-            .any(|pattern| lowered.contains(pattern));
+            .any(|pattern| lowered.contains(pattern))
+                || lowered.match_indices(&lowered_file).any(|(file_pos, _)| {
+                    let prefix = &lowered[..file_pos];
+                    [
+                        "never edit",
+                        "do not edit",
+                        "don't edit",
+                        "do not modify",
+                        "don't modify",
+                        "do not rewrite",
+                        "don't rewrite",
+                        "do not rename",
+                        "don't rename",
+                        "do not move",
+                        "don't move",
+                        "do not delete",
+                        "don't delete",
+                    ]
+                    .iter()
+                    .any(|marker| prefix.contains(marker))
+                });
             if is_read_only_file {
                 files.push(file);
             }
@@ -272,6 +296,82 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
     files.sort();
     files.dedup();
     files
+}
+
+fn automation_collect_string_leaves(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+        }
+        Value::Array(rows) => {
+            for row in rows {
+                automation_collect_string_leaves(row, out);
+            }
+        }
+        Value::Object(map) => {
+            for row in map.values() {
+                automation_collect_string_leaves(row, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn automation_read_only_source_of_truth_files_for_automation(
+    automation: &AutomationV2Spec,
+) -> Vec<String> {
+    let mut files = Vec::new();
+    if let Some(description) = automation.description.as_deref() {
+        files.extend(automation_read_only_file_tokens(description));
+    }
+    if let Some(metadata) = automation.metadata.as_ref() {
+        let mut strings = Vec::new();
+        automation_collect_string_leaves(metadata, &mut strings);
+        for text in strings {
+            files.extend(automation_read_only_file_tokens(&text));
+        }
+    }
+    for node in &automation.flow.nodes {
+        files.extend(automation_node_read_only_source_of_truth_files(node));
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+pub(crate) fn automation_read_only_source_of_truth_name_variants_for_automation(
+    automation: &AutomationV2Spec,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::<String>::new();
+    let workspace_root = automation.workspace_root.as_deref();
+    for path in automation_read_only_source_of_truth_files_for_automation(automation) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        names.insert(trimmed.to_ascii_lowercase());
+        if let Some(filename) = std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|value| value.to_str())
+        {
+            names.insert(filename.to_ascii_lowercase());
+        }
+        if let Some(root) = workspace_root {
+            if let Some(normalized) = super::normalize_workspace_display_path(root, trimmed) {
+                names.insert(normalized.to_ascii_lowercase());
+                if let Some(filename) = std::path::Path::new(&normalized)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                {
+                    names.insert(filename.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    names
 }
 
 pub(crate) fn automation_node_read_only_source_of_truth_files(

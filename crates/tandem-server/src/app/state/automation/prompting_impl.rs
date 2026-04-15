@@ -320,6 +320,7 @@ fn automation_prompt_render_delivery_source_body(upstream_inputs: &[Value]) -> O
 }
 
 fn automation_prompt_render_concrete_source_coverage(
+    automation: &AutomationV2Spec,
     node: &AutomationFlowNode,
     runtime_values: Option<&AutomationPromptRuntimeValues>,
 ) -> Option<String> {
@@ -355,6 +356,8 @@ fn automation_prompt_render_concrete_source_coverage(
             );
         }
     }
+    let automation_read_only_paths =
+        enforcement::automation_read_only_source_of_truth_files_for_automation(automation);
     let mut source_paths = Vec::new();
     source_paths.extend(read_only_paths.iter().cloned());
     source_paths.extend(explicit_input_files.iter().cloned());
@@ -367,6 +370,7 @@ fn automation_prompt_render_concrete_source_coverage(
     }
     paths.sort();
     paths.dedup();
+    read_only_paths.extend(automation_read_only_paths);
     read_only_paths.sort();
     read_only_paths.dedup();
     if paths.is_empty() {
@@ -633,7 +637,7 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         ));
     }
     if let Some(concrete_source_coverage) =
-        automation_prompt_render_concrete_source_coverage(node, runtime_values)
+        automation_prompt_render_concrete_source_coverage(automation, node, runtime_values)
     {
         sections.push(concrete_source_coverage);
     }

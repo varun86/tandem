@@ -2921,13 +2921,54 @@ fn automation_output_target_matches_node_objective(
 }
 
 pub(crate) fn automation_node_must_write_files_for_automation(
-    _automation: &AutomationV2Spec,
+    automation: &AutomationV2Spec,
     node: &AutomationFlowNode,
     runtime_values: Option<&AutomationPromptRuntimeValues>,
 ) -> Vec<String> {
+    let read_only_names =
+        enforcement::automation_read_only_source_of_truth_name_variants_for_automation(automation);
     let mut files = automation_node_must_write_files(node)
         .into_iter()
         .map(|path| automation_runtime_placeholder_replace(&path, runtime_values))
+        .filter(|path| {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            let lowered = trimmed.to_ascii_lowercase();
+            if read_only_names.contains(&lowered) {
+                return false;
+            }
+            let filename = std::path::Path::new(trimmed)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase());
+            if filename
+                .as_ref()
+                .is_some_and(|value| read_only_names.contains(value))
+            {
+                return false;
+            }
+            if let Some(root) = automation.workspace_root.as_deref() {
+                if let Some(normalized) = normalize_workspace_display_path(root, trimmed) {
+                    let normalized_lower = normalized.to_ascii_lowercase();
+                    if read_only_names.contains(&normalized_lower) {
+                        return false;
+                    }
+                    let normalized_filename = std::path::Path::new(&normalized)
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .map(|value| value.to_ascii_lowercase());
+                    if normalized_filename
+                        .as_ref()
+                        .is_some_and(|value| read_only_names.contains(value))
+                    {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
         .collect::<Vec<_>>();
     files.sort();
     files.dedup();
@@ -6913,7 +6954,8 @@ pub(crate) async fn execute_automation_v2_node(
                 ));
                 state.storage.save_session(session.clone()).await?;
 
-                let output = node_output::wrap_automation_node_output(
+                let output = node_output::wrap_automation_node_output_with_automation(
+                    automation,
                     node,
                     &session,
                     &[],
@@ -6994,7 +7036,8 @@ pub(crate) async fn execute_automation_v2_node(
             output_path = %output_path,
             "automation node used deterministic inline artifact shortcut"
         );
-        let output = node_output::wrap_automation_node_output(
+        let output = node_output::wrap_automation_node_output_with_automation(
+            automation,
             node,
             &session,
             &[],
@@ -7828,7 +7871,8 @@ pub(crate) async fn execute_automation_v2_node(
         )
         .await?
     };
-    let mut output = wrap_automation_node_output(
+    let mut output = wrap_automation_node_output_with_automation(
+        automation,
         node,
         &session,
         &requested_tools,

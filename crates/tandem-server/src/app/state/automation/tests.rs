@@ -741,6 +741,88 @@ fn report_markdown_nodes_do_not_infer_template_filenames_as_workspace_writes() {
 }
 
 #[test]
+fn automation_wide_read_only_rules_filter_later_node_write_targets() {
+    let protect_node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "assess".to_string(),
+        agent_id: "a1".to_string(),
+        objective: "Read RESUME.md as the source of truth. Never edit, rewrite, rename, move, or delete RESUME.md.".to_string(),
+        depends_on: vec![],
+        input_refs: vec![],
+        output_contract: None,
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let mut write_node = bare_node();
+    write_node.node_id = "generate_report".to_string();
+    write_node.objective =
+        "Create the daily results file and return the append-safe report summary.".to_string();
+    write_node.metadata = Some(json!({
+        "builder": {
+            "output_files": ["RESUME.md", "daily_results_{current_date}.md"]
+        }
+    }));
+    let automation = AutomationV2Spec {
+        automation_id: "automation-read-only-invariant".to_string(),
+        name: "Read Only Invariant".to_string(),
+        description: Some(
+            "Only read from RESUME.md. Keep RESUME.md untouched throughout the workflow."
+                .to_string(),
+        ),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![protect_node, write_node.clone()],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/home/evan/job-hunt".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let must_write_files = automation_node_must_write_files_for_automation(
+        &automation,
+        &write_node,
+        Some(&AutomationPromptRuntimeValues {
+            current_date: "2026-04-15".to_string(),
+            current_time: "1049".to_string(),
+            current_timestamp: "2026-04-15 10:49".to_string(),
+        }),
+    );
+
+    assert!(!must_write_files.iter().any(|path| path == "RESUME.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily_results_2026-04-15.md"));
+}
+
+#[test]
 fn wildcard_tool_allowlist_does_not_select_mcp_servers() {
     let selected = automation_infer_selected_mcp_servers(
         &Vec::new(),

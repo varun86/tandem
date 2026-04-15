@@ -1615,3 +1615,86 @@ async fn routine_tool_policy_hook_denies_disallowed_tool_for_session_scope() {
         .unwrap_or_default()
         .contains("not allowed for routine"));
 }
+
+#[tokio::test]
+async fn automation_tool_policy_hook_denies_writes_to_read_only_source_truth_files() {
+    let state = test_state().await;
+    let session = Session::new(
+        Some("automation-session".to_string()),
+        Some(".".to_string()),
+    );
+    let session_id = session.id.clone();
+    state
+        .storage
+        .save_session(session)
+        .await
+        .expect("save session");
+
+    let automation = crate::AutomationV2Spec {
+        automation_id: "automation-read-only-guard".to_string(),
+        name: "Read Only Guard".to_string(),
+        description: Some(
+            "Analyze RESUME.md and use it as the source of truth. Never edit, rewrite, rename, move, or delete RESUME.md."
+                .to_string(),
+        ),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/home/evan/job-hunt".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("automation run");
+    state
+        .add_automation_v2_session(&run.run_id, &session_id)
+        .await
+        .expect("linked automation session");
+
+    let hook = crate::agent_teams::ServerToolPolicyHook::new(state.clone());
+    let decision = hook
+        .evaluate_tool(ToolPolicyContext {
+            session_id,
+            message_id: "msg-automation-1".to_string(),
+            tool: "write".to_string(),
+            args: json!({
+                "path": "RESUME.md",
+                "content": "bad overwrite",
+                "__workspace_root": "/home/evan/job-hunt",
+            }),
+        })
+        .await
+        .expect("policy decision");
+
+    assert!(!decision.allowed);
+    assert!(decision
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("read-only source-of-truth"));
+}
