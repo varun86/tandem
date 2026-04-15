@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MOTION_TOKENS, prefersReducedMotion } from "./themes.js";
 import { renderIcons } from "./icons.js";
 import { GlowLayer, IconButton, StatusPulse } from "../ui/index.tsx";
+import type { NavigationLockState } from "../pages/pageTypes";
 
 const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
   dashboard: {
@@ -99,6 +100,7 @@ export function AppShell({
   onLogout,
   statusBar,
   routeKey,
+  navigationLock,
   children,
   providerGate,
 }: {
@@ -125,6 +127,7 @@ export function AppShell({
     } | null;
   };
   routeKey: string;
+  navigationLock?: NavigationLockState | null;
   children: any;
   providerGate?: any;
 }) {
@@ -135,6 +138,7 @@ export function AppShell({
   );
   const defaultAvatarUrl = "/icon.png";
   const reducedMotion = prefersReducedMotion();
+  const navigationLocked = !!navigationLock;
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -226,13 +230,14 @@ export function AppShell({
     navRoutes.map(([id, label, icon]) => {
       const active = currentRoute === id;
       const locked = providerLocked && id !== "settings";
+      const disabled = locked || navigationLocked;
       return (
         <button
           key={id}
           type="button"
           title={label}
-          disabled={locked}
-          className={`tcp-rail-icon ${active ? "active" : ""} ${locked ? "locked" : ""}`}
+          disabled={disabled}
+          className={`tcp-rail-icon ${active ? "active" : ""} ${disabled ? "locked" : ""}`}
           onClick={() => onNavigate(id)}
         >
           {active ? (
@@ -247,12 +252,13 @@ export function AppShell({
     navRoutes.map(([id, label, icon]) => {
       const active = currentRoute === id;
       const locked = providerLocked && id !== "settings";
+      const disabled = locked || navigationLocked;
       return (
         <button
           key={id}
           type="button"
-          disabled={locked}
-          className={`tcp-context-link ${active ? "active" : ""} ${locked ? "locked" : ""}`}
+          disabled={disabled}
+          className={`tcp-context-link ${active ? "active" : ""} ${disabled ? "locked" : ""}`}
           onClick={() => {
             onNavigate(id);
             if (mobile) setMobileNavOpen(false);
@@ -319,6 +325,7 @@ export function AppShell({
                 <button
                   type="button"
                   className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+                  disabled={navigationLocked}
                   title={
                     statusBar.bugMonitor?.lastError
                       ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
@@ -388,18 +395,23 @@ export function AppShell({
       </GlowLayer>
 
       <aside className="tcp-icon-rail hidden xl:flex">
-        <button type="button" className="tcp-rail-brand" onClick={() => onNavigate("dashboard")}>
+        <button
+          type="button"
+          className="tcp-rail-brand"
+          disabled={navigationLocked}
+          onClick={() => onNavigate("dashboard")}
+        >
           <div className="tcp-brand-avatar h-10 w-10">{renderAvatar()}</div>
         </button>
         <nav className="tcp-rail-nav">{renderIconRailItems()}</nav>
         <div className="tcp-rail-footer">
-          <IconButton title="Command palette" onClick={onPaletteOpen}>
+          <IconButton title="Command palette" onClick={onPaletteOpen} disabled={navigationLocked}>
             <i data-lucide="search"></i>
           </IconButton>
-          <IconButton title="Cycle theme" onClick={onThemeCycle}>
+          <IconButton title="Cycle theme" onClick={onThemeCycle} disabled={navigationLocked}>
             <i data-lucide="paint-bucket"></i>
           </IconButton>
-          <IconButton title="Logout" onClick={onLogout}>
+          <IconButton title="Logout" onClick={onLogout} disabled={navigationLocked}>
             <i data-lucide="log-out"></i>
           </IconButton>
           <div className="mt-2 flex justify-center">
@@ -417,6 +429,7 @@ export function AppShell({
           <button
             type="button"
             className="tcp-btn h-10 px-3"
+            disabled={navigationLocked}
             onClick={() => setMobileNavOpen(true)}
           >
             <i data-lucide="menu"></i>
@@ -432,6 +445,7 @@ export function AppShell({
             <button
               type="button"
               className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+              disabled={navigationLocked}
               title={
                 statusBar.bugMonitor?.lastError
                   ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
@@ -459,6 +473,7 @@ export function AppShell({
               <button
                 type="button"
                 className={`tcp-bug-monitor-pill ${bugMonitorState.toneClass}`}
+                disabled={navigationLocked}
                 title={
                   statusBar.bugMonitor?.lastError
                     ? `${bugMonitorState.label}: ${statusBar.bugMonitor.lastError}`
@@ -543,6 +558,64 @@ export function AppShell({
       </AnimatePresence>
 
       <AnimatePresence>{providerGate || null}</AnimatePresence>
+
+      <AnimatePresence>
+        {navigationLock ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            style={{ zIndex: 180 }}
+            initial={reducedMotion ? false : { opacity: 0 }}
+            animate={reducedMotion ? undefined : { opacity: 1 }}
+            exit={reducedMotion ? undefined : { opacity: 0 }}
+          >
+            <div className="tcp-confirm-backdrop" aria-hidden="true" />
+            <motion.div
+              className="tcp-confirm-dialog w-[min(36rem,calc(100vw-2rem))]"
+              role="alertdialog"
+              aria-live="assertive"
+              initial={reducedMotion ? false : { opacity: 0, y: 10, scale: 0.985 }}
+              animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+              exit={reducedMotion ? undefined : { opacity: 0, y: 6, scale: 0.985 }}
+              transition={
+                reducedMotion
+                  ? undefined
+                  : { duration: MOTION_TOKENS.duration.normal, ease: MOTION_TOKENS.easing.standard }
+              }
+            >
+              <div className="flex items-start gap-3">
+                <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
+                  <motion.div
+                    className="absolute inset-0 border-[3px] border-transparent border-t-amber-500 border-r-amber-500"
+                    animate={reducedMotion ? undefined : { rotate: 360 }}
+                    transition={
+                      reducedMotion
+                        ? undefined
+                        : { repeat: Infinity, ease: "linear", duration: 1.1 }
+                    }
+                  />
+                  <motion.div
+                    className="absolute inset-2 border-[3px] border-transparent border-l-amber-300 border-b-amber-300 opacity-70"
+                    animate={reducedMotion ? undefined : { rotate: -360 }}
+                    transition={
+                      reducedMotion
+                        ? undefined
+                        : { repeat: Infinity, ease: "linear", duration: 1.7 }
+                    }
+                  />
+                  <i
+                    data-lucide="loader-circle"
+                    className="relative z-10 h-5 w-5 text-amber-300"
+                  ></i>
+                </div>
+                <div className="min-w-0">
+                  <h3 className="tcp-confirm-title">{navigationLock.title}</h3>
+                  <p className="tcp-confirm-message">{navigationLock.message}</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

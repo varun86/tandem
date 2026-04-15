@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import YAML from "yaml";
 import { Step1Goal } from "./Step1Goal";
 import { Step2Schedule } from "./Step2Schedule";
@@ -8,6 +8,7 @@ import { Step3Mode } from "./Step3Mode";
 import { Step4Review } from "./Step4Review";
 import { detectBrowserTimezone, isValidTimezone } from "../timezone";
 import { buildDefaultKnowledgeOperatorPreferences } from "../../planner/plannerShared";
+import type { NavigationLockState } from "../../../pages/pageTypes";
 
 type ExecutionMode = "single" | "team" | "swarm";
 type WizardStep = 1 | 2 | 3 | 4;
@@ -313,6 +314,7 @@ export function CreateWizard({
   navigate,
   defaultProvider,
   defaultModel,
+  onNavigationLockChange,
 }: {
   client: any;
   api: (path: string, init?: RequestInit) => Promise<any>;
@@ -320,6 +322,7 @@ export function CreateWizard({
   navigate: (route: string) => void;
   defaultProvider: string;
   defaultModel: string;
+  onNavigationLockChange?: (lock: NavigationLockState | null) => void;
 }) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>(1);
@@ -678,6 +681,46 @@ export function CreateWizard({
     wizard.plannerModelId
   );
   const roleModelsError = validateRoleModelsJsonInput(wizard.roleModelsJson);
+  const navigationLock = useMemo<NavigationLockState | null>(() => {
+    if (compileMutation.isPending) {
+      return {
+        title: "Generating mission plan",
+        message: "Tandem is drafting the workflow plan. Stay on this page until it finishes.",
+      };
+    }
+    if (generateSkillMutation.isPending || installGeneratedSkillMutation.isPending) {
+      return {
+        title: "Generating reusable skill",
+        message: "Tandem is drafting the reusable skill. Stay on this page until it finishes.",
+      };
+    }
+    if (planningMessageMutation.isPending || planningResetMutation.isPending) {
+      return {
+        title: "Updating planning draft",
+        message: "Tandem is revising the draft. Stay on this page until it finishes.",
+      };
+    }
+    if (deployMutation.isPending) {
+      return {
+        title: "Creating automation",
+        message: "Tandem is creating the automation. Stay on this page until it finishes.",
+      };
+    }
+    return null;
+  }, [
+    compileMutation.isPending,
+    deployMutation.isPending,
+    generateSkillMutation.isPending,
+    installGeneratedSkillMutation.isPending,
+    planningMessageMutation.isPending,
+    planningResetMutation.isPending,
+  ]);
+  useLayoutEffect(() => {
+    onNavigationLockChange?.(navigationLock);
+    return () => {
+      onNavigationLockChange?.(null);
+    };
+  }, [navigationLock, onNavigationLockChange]);
   const timezoneError =
     String(wizard.timezone || "").trim().length > 0 && !isValidTimezone(wizard.timezone)
       ? "Timezone must be a valid IANA timezone like Europe/Berlin."
@@ -748,58 +791,6 @@ export function CreateWizard({
 
   return (
     <div className="flex flex-col h-full gap-4 min-h-0 relative">
-      <AnimatePresence>
-        {compileMutation.isPending ? (
-          <motion.div
-            className="absolute inset-[-1.25rem] z-50 flex items-center justify-center rounded-2xl bg-slate-950/80 backdrop-blur-md"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <div className="flex flex-col items-center gap-6 p-8">
-              <div className="relative flex items-center justify-center h-24 w-24">
-                <motion.div
-                  className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-amber-500 border-r-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]"
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, ease: "linear", duration: 1.2 }}
-                />
-                <motion.div
-                  className="absolute inset-2 rounded-full border-[3px] border-transparent border-l-amber-300 border-b-amber-300 opacity-70"
-                  animate={{ rotate: -360 }}
-                  transition={{ repeat: Infinity, ease: "linear", duration: 1.8 }}
-                />
-                <motion.div
-                  className="absolute inset-0 rounded-full bg-amber-500/20 blur-xl"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] }}
-                  transition={{ repeat: Infinity, ease: "easeInOut", duration: 2 }}
-                />
-                <i data-lucide="sparkles" className="h-10 w-10 text-amber-400 relative z-10" />
-              </div>
-              <div className="text-center">
-                <h3 className="text-xl font-bold tracking-tight text-white mb-2 flex items-center justify-center gap-1">
-                  Generating Mission Plan
-                  <motion.span
-                    animate={{ opacity: [0, 1, 0] }}
-                    transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-                  >
-                    ...
-                  </motion.span>
-                </h3>
-                <motion.p
-                  className="text-sm text-slate-400 max-w-sm leading-relaxed"
-                  animate={{ opacity: [0.6, 1, 0.6] }}
-                  transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
-                >
-                  Tandem is analyzing your goal, evaluating the workspace, and drafting a
-                  step-by-step blueprint.
-                </motion.p>
-              </div>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
       <div className="flex items-center gap-2">
         {AUTOMATION_WIZARD_CONFIG.steps.map((label, i) => {
           const num = (i + 1) as WizardStep;

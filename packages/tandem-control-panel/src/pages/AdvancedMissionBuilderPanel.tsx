@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import YAML from "yaml";
 import type { TandemClient } from "@frumu/tandem-client";
@@ -11,6 +11,7 @@ import {
   parseMissionBlueprintDraft,
   type MissionBuilderScheduleDefaults,
 } from "../features/mission-builder/shared";
+import type { NavigationLockState } from "./pageTypes";
 
 type ApiFn = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -631,6 +632,7 @@ export function AdvancedMissionBuilderPanel({
   onShowAutomations,
   onShowRuns,
   onClearEditing,
+  onNavigationLockChange,
 }: {
   client: TandemClient;
   api: ApiFn;
@@ -641,6 +643,7 @@ export function AdvancedMissionBuilderPanel({
   onShowAutomations: () => void;
   onShowRuns: () => void;
   onClearEditing?: () => void;
+  onNavigationLockChange?: (lock: NavigationLockState | null) => void;
 }) {
   const queryClient = useQueryClient();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -712,6 +715,26 @@ export function AdvancedMissionBuilderPanel({
       }),
   });
 
+  const navigationLock = useMemo<NavigationLockState | null>(() => {
+    if (!busy) return null;
+    if (busy === "generate") {
+      return {
+        title: "Generating mission draft",
+        message: "Tandem is drafting the mission. Stay on this page until it finishes.",
+      };
+    }
+    if (busy === "preview") {
+      return {
+        title: "Compiling preview",
+        message: "Tandem is compiling the preview. Stay on this page until it finishes.",
+      };
+    }
+    return {
+      title: "Applying mission draft",
+      message: "Tandem is creating the automation. Stay on this page until it finishes.",
+    };
+  }, [busy]);
+
   useEffect(() => {
     const nextWorkspace = String(
       (healthQuery.data as any)?.workspaceRoot || (healthQuery.data as any)?.workspace_root || ""
@@ -727,6 +750,13 @@ export function AdvancedMissionBuilderPanel({
           }
     );
   }, [healthQuery.data]);
+
+  useLayoutEffect(() => {
+    onNavigationLockChange?.(navigationLock);
+    return () => {
+      onNavigationLockChange?.(null);
+    };
+  }, [navigationLock, onNavigationLockChange]);
 
   useEffect(() => {
     const root =

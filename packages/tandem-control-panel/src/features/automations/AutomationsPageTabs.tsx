@@ -23,6 +23,8 @@ type AutomationsPageTabsProps = {
   setSelectedRunId: (runId: string) => void;
   advancedEditAutomation: any | null;
   setAdvancedEditAutomation: (automation: any | null) => void;
+  navigationLocked: boolean;
+  onNavigationLockChange?: (lock: { title: string; message: string } | null) => void;
   client: any;
   api: any;
   toast: any;
@@ -45,6 +47,8 @@ export function AutomationsPageTabs({
   setSelectedRunId,
   advancedEditAutomation,
   setAdvancedEditAutomation,
+  navigationLocked,
+  onNavigationLockChange,
   client,
   api,
   toast,
@@ -77,6 +81,7 @@ export function AutomationsPageTabs({
           <button
             key={entry.id}
             onClick={() => setTab(entry.id)}
+            disabled={navigationLocked}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
               tab === entry.id
                 ? "bg-amber-500/20 text-amber-300 shadow-sm"
@@ -112,6 +117,7 @@ export function AutomationsPageTabs({
                     toast={toast}
                     defaultProvider={providerStatus.defaultProvider}
                     defaultModel={providerStatus.defaultModel}
+                    onNavigationLockChange={onNavigationLockChange}
                     onShowAutomations={() => {
                       setAdvancedEditAutomation(null);
                       setTab("list");
@@ -134,6 +140,7 @@ export function AutomationsPageTabs({
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
+                          disabled={navigationLocked}
                           className={`tcp-btn h-9 px-3 text-sm ${
                             createMode === "simple"
                               ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
@@ -148,6 +155,7 @@ export function AutomationsPageTabs({
                         </button>
                         <button
                           type="button"
+                          disabled={navigationLocked}
                           className={`tcp-btn h-9 px-3 text-sm ${
                             createMode === "advanced"
                               ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
@@ -160,6 +168,7 @@ export function AutomationsPageTabs({
                         {composerEnabled ? (
                           <button
                             type="button"
+                            disabled={navigationLocked}
                             className={`tcp-btn h-9 px-3 text-sm ${
                               createMode === "composer"
                                 ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
@@ -193,6 +202,7 @@ export function AutomationsPageTabs({
                           setTab("running");
                         }}
                         onClearEditing={() => setAdvancedEditAutomation(null)}
+                        onNavigationLockChange={onNavigationLockChange}
                       />
                     ) : (
                       <CreateWizardComponent
@@ -202,6 +212,7 @@ export function AutomationsPageTabs({
                         navigate={navigate}
                         defaultProvider={providerStatus.defaultProvider}
                         defaultModel={providerStatus.defaultModel}
+                        onNavigationLockChange={onNavigationLockChange}
                       />
                     )}
                   </>

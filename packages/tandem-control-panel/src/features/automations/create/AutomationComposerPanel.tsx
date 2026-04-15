@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import YAML from "yaml";
 import { ChatInterfacePanel, type ChatQuickReply } from "../../../components/ChatInterfacePanel";
 import {
@@ -7,6 +7,7 @@ import {
   buildKnowledgeRolloutGuidance,
   normalizePlannerConversationMessages,
 } from "../../planner/plannerShared";
+import type { NavigationLockState } from "../../../pages/pageTypes";
 
 type ComposerPhase = "intent_capture" | "clarification" | "draft_ready" | "created";
 
@@ -31,6 +32,7 @@ type AutomationComposerPanelProps = {
   defaultModel: string;
   onShowAutomations: () => void;
   onShowRuns: () => void;
+  onNavigationLockChange?: (lock: NavigationLockState | null) => void;
 };
 
 type ComposerStorage = {
@@ -344,6 +346,7 @@ export function AutomationComposerPanel({
   defaultModel,
   onShowAutomations,
   onShowRuns,
+  onNavigationLockChange,
 }: AutomationComposerPanelProps) {
   const queryClient = useQueryClient();
   const [input, setInput] = useState("");
@@ -703,6 +706,40 @@ export function AutomationComposerPanel({
       toast("err", message);
     },
   });
+
+  const navigationLock = useMemo<NavigationLockState | null>(() => {
+    if (startMutation.isPending || messageMutation.isPending) {
+      return {
+        title: "Generating automation draft",
+        message: "Tandem is drafting the automation. Stay on this page until it finishes.",
+      };
+    }
+    if (createMutation.isPending) {
+      return {
+        title: "Creating automation",
+        message: "Tandem is creating the automation. Stay on this page until it finishes.",
+      };
+    }
+    if (runNowMutation.isPending) {
+      return {
+        title: "Starting the first run",
+        message: "Tandem is starting the run. Stay on this page until it finishes.",
+      };
+    }
+    return null;
+  }, [
+    createMutation.isPending,
+    messageMutation.isPending,
+    runNowMutation.isPending,
+    startMutation.isPending,
+  ]);
+
+  useLayoutEffect(() => {
+    onNavigationLockChange?.(navigationLock);
+    return () => {
+      onNavigationLockChange?.(null);
+    };
+  }, [navigationLock, onNavigationLockChange]);
 
   const handoffText = useMemo(() => {
     if (!generatedPayload) return "";

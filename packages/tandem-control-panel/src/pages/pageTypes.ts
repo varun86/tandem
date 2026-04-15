@@ -19,6 +19,11 @@ export type IdentityInfo = {
   controlPanelName: string;
 };
 
+export type NavigationLockState = {
+  title: string;
+  message: string;
+};
+
 export type NavigationPreferences = {
   acaMode: boolean;
   routeVisibility: NavigationVisibility;
@@ -43,4 +48,6 @@ export type AppPageProps = {
   setTheme: (themeId: string) => any;
   themeId: string;
   navigation?: NavigationPreferences;
+  navigationLock?: NavigationLockState | null;
+  setNavigationLock?: (lock: NavigationLockState | null) => void;
 };

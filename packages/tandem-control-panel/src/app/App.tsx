@@ -30,6 +30,7 @@ import { renderIcons } from "./icons.js";
 import { api, isTransientEngineError } from "../lib/api";
 import { useCapabilities, useSwarmStatus, useSystemHealth } from "../features/system/queries";
 import type { RouteId } from "./routes";
+import type { NavigationLockState } from "../pages/pageTypes";
 
 const TOKEN_STORAGE_KEY = "tandem_control_panel_token";
 const PALETTE_HIDDEN_ROUTE_IDS = new Set<RouteId>([
@@ -162,11 +163,17 @@ function useBugMonitorStatus(enabled: boolean) {
 function AppBody() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { route, navigate } = useHashRoute();
   const [themeId, setThemeId] = useState(getActiveThemeId());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navigationLock, setNavigationLock] = useState<NavigationLockState | null>(null);
   const [providerGateNoticeShown, setProviderGateNoticeShown] = useState(false);
   const autoLoginAttempted = useRef(false);
+  const { route, navigate } = useHashRoute({
+    canNavigate: useCallback(
+      (next, current) => !navigationLock || next === current,
+      [navigationLock]
+    ),
+  });
 
   useEffect(() => {
     applyTheme(themeId);
@@ -218,6 +225,28 @@ function AppBody() {
       renderIcons();
     } catch {}
   }, [authed, navVisibility, route]);
+
+  useEffect(() => {
+    if (!navigationLock) return;
+    if (route === "automations") return;
+    setNavigationLock(null);
+  }, [navigationLock, route]);
+
+  useEffect(() => {
+    if (!navigationLock) return;
+    setPaletteOpen(false);
+  }, [navigationLock]);
+
+  useEffect(() => {
+    if (!navigationLock) return undefined;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [navigationLock]);
 
   const loginMutation = useMutation({
     mutationFn: async ({ token }: { token: string; remember: boolean }) => {
@@ -364,6 +393,8 @@ function AppBody() {
     setTheme,
     themeId,
     navigation,
+    navigationLock,
+    setNavigationLock,
   };
 
   const paletteActions = useMemo<PaletteAction[]>(() => {
@@ -424,7 +455,10 @@ function AppBody() {
     return [...routeActions, ...engineActions];
   }, [navVisibility, navigate, toast]);
 
-  usePaletteHotkey(() => setPaletteOpen((v) => !v));
+  usePaletteHotkey(() => {
+    if (navigationLock) return;
+    setPaletteOpen((v) => !v);
+  });
 
   if (!authed) {
     return (
@@ -471,6 +505,7 @@ function AppBody() {
         onPaletteOpen={() => setPaletteOpen(true)}
         onThemeCycle={() => setTheme(cycleThemeId(themeId))}
         onLogout={logout}
+        navigationLock={navigationLock}
         statusBar={{
           engineHealthy: !!(healthQuery.data?.engine?.ready || healthQuery.data?.engine?.healthy),
           providerBadge,

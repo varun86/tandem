@@ -1139,7 +1139,15 @@ function MyAutomations({
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
-export function AutomationsPage({ client, api, toast, navigate, providerStatus }: AppPageProps) {
+export function AutomationsPage({
+  client,
+  api,
+  toast,
+  navigate,
+  providerStatus,
+  navigationLock,
+  setNavigationLock,
+}: AppPageProps) {
   const {
     tab,
     setTab,
@@ -1162,6 +1170,8 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
       setSelectedRunId={setSelectedRunId}
       advancedEditAutomation={advancedEditAutomation}
       setAdvancedEditAutomation={setAdvancedEditAutomation}
+      navigationLocked={!!navigationLock}
+      onNavigationLockChange={setNavigationLock}
       client={client}
       api={api}
       toast={toast}

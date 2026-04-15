@@ -1,23 +1,68 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureRouteId, routeFromHash, setHashRoute, type RouteId } from "./routes";
 
-export function useHashRoute() {
+type HashRouteOptions = {
+  canNavigate?: (next: RouteId, current: RouteId) => boolean;
+};
+
+export function useHashRoute(options: HashRouteOptions = {}) {
   const [route, setRouteState] = useState<RouteId>(() => routeFromHash());
+  const routeRef = useRef(route);
+  const canNavigateRef = useRef(options.canNavigate);
 
   useEffect(() => {
-    const onHash = () => setRouteState(routeFromHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    routeRef.current = route;
+  }, [route]);
+
+  useEffect(() => {
+    canNavigateRef.current = options.canNavigate;
+  }, [options.canNavigate]);
+
+  const commitRoute = useCallback((next: RouteId, source: "navigate" | "hashchange") => {
+    const current = routeRef.current;
+    if (next === current) {
+      if (window.location.hash !== `#/${current}`) {
+        setHashRoute(current);
+        return true;
+      }
+      setRouteState(current);
+      return true;
+    }
+    const allowed = canNavigateRef.current ? canNavigateRef.current(next, current) : true;
+    if (!allowed) {
+      if (source === "hashchange" && window.location.hash !== `#/${current}`) {
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}#/${current}`
+        );
+      }
+      return false;
+    }
+    if (window.location.hash !== `#/${next}`) {
+      setHashRoute(next);
+      return true;
+    }
+    setRouteState(next);
+    return true;
   }, []);
 
-  const navigate = useCallback((next: string) => {
-    const safe = ensureRouteId(next);
-    if (window.location.hash !== `#/${safe}`) {
-      setHashRoute(safe);
-      return;
-    }
-    setRouteState(safe);
-  }, []);
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = routeFromHash();
+      commitRoute(next, "hashchange");
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [commitRoute]);
+
+  const navigate = useCallback(
+    (next: string) => {
+      const safe = ensureRouteId(next);
+      commitRoute(safe, "navigate");
+    },
+    [commitRoute]
+  );
 
   return { route, navigate };
 }
