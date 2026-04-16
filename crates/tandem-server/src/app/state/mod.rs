@@ -1,6 +1,6 @@
 use crate::config::channels::normalize_allowed_tools;
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -79,6 +79,7 @@ pub struct AppState {
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
     pub automation_scheduler: Arc<RwLock<automation::AutomationScheduler>>,
     pub automation_scheduler_stopping: Arc<AtomicBool>,
+    pub automations_v2_persistence: Arc<tokio::sync::Mutex<()>>,
     pub workflow_plans: Arc<RwLock<std::collections::HashMap<String, WorkflowPlan>>>,
     pub workflow_plan_drafts:
         Arc<RwLock<std::collections::HashMap<String, WorkflowPlanDraftRecord>>>,
@@ -218,6 +219,7 @@ impl AppState {
                 config::env::resolve_scheduler_max_concurrent_runs(),
             ))),
             automation_scheduler_stopping: Arc::new(AtomicBool::new(false)),
+            automations_v2_persistence: Arc::new(tokio::sync::Mutex::new(())),
             workflow_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_plan_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_planner_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -1304,6 +1306,11 @@ impl AppState {
     }
 
     pub async fn persist_automations_v2(&self) -> anyhow::Result<()> {
+        let _guard = self.automations_v2_persistence.lock().await;
+        self.persist_automations_v2_locked().await
+    }
+
+    async fn persist_automations_v2_locked(&self) -> anyhow::Result<()> {
         let payload = {
             let guard = self.automations_v2.read().await;
             serde_json::to_string_pretty(&*guard)?
@@ -1311,7 +1318,7 @@ impl AppState {
         if let Some(parent) = self.automations_v2_path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(&self.automations_v2_path, &payload).await?;
+        write_string_atomic(&self.automations_v2_path, &payload).await?;
         let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
         Ok(())
     }
@@ -1433,7 +1440,7 @@ impl AppState {
         Ok(())
     }
 
-    async fn verify_automation_v2_persisted(
+    async fn verify_automation_v2_persisted_locked(
         &self,
         automation_id: &str,
         expected_present: bool,
@@ -1443,7 +1450,13 @@ impl AppState {
         } else {
             String::new()
         };
-        let active_parsed = parse_automation_v2_file(&active_raw);
+        let active_parsed = parse_automation_v2_file_strict(&active_raw).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to parse automation v2 persistence file `{}` during verification: {}",
+                self.automations_v2_path.display(),
+                error
+            )
+        })?;
         let active_present = active_parsed.contains_key(automation_id);
         if active_present != expected_present {
             let active_path = self.automations_v2_path.display().to_string();
@@ -1470,7 +1483,17 @@ impl AppState {
             } else {
                 String::new()
             };
-            let parsed = parse_automation_v2_file(&raw);
+            let parsed = match parse_automation_v2_file_strict(&raw) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    alternate_mismatches.push(format!(
+                        "{} expected_present={} parse_error={error}",
+                        path.display(),
+                        expected_present
+                    ));
+                    continue;
+                }
+            };
             let present = parsed.contains_key(automation_id);
             if present != expected_present {
                 alternate_mismatches.push(format!(
@@ -2688,12 +2711,13 @@ impl AppState {
                 automation_schedule_next_fire_at_ms(&automation.schedule, now);
         }
         migrate_bundled_studio_research_split_automation(&mut automation);
+        let _guard = self.automations_v2_persistence.lock().await;
         self.automations_v2
             .write()
             .await
             .insert(automation.automation_id.clone(), automation.clone());
-        self.persist_automations_v2().await?;
-        self.verify_automation_v2_persisted(&automation.automation_id, true)
+        self.persist_automations_v2_locked().await?;
+        self.verify_automation_v2_persisted_locked(&automation.automation_id, true)
             .await?;
         Ok(automation)
     }
@@ -4895,6 +4919,7 @@ impl AppState {
         &self,
         automation_id: &str,
     ) -> anyhow::Result<Option<AutomationV2Spec>> {
+        let _guard = self.automations_v2_persistence.lock().await;
         let removed = self.automations_v2.write().await.remove(automation_id);
         let removed_run_count = {
             let mut runs = self.automation_v2_runs.write().await;
@@ -4902,11 +4927,11 @@ impl AppState {
             runs.retain(|_, run| run.automation_id != automation_id);
             before.saturating_sub(runs.len())
         };
-        self.persist_automations_v2().await?;
+        self.persist_automations_v2_locked().await?;
         if removed_run_count > 0 {
             self.persist_automation_v2_runs().await?;
         }
-        self.verify_automation_v2_persisted(automation_id, false)
+        self.verify_automation_v2_persisted_locked(automation_id, false)
             .await?;
         Ok(removed)
     }
@@ -6261,6 +6286,32 @@ fn candidate_automation_v2_runs_paths(active_path: &PathBuf) -> Vec<PathBuf> {
 fn parse_automation_v2_file(raw: &str) -> std::collections::HashMap<String, AutomationV2Spec> {
     serde_json::from_str::<std::collections::HashMap<String, AutomationV2Spec>>(raw)
         .unwrap_or_default()
+}
+
+fn parse_automation_v2_file_strict(
+    raw: &str,
+) -> anyhow::Result<std::collections::HashMap<String, AutomationV2Spec>> {
+    serde_json::from_str::<std::collections::HashMap<String, AutomationV2Spec>>(raw)
+        .map_err(anyhow::Error::from)
+}
+
+async fn write_string_atomic(path: &Path, payload: &str) -> anyhow::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("state.json");
+    let temp_path = parent.join(format!(
+        ".{file_name}.tmp-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    fs::write(&temp_path, payload).await?;
+    if let Err(error) = fs::rename(&temp_path, path).await {
+        let _ = fs::remove_file(&temp_path).await;
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 fn parse_automation_v2_runs_file(

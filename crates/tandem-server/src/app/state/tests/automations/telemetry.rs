@@ -497,6 +497,75 @@ fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_s
 }
 
 #[test]
+fn summarize_automation_tool_activity_treats_zero_result_websearch_as_failure() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(Some("zero result websearch".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "websearch".to_string(),
+            args: json!({"query":"qsr delivery brands Gen Z gaming creator youth campaign sponsorship 2025"}),
+            result: Some(json!({
+                "output": serde_json::to_string(&json!({
+                    "query": "qsr delivery brands Gen Z gaming creator youth campaign sponsorship 2025",
+                    "result_count": 0,
+                    "partial": false,
+                    "results": []
+                })).expect("json output"),
+                "metadata": {
+                    "count": 0
+                }
+            })),
+            error: None,
+        }],
+    ));
+
+    let telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        telemetry
+            .get("web_research_succeeded")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        telemetry
+            .get("latest_web_research_failure")
+            .and_then(Value::as_str),
+        Some("web research returned no results")
+    );
+}
+
+#[test]
 fn summarize_automation_tool_activity_treats_runtime_websearch_string_result_as_success() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

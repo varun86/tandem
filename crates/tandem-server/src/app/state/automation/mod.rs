@@ -6291,6 +6291,7 @@ pub(crate) fn summarize_automation_tool_activity(
             }
             if is_web_tool {
                 web_research_used = true;
+                let is_websearch = normalized.as_str() == "websearch";
                 let metadata = automation_tool_result_metadata(result.as_ref())
                     .cloned()
                     .unwrap_or(Value::Null);
@@ -6330,11 +6331,12 @@ pub(crate) fn summarize_automation_tool_activity(
                     .as_deref()
                     .is_some_and(web_research_unavailable_failure)
                     || web_research_unavailable_failure(&output);
-                if (result_error.is_none() || result_has_sources)
-                    && !timed_out
-                    && !unavailable
-                    && !output.is_empty()
-                {
+                let meaningful_web_result = if is_websearch {
+                    result_has_sources
+                } else {
+                    !output.is_empty()
+                };
+                if meaningful_web_result && !timed_out && !unavailable {
                     web_research_succeeded = true;
                     latest_web_research_failure = None;
                 } else if latest_web_research_failure.is_none() {
@@ -6345,6 +6347,8 @@ pub(crate) fn summarize_automation_tool_activity(
                                 Some("web research timed out".to_string())
                             } else if unavailable {
                                 Some(normalize_web_research_failure_label(&output))
+                            } else if is_websearch && !result_has_sources {
+                                Some("web research returned no results".to_string())
                             } else if output.is_empty() {
                                 Some("web research returned no usable output".to_string())
                             } else {
