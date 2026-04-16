@@ -144,7 +144,7 @@ export function Step3Mode(props: Step3ModeProps) {
           </button>
         ))}
       </div>
-      {selected === "swarm" ? (
+      {selected !== "single" ? (
         <div className="grid gap-1">
           <label className="text-xs text-slate-400">Max parallel agents</label>
           <input
@@ -155,6 +155,11 @@ export function Step3Mode(props: Step3ModeProps) {
             value={maxAgents}
             onInput={(e) => onMaxAgents((e.target as HTMLInputElement).value)}
           />
+          <div className="text-xs text-slate-500">
+            {selected === "team"
+              ? "Team mode uses this as the concurrency cap for a small set of specialized agents."
+              : "Swarm mode uses this as the concurrency cap when Tandem fans work out in parallel."}
+          </div>
         </div>
       ) : null}
       <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">

@@ -148,6 +148,46 @@ fn report_markdown_node() -> AutomationFlowNode {
     node
 }
 
+fn automation_with_live_output_target(nodes: Vec<AutomationFlowNode>) -> AutomationV2Spec {
+    AutomationV2Spec {
+        automation_id: "automation-live-output".to_string(),
+        name: "Live Output".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "sales/genz-sponsor-research/{current_date}_{current_time}_genz_sponsor_targets.md"
+                .to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp/workspace".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    }
+}
+
 fn local_citations_contract_node() -> AutomationFlowNode {
     let mut node = bare_node();
     node.node_id = "research_sources".to_string();
@@ -825,6 +865,75 @@ fn automation_output_targets_replace_runtime_placeholders_before_dedup() {
     assert!(!must_write_files
         .iter()
         .any(|path| path.contains("{current_date}") || path.contains("{current_time}")));
+}
+
+#[test]
+fn intermediate_nodes_cannot_treat_live_output_targets_as_input_files() {
+    let mut gather = bare_node();
+    gather.node_id = "gather_fintech_candidates".to_string();
+    gather.objective = "Research fintech sponsor candidates.".to_string();
+    gather.metadata = Some(json!({
+        "builder": {
+            "input_files": ["/tmp/workspace/sales/genz-sponsor-research/2026-04-16_1530_genz_sponsor_targets.md"]
+        }
+    }));
+
+    let mut finalize = bare_node();
+    finalize.node_id = "draft_markdown_report".to_string();
+    finalize.objective = "Write the final sponsor targets report to sales/genz-sponsor-research/2026-04-16_1530_genz_sponsor_targets.md.".to_string();
+    finalize.depends_on = vec!["gather_fintech_candidates".to_string()];
+
+    let automation = automation_with_live_output_target(vec![gather.clone(), finalize]);
+    let runtime_values = AutomationPromptRuntimeValues {
+        current_date: "2026-04-16".to_string(),
+        current_time: "1530".to_string(),
+        current_timestamp: "2026-04-16 15:30".to_string(),
+    };
+
+    let input_files = automation_node_effective_input_files_for_automation(
+        &automation,
+        &gather,
+        Some(&runtime_values),
+    );
+
+    assert!(input_files.is_empty(), "expected live output targets to be stripped from intermediate input files, got {input_files:?}");
+}
+
+#[test]
+fn terminal_report_node_may_access_live_output_target() {
+    let gather = {
+        let mut node = bare_node();
+        node.node_id = "gather_candidates".to_string();
+        node.objective = "Research sponsor candidates.".to_string();
+        node
+    };
+    let mut finalize = bare_node();
+    finalize.node_id = "draft_markdown_report".to_string();
+    finalize.objective = "Append the final sponsor targets report to sales/genz-sponsor-research/2026-04-16_1530_genz_sponsor_targets.md.".to_string();
+    finalize.depends_on = vec!["gather_candidates".to_string()];
+    finalize.metadata = Some(json!({
+        "builder": {
+            "input_files": ["sales/genz-sponsor-research/2026-04-16_1530_genz_sponsor_targets.md"]
+        }
+    }));
+
+    let automation = automation_with_live_output_target(vec![gather, finalize.clone()]);
+    let runtime_values = AutomationPromptRuntimeValues {
+        current_date: "2026-04-16".to_string(),
+        current_time: "1530".to_string(),
+        current_timestamp: "2026-04-16 15:30".to_string(),
+    };
+
+    let input_files = automation_node_effective_input_files_for_automation(
+        &automation,
+        &finalize,
+        Some(&runtime_values),
+    );
+
+    assert_eq!(
+        input_files,
+        vec!["sales/genz-sponsor-research/2026-04-16_1530_genz_sponsor_targets.md".to_string()]
+    );
 }
 
 #[test]

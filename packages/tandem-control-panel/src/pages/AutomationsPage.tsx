@@ -1053,12 +1053,12 @@ function workflowEditToOperatorPreferences(draft: WorkflowEditDraft) {
   const prefs: Record<string, any> = {
     execution_mode: draft.executionMode,
     max_parallel_agents:
-      draft.executionMode === "swarm"
-        ? Math.max(
-            1,
+      draft.executionMode === "single"
+        ? 1
+        : Math.max(
+            2,
             Math.min(16, Number.parseInt(String(draft.maxParallelAgents || "4"), 10) || 4)
-          )
-        : 1,
+          ),
   };
   const modelProvider = String(draft.modelProvider || "").trim();
   const modelId = String(draft.modelId || "").trim();

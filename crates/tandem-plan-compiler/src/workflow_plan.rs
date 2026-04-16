@@ -901,22 +901,41 @@ pub fn workflow_plan_should_surface_mcp_discovery(
     !allowed_mcp_servers.is_empty() || workflow_plan_mentions_connector_backed_sources(prompt)
 }
 
+fn normalized_parallel_agent_count(
+    execution_mode: Option<&str>,
+    max_parallel_agents: Option<u64>,
+) -> Option<u32> {
+    let execution_mode = execution_mode
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .filter(|value| !value.is_empty());
+    match execution_mode.as_deref() {
+        Some("single") => Some(1),
+        Some("team") => Some(
+            max_parallel_agents
+                .map(|value| value.clamp(2, 16) as u32)
+                .unwrap_or(2),
+        ),
+        Some("swarm") => Some(
+            max_parallel_agents
+                .map(|value| value.clamp(4, 16) as u32)
+                .unwrap_or(4),
+        ),
+        Some(_) => max_parallel_agents
+            .map(|value| value.clamp(1, 16) as u32)
+            .or(Some(1)),
+        None => max_parallel_agents.map(|value| value.clamp(1, 16) as u32),
+    }
+}
+
 pub fn plan_max_parallel_agents(operator_preferences: Option<&Value>) -> u32 {
-    operator_preferences
+    let execution_mode = operator_preferences
+        .and_then(|prefs| prefs.get("execution_mode"))
+        .and_then(Value::as_str);
+    let explicit_max = operator_preferences
         .and_then(|prefs| prefs.get("max_parallel_agents"))
-        .and_then(Value::as_u64)
-        .map(|value| value.clamp(1, 16) as u32)
-        .or_else(|| {
-            operator_preferences
-                .and_then(|prefs| prefs.get("execution_mode"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .and_then(|mode| match mode {
-                    "swarm" => Some(4),
-                    _ => Some(1),
-                })
-        })
-        .unwrap_or(1)
+        .and_then(Value::as_u64);
+    normalized_parallel_agent_count(execution_mode, explicit_max).unwrap_or(1)
 }
 
 pub fn workflow_plan_agent_roles<Step, F>(steps: &[Step], agent_role: F) -> Vec<String>
@@ -1012,26 +1031,28 @@ pub fn normalize_operator_preferences(raw: Option<Value>) -> Option<Value> {
     let Some(map) = prefs.as_object_mut() else {
         return None;
     };
-    if let Some(mode) = map
+    let execution_mode = map
         .get("execution_mode")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        map.insert(
-            "execution_mode".to_string(),
-            Value::String(mode.to_string()),
-        );
+        .map(|value| value.to_ascii_lowercase());
+    if let Some(mode) = execution_mode.as_ref() {
+        map.insert("execution_mode".to_string(), Value::String(mode.clone()));
     } else {
         map.remove("execution_mode");
     }
-    if let Some(max_parallel) = map.get("max_parallel_agents").and_then(Value::as_u64) {
-        map.insert(
-            "max_parallel_agents".to_string(),
-            Value::Number(serde_json::Number::from(max_parallel.clamp(1, 16))),
-        );
-    } else {
-        map.remove("max_parallel_agents");
+    let max_parallel = map.get("max_parallel_agents").and_then(Value::as_u64);
+    match normalized_parallel_agent_count(execution_mode.as_deref(), max_parallel) {
+        Some(value) => {
+            map.insert(
+                "max_parallel_agents".to_string(),
+                Value::Number(serde_json::Number::from(value)),
+            );
+        }
+        None => {
+            map.remove("max_parallel_agents");
+        }
     }
     if let Some(provider_id) = map
         .get("model_provider")
@@ -1896,8 +1917,15 @@ pub(crate) fn truncate_text(input: &str, max_len: usize) -> String {
     if input.len() <= max_len {
         return input.to_string();
     }
-    let mut out = input[..max_len].to_string();
-    out.truncate(max_len);
+    let mut end = 0usize;
+    for (idx, ch) in input.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > max_len {
+            break;
+        }
+        end = next;
+    }
+    let mut out = input[..end].to_string();
     out
 }
 
@@ -2015,6 +2043,13 @@ Here is the planner response:
     }
 
     #[test]
+    fn truncate_text_respects_utf8_char_boundaries() {
+        let input = format!("{}·tail", "a".repeat(599));
+        let truncated = truncate_text(&input, 601);
+        assert_eq!(truncated, format!("{}·", "a".repeat(599)));
+    }
+
+    #[test]
     fn planner_model_spec_falls_back_to_default_model() {
         let spec = planner_model_spec(Some(&json!({
             "model_provider": "openai",
@@ -2023,6 +2058,39 @@ Here is the planner response:
         .expect("default planner spec");
         assert_eq!(spec.provider_id, "openai");
         assert_eq!(spec.model_id, "gpt-5.1");
+    }
+
+    #[test]
+    fn normalize_operator_preferences_infers_parallel_defaults_for_execution_modes() {
+        let single = normalize_operator_preferences(Some(json!({
+            "execution_mode": "single",
+            "max_parallel_agents": 8
+        })))
+        .expect("single preferences");
+        assert_eq!(
+            single.get("max_parallel_agents").and_then(Value::as_u64),
+            Some(1)
+        );
+
+        let team = normalize_operator_preferences(Some(json!({
+            "execution_mode": "team",
+            "max_parallel_agents": 1
+        })))
+        .expect("team preferences");
+        assert_eq!(
+            team.get("max_parallel_agents").and_then(Value::as_u64),
+            Some(2)
+        );
+
+        let swarm = normalize_operator_preferences(Some(json!({
+            "execution_mode": "swarm",
+            "max_parallel_agents": 2
+        })))
+        .expect("swarm preferences");
+        assert_eq!(
+            swarm.get("max_parallel_agents").and_then(Value::as_u64),
+            Some(4)
+        );
     }
 
     #[test]

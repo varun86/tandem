@@ -117,7 +117,7 @@ export function Step4Review({
   const effectiveMaxParallel = Number(
     (planOperatorPreferences as any)?.max_parallel_agents ??
       (planOperatorPreferences as any)?.maxParallelAgents ??
-      (effectiveMode === "swarm" ? wizard.maxAgents : 1)
+      (effectiveMode === "single" ? 1 : wizard.maxAgents)
   );
   const hasPlanPreview = !!planPreview;
   const effectiveModelProvider = String(

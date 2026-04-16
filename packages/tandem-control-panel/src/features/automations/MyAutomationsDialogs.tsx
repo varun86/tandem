@@ -480,7 +480,7 @@ export function WorkflowAutomationEditDialog({
                   <label className="text-xs text-slate-400">Max parallel agents</label>
                   <input
                     type="number"
-                    min="1"
+                    min="2"
                     max="16"
                     className="tcp-input"
                     value={workflowEditDraft.maxParallelAgents}
@@ -494,12 +494,12 @@ export function WorkflowAutomationEditDialog({
                           : current
                       )
                     }
-                    disabled={workflowEditDraft.executionMode !== "swarm"}
+                    disabled={workflowEditDraft.executionMode === "single"}
                   />
                   <div className="text-xs text-slate-500">
-                    {workflowEditDraft.executionMode === "swarm"
-                      ? "Only used for swarm runs, where Tandem fans tasks out in parallel."
-                      : "Single Agent and Agent Team ignore this value because they stay on tighter coordination paths."}
+                    {workflowEditDraft.executionMode === "single"
+                      ? "Single Agent ignores this value because it stays on one coordinated thread."
+                      : "Team and swarm runs use this value as the concurrency cap for parallel sub-tasks."}
                   </div>
                 </div>
               </div>

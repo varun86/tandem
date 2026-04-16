@@ -859,12 +859,12 @@ export function MyAutomationsContainer({
         execution: {
           ...(existing?.execution || {}),
           max_parallel_agents:
-            draft.executionMode === "swarm"
-              ? Math.max(
-                  1,
+            draft.executionMode === "single"
+              ? 1
+              : Math.max(
+                  2,
                   Math.min(16, Number.parseInt(String(draft.maxParallelAgents || "4"), 10) || 4)
-                )
-              : 1,
+                ),
         },
         flow: existing?.flow
           ? {
@@ -1462,10 +1462,6 @@ export function MyAutomationsContainer({
       })
       .filter(Boolean) as Array<{ nodeId: string; guidance: any }>;
   }, [selectedRun]);
-  useEffect(() => {
-    if (!selectedBoardTaskId || !boardDetailRef.current) return;
-    boardDetailRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [selectedBoardTaskId]);
   useEffect(() => {
     setSelectedRunArtifactKey("");
   }, [selectedRunId, selectedBoardTaskId]);

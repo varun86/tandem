@@ -29,6 +29,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- when a prompt names a file as read-only or source of truth, never infer it as a write target; treat it as input-only unless the contract explicitly declares it as output\n",
             "- when a prompt names concrete source files or output files, carry those exact names into the relevant step objectives instead of replacing them with generic workspace language\n",
             "- when a prompt names `websearch`, `webfetch`, or another explicit tool, preserve that tool name in the step objective that will use it\n",
+            "- when the workflow is team or swarm style, include operator_preferences.max_parallel_agents so the runtime can fan out more than one active agent and the control panel can edit the cap later\n",
             "- when a step summarizes, merges, or finalizes upstream work, include explicit input_refs for the upstream steps it synthesizes instead of relying on depends_on alone\n",
             "- final synthesis steps must say which upstream artifacts or findings they are consolidating and must require a concrete synthesis rather than a generic recap\n",
             "{}",
@@ -86,6 +87,7 @@ mod tests {
         assert!(sections.contains("source_material"));
         assert!(sections.contains("concrete source files or output files"));
         assert!(sections.contains("websearch"));
+        assert!(sections.contains("max_parallel_agents"));
         assert!(sections.contains("explicit input_refs for the upstream steps"));
         assert!(sections.contains("final recap, merged summary, or daily rollup"));
     }

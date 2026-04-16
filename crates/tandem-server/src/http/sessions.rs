@@ -1146,7 +1146,15 @@ pub(super) fn truncate_text(input: &str, max_len: usize) -> String {
     if input.len() <= max_len {
         return input.to_string();
     }
-    let mut out = input[..max_len].to_string();
+    let mut end = 0usize;
+    for (idx, ch) in input.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > max_len {
+            break;
+        }
+        end = next;
+    }
+    let mut out = input[..end].to_string();
     out.push_str("...<truncated>");
     out
 }

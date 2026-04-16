@@ -2828,6 +2828,131 @@ fn automation_node_explicit_output_files(node: &AutomationFlowNode) -> Vec<Strin
     files
 }
 
+fn automation_declared_output_target_aliases(
+    automation: &AutomationV2Spec,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> HashSet<String> {
+    let mut aliases = HashSet::new();
+    for target in &automation.output_targets {
+        let replaced = automation_runtime_placeholder_replace(target, runtime_values);
+        for candidate in [target.as_str(), replaced.as_str()] {
+            let trimmed = candidate.trim().trim_matches('`');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let normalized = trimmed
+                .strip_prefix("file://")
+                .unwrap_or(trimmed)
+                .trim()
+                .replace('\\', "/");
+            if normalized.is_empty() {
+                continue;
+            }
+            aliases.insert(normalized.to_ascii_lowercase());
+            if let Some(root) = automation.workspace_root.as_deref() {
+                if let Some(relative) = normalize_workspace_display_path(root, &normalized) {
+                    aliases.insert(relative.replace('\\', "/").to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+fn automation_path_matches_declared_output_target(
+    automation: &AutomationV2Spec,
+    blocked_targets: &HashSet<String>,
+    path: &str,
+) -> bool {
+    let trimmed = path.trim().trim_matches('`');
+    if trimmed.is_empty() {
+        return false;
+    }
+    let normalized = trimmed
+        .strip_prefix("file://")
+        .unwrap_or(trimmed)
+        .trim()
+        .replace('\\', "/");
+    let lowered = normalized.to_ascii_lowercase();
+    if blocked_targets.contains(&lowered) {
+        return true;
+    }
+    automation
+        .workspace_root
+        .as_deref()
+        .and_then(|root| normalize_workspace_display_path(root, &normalized))
+        .map(|relative| blocked_targets.contains(&relative.replace('\\', "/").to_ascii_lowercase()))
+        .unwrap_or(false)
+}
+
+fn automation_node_is_terminal_for_automation(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+) -> bool {
+    !automation.flow.nodes.iter().any(|candidate| {
+        candidate.node_id != node.node_id
+            && (candidate.depends_on.iter().any(|dep| dep == &node.node_id)
+                || candidate
+                    .input_refs
+                    .iter()
+                    .any(|input| input.from_step_id == node.node_id))
+    })
+}
+
+fn automation_node_can_access_declared_output_targets(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+) -> bool {
+    if automation_node_publish_spec(node).is_some() {
+        return true;
+    }
+    automation_node_is_terminal_for_automation(automation, node)
+        && automation
+            .output_targets
+            .iter()
+            .any(|target| automation_output_target_matches_node_objective(target, &node.objective))
+}
+
+pub(crate) fn automation_node_effective_input_files_for_automation(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let mut files = automation_node_explicit_input_files(node);
+    if automation_node_can_access_declared_output_targets(automation, node) {
+        files.sort();
+        files.dedup();
+        return files;
+    }
+    let blocked_targets = automation_declared_output_target_aliases(automation, runtime_values);
+    files.retain(|path| {
+        !automation_path_matches_declared_output_target(automation, &blocked_targets, path)
+    });
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn automation_node_effective_output_files_for_automation(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let mut files = automation_node_explicit_output_files(node);
+    if automation_node_can_access_declared_output_targets(automation, node) {
+        files.sort();
+        files.dedup();
+        return files;
+    }
+    let blocked_targets = automation_declared_output_target_aliases(automation, runtime_values);
+    files.retain(|path| {
+        !automation_path_matches_declared_output_target(automation, &blocked_targets, path)
+    });
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
     let explicit_output_files = automation_node_explicit_output_files(node);
     let read_only_files = enforcement::automation_node_read_only_source_of_truth_files(node)
@@ -3028,6 +3153,12 @@ pub(crate) fn automation_node_must_write_files_for_automation(
             true
         })
         .collect::<Vec<_>>();
+    if !automation_node_can_access_declared_output_targets(automation, node) {
+        let blocked_targets = automation_declared_output_target_aliases(automation, runtime_values);
+        files.retain(|path| {
+            !automation_path_matches_declared_output_target(automation, &blocked_targets, path)
+        });
+    }
     files.sort();
     files.dedup();
     files
@@ -4946,8 +5077,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             json!(missing_required_source_read_paths),
         );
     }
-    let explicit_input_files = automation_node_explicit_input_files(node);
-    let explicit_output_files = automation_node_explicit_output_files(node);
+    let explicit_input_files =
+        automation_node_effective_input_files_for_automation(automation, node, runtime_values);
+    let explicit_output_files =
+        automation_node_effective_output_files_for_automation(automation, node, runtime_values);
     let mut read_paths = current_read_paths.clone();
     let mut discovered_relevant_paths = if use_upstream_evidence {
         let mut paths = Vec::new();

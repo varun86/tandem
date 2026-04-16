@@ -240,6 +240,73 @@ pub(crate) fn normalize_workflow_step_metadata(step: &mut crate::WorkflowPlanSte
 }
 
 pub(crate) fn normalize_workflow_plan_file_contracts(plan: &mut crate::WorkflowPlan) {
+    let explicit_output_targets =
+        compiler_api::infer_explicit_output_targets(&plan.original_prompt);
+    if !explicit_output_targets.is_empty() {
+        let output_target_set = explicit_output_targets
+            .iter()
+            .map(|target| target.trim())
+            .filter(|target| !target.is_empty())
+            .map(|target| {
+                target
+                    .strip_prefix("file://")
+                    .unwrap_or(target)
+                    .trim()
+                    .replace('\\', "/")
+                    .to_ascii_lowercase()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for step in &mut plan.steps {
+            let Some(builder) = step
+                .metadata
+                .as_mut()
+                .and_then(Value::as_object_mut)
+                .and_then(|root| root.get_mut("builder"))
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+            for key in ["input_files", "output_files", "must_write_files"] {
+                let filtered = builder.get(key).and_then(Value::as_array).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .filter(|value| {
+                            let normalized = value
+                                .strip_prefix("file://")
+                                .unwrap_or(value)
+                                .trim()
+                                .replace('\\', "/")
+                                .to_ascii_lowercase();
+                            !output_target_set.contains(&normalized)
+                        })
+                        .collect::<Vec<_>>()
+                });
+                if let Some(filtered) = filtered {
+                    builder.insert(key.to_string(), serde_json::json!(filtered));
+                }
+            }
+            let should_remove_output_path = builder
+                .get("output_path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    value
+                        .strip_prefix("file://")
+                        .unwrap_or(value)
+                        .trim()
+                        .replace('\\', "/")
+                        .to_ascii_lowercase()
+                })
+                .is_some_and(|value| output_target_set.contains(&value));
+            if should_remove_output_path {
+                builder.remove("output_path");
+            }
+        }
+    }
     compiler_api::derive_workflow_step_file_contracts(plan);
 }
 
@@ -1030,5 +1097,118 @@ mod tests {
             .as_ref()
             .and_then(|contract| contract.summary_guidance.as_deref())
             .is_none());
+    }
+
+    #[test]
+    fn normalize_workflow_plan_file_contracts_strips_live_output_targets_from_step_contracts() {
+        let mut plan = crate::WorkflowPlan {
+            plan_id: "wfplan-live-targets".to_string(),
+            planner_version: "v1".to_string(),
+            plan_source: "test".to_string(),
+            original_prompt: "Research brands.\n\nOpen or create:\n\n`sales/genz/report.md`\n"
+                .to_string(),
+            normalized_prompt: "research brands. open or create: `sales/genz/report.md`"
+                .to_string(),
+            confidence: "medium".to_string(),
+            title: "Live Targets".to_string(),
+            description: None,
+            schedule: crate::AutomationV2Schedule {
+                schedule_type: crate::AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+            },
+            execution_target: "automation_v2".to_string(),
+            workspace_root: ".".to_string(),
+            steps: vec![
+                crate::WorkflowPlanStep {
+                    step_id: "gather_candidates".to_string(),
+                    kind: "research".to_string(),
+                    objective: "Gather candidate sponsors.".to_string(),
+                    agent_role: "researcher".to_string(),
+                    depends_on: Vec::new(),
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: None,
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(serde_json::json!({
+                        "builder": {
+                            "output_path": "sales/genz/report.md",
+                            "output_files": ["sales/genz/report.md"],
+                            "must_write_files": ["sales/genz/report.md"],
+                        }
+                    })),
+                },
+                crate::WorkflowPlanStep {
+                    step_id: "summarize_candidates".to_string(),
+                    kind: "summarize".to_string(),
+                    objective: "Summarize the strongest candidates.".to_string(),
+                    agent_role: "writer".to_string(),
+                    depends_on: vec!["gather_candidates".to_string()],
+                    input_refs: vec![crate::AutomationFlowInputRef {
+                        from_step_id: "gather_candidates".to_string(),
+                        alias: "candidates".to_string(),
+                    }],
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "report_markdown".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                        enforcement: None,
+                        schema: None,
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(serde_json::json!({
+                        "builder": {
+                            "input_files": ["sales/genz/report.md"],
+                        }
+                    })),
+                },
+            ],
+            requires_integrations: Vec::new(),
+            allowed_mcp_servers: Vec::new(),
+            operator_preferences: None,
+            save_options: serde_json::json!({}),
+        };
+
+        normalize_workflow_plan_file_contracts(&mut plan);
+
+        let gather_builder = plan.steps[0]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("gather builder");
+        assert!(gather_builder.get("output_path").is_none());
+        assert_eq!(
+            gather_builder
+                .get("output_files")
+                .and_then(Value::as_array)
+                .map(|items| items.len()),
+            Some(0)
+        );
+        assert_eq!(
+            gather_builder
+                .get("must_write_files")
+                .and_then(Value::as_array)
+                .map(|items| items.len()),
+            Some(0)
+        );
+        let summarize_builder = plan.steps[1]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("builder"))
+            .and_then(Value::as_object)
+            .expect("summarize builder");
+        assert_eq!(
+            summarize_builder
+                .get("input_files")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(Vec::<&str>::new())
+        );
     }
 }

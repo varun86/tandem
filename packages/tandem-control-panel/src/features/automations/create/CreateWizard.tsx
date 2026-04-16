@@ -292,9 +292,9 @@ function buildOperatorPreferences(wizard: WizardState) {
     roleModels.planner = { provider_id: plannerModelProvider, model_id: plannerModelId };
   }
   const maxParallelAgents =
-    wizard.mode === "swarm"
-      ? Math.max(1, Math.min(16, Number.parseInt(String(wizard.maxAgents || "4"), 10) || 4))
-      : 1;
+    wizard.mode === "single"
+      ? 1
+      : Math.max(2, Math.min(16, Number.parseInt(String(wizard.maxAgents || "4"), 10) || 4));
   const payload: Record<string, unknown> = {
     execution_mode: wizard.mode,
     max_parallel_agents: maxParallelAgents,

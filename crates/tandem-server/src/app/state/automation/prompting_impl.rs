@@ -368,7 +368,6 @@ fn automation_prompt_render_concrete_source_coverage(
     let mut read_only_paths = automation_prompt_infer_read_only_workspace_paths(
         &automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
     );
-    let mut explicit_input_files = Vec::new();
     if let Some(builder) = node
         .metadata
         .as_ref()
@@ -383,17 +382,12 @@ fn automation_prompt_render_concrete_source_coverage(
                 &automation_prompt_apply_runtime_placeholders(prompt, runtime_values),
             ));
         }
-        if let Some(input_files) = builder.get("input_files").and_then(Value::as_array) {
-            explicit_input_files.extend(
-                input_files
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string),
-            );
-        }
     }
+    let explicit_input_files = super::automation_node_effective_input_files_for_automation(
+        automation,
+        node,
+        runtime_values,
+    );
     let automation_read_only_paths =
         enforcement::automation_read_only_source_of_truth_files_for_automation(automation);
     let mut source_paths = Vec::new();
