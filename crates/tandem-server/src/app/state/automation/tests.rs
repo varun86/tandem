@@ -148,7 +148,10 @@ fn report_markdown_node() -> AutomationFlowNode {
     node
 }
 
-fn automation_with_live_output_target(nodes: Vec<AutomationFlowNode>) -> AutomationV2Spec {
+fn automation_with_output_targets(
+    nodes: Vec<AutomationFlowNode>,
+    output_targets: Vec<String>,
+) -> AutomationV2Spec {
     AutomationV2Spec {
         automation_id: "automation-live-output".to_string(),
         name: "Live Output".to_string(),
@@ -171,10 +174,7 @@ fn automation_with_live_output_target(nodes: Vec<AutomationFlowNode>) -> Automat
             max_total_tokens: None,
             max_total_cost_usd: None,
         },
-        output_targets: vec![
-            "sales/genz-sponsor-research/{current_date}_{current_time}_genz_sponsor_targets.md"
-                .to_string(),
-        ],
+        output_targets,
         created_at_ms: 0,
         updated_at_ms: 0,
         creator_id: "test".to_string(),
@@ -186,6 +186,16 @@ fn automation_with_live_output_target(nodes: Vec<AutomationFlowNode>) -> Automat
         watch_conditions: Vec::new(),
         handoff_config: None,
     }
+}
+
+fn automation_with_live_output_target(nodes: Vec<AutomationFlowNode>) -> AutomationV2Spec {
+    automation_with_output_targets(
+        nodes,
+        vec![
+            "sales/genz-sponsor-research/{current_date}_{current_time}_genz_sponsor_targets.md"
+                .to_string(),
+        ],
+    )
 }
 
 fn local_citations_contract_node() -> AutomationFlowNode {
@@ -229,6 +239,249 @@ fn mcp_citations_contract_node() -> AutomationFlowNode {
         }
     }));
     node
+}
+
+#[test]
+fn repair_automation_output_contracts_recovers_report_nodes_and_input_refs() {
+    let mut draft = bare_node();
+    draft.node_id = "draft_deliverable".to_string();
+    draft.objective = "Write the final report to reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md using the upstream evidence.".to_string();
+    draft.depends_on = vec!["refine_results".to_string()];
+    draft.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: Some(json!({"type": "object"})),
+        summary_guidance: None,
+    });
+
+    let mut finalize = bare_node();
+    finalize.node_id = "finalize_outputs".to_string();
+    finalize.objective = "Finalize and save reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md after rereading the strongest upstream artifacts.".to_string();
+    finalize.depends_on = vec!["draft_deliverable".to_string()];
+    finalize.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: Some(json!({"type": "object"})),
+        summary_guidance: None,
+    });
+
+    let mut automation = automation_with_output_targets(
+        vec![bare_node(), draft, finalize],
+        vec!["reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md".to_string()],
+    );
+    automation.flow.nodes[0].node_id = "refine_results".to_string();
+    automation.flow.nodes[0].objective = "Filter and compare the gathered findings.".to_string();
+
+    assert!(repair_automation_output_contracts(&mut automation));
+
+    let draft = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "draft_deliverable")
+        .expect("draft node");
+    assert_eq!(draft.input_refs.len(), 1);
+    assert_eq!(draft.input_refs[0].from_step_id, "refine_results");
+    assert_eq!(
+        draft
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("report_markdown")
+    );
+    assert!(draft
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.schema.is_none()));
+    assert!(draft
+        .output_contract
+        .as_ref()
+        .and_then(|contract| contract.summary_guidance.as_deref())
+        .is_some_and(
+            |guidance| guidance.contains("Read and synthesize the strongest upstream artifacts")
+        ));
+
+    let finalize = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "finalize_outputs")
+        .expect("finalize node");
+    assert_eq!(finalize.input_refs.len(), 1);
+    assert_eq!(finalize.input_refs[0].from_step_id, "draft_deliverable");
+    assert_eq!(
+        finalize
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("report_markdown")
+    );
+}
+
+#[test]
+fn repair_automation_output_contracts_handles_text_json_and_code_outputs() {
+    let mut text_node = bare_node();
+    text_node.node_id = "write_notes".to_string();
+    text_node.objective = "Write the final plain text notes to reports/findings.txt.".to_string();
+    text_node.depends_on = vec!["gather".to_string()];
+    text_node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: Some(json!({"type": "object"})),
+        summary_guidance: None,
+    });
+    text_node.metadata = Some(json!({"builder": {"output_path": "reports/findings.txt"}}));
+
+    let mut json_node = bare_node();
+    json_node.node_id = "export_json".to_string();
+    json_node.objective = "Export the structured results to artifacts/findings.json.".to_string();
+    json_node.depends_on = vec!["write_notes".to_string()];
+    json_node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "generic_artifact".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    json_node.metadata = Some(json!({"builder": {"output_path": "artifacts/findings.json"}}));
+
+    let mut code_node = bare_node();
+    code_node.node_id = "render_yaml".to_string();
+    code_node.objective =
+        "Render the final workflow config to config/agent-workflow.yaml.".to_string();
+    code_node.depends_on = vec!["export_json".to_string()];
+    code_node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: Some(json!({"type": "object"})),
+        summary_guidance: None,
+    });
+    code_node.metadata = Some(json!({"builder": {"output_path": "config/agent-workflow.yaml"}}));
+
+    let mut automation = automation_with_output_targets(
+        vec![bare_node(), text_node, json_node, code_node],
+        vec![
+            "reports/findings.txt".to_string(),
+            "artifacts/findings.json".to_string(),
+            "config/agent-workflow.yaml".to_string(),
+        ],
+    );
+    automation.flow.nodes[0].node_id = "gather".to_string();
+    automation.flow.nodes[0].objective = "Gather the source evidence.".to_string();
+
+    assert!(repair_automation_output_contracts(&mut automation));
+
+    let text_node = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "write_notes")
+        .expect("text node");
+    assert_eq!(
+        text_node
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("text_summary")
+    );
+    assert_eq!(text_node.input_refs.len(), 1);
+
+    let json_node = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "export_json")
+        .expect("json node");
+    assert_eq!(
+        json_node
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("structured_json")
+    );
+    assert_eq!(
+        json_node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.validator),
+        Some(crate::AutomationOutputValidatorKind::StructuredJson)
+    );
+
+    let code_node = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "render_yaml")
+        .expect("code node");
+    assert_eq!(
+        code_node
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("code_patch")
+    );
+    assert_eq!(
+        code_node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.validator),
+        Some(crate::AutomationOutputValidatorKind::CodePatch)
+    );
+    assert!(code_node
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.schema.is_none()));
+    assert_eq!(code_node.input_refs.len(), 1);
+}
+
+#[test]
+fn repair_automation_output_contracts_preserves_specialized_contracts() {
+    let mut node = bare_node();
+    node.node_id = "final_brief".to_string();
+    node.objective = "Write the final brief to reports/final-brief.md.".to_string();
+    node.depends_on = vec!["research".to_string()];
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "brief".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+        enforcement: None,
+        schema: Some(json!({"type": "object"})),
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({"builder": {"output_path": "reports/final-brief.md"}}));
+
+    let mut automation = automation_with_output_targets(
+        vec![bare_node(), node],
+        vec!["reports/final-brief.md".to_string()],
+    );
+    automation.flow.nodes[0].node_id = "research".to_string();
+    automation.flow.nodes[0].objective = "Research the topic.".to_string();
+
+    assert!(repair_automation_output_contracts(&mut automation));
+
+    let node = automation
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "final_brief")
+        .expect("brief node");
+    assert_eq!(
+        node.output_contract
+            .as_ref()
+            .map(|contract| contract.kind.as_str()),
+        Some("brief")
+    );
+    assert_eq!(
+        node.output_contract
+            .as_ref()
+            .and_then(|contract| contract.validator),
+        Some(crate::AutomationOutputValidatorKind::ResearchBrief)
+    );
+    assert_eq!(node.input_refs.len(), 1);
+    assert_eq!(node.input_refs[0].from_step_id, "research");
 }
 
 #[test]

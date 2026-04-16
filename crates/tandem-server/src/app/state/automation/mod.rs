@@ -52,7 +52,10 @@ use types::*;
 use upstream::*;
 use validation::*;
 use verification::*;
-pub(crate) use workflow_impl::migrate_bundled_studio_research_split_automation;
+pub(crate) use workflow_impl::{
+    automation_builder_declared_output_targets, infer_automation_output_contract,
+    migrate_bundled_studio_research_split_automation, repair_automation_output_contracts,
+};
 pub(crate) use workflow_learning::*;
 
 pub fn automation_node_output_enforcement(

@@ -32,6 +32,15 @@ fn workflow_step_contract_kind(step: &crate::WorkflowPlanStep) -> String {
         .unwrap_or_default()
 }
 
+fn workflow_step_text_blob(step: &crate::WorkflowPlanStep) -> String {
+    format!(
+        "{}\n{}\n{}",
+        step.step_id.to_ascii_lowercase(),
+        step.kind.to_ascii_lowercase(),
+        step.objective.to_ascii_lowercase()
+    )
+}
+
 fn workflow_step_is_upstream_synthesis(step: &crate::WorkflowPlanStep) -> bool {
     let has_upstream_dependencies = !step.depends_on.is_empty() || !step.input_refs.is_empty();
     if !has_upstream_dependencies {
@@ -40,16 +49,16 @@ fn workflow_step_is_upstream_synthesis(step: &crate::WorkflowPlanStep) -> bool {
     let contract_kind = workflow_step_contract_kind(step);
     if !matches!(
         contract_kind.as_str(),
-        "structured_json" | "report_markdown" | "text_summary" | "review_summary"
+        "structured_json"
+            | "report_markdown"
+            | "text_summary"
+            | "review_summary"
+            | "generic_artifact"
+            | "code_patch"
     ) {
         return false;
     }
-    let lowered = format!(
-        "{}\n{}\n{}",
-        step.step_id.to_ascii_lowercase(),
-        step.kind.to_ascii_lowercase(),
-        step.objective.to_ascii_lowercase()
-    );
+    let lowered = workflow_step_text_blob(step);
     [
         "summar",
         "synthes",
@@ -61,6 +70,13 @@ fn workflow_step_is_upstream_synthesis(step: &crate::WorkflowPlanStep) -> bool {
         "merge",
         "consolidat",
         "recap",
+        "write",
+        "save",
+        "export",
+        "render",
+        "produce",
+        "patch",
+        "update",
     ]
     .iter()
     .any(|needle| lowered.contains(needle))
@@ -242,6 +258,23 @@ pub(crate) fn normalize_workflow_step_metadata(step: &mut crate::WorkflowPlanSte
 pub(crate) fn normalize_workflow_plan_file_contracts(plan: &mut crate::WorkflowPlan) {
     let explicit_output_targets =
         compiler_api::infer_explicit_output_targets(&plan.original_prompt);
+    for step in &mut plan.steps {
+        normalize_workflow_step_metadata(step);
+        let builder_output_targets =
+            crate::app::state::automation::automation_builder_declared_output_targets(
+                step.metadata.as_ref(),
+            );
+        if let Some(contract) = crate::app::state::automation::infer_automation_output_contract(
+            &step.step_id,
+            &step.kind,
+            &step.objective,
+            step.output_contract.as_ref(),
+            &explicit_output_targets,
+            &builder_output_targets,
+        ) {
+            step.output_contract = Some(contract);
+        }
+    }
     if !explicit_output_targets.is_empty() {
         let output_target_set = explicit_output_targets
             .iter()
@@ -1210,5 +1243,260 @@ mod tests {
                 .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
             Some(Vec::<&str>::new())
         );
+    }
+
+    #[test]
+    fn normalize_workflow_plan_file_contracts_recovers_markdown_synthesis_fallback_steps() {
+        let mut plan = crate::WorkflowPlan {
+            plan_id: "wfplan-fallback-report".to_string(),
+            planner_version: "v1".to_string(),
+            plan_source: "test".to_string(),
+            original_prompt: "Research Reddit pain points and save the markdown report to `reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md`.".to_string(),
+            normalized_prompt: "research reddit pain points and save the markdown report".to_string(),
+            confidence: "low".to_string(),
+            title: "Fallback report".to_string(),
+            description: None,
+            schedule: crate::AutomationV2Schedule {
+                schedule_type: crate::AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+            },
+            execution_target: "automation_v2".to_string(),
+            workspace_root: ".".to_string(),
+            steps: vec![
+                crate::WorkflowPlanStep {
+                    step_id: "refine_results".to_string(),
+                    kind: "compare".to_string(),
+                    objective: "Filter, compare, and deduplicate the gathered results.".to_string(),
+                    agent_role: "reviewer".to_string(),
+                    depends_on: vec!["gather_supporting_sources".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: None,
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {}})),
+                },
+                crate::WorkflowPlanStep {
+                    step_id: "draft_deliverable".to_string(),
+                    kind: "draft".to_string(),
+                    objective: "Read and synthesize the strongest upstream artifacts from the prior steps, then write the final report or daily artifact for `reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md` using concrete evidence rather than a generic recap.".to_string(),
+                    agent_role: "writer".to_string(),
+                    depends_on: vec!["refine_results".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: Some(json!({"type":"object"})),
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {}})),
+                },
+                crate::WorkflowPlanStep {
+                    step_id: "finalize_outputs".to_string(),
+                    kind: "finalize".to_string(),
+                    objective: "Complete the workflow by writing `reports/agent_automation_painpoints_YYYY-MM-DD_HH-MM-SS.md`. Re-read the strongest upstream artifacts before finalizing.".to_string(),
+                    agent_role: "executor".to_string(),
+                    depends_on: vec!["draft_deliverable".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: Some(json!({"type":"object"})),
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {}})),
+                },
+            ],
+            requires_integrations: Vec::new(),
+            allowed_mcp_servers: Vec::new(),
+            operator_preferences: None,
+            save_options: serde_json::json!({}),
+        };
+
+        normalize_workflow_plan_file_contracts(&mut plan);
+
+        let draft = &plan.steps[1];
+        assert_eq!(draft.input_refs.len(), 1);
+        assert_eq!(draft.input_refs[0].from_step_id, "refine_results");
+        assert_eq!(
+            draft
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.as_str()),
+            Some("report_markdown")
+        );
+        assert_eq!(
+            draft
+                .output_contract
+                .as_ref()
+                .and_then(|contract| contract.validator),
+            Some(crate::AutomationOutputValidatorKind::GenericArtifact)
+        );
+        assert!(draft
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.summary_guidance.as_deref())
+            .is_some_and(|guidance| guidance
+                .contains("Read and synthesize the strongest upstream artifacts")));
+
+        let finalize = &plan.steps[2];
+        assert_eq!(finalize.input_refs.len(), 1);
+        assert_eq!(finalize.input_refs[0].from_step_id, "draft_deliverable");
+        assert_eq!(
+            finalize
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.as_str()),
+            Some("report_markdown")
+        );
+        assert_eq!(
+            finalize
+                .output_contract
+                .as_ref()
+                .and_then(|contract| contract.validator),
+            Some(crate::AutomationOutputValidatorKind::GenericArtifact)
+        );
+    }
+
+    #[test]
+    fn normalize_workflow_plan_file_contracts_infers_text_json_and_code_targets() {
+        let mut plan = crate::WorkflowPlan {
+            plan_id: "wfplan-target-kinds".to_string(),
+            planner_version: "v1".to_string(),
+            plan_source: "test".to_string(),
+            original_prompt: "Write `reports/findings.txt`, `artifacts/findings.json`, and `config/agent-workflow.yaml`.".to_string(),
+            normalized_prompt: "write findings outputs".to_string(),
+            confidence: "low".to_string(),
+            title: "Target kinds".to_string(),
+            description: None,
+            schedule: crate::AutomationV2Schedule {
+                schedule_type: crate::AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+            },
+            execution_target: "automation_v2".to_string(),
+            workspace_root: ".".to_string(),
+            steps: vec![
+                crate::WorkflowPlanStep {
+                    step_id: "write_plain_text".to_string(),
+                    kind: "draft".to_string(),
+                    objective: "Write the final plain text findings to reports/findings.txt.".to_string(),
+                    agent_role: "writer".to_string(),
+                    depends_on: vec!["collect_sources".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: Some(json!({"type":"object"})),
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {"output_path": "reports/findings.txt"}})),
+                },
+                crate::WorkflowPlanStep {
+                    step_id: "export_json_payload".to_string(),
+                    kind: "finalize".to_string(),
+                    objective: "Export the structured findings to artifacts/findings.json.".to_string(),
+                    agent_role: "writer".to_string(),
+                    depends_on: vec!["write_plain_text".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "generic_artifact".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                        enforcement: None,
+                        schema: None,
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {"output_path": "artifacts/findings.json"}})),
+                },
+                crate::WorkflowPlanStep {
+                    step_id: "render_yaml_config".to_string(),
+                    kind: "finalize".to_string(),
+                    objective: "Render the final workflow config to config/agent-workflow.yaml.".to_string(),
+                    agent_role: "writer".to_string(),
+                    depends_on: vec!["export_json_payload".to_string()],
+                    input_refs: Vec::new(),
+                    output_contract: Some(crate::AutomationFlowOutputContract {
+                        kind: "structured_json".to_string(),
+                        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                        enforcement: None,
+                        schema: Some(json!({"type":"object"})),
+                        summary_guidance: None,
+                    }),
+                    metadata: Some(json!({"builder": {"output_path": "config/agent-workflow.yaml"}})),
+                },
+            ],
+            requires_integrations: Vec::new(),
+            allowed_mcp_servers: Vec::new(),
+            operator_preferences: None,
+            save_options: serde_json::json!({}),
+        };
+
+        normalize_workflow_plan_file_contracts(&mut plan);
+
+        assert_eq!(
+            plan.steps[0]
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.as_str()),
+            Some("text_summary")
+        );
+        assert_eq!(
+            plan.steps[0]
+                .output_contract
+                .as_ref()
+                .and_then(|contract| contract.validator),
+            Some(crate::AutomationOutputValidatorKind::GenericArtifact)
+        );
+        assert!(plan.steps[0]
+            .output_contract
+            .as_ref()
+            .is_some_and(|contract| contract.schema.is_none()));
+        assert_eq!(plan.steps[0].input_refs.len(), 1);
+
+        assert_eq!(
+            plan.steps[1]
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.as_str()),
+            Some("structured_json")
+        );
+        assert_eq!(
+            plan.steps[1]
+                .output_contract
+                .as_ref()
+                .and_then(|contract| contract.validator),
+            Some(crate::AutomationOutputValidatorKind::StructuredJson)
+        );
+
+        assert_eq!(
+            plan.steps[2]
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.as_str()),
+            Some("code_patch")
+        );
+        assert_eq!(
+            plan.steps[2]
+                .output_contract
+                .as_ref()
+                .and_then(|contract| contract.validator),
+            Some(crate::AutomationOutputValidatorKind::CodePatch)
+        );
+        assert!(plan.steps[2]
+            .output_contract
+            .as_ref()
+            .is_some_and(|contract| contract.schema.is_none()));
+        assert_eq!(plan.steps[2].input_refs.len(), 1);
     }
 }

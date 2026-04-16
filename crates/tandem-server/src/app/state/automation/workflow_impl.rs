@@ -4,6 +4,451 @@ fn automation_node_delivery_method_value(node: &AutomationFlowNode) -> String {
     automation_node_delivery_method(node).unwrap_or_else(|| "none".to_string())
 }
 
+fn normalized_output_target_token(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed
+        .trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\''
+                    | '`'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | ','
+                    | ';'
+                    | ':'
+                    | '.'
+                    | '!'
+                    | '?'
+            )
+        })
+        .strip_prefix("file://")
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\''
+                    | '`'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | ','
+                    | ';'
+                    | ':'
+                    | '.'
+                    | '!'
+                    | '?'
+            )
+        })
+        .replace('\\', "/");
+    let normalized = normalized.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn output_target_matches_suffix(target: &str, suffixes: &[&str]) -> bool {
+    normalized_output_target_token(target)
+        .is_some_and(|normalized| suffixes.iter().any(|suffix| normalized.ends_with(suffix)))
+}
+
+fn classify_output_target_contract_kind(target: &str) -> Option<&'static str> {
+    if output_target_matches_suffix(target, &[".md", ".markdown", ".mdx"]) {
+        return Some("report_markdown");
+    }
+    if output_target_matches_suffix(target, &[".txt", ".text", ".log"]) {
+        return Some("text_summary");
+    }
+    if output_target_matches_suffix(target, &[".json", ".jsonl", ".ndjson", ".geojson"]) {
+        return Some("structured_json");
+    }
+    if output_target_matches_suffix(
+        target,
+        &[
+            ".py", ".rs", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".kt", ".kts", ".swift",
+            ".rb", ".php", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".html", ".htm",
+            ".css", ".scss", ".less", ".xml", ".svg", ".yaml", ".yml", ".toml", ".ini", ".env",
+            ".sql", ".graphql", ".gql", ".sh", ".bash", ".zsh", ".fish", ".csv", ".tsv",
+        ],
+    ) {
+        return Some("code_patch");
+    }
+    None
+}
+
+fn output_contract_validator_for_kind(kind: &str) -> Option<AutomationOutputValidatorKind> {
+    match kind {
+        "report_markdown" | "text_summary" => Some(AutomationOutputValidatorKind::GenericArtifact),
+        "structured_json" => Some(AutomationOutputValidatorKind::StructuredJson),
+        "code_patch" => Some(AutomationOutputValidatorKind::CodePatch),
+        _ => None,
+    }
+}
+
+fn output_contract_kind_is_specialized(kind: &str) -> bool {
+    matches!(
+        kind,
+        "brief" | "review" | "review_summary" | "approval_gate" | "urls" | "citations"
+    )
+}
+
+fn output_contract_kind_is_weak(kind: &str) -> bool {
+    kind.is_empty() || matches!(kind, "structured_json" | "generic_artifact")
+}
+
+fn output_writer_text_blob(step_id: &str, step_kind: &str, objective: &str) -> String {
+    format!(
+        "{}\n{}\n{}",
+        step_id.to_ascii_lowercase(),
+        step_kind.to_ascii_lowercase(),
+        objective.to_ascii_lowercase()
+    )
+}
+
+fn output_writer_has_writer_intent(text: &str) -> bool {
+    [
+        "write", "save", "export", "output", "deliver", "generate", "draft", "final", "finalize",
+        "prepare", "render", "produce", "append", "patch", "update", "create",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn output_writer_has_report_intent(text: &str) -> bool {
+    [
+        "markdown", "report", "writeup", "write-up", "analysis", "briefing", "brief ",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn output_writer_has_text_intent(text: &str) -> bool {
+    [
+        "plain text",
+        "text summary",
+        "summary",
+        "notes",
+        "transcript",
+        "log file",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn output_writer_mentions_target(text: &str, targets: &[String]) -> bool {
+    targets.iter().any(|target| {
+        normalized_output_target_token(target).is_some_and(|normalized| {
+            text.contains(&normalized)
+                || normalized
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|basename| text.contains(basename))
+        })
+    })
+}
+
+fn infer_output_contract_kind_from_targets(
+    targets: &[String],
+    text: &str,
+    require_writer_intent: bool,
+) -> Option<&'static str> {
+    if targets.is_empty() {
+        return None;
+    }
+    let mentions_target = output_writer_mentions_target(text, targets);
+    let writer_intent = output_writer_has_writer_intent(text);
+    if require_writer_intent && !mentions_target && !writer_intent {
+        return None;
+    }
+    targets
+        .iter()
+        .find_map(|target| classify_output_target_contract_kind(target))
+}
+
+fn automation_input_ref_alias_from_node_id(node_id: &str) -> String {
+    let alias = node_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let alias = alias.trim_matches('_').replace("__", "_");
+    if alias.is_empty() {
+        "upstream_artifact".to_string()
+    } else if alias.ends_with("_artifact") {
+        alias
+    } else {
+        format!("{alias}_artifact")
+    }
+}
+
+fn automation_node_should_restore_upstream_inputs(
+    node: &AutomationFlowNode,
+    effective_contract_kind: &str,
+    builder_targets: &[String],
+    explicit_output_targets: &[String],
+) -> bool {
+    if node.depends_on.is_empty() {
+        return false;
+    }
+    let text = output_writer_text_blob(&node.node_id, "", &node.objective);
+    let writer_target_match = !builder_targets.is_empty()
+        || infer_output_contract_kind_from_targets(builder_targets, &text, false).is_some()
+        || infer_output_contract_kind_from_targets(explicit_output_targets, &text, true).is_some();
+    writer_target_match
+        || matches!(
+            effective_contract_kind,
+            "report_markdown" | "text_summary" | "review_summary" | "approval_gate" | "code_patch"
+        )
+        || [
+            "summar",
+            "synthes",
+            "report",
+            "final",
+            "finalize",
+            "deliverable",
+            "append",
+            "merge",
+            "consolidat",
+            "recap",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+fn ensure_upstream_input_refs(node: &mut AutomationFlowNode) -> bool {
+    if node.depends_on.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    let mut existing_aliases = node
+        .input_refs
+        .iter()
+        .map(|input_ref| input_ref.alias.trim().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let existing_inputs = node
+        .input_refs
+        .iter()
+        .map(|input_ref| input_ref.from_step_id.trim().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    for upstream_node_id in &node.depends_on {
+        let trimmed = upstream_node_id.trim();
+        if trimmed.is_empty() || existing_inputs.contains(trimmed) {
+            continue;
+        }
+        let alias_base = automation_input_ref_alias_from_node_id(trimmed);
+        let mut alias = alias_base.clone();
+        let mut index = 2u32;
+        while existing_aliases.contains(&alias) {
+            alias = format!("{alias_base}_{index}");
+            index += 1;
+        }
+        existing_aliases.insert(alias.clone());
+        node.input_refs.push(AutomationFlowInputRef {
+            from_step_id: trimmed.to_string(),
+            alias,
+        });
+        changed = true;
+    }
+    changed
+}
+
+fn ensure_report_or_text_summary_guidance(node: &mut AutomationFlowNode) -> bool {
+    let Some(contract) = node.output_contract.as_mut() else {
+        return false;
+    };
+    let kind = contract.kind.trim().to_ascii_lowercase();
+    if !matches!(kind.as_str(), "report_markdown" | "text_summary") {
+        return false;
+    }
+    let upstream_node_ids = node
+        .input_refs
+        .iter()
+        .map(|input_ref| input_ref.from_step_id.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if upstream_node_ids.is_empty() {
+        return false;
+    }
+    let upstream_summary = upstream_node_ids
+        .iter()
+        .take(4)
+        .map(|node_id| format!("`{node_id}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let synthesis_guidance = format!(
+        "Read and synthesize the strongest upstream artifacts from {}. Reuse the concrete filenames, named entities, URLs, counts, match reasons, risks, and proof points from those upstream steps instead of producing a generic recap.",
+        upstream_summary
+    );
+    match contract.summary_guidance.take() {
+        Some(existing)
+            if existing
+                .to_ascii_lowercase()
+                .contains("read and synthesize the strongest upstream artifacts") =>
+        {
+            contract.summary_guidance = Some(existing);
+            false
+        }
+        Some(existing) if existing.trim().is_empty() => {
+            contract.summary_guidance = Some(synthesis_guidance);
+            true
+        }
+        Some(existing) => {
+            contract.summary_guidance = Some(format!("{existing}\n\n{synthesis_guidance}"));
+            true
+        }
+        None => {
+            contract.summary_guidance = Some(synthesis_guidance);
+            true
+        }
+    }
+}
+
+pub(crate) fn automation_builder_declared_output_targets(metadata: Option<&Value>) -> Vec<String> {
+    let Some(builder) = metadata
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let mut targets = Vec::new();
+    if let Some(path) = builder
+        .get("output_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        targets.push(path.to_string());
+    }
+    for key in ["output_files", "must_write_files"] {
+        if let Some(items) = builder.get(key).and_then(Value::as_array) {
+            targets.extend(
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            );
+        }
+    }
+    normalize_non_empty_list(targets)
+}
+
+pub(crate) fn infer_automation_output_contract(
+    step_id: &str,
+    step_kind: &str,
+    objective: &str,
+    current_contract: Option<&AutomationFlowOutputContract>,
+    explicit_output_targets: &[String],
+    builder_output_targets: &[String],
+) -> Option<AutomationFlowOutputContract> {
+    let current_kind = current_contract
+        .map(|contract| contract.kind.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if output_contract_kind_is_specialized(&current_kind) {
+        return None;
+    }
+
+    let text = output_writer_text_blob(step_id, step_kind, objective);
+    let inferred_kind =
+        infer_output_contract_kind_from_targets(builder_output_targets, &text, false)
+            .or_else(|| {
+                infer_output_contract_kind_from_targets(explicit_output_targets, &text, true)
+            })
+            .or_else(|| {
+                if !output_contract_kind_is_weak(&current_kind)
+                    || !output_writer_has_writer_intent(&text)
+                {
+                    return None;
+                }
+                if output_writer_has_report_intent(&text) {
+                    Some("report_markdown")
+                } else if output_writer_has_text_intent(&text) {
+                    Some("text_summary")
+                } else {
+                    None
+                }
+            })?;
+
+    if !output_contract_kind_is_weak(&current_kind) && current_kind != inferred_kind {
+        return None;
+    }
+
+    let mut contract = current_contract
+        .cloned()
+        .unwrap_or_else(|| AutomationFlowOutputContract {
+            kind: inferred_kind.to_string(),
+            validator: output_contract_validator_for_kind(inferred_kind),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        });
+    contract.kind = inferred_kind.to_string();
+    contract.validator = output_contract_validator_for_kind(inferred_kind);
+    if inferred_kind != "structured_json" {
+        contract.schema = None;
+    }
+    Some(contract)
+}
+
+pub(crate) fn repair_automation_output_contracts(automation: &mut AutomationV2Spec) -> bool {
+    let explicit_output_targets = normalize_non_empty_list(automation.output_targets.clone());
+    let mut changed = false;
+    for node in &mut automation.flow.nodes {
+        let before_input_refs = serde_json::to_value(&node.input_refs).ok();
+        let before_contract = serde_json::to_value(&node.output_contract).ok();
+        let builder_targets = automation_builder_declared_output_targets(node.metadata.as_ref());
+        if let Some(contract) = infer_automation_output_contract(
+            &node.node_id,
+            "",
+            &node.objective,
+            node.output_contract.as_ref(),
+            &explicit_output_targets,
+            &builder_targets,
+        ) {
+            node.output_contract = Some(contract);
+        }
+        let effective_contract_kind = node
+            .output_contract
+            .as_ref()
+            .map(|contract| contract.kind.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        if automation_node_should_restore_upstream_inputs(
+            node,
+            &effective_contract_kind,
+            &builder_targets,
+            &explicit_output_targets,
+        ) {
+            changed = ensure_upstream_input_refs(node) || changed;
+        }
+        changed = ensure_report_or_text_summary_guidance(node) || changed;
+        let after_input_refs = serde_json::to_value(&node.input_refs).ok();
+        let after_contract = serde_json::to_value(&node.output_contract).ok();
+        if before_input_refs != after_input_refs || before_contract != after_contract {
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(crate) fn automation_output_session_id(output: &Value) -> Option<String> {
     output
         .get("content")
