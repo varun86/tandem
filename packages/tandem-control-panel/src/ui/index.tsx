@@ -360,7 +360,7 @@ export function SplitView({
   aside?: any;
 }) {
   return (
-    <div className={`tcp-split-view ${className}`.trim()}>
+    <div className={`tcp-split-view ${!aside ? "tcp-split-view--solo" : ""} ${className}`.trim()}>
       <div className={`min-w-0 ${mainClassName}`.trim()}>{main}</div>
       {aside ? <div className={`min-w-0 ${asideClassName}`.trim()}>{aside}</div> : null}
     </div>

@@ -1111,6 +1111,10 @@ Replace `YYYY-MM-DD` with the actual resolved date for the run.";
         );
 
         assert!(
+            plan.steps.len() >= 4,
+            "complex workflow prompts should decompose into multiple concrete fallback steps"
+        );
+        assert!(
             plan.steps[0].objective.contains("RESUME.md"),
             "assess step should name the source-of-truth file"
         );

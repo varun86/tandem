@@ -817,6 +817,10 @@
     .tcp-split-view {
       grid-template-columns: minmax(0, 1fr) minmax(320px, 0.84fr);
     }
+
+    .tcp-split-view.tcp-split-view--solo {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .tcp-drawer-root {

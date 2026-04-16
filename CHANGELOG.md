@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.30] - Released 2026-04-16
+
+### Added
+
+- **Workflow replay coverage package**: Added a focused workflow replay suite for escaped resume/job-search failures, plus internal replay-template and planner/runtime/validator contract-matrix docs to make future workflow-runtime regressions easier to reproduce and gate.
+- **Automation calendar hour drill-down**: The control panel calendar now includes an hour-level inspection panel so crowded slots can be expanded into the exact automations scheduled in that UTC hour.
+
+### Changed
+
+- **Automation calendar schedule coverage**: The calendar now shows both cron and interval automations, expanding interval occurrences from the automation anchor time instead of hiding non-cron schedules from the scheduling view.
+- **Workflow synthesis calibration coverage**: Rich-upstream report validation now has explicit matrix coverage for generic summaries, single-anchor reports, and repaired multi-anchor syntheses so future validator tuning stays honest.
+- **Run debugger task density**: Task cards in the run debugger now start collapsed and expand in place on selection, keeping large workflows readable even when a single run has dozens of tasks.
+- **Settings layout cleanup**: The Settings page now uses the full content width after removing the empty right rail, and the shared split-view layout expands correctly in single-column mode.
+
+### Fixed
+
+- **Complex fallback workflow regression guard**: Added a planner regression that prevents complex fallback workflows from collapsing back into a single generic step when the prompt names concrete files, outputs, and explicit tools.
+- **Exact-source workflow replay coverage**: Added a regression proving upstream evidence can satisfy exact required source reads while still enforcing the paired workspace-write contract for artifact-producing workflow nodes.
+- **Calendar timezone and slot drill-down**: Calendar previews now respect the automation timezone and browser-local display time, and clicking a slot opens the exact 30-minute block instead of bouncing back to the whole day.
+
 ## [0.4.29] - Released 2026-04-15
 
 ### Added

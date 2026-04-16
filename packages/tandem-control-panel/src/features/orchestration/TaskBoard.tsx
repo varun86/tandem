@@ -1,3 +1,4 @@
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { OrchestrationTask, TaskState } from "./types";
 
@@ -56,110 +57,165 @@ function TaskCard({
   onTaskSelect?: (task: OrchestrationTask) => void;
   onRetryTask?: (task: OrchestrationTask) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const isExpanded = Boolean(isSelected);
   const error =
     task.state === "failed" || task.state === "blocked"
       ? String(task.error_message || "").trim()
       : "";
+  const transition = reduceMotion
+    ? { duration: 0 }
+    : { type: "spring", stiffness: 360, damping: 34, mass: 0.8 };
+  const animateClass = taskCardClass(task.state, isCurrent, Boolean(isSelected));
+
+  const compactMeta: string[] = [];
+  if (task.assigned_role) compactMeta.push(`role: ${task.assigned_role}`);
+  if (task.gate) compactMeta.push(`gate: ${task.gate}`);
+  if (workflowSummary && workflowSummary.runs > 0) {
+    compactMeta.push(`workflow ${workflowSummary.runs}`);
+  }
+  if (task.dependencies.length) {
+    compactMeta.push(`deps ${task.dependencies.length}`);
+  }
   return (
-    <div
-      className={`min-w-0 overflow-hidden cursor-pointer rounded-lg border p-2 ${taskCardClass(
-        task.state,
-        isCurrent,
-        Boolean(isSelected)
-      )}`}
+    <motion.div
+      layout
+      className={`min-w-0 cursor-pointer overflow-hidden rounded-lg border p-2 ${animateClass}`}
       onClick={() => onTaskSelect?.(task)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onTaskSelect?.(task);
+      }}
+      animate={reduceMotion ? undefined : { opacity: 1 }}
+      transition={transition}
     >
-      <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
-        <div
-          className="min-w-0 line-clamp-6 break-words text-xs font-medium leading-snug"
-          title={task.title}
-        >
-          {task.title}
-        </div>
-        <span className={`${statusClass(task.state)} inline-flex shrink-0 items-center gap-1`}>
-          {statusIcon(task.state)}
-          <span>{LABELS[task.state]}</span>
-        </span>
-      </div>
-      {task.description ? (
-        <div className="tcp-subtle line-clamp-2 break-words text-xs">{task.description}</div>
-      ) : null}
-      {task.assigned_role || task.gate ? (
-        <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
-          {task.assigned_role ? (
-            <span className="rounded border border-cyan-600/50 bg-cyan-950/30 px-1.5 py-0.5">
-              role: {task.assigned_role}
-            </span>
-          ) : null}
-          {task.gate ? (
-            <span className="rounded border border-emerald-600/50 bg-emerald-950/30 px-1.5 py-0.5 text-emerald-200">
-              gate: {task.gate}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {workflowSummary && workflowSummary.runs > 0 ? (
-        <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
-          <span className="rounded border border-indigo-600/50 bg-indigo-950/30 px-1.5 py-0.5">
-            workflow runs: {workflowSummary.runs}
-          </span>
-          {workflowSummary.failed > 0 ? (
-            <span className="rounded border border-rose-600/50 bg-rose-950/30 px-1.5 py-0.5 text-rose-200">
-              workflow failed: {workflowSummary.failed}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {error ? (
-        <div
-          className={`mt-1 min-w-0 text-xs ${
-            task.state === "blocked" ? "text-emerald-200/90" : "text-rose-300"
-          }`}
-        >
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <div
-            className={expanded ? "whitespace-pre-wrap break-words" : "line-clamp-2 break-words"}
+            className="line-clamp-2 break-words text-xs font-medium leading-snug"
+            title={task.title}
           >
-            {error}
+            {task.title}
           </div>
-          {error.length > 130 ? (
-            <button
-              className="tcp-btn mt-1 h-6 px-2 text-[11px]"
-              onClick={() => setExpanded((v) => !v)}
+          {!isExpanded && task.description ? (
+            <div className="tcp-subtle mt-1 line-clamp-1 break-words text-[11px]">
+              {task.description}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className={`${statusClass(task.state)} inline-flex items-center gap-1`}>
+            {statusIcon(task.state)}
+            <span>{LABELS[task.state]}</span>
+          </span>
+          <span className="tcp-subtle text-[10px]">{isExpanded ? "Open" : "Tap to expand"}</span>
+        </div>
+      </div>
+      {compactMeta.length ? (
+        <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
+          {compactMeta.slice(0, 3).map((item) => (
+            <span
+              key={item}
+              className="rounded border border-slate-700/60 bg-slate-950/20 px-1.5 py-0.5"
             >
-              {expanded ? "Less" : "More"}
-            </button>
+              {item}
+            </span>
+          ))}
+          {compactMeta.length > 3 ? (
+            <span className="rounded border border-slate-700/60 bg-slate-950/20 px-1.5 py-0.5">
+              +{compactMeta.length - 3}
+            </span>
           ) : null}
         </div>
       ) : null}
-      <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-        {task.dependencies.slice(0, 2).map((dep) => (
-          <span
-            key={dep}
-            className="rounded border border-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300"
+      <AnimatePresence initial={false} mode="popLayout">
+        {isExpanded ? (
+          <motion.div
+            key="expanded-task-card"
+            initial={reduceMotion ? { opacity: 1 } : { opacity: 0, height: 0 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: "auto" }}
+            exit={reduceMotion ? { opacity: 1 } : { opacity: 0, height: 0 }}
+            transition={transition}
+            className="overflow-hidden"
           >
-            {"<-"} {dep}
-          </span>
-        ))}
-        {task.dependencies.length > 2 ? (
-          <span className="rounded border border-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">
-            +{task.dependencies.length - 2} more
-          </span>
+            <div className="mt-2 grid gap-2 border-t border-slate-700/50 pt-2 text-xs">
+              {task.description ? (
+                <div className="tcp-subtle whitespace-pre-wrap break-words">{task.description}</div>
+              ) : null}
+              {task.assigned_role || task.gate ? (
+                <div className="flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
+                  {task.assigned_role ? (
+                    <span className="rounded border border-cyan-600/50 bg-cyan-950/30 px-1.5 py-0.5">
+                      role: {task.assigned_role}
+                    </span>
+                  ) : null}
+                  {task.gate ? (
+                    <span className="rounded border border-emerald-600/50 bg-emerald-950/30 px-1.5 py-0.5 text-emerald-200">
+                      gate: {task.gate}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {workflowSummary && workflowSummary.runs > 0 ? (
+                <div className="flex min-w-0 flex-wrap gap-1 text-[10px] text-slate-300">
+                  <span className="rounded border border-indigo-600/50 bg-indigo-950/30 px-1.5 py-0.5">
+                    workflow runs: {workflowSummary.runs}
+                  </span>
+                  {workflowSummary.failed > 0 ? (
+                    <span className="rounded border border-rose-600/50 bg-rose-950/30 px-1.5 py-0.5 text-rose-200">
+                      workflow failed: {workflowSummary.failed}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {error ? (
+                <div
+                  className={`min-w-0 text-xs ${
+                    task.state === "blocked" ? "text-emerald-200/90" : "text-rose-300"
+                  }`}
+                >
+                  <div className="whitespace-pre-wrap break-words">{error}</div>
+                </div>
+              ) : null}
+              {task.dependencies.length ? (
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {task.dependencies.slice(0, 4).map((dep) => (
+                    <span
+                      key={dep}
+                      className="rounded border border-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300"
+                    >
+                      {"<-"} {dep}
+                    </span>
+                  ))}
+                  {task.dependencies.length > 4 ? (
+                    <span className="rounded border border-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">
+                      +{task.dependencies.length - 4} more
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="tcp-subtle text-[10px]">Details</div>
+              <div className="flex flex-wrap gap-2">
+                {task.state === "failed" && onRetryTask ? (
+                  <button
+                    className="tcp-btn h-7 px-2 text-xs"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRetryTask(task);
+                    }}
+                  >
+                    Retry Task
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </motion.div>
         ) : null}
-      </div>
-      <div className="mt-2 tcp-subtle text-[10px]">Details</div>
-      {task.state === "failed" && onRetryTask ? (
-        <button
-          className="tcp-btn mt-2 h-7 px-2 text-xs"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRetryTask(task);
-          }}
-        >
-          Retry Task
-        </button>
-      ) : null}
-    </div>
+      </AnimatePresence>
+    </motion.div>
   );
 }
 

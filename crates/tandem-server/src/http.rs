@@ -30,7 +30,6 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-use tandem_channels::start_channel_listeners;
 use tandem_tools::Tool;
 use tandem_types::{
     CreateSessionRequest, EngineEvent, Message, MessagePart, MessagePartInput, MessageRole,
@@ -350,21 +349,9 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         }
     });
 
-    // --- Channel listeners (optional) ---
-    // Reads TANDEM_TELEGRAM_BOT_TOKEN, TANDEM_DISCORD_BOT_TOKEN, TANDEM_SLACK_BOT_TOKEN etc.
-    // If no channels are configured the server starts normally without them.
-    let channel_listener_set = match tandem_channels::config::ChannelsConfig::from_env() {
-        Ok(config) => {
-            tracing::info!("tandem-channels: starting configured channel listeners");
-            let set = start_channel_listeners(config).await;
-            Some(set)
-        }
-        Err(e) => {
-            tracing::info!("tandem-channels: no channels configured ({})", e);
-            None
-        }
-    };
-
+    // Channel listeners are started during runtime initialization
+    // (`initialize_runtime()` in `engine/src/main.rs`) so `serve()` only owns
+    // the HTTP server lifecycle.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -399,9 +386,6 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     bug_monitor.abort();
     global_memory_ingestor.abort();
     hygiene_task.abort();
-    if let Some(mut set) = channel_listener_set {
-        set.abort_all();
-    }
     result?;
     Ok(())
 }

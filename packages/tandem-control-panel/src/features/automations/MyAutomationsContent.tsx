@@ -122,8 +122,6 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
   const {
     setCalendarRange,
     openCalendarAutomationEdit,
-    onRunCalendarAutomation,
-    updateCalendarAutomationFromEvent,
     onOpenAdvancedEdit,
     setWorkflowEditDraft,
     runNowV2Mutation,
@@ -442,10 +440,6 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           events={calendarEvents}
           onRangeChange={setCalendarRange}
           onOpenAutomation={openCalendarAutomationEdit}
-          onRunAutomation={onRunCalendarAutomation}
-          onEventDrop={updateCalendarAutomationFromEvent}
-          statusColor={statusColor}
-          runActionsDisabled={runNowMutation.isPending || runNowV2Mutation.isPending}
         />
       ) : null}
 

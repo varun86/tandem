@@ -58,6 +58,7 @@ interface WorkflowEditDraft {
   scheduleKind: "manual" | "cron" | "interval";
   cronExpression: string;
   intervalSeconds: string;
+  timezone: string;
   workspaceRoot: string;
   executionMode: ExecutionMode;
   maxParallelAgents: string;
@@ -172,6 +173,46 @@ function formatAutomationV2ScheduleLabel(schedule: any) {
     });
   }
   return "manual";
+}
+
+function getAutomationScheduleAnchorMs(automation: any) {
+  const raw =
+    automation?.next_fire_at_ms ||
+    automation?.nextFireAtMs ||
+    automation?.created_at_ms ||
+    automation?.createdAtMs ||
+    0;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function expandIntervalOccurrences(
+  intervalSeconds: number,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  anchorMs: number
+) {
+  const intervalMs = Math.max(1, Math.round(Math.max(1, intervalSeconds) * 1000));
+  const start = Math.max(0, Math.min(rangeStartMs, rangeEndMs));
+  const end = Math.max(rangeStartMs, rangeEndMs);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0 || end <= 0) return [];
+
+  const anchor = anchorMs > 0 ? anchorMs : start;
+  if (end < anchor) return [];
+
+  let first = anchor;
+  if (anchor < start) {
+    const offset = start - anchor;
+    const steps = Math.ceil(offset / intervalMs);
+    first = anchor + steps * intervalMs;
+  }
+
+  const occurrences: number[] = [];
+  for (let cursor = first; cursor < end; cursor += intervalMs) {
+    if (cursor >= start) occurrences.push(cursor);
+    if (occurrences.length >= 400) break;
+  }
+  return occurrences;
 }
 
 function validateWorkspaceRootInput(raw: string) {
@@ -604,6 +645,7 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     scheduleKind: scheduleEditor.scheduleKind,
     cronExpression: scheduleEditor.cronExpression,
     intervalSeconds: String(scheduleEditor.intervalSeconds),
+    timezone: getAutomationScheduleTimezone(automation),
     workspaceRoot: String(
       automation?.workspace_root ||
         automation?.workspaceRoot ||
@@ -668,11 +710,12 @@ function isMissionBlueprintAutomation(automation: any) {
 }
 
 function workflowEditToSchedule(draft: WorkflowEditDraft) {
+  const timezone = normalizedScheduleTimezone(draft.timezone);
   const misfirePolicy = { type: "run_once" as const };
   if (draft.scheduleKind === "manual") {
     return {
       type: "manual",
-      timezone: "UTC",
+      timezone,
       misfire_policy: misfirePolicy,
     };
   }
@@ -680,7 +723,7 @@ function workflowEditToSchedule(draft: WorkflowEditDraft) {
     return {
       type: "cron",
       cron_expression: String(draft.cronExpression || "").trim(),
-      timezone: "UTC",
+      timezone,
       misfire_policy: misfirePolicy,
     };
   }
@@ -690,13 +733,77 @@ function workflowEditToSchedule(draft: WorkflowEditDraft) {
       1,
       Number.parseInt(String(draft.intervalSeconds || "3600"), 10) || 3600
     ),
-    timezone: "UTC",
+    timezone,
     misfire_policy: misfirePolicy,
   };
 }
 
 const CALENDAR_DISPLAY_DURATION_MS = 30 * 60 * 1000;
 const CALENDAR_SLOT_MS = 60 * 1000;
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+const TIMEZONE_NUMERIC_FORMATTER_CACHE = new Map<string, Intl.DateTimeFormat>();
+const TIMEZONE_WEEKDAY_FORMATTER_CACHE = new Map<string, Intl.DateTimeFormat>();
+
+function normalizedScheduleTimezone(value: string) {
+  return String(value || "").trim() || "UTC";
+}
+
+function timezoneNumericFormatter(timezone: string) {
+  const normalized = normalizedScheduleTimezone(timezone);
+  let formatter = TIMEZONE_NUMERIC_FORMATTER_CACHE.get(normalized);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: normalized,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    TIMEZONE_NUMERIC_FORMATTER_CACHE.set(normalized, formatter);
+  }
+  return formatter;
+}
+
+function timezoneWeekdayFormatter(timezone: string) {
+  const normalized = normalizedScheduleTimezone(timezone);
+  let formatter = TIMEZONE_WEEKDAY_FORMATTER_CACHE.get(normalized);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: normalized,
+      weekday: "short",
+    });
+    TIMEZONE_WEEKDAY_FORMATTER_CACHE.set(normalized, formatter);
+  }
+  return formatter;
+}
+
+function getDatePart(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes) {
+  return Number.parseInt(parts.find((part) => part.type === type)?.value || "0", 10);
+}
+
+function zonedDateParts(date: Date, timezone: string) {
+  const normalized = normalizedScheduleTimezone(timezone);
+  const parts = timezoneNumericFormatter(normalized).formatToParts(date);
+  const weekdayLabel = timezoneWeekdayFormatter(normalized).format(date);
+  return {
+    year: getDatePart(parts, "year"),
+    month: getDatePart(parts, "month"),
+    day: getDatePart(parts, "day"),
+    hour: getDatePart(parts, "hour"),
+    minute: getDatePart(parts, "minute"),
+    weekday: WEEKDAY_INDEX[weekdayLabel] ?? 0,
+  };
+}
 
 function getAutomationScheduleTimezone(automation: any) {
   return (
@@ -759,18 +866,14 @@ function matchesCronField(field: string, value: number, min: number, max: number
   return atoms.some((atom) => matchesCronAtom(atom, value, min, max));
 }
 
-function cronMatchesUtc(date: Date, expression: string) {
+function cronMatchesInTimezone(date: Date, expression: string, timezone: string) {
   const fields = String(expression || "")
     .trim()
     .split(/\s+/)
     .filter(Boolean);
   if (fields.length !== 5) return false;
   const [minuteField, hourField, domField, monthField, dowField] = fields;
-  const minute = date.getUTCMinutes();
-  const hour = date.getUTCHours();
-  const dom = date.getUTCDate();
-  const month = date.getUTCMonth() + 1;
-  const dow = date.getUTCDay();
+  const { minute, hour, day: dom, month, weekday: dow } = zonedDateParts(date, timezone);
   const minuteMatch = matchesCronField(minuteField, minute, 0, 59);
   const hourMatch = matchesCronField(hourField, hour, 0, 23);
   const monthMatch = matchesCronField(monthField, month, 1, 12);
@@ -782,16 +885,21 @@ function cronMatchesUtc(date: Date, expression: string) {
   return minuteMatch && hourMatch && monthMatch && dayMatch;
 }
 
-function expandCronOccurrences(expression: string, rangeStartMs: number, rangeEndMs: number) {
+function expandCronOccurrences(
+  expression: string,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  timezone: string
+) {
   const out: number[] = [];
   const start = Math.max(0, Math.min(rangeStartMs, rangeEndMs));
   const end = Math.max(rangeStartMs, rangeEndMs);
   const cursor = new Date(Math.floor(start / CALENDAR_SLOT_MS) * CALENDAR_SLOT_MS);
   while (cursor.getTime() < end) {
-    if (cronMatchesUtc(cursor, expression)) {
+    if (cronMatchesInTimezone(cursor, expression, timezone)) {
       out.push(cursor.getTime());
     }
-    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
+    cursor.setTime(cursor.getTime() + CALENDAR_SLOT_MS);
   }
   return out;
 }
@@ -870,7 +978,12 @@ function buildCalendarOccurrences({
     .trim()
     .toLowerCase();
   const cronExpression = getAutomationCronExpression(schedule);
-  if (scheduleType !== "cron" || !cronExpression) return [];
+  const intervalSeconds = Number(
+    schedule?.interval_seconds?.seconds ||
+      schedule?.interval_seconds ||
+      schedule?.intervalSeconds ||
+      0
+  );
   const title = getAutomationCalendarTitle(automation);
   const scheduleLabel =
     family === "legacy" ? formatScheduleLabel(schedule) : formatAutomationV2ScheduleLabel(schedule);
@@ -892,7 +1005,18 @@ function buildCalendarOccurrences({
     automation?.policy?.approval?.requires_approval === true;
   const activationReady = automation?.metadata?.plan_package_validation?.ready_for_activation;
   const editable = isCalendarEditableCron(cronExpression);
-  const starts = expandCronOccurrences(cronExpression, rangeStartMs, rangeEndMs);
+  const starts =
+    scheduleType === "cron" && cronExpression
+      ? expandCronOccurrences(cronExpression, rangeStartMs, rangeEndMs, timezone)
+      : scheduleType === "interval" && Number.isFinite(intervalSeconds) && intervalSeconds > 0
+        ? expandIntervalOccurrences(
+            intervalSeconds,
+            rangeStartMs,
+            rangeEndMs,
+            getAutomationScheduleAnchorMs(automation)
+          )
+        : [];
+  if (!starts.length) return [];
   return starts.map((startMs) => ({
     id: `${automationId}:${startMs}`,
     title,
@@ -909,6 +1033,8 @@ function buildCalendarOccurrences({
       scheduleLabel,
       scheduleType,
       cronExpression,
+      intervalSeconds:
+        Number.isFinite(intervalSeconds) && intervalSeconds > 0 ? intervalSeconds : null,
       status,
       timezone,
       lifecycleState,

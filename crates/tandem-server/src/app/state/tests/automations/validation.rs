@@ -2088,6 +2088,7 @@ fn upstream_synthesis_validation_matrix_covers_markdown_and_html_evidence_preser
 </html>
 "#
     .trim();
+    let single_anchor_markdown_report = "# Final Synthesis Report\n\n## Executive Summary\nThis report is grounded in the local workflow evidence and summarizes the strongest matches from the run. It is meant to be substantive enough for release review and rerun planning without collapsing into vague workflow commentary.\n\n## Resume Direction\nThe `resume_overview.md` handoff keeps the search aligned with senior Rust, automation, and Europe-friendly roles. That source should continue to shape the search keywords and the shortlist criteria for future runs.\n\n## Observed Patterns\nThe current run still favors direct company postings and focused boards over broad aggregators. Keeping the report concise is useful, but the evidence should stay specific enough to preserve operator trust.\n\n## Recommendation\nContinue the same search pattern tomorrow and tighten the filters further around Rust, workflow automation, and product-facing systems work so the daily review stays high-signal.\n";
     let rich_upstream = AutomationUpstreamEvidence {
         read_paths: vec![
             ".tandem/artifacts/collect-inputs.json".to_string(),
@@ -2166,6 +2167,41 @@ fn upstream_synthesis_validation_matrix_covers_markdown_and_html_evidence_preser
             expected_validation_outcome: "accepted_with_warnings",
             expected_rejected: None,
             expect_upstream_unsynthesized: false,
+        },
+        UpstreamSynthesisMatrixCase {
+            name: "markdown-single-anchor-blocked-when-two-are-required",
+            node_id: "generate_report",
+            output_path: "generate-report.md",
+            artifact_text: single_anchor_markdown_report,
+            session_text: "Completed the report.",
+            write_path: "generate-report.md",
+            tool_telemetry: json!({
+                "requested_tools": ["read", "write"],
+                "executed_tools": ["read", "write"],
+                "tool_call_counts": {
+                    "read": 2,
+                    "write": 1
+                }
+            }),
+            upstream_evidence: AutomationUpstreamEvidence {
+                read_paths: vec![
+                    "resume_overview.md".to_string(),
+                    "job_search_results_2026-04-15.md".to_string(),
+                ],
+                discovered_relevant_paths: vec![
+                    "resume_overview.md".to_string(),
+                    "job_search_results_2026-04-15.md".to_string(),
+                ],
+                web_research_attempted: false,
+                web_research_succeeded: false,
+                citation_count: 0,
+                citations: Vec::new(),
+            },
+            expected_validation_outcome: "blocked",
+            expected_rejected: Some(
+                "final artifact does not adequately synthesize the available upstream evidence",
+            ),
+            expect_upstream_unsynthesized: true,
         },
         UpstreamSynthesisMatrixCase {
             name: "html-generic-summary-blocked",

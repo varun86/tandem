@@ -21,6 +21,7 @@ mod brief_outcomes;
 mod brief_validation;
 mod integration;
 mod prompting;
+mod replay_suite;
 mod runtime_paths;
 mod structured_handoff;
 mod telemetry;
