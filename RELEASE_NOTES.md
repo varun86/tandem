@@ -19,6 +19,7 @@ This release adds the first real Tandem path for using a Codex account allocatio
 - **Default-provider promotion after connect**: When a Codex account is connected, Tandem now correctly routes local runs through `openai-codex` instead of continuing to hit quota-limited OpenAI API-key paths.
 - **Discord guild-channel recovery**: Discord channel handling is now fixed for guild traffic, including empty `guild_id` normalization, working channel replies outside DMs, and stable mention-only intake.
 - **Mention-only docs-tool recovery**: Discord mention-only prompts that route into Tandem Docs now recover the `task` argument from the actual user message instead of surfacing raw MCP 400 errors.
+- **Docs search query recovery**: Tandem now recovers a missing `query` for `search_docs` from the user’s actual prompt, preventing another class of empty-arg MCP failures during docs-assisted chats.
 - **Cost-control path for local testing**: This release is the first real step toward moving test-heavy local runs off OpenRouter spend and onto a Codex subscription allocation when one is available.
 
 ## v0.4.29 (Released 2026-04-15)

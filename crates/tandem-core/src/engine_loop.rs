@@ -5214,6 +5214,26 @@ fn normalize_tool_args_with_mode(
             missing_terminal = true;
             missing_terminal_reason = Some("WEBSEARCH_QUERY_MISSING".to_string());
         }
+    } else if tool_name_requires_query_arg(&normalized_tool) {
+        if let Some(found) = extract_query_arg(&args) {
+            query = Some(found);
+            args = set_query_arg(args, query.clone(), "tool_args");
+        } else if let Some(inferred) = infer_query_from_text(latest_user_text) {
+            args_source = "inferred_from_user".to_string();
+            args_integrity = "recovered".to_string();
+            query = Some(inferred);
+            args = set_query_arg(args, query.clone(), "inferred_from_user");
+        } else if let Some(recovered) = infer_query_from_text(latest_assistant_context) {
+            args_source = "recovered_from_context".to_string();
+            args_integrity = "recovered".to_string();
+            query = Some(recovered);
+            args = set_query_arg(args, query.clone(), "recovered_from_context");
+        } else {
+            args_source = "missing".to_string();
+            args_integrity = "empty".to_string();
+            missing_terminal = true;
+            missing_terminal_reason = Some("QUERY_MISSING".to_string());
+        }
     } else if is_shell_tool_name(&normalized_tool) {
         if let Some(command) = extract_shell_command(&args) {
             args = set_shell_command(args, command);
@@ -5869,6 +5889,14 @@ fn set_webfetch_url_arg(args: Value, url: String) -> Value {
     Value::Object(obj)
 }
 
+fn set_query_arg(args: Value, query: Option<String>, _source: &str) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    if let Some(query) = query {
+        obj.insert("query".to_string(), Value::String(query));
+    }
+    Value::Object(obj)
+}
+
 fn set_pack_builder_goal_arg(args: Value, goal: String) -> Value {
     let mut obj = args.as_object().cloned().unwrap_or_default();
     obj.insert("goal".to_string(), Value::String(goal));
@@ -6124,6 +6152,34 @@ fn extract_websearch_query(args: &Value) -> Option<String> {
         }
     }
     args.as_str().and_then(sanitize_websearch_query_candidate)
+}
+
+fn extract_query_arg(args: &Value) -> Option<String> {
+    const QUERY_KEYS: [&str; 5] = ["query", "q", "search_query", "searchQuery", "keywords"];
+    for key in QUERY_KEYS {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    for container in ["arguments", "args", "input", "params"] {
+        if let Some(obj) = args.get(container) {
+            for key in QUERY_KEYS {
+                if let Some(value) = obj.get(key).and_then(|v| v.as_str()) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    args.as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn sanitize_websearch_query_candidate(raw: &str) -> Option<String> {
@@ -6386,9 +6442,23 @@ fn infer_task_from_text(text: &str) -> Option<String> {
     }
 }
 
+fn infer_query_from_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn tool_name_requires_task_arg(tool_name: &str) -> bool {
     let normalized = normalize_tool_name(tool_name);
     normalized == "answer_how_to" || normalized.ends_with(".answer_how_to")
+}
+
+fn tool_name_requires_query_arg(tool_name: &str) -> bool {
+    let normalized = normalize_tool_name(tool_name);
+    normalized == "search_docs" || normalized.ends_with(".search_docs")
 }
 
 fn sanitize_url_candidate(raw: &str) -> Option<String> {
@@ -8641,6 +8711,37 @@ Call: todowrite(task_id=3, status="in_progress")
         assert_eq!(
             normalized.args.get("task").and_then(|v| v.as_str()),
             Some("install tandem locally")
+        );
+        assert_eq!(normalized.args_source, "provider_json");
+        assert_eq!(normalized.args_integrity, "ok");
+    }
+
+    #[test]
+    fn normalize_tool_args_search_docs_infers_query_from_user_prompt() {
+        let user_text = "https://docs.tandem.ac/start-here/";
+        let normalized =
+            normalize_tool_args("mcp.tandem_mcp.search_docs", json!({}), user_text, "");
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("query").and_then(|v| v.as_str()),
+            Some(user_text)
+        );
+        assert_eq!(normalized.args_source, "inferred_from_user");
+        assert_eq!(normalized.args_integrity, "recovered");
+    }
+
+    #[test]
+    fn normalize_tool_args_search_docs_keeps_existing_query() {
+        let normalized = normalize_tool_args(
+            "mcp.tandem_mcp.search_docs",
+            json!({"query":"oauth setup"}),
+            "different user prompt",
+            "",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("query").and_then(|v| v.as_str()),
+            Some("oauth setup")
         );
         assert_eq!(normalized.args_source, "provider_json");
         assert_eq!(normalized.args_integrity, "ok");

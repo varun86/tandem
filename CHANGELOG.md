@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel default-provider behavior**: Connecting a Codex account now correctly promotes `openai-codex` for Tandem runs so chats and channel traffic stop silently falling back to quota-limited API-key providers.
 - **Discord guild message intake**: Discord channel messages now survive empty `guild_id` config values, and guild-channel intake no longer silently black-holes messages while DMs continue to work.
 - **Discord mention-only handling**: Mention-only Discord mode now cleanly accepts explicit mentions and reply-to-bot flows without dropping valid guild messages or surfacing raw Tandem Docs MCP errors for empty tool args.
+- **Docs search MCP recovery**: `search_docs` calls now recover a missing `query` from the user’s prompt, preventing raw MCP 400s when the model picks the docs-search tool but omits the query field.
 
 ## [0.4.29] - Released 2026-04-15
 
