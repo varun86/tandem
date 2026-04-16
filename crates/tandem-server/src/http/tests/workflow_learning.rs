@@ -120,6 +120,35 @@ fn sample_automation(workspace_root: &str, automation_id: &str) -> crate::Automa
     }
 }
 
+fn sample_plan_package_bundle() -> tandem_plan_compiler::api::PlanPackageImportBundle {
+    let plan = tandem_plan_compiler::api::WorkflowPlanJson {
+        plan_id: "plan_workflow_learning".to_string(),
+        planner_version: "planner_v1".to_string(),
+        plan_source: "test".to_string(),
+        original_prompt: "Build a workflow.".to_string(),
+        normalized_prompt: "Build a workflow.".to_string(),
+        confidence: "medium".to_string(),
+        title: "Workflow Learning Test".to_string(),
+        description: None,
+        schedule: tandem_plan_compiler::api::default_fallback_schedule_json(),
+        execution_target: "automation_v2".to_string(),
+        workspace_root: "/workspace".to_string(),
+        steps: vec![tandem_plan_compiler::api::default_fallback_step_json()],
+        requires_integrations: Vec::new(),
+        allowed_mcp_servers: Vec::new(),
+        operator_preferences: Some(json!({})),
+        save_options: json!({}),
+    };
+    let package =
+        tandem_plan_compiler::api::compile_workflow_plan_preview_package(&plan, Some("tester"));
+    let exported = tandem_plan_compiler::api::export_plan_package_bundle(&package);
+    tandem_plan_compiler::api::PlanPackageImportBundle {
+        bundle_version: exported.bundle_version,
+        plan: exported.plan,
+        scope_snapshot: Some(exported.scope_snapshot),
+    }
+}
+
 #[tokio::test]
 async fn workflow_learning_candidates_list_filters_and_rejects_invalid_status() {
     let state = test_state().await;
@@ -438,4 +467,127 @@ async fn workflow_learning_candidate_spawn_revision_marks_missing_plan_bundle() 
         .await
         .expect("missing spawn response");
     assert_eq!(missing_resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn workflow_learning_candidate_spawn_revision_creates_planner_session_with_context() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let workspace_root = std::env::temp_dir()
+        .join(format!(
+            "wflearn-workspace-session-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    let mut automation = sample_automation(&workspace_root, "workflow-revision-session");
+    automation.metadata = Some(json!({
+        "plan_package_bundle": sample_plan_package_bundle()
+    }));
+    state
+        .put_automation_v2(automation)
+        .await
+        .expect("put automation");
+    let mut candidate = sample_candidate(
+        "wflearn-revision-session",
+        "workflow-revision-session",
+        crate::WorkflowLearningCandidateKind::PromptPatch,
+        crate::WorkflowLearningCandidateStatus::Approved,
+    );
+    candidate.summary = "Tighten the node prompt around required citations".to_string();
+    candidate.fingerprint = "fingerprint-revision-session".to_string();
+    candidate.run_ids = vec!["run-a".to_string(), "run-b".to_string()];
+    candidate.evidence_refs = vec![json!({
+        "run_id": "run-b",
+        "node_id": "node-1",
+        "reason": "validator rejected unsupported citations"
+    })];
+    state
+        .put_workflow_learning_candidate(candidate)
+        .await
+        .expect("put revision candidate");
+
+    let spawn_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-learning/candidates/wflearn-revision-session/spawn-revision")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reviewer_id": "reviewer-1",
+                "title": "Revise workflow from learning"
+            })
+            .to_string(),
+        ))
+        .expect("spawn request");
+    let spawn_resp = app
+        .clone()
+        .oneshot(spawn_req)
+        .await
+        .expect("spawn response");
+    assert_eq!(spawn_resp.status(), StatusCode::OK);
+    let spawn_payload: Value = serde_json::from_slice(
+        &to_bytes(spawn_resp.into_body(), usize::MAX)
+            .await
+            .expect("spawn body"),
+    )
+    .expect("spawn json");
+    let session_id = spawn_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .expect("session id");
+    let notes = spawn_payload
+        .get("session")
+        .and_then(|row| row.get("notes"))
+        .and_then(Value::as_str)
+        .expect("session notes");
+    assert!(notes.contains("fingerprint-revision-session"));
+    assert!(notes.contains("run-a, run-b"));
+    assert!(notes.contains("Preserve validated parts of the existing workflow"));
+    assert!(notes.contains("do not regress completion rate or validation pass rate"));
+    assert_eq!(
+        spawn_payload
+            .get("session")
+            .and_then(|row| row.get("title"))
+            .and_then(Value::as_str),
+        Some("Revise workflow from learning")
+    );
+    assert_eq!(
+        spawn_payload
+            .get("session")
+            .and_then(|row| row.get("source_kind"))
+            .and_then(Value::as_str),
+        Some("workflow_learning_revision")
+    );
+    assert_eq!(
+        spawn_payload
+            .get("session")
+            .and_then(|row| row.get("import_validation"))
+            .and_then(|row| row.get("compatible"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(spawn_payload
+        .get("session")
+        .and_then(|row| row.get("draft"))
+        .is_some());
+
+    let stored_session = state
+        .get_workflow_planner_session(&session_id)
+        .await
+        .expect("stored planner session");
+    assert_eq!(stored_session.session_id, session_id);
+    assert!(stored_session
+        .notes
+        .contains("validator rejected unsupported citations"));
+    let updated_candidate = state
+        .get_workflow_learning_candidate("wflearn-revision-session")
+        .await
+        .expect("updated candidate");
+    assert_eq!(
+        updated_candidate.last_revision_session_id.as_deref(),
+        Some(session_id.as_str())
+    );
+    assert!(updated_candidate.baseline_before.is_some());
 }
