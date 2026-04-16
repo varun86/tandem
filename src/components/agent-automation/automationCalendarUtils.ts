@@ -22,8 +22,11 @@ export type AutomationCalendarEvent = {
     automation: AutomationV2Spec;
     automationId: string;
     scheduleLabel: string;
+    scheduleType: string;
     cronExpression: string;
+    intervalSeconds?: number | null;
     status: string;
+    timezone?: string | null;
   };
 };
 
@@ -131,6 +134,46 @@ function expandCronOccurrences(expression: string, rangeStartMs: number, rangeEn
   return out;
 }
 
+function getAutomationScheduleAnchorMs(automation: AutomationV2Spec) {
+  const raw =
+    automation?.next_fire_at_ms ??
+    automation?.nextFireAtMs ??
+    automation?.created_at_ms ??
+    automation?.createdAtMs ??
+    0;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function expandIntervalOccurrences(
+  intervalSeconds: number,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  anchorMs: number
+) {
+  const intervalMs = Math.max(1, Math.round(Math.max(1, intervalSeconds) * 1000));
+  const start = Math.max(0, Math.min(rangeStartMs, rangeEndMs));
+  const end = Math.max(rangeStartMs, rangeEndMs);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0 || end <= 0) return [];
+
+  const anchor = anchorMs > 0 ? anchorMs : start;
+  if (end < anchor) return [];
+
+  let first = anchor;
+  if (anchor < start) {
+    const offset = start - anchor;
+    const steps = Math.ceil(offset / intervalMs);
+    first = anchor + steps * intervalMs;
+  }
+
+  const occurrences: number[] = [];
+  for (let cursor = first; cursor < end; cursor += intervalMs) {
+    if (cursor >= start) occurrences.push(cursor);
+    if (occurrences.length >= 400) break;
+  }
+  return occurrences;
+}
+
 export function isCalendarEditableCron(expression: string) {
   const fields = String(expression || "")
     .trim()
@@ -167,9 +210,28 @@ export function buildWorkflowCalendarOccurrences(
   range: CalendarRange
 ): AutomationCalendarEvent[] {
   const automationId = String(automation?.automation_id || "").trim();
-  const cronExpression = String(automation?.schedule?.cron_expression || "").trim();
-  if (!automationId || automation?.schedule?.type !== "cron" || !cronExpression) return [];
-  const starts = expandCronOccurrences(cronExpression, range.startMs, range.endMs);
+  if (!automationId) return [];
+  const schedule = automation?.schedule || {};
+  const scheduleType = String(schedule?.type || "")
+    .trim()
+    .toLowerCase();
+  const cronExpression = String(schedule?.cron_expression || "").trim();
+  const scheduleValue = schedule as { interval_seconds?: number; intervalSeconds?: number };
+  const intervalSeconds = Number(
+    scheduleValue.interval_seconds ?? scheduleValue.intervalSeconds ?? 0
+  );
+  const starts =
+    scheduleType === "cron" && cronExpression
+      ? expandCronOccurrences(cronExpression, range.startMs, range.endMs)
+      : scheduleType === "interval" && Number.isFinite(intervalSeconds) && intervalSeconds > 0
+        ? expandIntervalOccurrences(
+            intervalSeconds,
+            range.startMs,
+            range.endMs,
+            getAutomationScheduleAnchorMs(automation)
+          )
+        : [];
+  if (!starts.length) return [];
   const editable = isCalendarEditableCron(cronExpression);
   const title = getAutomationCalendarTitle(automation);
   const status = String(automation.status || "active").trim() || "active";
@@ -187,8 +249,12 @@ export function buildWorkflowCalendarOccurrences(
       automation,
       automationId,
       scheduleLabel,
+      scheduleType,
       cronExpression,
+      intervalSeconds:
+        Number.isFinite(intervalSeconds) && intervalSeconds > 0 ? intervalSeconds : null,
       status,
+      timezone: automation?.schedule?.timezone || null,
     },
   }));
 }
