@@ -4,6 +4,7 @@ use crate::{
     WorkflowLearningCandidate, WorkflowLearningCandidateKind, WorkflowLearningCandidateStatus,
 };
 use async_trait::async_trait;
+use axum::response::IntoResponse;
 use tandem_memory::types::{DistilledFact, MemoryResult};
 use tandem_plan_compiler::api as compiler_api;
 use tandem_plan_compiler::api::schedule_from_value;
@@ -3897,24 +3898,24 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
     State(state): State<AppState>,
     Path(candidate_id): Path<String>,
     Json(input): Json<WorkflowLearningCandidateSpawnRevisionRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     let Some(candidate) = state.get_workflow_learning_candidate(&candidate_id).await else {
-        return Err(StatusCode::NOT_FOUND);
+        return StatusCode::NOT_FOUND.into_response();
     };
     if !matches!(
         candidate.kind,
         WorkflowLearningCandidateKind::PromptPatch | WorkflowLearningCandidateKind::GraphPatch
     ) {
-        return Err(StatusCode::BAD_REQUEST);
+        return StatusCode::BAD_REQUEST.into_response();
     }
     if !matches!(
         candidate.status,
         WorkflowLearningCandidateStatus::Approved | WorkflowLearningCandidateStatus::Applied
     ) {
-        return Err(StatusCode::CONFLICT);
+        return StatusCode::CONFLICT.into_response();
     }
     let Some(automation) = state.get_automation_v2(&candidate.workflow_id).await else {
-        return Err(StatusCode::NOT_FOUND);
+        return StatusCode::NOT_FOUND.into_response();
     };
     let metadata = automation.metadata.as_ref();
     let bundle = metadata
@@ -3941,11 +3942,34 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
                 candidate.needs_plan_bundle = true;
             })
             .await;
-        return Err(StatusCode::CONFLICT);
+        let updated = state.get_workflow_learning_candidate(&candidate_id).await;
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "ok": false,
+                "error": "needs_plan_bundle",
+                "detail": format!(
+                    "Workflow `{}` must retain `plan_package` or `plan_package_bundle` metadata before `{}` learnings can spawn a planner revision.",
+                    candidate.workflow_id,
+                    workflow_learning_kind_label(candidate.kind),
+                ),
+                "candidate": updated,
+            })),
+        )
+            .into_response();
     };
     let validation = compiler_api::validate_plan_package_bundle(&bundle);
     if !validation.compatible {
-        return Err(StatusCode::CONFLICT);
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "ok": false,
+                "error": "incompatible_plan_bundle",
+                "detail": "Stored workflow plan bundle is not compatible with the current planner revision import path.",
+                "validation": validation,
+            })),
+        )
+            .into_response();
     }
     let default_workspace_root = state.workspace_index.snapshot().await.root;
     let workspace_root = automation
@@ -4016,7 +4040,10 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
     let stored = state
         .put_workflow_planner_session(session)
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|_| StatusCode::BAD_REQUEST);
+    let Ok(stored) = stored else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     let baseline = state
         .workflow_learning_metrics_for_workflow(&candidate.workflow_id)
         .await;
@@ -4028,12 +4055,16 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
             }
         })
         .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(json!({
+        .ok_or(StatusCode::NOT_FOUND);
+    let Ok(updated) = updated else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    Json(json!({
         "ok": true,
         "candidate": updated,
         "session": stored,
-    })))
+    }))
+    .into_response()
 }
 
 pub(super) async fn memory_audit(

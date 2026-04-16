@@ -450,6 +450,27 @@ async fn workflow_learning_candidate_spawn_revision_marks_missing_plan_bundle() 
         .await
         .expect("spawn response");
     assert_eq!(spawn_resp.status(), StatusCode::CONFLICT);
+    let spawn_payload: Value = serde_json::from_slice(
+        &to_bytes(spawn_resp.into_body(), usize::MAX)
+            .await
+            .expect("spawn body"),
+    )
+    .expect("spawn json");
+    assert_eq!(
+        spawn_payload.get("error").and_then(Value::as_str),
+        Some("needs_plan_bundle")
+    );
+    assert!(spawn_payload
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("plan_package_bundle")));
+    assert_eq!(
+        spawn_payload
+            .get("candidate")
+            .and_then(|row| row.get("needs_plan_bundle"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
     let updated = state
         .get_workflow_learning_candidate("wflearn-revision")
         .await
