@@ -2223,16 +2223,23 @@ impl EngineLoop {
                 }
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
-                let preview = last_tool_outputs
-                    .iter()
-                    .take(3)
-                    .map(|o| truncate_text(o, 240))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                completion = format!(
-                    "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\n{}",
-                    preview
-                );
+                if let Some(summary) = summarize_auth_pending_outputs(&last_tool_outputs) {
+                    completion = summary;
+                } else if let Some(hint) =
+                    summarize_terminal_tool_failure_for_user(&last_tool_outputs)
+                {
+                    completion = hint;
+                } else {
+                    let preview = summarize_user_visible_tool_outputs(&last_tool_outputs);
+                    if preview.trim().is_empty() {
+                        completion = "I used tools for this request, but I couldn't turn the results into a clean final answer. Please retry with the docs page URL, docs path, or exact search query you want me to use.".to_string();
+                    } else {
+                        completion = format!(
+                            "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\n{}",
+                            preview
+                        );
+                    }
+                }
             }
             if completion.trim().is_empty() {
                 completion =
@@ -6879,6 +6886,80 @@ fn summarize_tool_outputs(outputs: &[String]) -> String {
         .join("\n\n")
 }
 
+fn summarize_user_visible_tool_outputs(outputs: &[String]) -> String {
+    let filtered = outputs
+        .iter()
+        .filter(|output| !should_hide_tool_output_from_user_fallback(output))
+        .take(3)
+        .map(|output| truncate_text(output, 240))
+        .collect::<Vec<_>>();
+    filtered.join("\n")
+}
+
+fn should_hide_tool_output_from_user_fallback(output: &str) -> bool {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("call skipped")
+        || lower.contains("it is not available in this turn")
+        || is_terminal_tool_error_reason(trimmed)
+    {
+        return true;
+    }
+    extract_tool_result_body(trimmed).is_some_and(is_non_productive_tool_result_body)
+}
+
+fn summarize_terminal_tool_failure_for_user(outputs: &[String]) -> Option<String> {
+    let reasons = outputs
+        .iter()
+        .filter_map(|output| terminal_tool_error_reason(output))
+        .collect::<Vec<_>>();
+    if reasons.is_empty() {
+        return None;
+    }
+    if reasons.iter().any(|reason| *reason == "DOC_PATH_MISSING") {
+        return Some(
+            "I couldn't tell which Tandem docs page to open. Please include a docs URL like `https://docs.tandem.ac/start-here/` or a docs path like `/start-here/` and try again."
+                .to_string(),
+        );
+    }
+    if reasons
+        .iter()
+        .any(|reason| *reason == "QUERY_MISSING" || *reason == "WEBSEARCH_QUERY_MISSING")
+    {
+        return Some(
+            "I need a concrete search query or target URL to continue. Please include the exact thing you want searched and try again."
+                .to_string(),
+        );
+    }
+    if reasons.iter().any(|reason| *reason == "TASK_MISSING") {
+        return Some(
+            "I need the actual docs/help question in the prompt before I can answer it. Please resend the request with the question you want answered."
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn terminal_tool_error_reason(output: &str) -> Option<&str> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first_line = trimmed.lines().next().unwrap_or_default().trim();
+    if first_line.is_empty() {
+        return None;
+    }
+    let normalized = first_line.to_ascii_uppercase();
+    if is_terminal_tool_error_reason(&normalized) {
+        Some(first_line)
+    } else {
+        None
+    }
+}
+
 fn is_os_mismatch_tool_output(output: &str) -> bool {
     let lower = output.to_ascii_lowercase();
     lower.contains("os error 3")
@@ -9705,6 +9786,32 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(prompt.contains("required handoff fields"));
         assert!(prompt.contains("required final status object"));
         assert!(prompt.contains("Do not stop at a tool summary"));
+    }
+
+    #[test]
+    fn summarize_terminal_tool_failure_for_user_maps_doc_path_missing() {
+        let summary = summarize_terminal_tool_failure_for_user(&[String::from("DOC_PATH_MISSING")]);
+        assert!(summary.as_deref().unwrap_or_default().contains("docs page"));
+        assert!(summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("https://docs.tandem.ac/start-here/"));
+    }
+
+    #[test]
+    fn summarize_user_visible_tool_outputs_hides_internal_skipped_and_error_lines() {
+        let summary = summarize_user_visible_tool_outputs(&[
+            String::from(
+                "Tool `read` result:\n# Start Here\nTandem is an engine-owned workflow runtime.",
+            ),
+            String::from(
+                "Tool `tool` call skipped: it is not available in this turn. Available tools: mcp.tandem_mcp.get_doc.",
+            ),
+            String::from("DOC_PATH_MISSING"),
+        ]);
+        assert!(summary.contains("Tool `read` result:"));
+        assert!(!summary.contains("call skipped"));
+        assert!(!summary.contains("DOC_PATH_MISSING"));
     }
 
     #[test]
