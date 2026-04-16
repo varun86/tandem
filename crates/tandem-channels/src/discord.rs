@@ -507,6 +507,13 @@ impl Channel for DiscordChannel {
                 msg = read.next() => {
                     let text = match msg {
                         Some(Ok(Message::Text(t))) => t,
+                        Some(Ok(Message::Binary(bytes))) => {
+                            info!(
+                                "Discord: received binary gateway frame ({} bytes)",
+                                bytes.len()
+                            );
+                            continue;
+                        }
                         Some(Ok(Message::Close(_))) | None => break,
                         _ => continue,
                     };
@@ -543,11 +550,63 @@ impl Channel for DiscordChannel {
                     }
 
                     let t = event.get("t").and_then(|t| t.as_str()).unwrap_or("");
+                    if t == "READY" {
+                        let session_id = event
+                            .get("d")
+                            .and_then(|d| d.get("session_id"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown");
+                        let guild_count = event
+                            .get("d")
+                            .and_then(|d| d.get("guilds"))
+                            .and_then(serde_json::Value::as_array)
+                            .map(|guilds| guilds.len())
+                            .unwrap_or(0);
+                        info!(
+                            "Discord: READY session_id={} guild_count={}",
+                            session_id, guild_count
+                        );
+                    } else if t == "RESUMED" {
+                        info!("Discord: RESUMED gateway session");
+                    } else if t == "GUILD_CREATE" {
+                        let guild_id = event
+                            .get("d")
+                            .and_then(|d| d.get("id"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown");
+                        let guild_name = event
+                            .get("d")
+                            .and_then(|d| d.get("name"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown");
+                        info!(
+                            "Discord: GUILD_CREATE id={} name={}",
+                            guild_id, guild_name
+                        );
+                    }
                     if t != "MESSAGE_CREATE" {
                         continue;
                     }
 
                     let Some(d) = event.get("d") else { continue };
+                    info!(
+                        "Discord: received MESSAGE_CREATE id={} channel={} guild={} author={} content_len={} attachment_count={}",
+                        d.get("id").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+                        d.get("channel_id").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+                        d.get("guild_id").and_then(serde_json::Value::as_str).unwrap_or("dm"),
+                        d.get("author")
+                            .and_then(|author| author.get("id"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown"),
+                        d.get("content")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::len)
+                            .unwrap_or(0),
+                        d.get("attachments")
+                            .and_then(serde_json::Value::as_array)
+                            .map(|attachments| attachments.len())
+                            .unwrap_or(0)
+                    );
 
                     // Filter out own messages
                     let author_id = d["author"]["id"].as_str().unwrap_or("");
