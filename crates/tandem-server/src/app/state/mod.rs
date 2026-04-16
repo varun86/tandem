@@ -107,6 +107,14 @@ pub struct AppState {
     pub bug_monitor_posts: Arc<RwLock<std::collections::HashMap<String, BugMonitorPostRecord>>>,
     pub external_actions: Arc<RwLock<std::collections::HashMap<String, ExternalActionRecord>>>,
     pub bug_monitor_runtime_status: Arc<RwLock<BugMonitorRuntimeStatus>>,
+    pub(crate) provider_oauth_sessions: Arc<
+        RwLock<
+            std::collections::HashMap<
+                String,
+                crate::http::config_providers::ProviderOAuthSessionRecord,
+            >,
+        >,
+    >,
     pub workflows: Arc<RwLock<WorkflowRegistry>>,
     pub workflow_runs: Arc<RwLock<std::collections::HashMap<String, WorkflowRunRecord>>>,
     pub workflow_hook_overrides: Arc<RwLock<std::collections::HashMap<String, bool>>>,
@@ -235,6 +243,7 @@ impl AppState {
             bug_monitor_posts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             external_actions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_runtime_status: Arc::new(RwLock::new(BugMonitorRuntimeStatus::default())),
+            provider_oauth_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflows: Arc::new(RwLock::new(WorkflowRegistry::default())),
             workflow_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_hook_overrides: Arc::new(RwLock::new(std::collections::HashMap::new())),

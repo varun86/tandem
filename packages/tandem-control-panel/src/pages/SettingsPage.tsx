@@ -281,6 +281,7 @@ type ChannelToolPreferencesRow = {
 
 const BUILTIN_PROVIDER_IDS = new Set([
   "openai",
+  "openai-codex",
   "openrouter",
   "anthropic",
   "ollama",
@@ -293,6 +294,8 @@ const BUILTIN_PROVIDER_IDS = new Set([
   "copilot",
   "cohere",
 ]);
+
+const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 
 const CHANNEL_TOOL_GROUPS = [
   { label: "File", tools: ["read", "glob", "ls", "list", "grep", "codesearch", "search"] },
@@ -771,6 +774,7 @@ export function SettingsPage({
   const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
   const [customProviderFormOpen, setCustomProviderFormOpen] = useState(false);
+  const [oauthSessionByProvider, setOauthSessionByProvider] = useState<Record<string, string>>({});
   const [customProviderId, setCustomProviderId] = useState("custom");
   const [customProviderUrl, setCustomProviderUrl] = useState("");
   const [customProviderModel, setCustomProviderModel] = useState("");
@@ -901,6 +905,16 @@ export function SettingsPage({
     queryKey: ["settings", "providers", "config"],
     queryFn: () => client.providers.config().catch(() => ({ default: "", providers: {} })),
   });
+  const providersAuth = useQuery({
+    queryKey: ["settings", "providers", "auth"],
+    queryFn: () => client.providers.authStatus().catch(() => ({ providers: {} })),
+    refetchInterval: 15_000,
+  });
+  const systemHealthQuery = useQuery({
+    queryKey: ["settings", "system", "health"],
+    queryFn: () => api("/api/system/health", { method: "GET" }).catch(() => null),
+    refetchInterval: 30_000,
+  });
   const channelProviderOptions = useMemo(
     () =>
       buildPlannerProviderOptions({
@@ -917,6 +931,15 @@ export function SettingsPage({
       }),
     [providersCatalog.data, providersConfig.data]
   );
+  const providerAuthById = useMemo(() => {
+    const nested = (providersAuth.data as Record<string, any> | undefined)?.providers;
+    if (nested && typeof nested === "object") return nested as Record<string, any>;
+    if (providersAuth.data && typeof providersAuth.data === "object") {
+      return providersAuth.data as Record<string, any>;
+    }
+    return {} as Record<string, any>;
+  }, [providersAuth.data]);
+  const localEngine = systemHealthQuery.data?.localEngine === true;
   const channelDefaultModel = useMemo(() => {
     const defaultProvider = String(providersConfig.data?.default || "").trim();
     const defaultModel = String(
@@ -1336,10 +1359,147 @@ export function SettingsPage({
       client.providers.setApiKey(providerId, apiKey),
     onSuccess: async () => {
       toast("ok", "API key updated.");
-      await refreshProviderStatus();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
+        refreshProviderStatus(),
+      ]);
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
+  const authorizeProviderOAuthMutation = useMutation({
+    mutationFn: ({ providerId }: { providerId: string }) =>
+      client.providers.oauthAuthorize(providerId),
+    onSuccess: async (payload: any, vars) => {
+      const providerId = String(vars.providerId || "")
+        .trim()
+        .toLowerCase();
+      const sessionId = String(payload?.session_id || payload?.sessionId || "").trim();
+      const authorizationUrl = String(
+        payload?.authorization_url || payload?.authorizationUrl || payload?.url || ""
+      ).trim();
+      if (!providerId || !sessionId || !authorizationUrl) {
+        toast("err", "OAuth authorize response was incomplete.");
+        return;
+      }
+      setOauthSessionByProvider((current) => ({ ...current, [providerId]: sessionId }));
+      window.open(authorizationUrl, "_blank", "noopener,noreferrer");
+      toast(
+        "info",
+        providerId === OPENAI_CODEX_PROVIDER_ID
+          ? "Browser sign-in opened for Codex. Finish the flow there, then return to Tandem."
+          : `Browser sign-in opened for ${providerId}.`
+      );
+      await queryClient.invalidateQueries({ queryKey: ["settings", "providers", "auth"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const disconnectProviderOAuthMutation = useMutation({
+    mutationFn: ({ providerId }: { providerId: string }) =>
+      client.providers.oauthDisconnect(providerId),
+    onSuccess: async (_payload, vars) => {
+      const providerId = String(vars.providerId || "")
+        .trim()
+        .toLowerCase();
+      setOauthSessionByProvider((current) => {
+        if (!current[providerId]) return current;
+        const next = { ...current };
+        delete next[providerId];
+        return next;
+      });
+      toast(
+        "ok",
+        providerId === OPENAI_CODEX_PROVIDER_ID
+          ? "Codex account disconnected."
+          : `${providerId} disconnected.`
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
+        refreshProviderStatus(),
+      ]);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  useEffect(() => {
+    const entries = Object.entries(oauthSessionByProvider).filter(
+      ([providerId, sessionId]) => !!providerId && !!sessionId
+    );
+    if (!entries.length) return;
+
+    let cancelled = false;
+    const finished = new Set<string>();
+
+    const poll = async () => {
+      const results = await Promise.all(
+        entries.map(async ([providerId, sessionId]) => {
+          try {
+            const payload = await client.providers.oauthStatus(providerId, sessionId);
+            return { providerId, sessionId, payload, error: null as Error | null };
+          } catch (error) {
+            return {
+              providerId,
+              sessionId,
+              payload: null,
+              error: error instanceof Error ? error : new Error(String(error)),
+            };
+          }
+        })
+      );
+
+      for (const result of results) {
+        if (cancelled || finished.has(result.providerId)) continue;
+        if (result.error) {
+          finished.add(result.providerId);
+          setOauthSessionByProvider((current) => {
+            if (current[result.providerId] !== result.sessionId) return current;
+            const next = { ...current };
+            delete next[result.providerId];
+            return next;
+          });
+          toast("err", result.error.message);
+          continue;
+        }
+
+        const payload = result.payload as Record<string, any> | null;
+        const status = String(payload?.status || "")
+          .trim()
+          .toLowerCase();
+        if (!status || status === "pending") continue;
+
+        finished.add(result.providerId);
+        setOauthSessionByProvider((current) => {
+          if (current[result.providerId] !== result.sessionId) return current;
+          const next = { ...current };
+          delete next[result.providerId];
+          return next;
+        });
+
+        if (status === "connected") {
+          const email = String(payload?.email || "").trim();
+          toast("ok", email ? `Codex account connected: ${email}` : "Codex account connected.");
+        } else if (status === "expired") {
+          toast("warn", "Codex sign-in expired. Start the connection again.");
+        } else {
+          const detail = String(payload?.error || payload?.message || "").trim();
+          toast("err", detail || "Codex sign-in did not complete. Please try again.");
+        }
+
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
+          refreshProviderStatus(),
+        ]);
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [client, oauthSessionByProvider, queryClient, refreshProviderStatus, toast]);
   const saveSearchSettingsMutation = useMutation({
     mutationFn: async (
       payload: Partial<{
@@ -2583,6 +2743,47 @@ export function SettingsPage({
                               const providerHint =
                                 (providerHints as Record<string, any>)[providerId] || null;
                               const keyUrl = String(providerHint?.keyUrl || "").trim();
+                              const providerAuth = providerAuthById[providerId] || {};
+                              const authKind = String(
+                                providerAuth?.auth_kind || providerAuth?.authKind || ""
+                              )
+                                .trim()
+                                .toLowerCase();
+                              const oauthStatus = String(providerAuth?.status || "")
+                                .trim()
+                                .toLowerCase();
+                              const oauthEmail = String(providerAuth?.email || "").trim();
+                              const oauthDisplayName = String(
+                                providerAuth?.display_name || providerAuth?.displayName || ""
+                              ).trim();
+                              const oauthManagedBy = String(
+                                providerAuth?.managed_by || providerAuth?.managedBy || ""
+                              ).trim();
+                              const oauthExpiresAtMs = Number(
+                                providerAuth?.expires_at_ms || providerAuth?.expiresAtMs || 0
+                              );
+                              const oauthSessionId = String(
+                                oauthSessionByProvider[providerId] || ""
+                              ).trim();
+                              const oauthPending =
+                                !!oauthSessionId ||
+                                (authorizeProviderOAuthMutation.isPending &&
+                                  String(authorizeProviderOAuthMutation.variables?.providerId || "")
+                                    .trim()
+                                    .toLowerCase() === providerId);
+                              const oauthConnected =
+                                authKind === "oauth" &&
+                                providerAuth?.connected === true &&
+                                oauthStatus !== "reauth_required";
+                              const supportsOAuth = providerId === OPENAI_CODEX_PROVIDER_ID;
+                              const canUseOAuthHere = !supportsOAuth || localEngine;
+                              const oauthBadge = oauthPending
+                                ? { tone: "info" as const, text: "sign-in pending" }
+                                : oauthConnected
+                                  ? { tone: "ok" as const, text: "account connected" }
+                                  : oauthStatus === "reauth_required"
+                                    ? { tone: "warn" as const, text: "reauth required" }
+                                    : { tone: "warn" as const, text: "not connected" };
 
                               return (
                                 <motion.details key={providerId} layout className="tcp-list-item">
@@ -2596,7 +2797,7 @@ export function SettingsPage({
                                     </div>
                                   </summary>
                                   <div className="mt-3 grid gap-3">
-                                    {keyUrl ? (
+                                    {keyUrl && !supportsOAuth ? (
                                       <div className="flex justify-end">
                                         <a
                                           className="tcp-btn h-8 px-3 text-xs"
@@ -2663,31 +2864,132 @@ export function SettingsPage({
                                       </div>
                                     </form>
 
-                                    <form
-                                      onSubmit={(e) => {
-                                        e.preventDefault();
-                                        const input = e.currentTarget.elements.namedItem(
-                                          "apiKey"
-                                        ) as HTMLInputElement;
-                                        const value = String(input?.value || "").trim();
-                                        if (!value) return;
-                                        setApiKeyMutation.mutate({ providerId, apiKey: value });
-                                        input.value = "";
-                                      }}
-                                      className="flex gap-2"
-                                    >
-                                      <input
-                                        name="apiKey"
-                                        className="tcp-input"
-                                        placeholder={String(
-                                          providerHint?.placeholder || `Set ${providerId} API key`
-                                        )}
-                                      />
-                                      <button className="tcp-btn" type="submit">
-                                        <i data-lucide="save"></i>
-                                        Save
-                                      </button>
-                                    </form>
+                                    {supportsOAuth ? (
+                                      <div className="grid gap-3 rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <div className="font-medium">
+                                              {String(providerHint?.label || "Codex Account")}
+                                            </div>
+                                            <div className="tcp-subtle text-xs">
+                                              {String(
+                                                providerHint?.description ||
+                                                  "Use your ChatGPT/Codex subscription instead of a separate API key."
+                                              )}
+                                            </div>
+                                          </div>
+                                          <Badge tone={oauthBadge.tone}>{oauthBadge.text}</Badge>
+                                        </div>
+
+                                        <div className="grid gap-1 text-xs tcp-subtle">
+                                          {oauthConnected ? (
+                                            <div>
+                                              {oauthDisplayName || oauthEmail
+                                                ? `Connected as ${oauthDisplayName || oauthEmail}.`
+                                                : "Connected to a Codex account."}
+                                            </div>
+                                          ) : null}
+                                          {oauthManagedBy ? (
+                                            <div>
+                                              Managed by{" "}
+                                              {oauthManagedBy === "codex-cli"
+                                                ? "the local Codex CLI session"
+                                                : "Tandem"}
+                                              .
+                                            </div>
+                                          ) : null}
+                                          {oauthExpiresAtMs > 0 ? (
+                                            <div>
+                                              Session status refreshes through{" "}
+                                              {new Date(oauthExpiresAtMs).toLocaleString()}.
+                                            </div>
+                                          ) : null}
+                                          {!canUseOAuthHere ? (
+                                            <div>
+                                              Codex account sign-in is only enabled when this
+                                              control panel is connected to a local engine.
+                                            </div>
+                                          ) : null}
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn"
+                                            disabled={
+                                              !canUseOAuthHere ||
+                                              oauthPending ||
+                                              disconnectProviderOAuthMutation.isPending
+                                            }
+                                            onClick={() =>
+                                              authorizeProviderOAuthMutation.mutate({ providerId })
+                                            }
+                                          >
+                                            <i data-lucide="log-in"></i>
+                                            {oauthConnected
+                                              ? "Reconnect Codex Account"
+                                              : "Connect Codex Account"}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-10 px-4 text-sm"
+                                            disabled={
+                                              !oauthConnected ||
+                                              disconnectProviderOAuthMutation.isPending ||
+                                              oauthPending
+                                            }
+                                            onClick={() =>
+                                              disconnectProviderOAuthMutation.mutate({ providerId })
+                                            }
+                                          >
+                                            <i data-lucide="unlink"></i>
+                                            Disconnect
+                                          </button>
+                                          {oauthPending ? (
+                                            <button
+                                              type="button"
+                                              className="tcp-btn h-10 px-4 text-sm"
+                                              onClick={() =>
+                                                window.open(
+                                                  "https://chatgpt.com/codex",
+                                                  "_blank",
+                                                  "noopener,noreferrer"
+                                                )
+                                              }
+                                            >
+                                              <i data-lucide="external-link"></i>
+                                              Open Codex
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <form
+                                        onSubmit={(e) => {
+                                          e.preventDefault();
+                                          const input = e.currentTarget.elements.namedItem(
+                                            "apiKey"
+                                          ) as HTMLInputElement;
+                                          const value = String(input?.value || "").trim();
+                                          if (!value) return;
+                                          setApiKeyMutation.mutate({ providerId, apiKey: value });
+                                          input.value = "";
+                                        }}
+                                        className="flex gap-2"
+                                      >
+                                        <input
+                                          name="apiKey"
+                                          className="tcp-input"
+                                          placeholder={String(
+                                            providerHint?.placeholder || `Set ${providerId} API key`
+                                          )}
+                                        />
+                                        <button className="tcp-btn" type="submit">
+                                          <i data-lucide="save"></i>
+                                          Save
+                                        </button>
+                                      </form>
+                                    )}
                                   </div>
                                 </motion.details>
                               );

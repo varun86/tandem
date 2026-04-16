@@ -1099,6 +1099,28 @@ class Providers {
     });
   }
 
+  /** Start a provider-owned OAuth flow. */
+  async oauthAuthorize(providerId: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/provider/${encodeURIComponent(providerId)}/oauth/authorize`, {
+      method: "POST",
+    });
+  }
+
+  /** Poll provider OAuth session state. */
+  async oauthStatus(providerId: string, sessionId?: string): Promise<JsonObject> {
+    const suffix = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    return this.req<JsonObject>(
+      `/provider/${encodeURIComponent(providerId)}/oauth/status${suffix}`
+    );
+  }
+
+  /** Disconnect a provider-owned OAuth session. */
+  async oauthDisconnect(providerId: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/provider/${encodeURIComponent(providerId)}/oauth/session`, {
+      method: "DELETE",
+    });
+  }
+
   /** Get authentication status for a provider. */
   async authStatus(): Promise<JsonObject> {
     return this.req<JsonObject>("/provider/auth");

@@ -533,6 +533,7 @@ fn inject_stored_provider_auth(value: &mut Value) {
         return;
     };
     let secrets = crate::load_provider_auth();
+    let credentials = crate::load_provider_credentials();
     for (provider_id, provider_cfg) in providers.iter_mut() {
         let Value::Object(cfg) = provider_cfg else {
             continue;
@@ -545,10 +546,54 @@ fn inject_stored_provider_auth(value: &mut Value) {
         if already_present || provider_has_runtime_secret(provider_id) {
             continue;
         }
-        let Some(token) = secrets.get(&provider_id.to_ascii_lowercase()) else {
+        let normalized_provider_id = provider_id.to_ascii_lowercase();
+
+        if let Some(credential) = credentials.get(&normalized_provider_id) {
+            if let Some(token) = credential.runtime_bearer_token() {
+                cfg.insert("api_key".to_string(), Value::String(token.to_string()));
+            }
+            match credential {
+                crate::ProviderCredential::ApiKey(_) => {
+                    cfg.insert(
+                        "auth_kind".to_string(),
+                        Value::String("api_key".to_string()),
+                    );
+                }
+                crate::ProviderCredential::OAuth(oauth) => {
+                    cfg.insert("auth_kind".to_string(), Value::String("oauth".to_string()));
+                    cfg.insert(
+                        "expires_at_ms".to_string(),
+                        Value::Number(serde_json::Number::from(oauth.expires_at_ms)),
+                    );
+                    cfg.insert(
+                        "managed_by".to_string(),
+                        Value::String(oauth.managed_by.clone()),
+                    );
+                    if let Some(account_id) = &oauth.account_id {
+                        cfg.insert("account_id".to_string(), Value::String(account_id.clone()));
+                    }
+                    if let Some(email) = &oauth.email {
+                        cfg.insert("email".to_string(), Value::String(email.clone()));
+                    }
+                    if let Some(display_name) = &oauth.display_name {
+                        cfg.insert(
+                            "display_name".to_string(),
+                            Value::String(display_name.clone()),
+                        );
+                    }
+                }
+            }
+            continue;
+        }
+
+        let Some(token) = secrets.get(&normalized_provider_id) else {
             continue;
         };
         if !token.trim().is_empty() {
+            cfg.insert(
+                "auth_kind".to_string(),
+                Value::String("api_key".to_string()),
+            );
             cfg.insert("api_key".to_string(), Value::String(token.clone()));
         }
     }

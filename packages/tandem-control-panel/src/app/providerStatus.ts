@@ -11,7 +11,27 @@ function providerNeedsApiKey(providerId: string) {
   const id = String(providerId || "")
     .trim()
     .toLowerCase();
-  return !!id && id !== "ollama" && id !== "llama_cpp" && id !== "llama.cpp" && id !== "local";
+  return (
+    !!id &&
+    id !== "ollama" &&
+    id !== "llama_cpp" &&
+    id !== "llama.cpp" &&
+    id !== "local" &&
+    id !== "openai-codex"
+  );
+}
+
+function providerHasUsableOAuth(value: any) {
+  if (!value || typeof value !== "object") return false;
+  const authKind = String(value.auth_kind || value.authKind || "")
+    .trim()
+    .toLowerCase();
+  const status = String(value.status || "")
+    .trim()
+    .toLowerCase();
+  if (authKind !== "oauth") return false;
+  if (status === "reauth_required" || status === "expired" || status === "error") return false;
+  return value.connected === true || status === "connected" || status === "configured";
 }
 
 function providerHasStoredKey(authStatus: any, providerId: string) {
@@ -22,6 +42,7 @@ function providerHasStoredKey(authStatus: any, providerId: string) {
 
   const readCandidate = (value: any) => {
     if (!value || typeof value !== "object") return false;
+    if (providerHasUsableOAuth(value)) return true;
     if (value.has_key === true || value.hasKey === true) return true;
     if (value.configured === true && !providerNeedsApiKey(id)) return true;
     return false;

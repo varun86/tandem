@@ -9,29 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Workflow replay coverage package**: Added a focused workflow replay suite for escaped resume/job-search failures, plus internal replay-template and planner/runtime/validator contract-matrix docs to make future workflow-runtime regressions easier to reproduce and gate.
-- **Automation calendar hour drill-down**: The control panel calendar now includes an hour-level inspection panel so crowded slots can be expanded into the exact automations scheduled in that UTC hour.
-- **Workflow learning loop foundation**: Added durable session distillation writes, workflow learning candidates, approved-learning prompt injection, and review/promotion/revision APIs so workflow runs can start accumulating governed reusable learnings instead of keeping distillation as a no-op placeholder.
+- **Codex account auth foundation**: Tandem can now treat `openai-codex` as a first-class provider with engine-owned OAuth session state instead of forcing everything through pasted API keys.
+- **Local provider OAuth lifecycle**: Added provider OAuth authorize, callback, status, disconnect, PKCE/state handling, secure credential persistence, and refresh-aware auth state for local engine-backed Codex account sign-in.
+- **Structured provider credential storage**: Provider auth is no longer limited to raw `provider_id -> token` storage. Tandem now supports typed API-key and OAuth credential records with expiry, account identity, and ownership metadata.
+- **Control panel Codex connection flow**: The local Tandem control panel now exposes `Connect Codex Account`, browser-based sign-in, pending-state polling, connected-account display, reconnect, and disconnect actions.
+- **Codex auth research + delivery tracking**: Added a detailed internal Codex account auth research memo and a Kanban board covering phased rollout, risks, and follow-up work.
 
 ### Changed
 
-- **Automation calendar schedule coverage**: The calendar now shows both cron and interval automations, expanding interval occurrences from the automation anchor time instead of hiding non-cron schedules from the scheduling view.
-- **Workflow synthesis calibration coverage**: Rich-upstream report validation now has explicit matrix coverage for generic summaries, single-anchor reports, and repaired multi-anchor syntheses so future validator tuning stays honest.
-- **Workflow learning API, state, runtime, candidate-generation, planner-revision, distillation, and evidence coverage**: Added focused HTTP, state, runtime, and memory-layer coverage for workflow learning candidate listing, review, promotion, revision-spawn guardrails, candidate dedupe, status transitions, approved-learning prompt injection, run-summary persistence, terminal-run candidate generation thresholds, prompt/graph planner revision session creation, distillation writer accounting, and richer candidate evidence payloads so the new surfaces keep deterministic behavior as the feature hardens.
-- **Workflow distillation route coverage**: Added an end-to-end `/memory/context/distill` regression that runs through a stubbed provider, proves governed session-tier persistence, checks the richer `stored_count` / `deduped_count` / `memory_ids` / `candidate_ids` response shape, and verifies repeated distillation dedupes memory facts and memory-fact candidates by workflow scope.
-- **Workflow learning revision error payloads**: Planner-revision spawning now returns explicit conflict payloads for missing or incompatible stored plan bundles, and the HTTP coverage asserts the `needs_plan_bundle` path updates candidate state and surfaces a deterministic machine-readable error.
-- **Workflow learning evaluation window**: Applied learnings now wait for a minimum post-change sample window before they can be marked regressed, and state coverage now proves the status stays stable through early noise before flipping only after enough failed post-change runs accumulate.
-- **Workflow learning forensic evidence**: Failure-derived learning candidates now carry richer structured validator, repair, and artifact-validation summaries plus explicit forensic receipt links when attempt ledgers or attempt-forensic records are available, making candidate review much more actionable.
-- **Run debugger task density**: Task cards in the run debugger now start collapsed and expand in place on selection, keeping large workflows readable even when a single run has dozens of tasks.
-- **Settings layout cleanup**: The Settings page now uses the full content width after removing the empty right rail, and the shared split-view layout expands correctly in single-column mode.
-- **Control panel icon asset recovery**: Restored the missing control-panel icon wiring so the shell can render the expected built-in icon set without frontend lookup errors.
+- **Provider auth model**: `/provider/auth` now exposes `auth_kind`, `status`, `connected`, `expires_at_ms`, `email`, and `managed_by`, allowing the UI to distinguish API-key auth from OAuth-backed account sessions.
+- **Provider readiness logic**: Tandem now treats OAuth-backed providers as first-class configured providers rather than forcing API-key-only readiness assumptions.
+- **OpenAI provider routing**: `openai-codex` now exists as its own provider/catalog entry with starter models, so Codex-account traffic can be separated cleanly from standard OpenAI API-key usage.
+- **Settings guidance**: The control panel provider settings now explain Codex account auth separately from API-key auth and only expose the browser sign-in flow when the control panel is connected to a local engine.
 
 ### Fixed
 
-- **Complex fallback workflow regression guard**: Added a planner regression that prevents complex fallback workflows from collapsing back into a single generic step when the prompt names concrete files, outputs, and explicit tools.
-- **Exact-source workflow replay coverage**: Added a regression proving upstream evidence can satisfy exact required source reads while still enforcing the paired workspace-write contract for artifact-producing workflow nodes.
-- **Calendar timezone and slot drill-down**: Calendar previews now respect the automation timezone and browser-local display time, and clicking a slot opens the exact 30-minute block instead of bouncing back to the whole day.
-- **Workflow distillation persistence gap**: Session distillation now records durable session-tier memory facts with provenance, dedupes repeated facts by workflow scope, and returns stored candidate/memory identifiers in the API response instead of only reporting extracted facts.
+- **OpenRouter cost escape hatch**: Local Tandem installs can now route eligible work toward a connected Codex account instead of requiring OpenRouter-only paid usage for every heavy test loop.
+- **Auth failure visibility**: Expired or invalid Codex OAuth sessions now fail closed with explicit `reauth_required` state instead of masquerading as a healthy saved-key configuration.
+- **Browser secret handling**: Refresh-capable Codex credentials stay engine-owned; the control panel only initiates and observes the OAuth flow rather than persisting refresh tokens in browser state.
 
 ## [0.4.29] - Released 2026-04-15
 

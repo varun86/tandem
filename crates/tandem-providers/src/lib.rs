@@ -755,6 +755,15 @@ fn build_providers(config: &AppConfig) -> Vec<Arc<dyn Provider>> {
     add_openai_provider(
         config,
         &mut providers,
+        "openai-codex",
+        "OpenAI Codex",
+        "https://api.openai.com/v1",
+        "gpt-5.4",
+        true,
+    );
+    add_openai_provider(
+        config,
+        &mut providers,
         "openrouter",
         "OpenRouter",
         "https://openrouter.ai/api/v1",
@@ -972,6 +981,7 @@ fn is_known_provider_id(id: &str) -> bool {
         id.trim().to_ascii_lowercase().as_str(),
         "ollama"
             | "openai"
+            | "openai-codex"
             | "openrouter"
             | "llama_cpp"
             | "llama.cpp"

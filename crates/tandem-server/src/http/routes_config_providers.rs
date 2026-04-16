@@ -1,7 +1,7 @@
 use super::config_providers::*;
 use crate::http::AppState;
 use axum::{
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 
@@ -21,9 +21,14 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/provider/{id}/oauth/authorize",
             post(provider_oauth_authorize),
         )
+        .route("/provider/{id}/oauth/status", get(provider_oauth_status))
         .route(
             "/provider/{id}/oauth/callback",
-            post(provider_oauth_callback),
+            get(provider_oauth_callback_get).post(provider_oauth_callback_post),
+        )
+        .route(
+            "/provider/{id}/oauth/session",
+            delete(provider_oauth_disconnect),
         )
         .route("/auth/{id}", put(set_auth).delete(delete_auth))
         .route("/auth/token", put(set_api_token).delete(clear_api_token))

@@ -41,3 +41,32 @@ test("deriveProviderState still supports camelCase defaultModel entries", () => 
   assert.equal(state.defaultModel, "gpt-5.2");
   assert.equal(state.ready, true);
 });
+
+test("deriveProviderState treats connected oauth providers as ready", () => {
+  const state = deriveProviderState(
+    {
+      default: "openai-codex",
+      providers: {
+        "openai-codex": {
+          default_model: "gpt-5.4",
+        },
+      },
+    },
+    { connected: ["openai-codex"] },
+    {
+      providers: {
+        "openai-codex": {
+          auth_kind: "oauth",
+          status: "connected",
+          connected: true,
+          has_key: true,
+        },
+      },
+    }
+  );
+
+  assert.equal(state.defaultProvider, "openai-codex");
+  assert.equal(state.defaultModel, "gpt-5.4");
+  assert.equal(state.ready, true);
+  assert.equal(state.needsOnboarding, false);
+});

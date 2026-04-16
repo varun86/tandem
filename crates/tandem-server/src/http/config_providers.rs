@@ -1,13 +1,14 @@
 use crate::http::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     Json,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::Duration;
@@ -28,6 +29,34 @@ pub(super) struct ApiTokenInput {
     pub token: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct ProviderOAuthCallbackInput {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct ProviderOAuthStatusQuery {
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProviderOAuthSessionRecord {
+    pub session_id: String,
+    pub provider_id: String,
+    pub status: String,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub redirect_uri: String,
+    pub state: String,
+    pub code_verifier: String,
+    pub authorization_url: String,
+    pub error: Option<String>,
+    pub email: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct LegacyProviderInfo {
     pub id: String,
@@ -35,6 +64,25 @@ pub(super) struct LegacyProviderInfo {
     pub models: Vec<String>,
     pub configured: bool,
 }
+
+#[derive(Debug, Deserialize)]
+struct OpenAiCodexTokenExchangeResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    id_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiCodexApiKeyExchangeResponse {
+    access_token: String,
+}
+
+const OPENAI_CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CODEX_OAUTH_ISSUER: &str = "https://auth.openai.com";
+const OPENAI_CODEX_PROVIDER_ID: &str = "openai-codex";
+const OPENAI_CODEX_DEFAULT_MODEL: &str = "gpt-5.4";
+const OPENAI_CODEX_API_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENAI_CODEX_OAUTH_REFRESH_SKEW_MS: u64 = 5 * 60 * 1000;
 
 fn is_internal_secret_id(raw: &str) -> bool {
     let normalized = raw.trim().to_ascii_lowercase();
@@ -231,6 +279,11 @@ pub(super) async fn list_providers(State(state): State<AppState>) -> Json<Value>
                 entry.catalog_source = Some("remote".to_string());
                 entry.catalog_status = Some("ok".to_string());
             }
+            ProviderCatalogFetchResult::Static { models } => {
+                entry.models = models;
+                entry.catalog_source = Some("static".to_string());
+                entry.catalog_status = Some("ok".to_string());
+            }
             ProviderCatalogFetchResult::Unavailable { message } => {
                 entry.catalog_source = Some("empty".to_string());
                 entry.catalog_status = Some("unavailable".to_string());
@@ -300,6 +353,7 @@ pub(super) async fn list_providers_legacy(
 }
 
 pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> {
+    let _ = refresh_openai_codex_oauth_if_needed(&state).await;
     let cfg = state.config.get_effective_value().await;
     let providers_cfg = cfg
         .get("providers")
@@ -307,6 +361,7 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
         .cloned()
         .unwrap_or_default();
     let persisted = tandem_core::load_provider_auth();
+    let persisted_credentials = tandem_core::load_provider_credentials();
     let persisted_ids = persisted
         .keys()
         .filter(|id| !is_internal_secret_id(id))
@@ -328,10 +383,16 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
             known_ids.insert(normalized);
         }
     }
+    known_ids.insert(OPENAI_CODEX_PROVIDER_ID.to_string());
     known_ids.extend(providers_cfg.keys().map(|id| canonical_provider_id(id)));
     known_ids.extend(connected.iter().map(|id| canonical_provider_id(id)));
     known_ids.extend(runtime_auth.keys().map(|id| canonical_provider_id(id)));
     known_ids.extend(persisted_ids.iter().map(|id| canonical_provider_id(id)));
+    known_ids.extend(
+        persisted_credentials
+            .keys()
+            .map(|id| canonical_provider_id(id)),
+    );
 
     let mut ids = known_ids.into_iter().collect::<Vec<_>>();
     ids.sort();
@@ -359,8 +420,15 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
         let has_persisted_key = provider_id_aliases(&provider_id)
             .iter()
             .any(|alias| persisted_ids.contains(*alias));
+        let oauth_credential = provider_id_aliases(&provider_id)
+            .iter()
+            .find_map(|alias| persisted_credentials.get(*alias))
+            .or_else(|| persisted_credentials.get(&provider_id));
+        let has_oauth_credential = oauth_credential.is_some();
         let has_key = has_env_key || has_runtime_key || has_config_key || has_persisted_key;
-        let source = if has_env_key {
+        let source = if has_oauth_credential {
+            "oauth"
+        } else if has_env_key {
             "env"
         } else if has_persisted_key {
             "persisted"
@@ -370,26 +438,220 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
             "none"
         };
         let configured = connected.contains(&provider_id);
-        providers.insert(
-            provider_id,
-            json!({
-                "has_key": has_key,
-                "configured": configured,
-                "connected": configured,
-                "source": source,
-            }),
-        );
+        let auth_kind = match oauth_credential {
+            Some(tandem_core::ProviderCredential::OAuth(_)) => "oauth",
+            _ => "api_key",
+        };
+        let mut payload = json!({
+            "has_key": has_key || has_oauth_credential,
+            "configured": configured,
+            "connected": configured && (has_key || has_oauth_credential || !provider_requires_api_key(&provider_id)),
+            "source": source,
+            "auth_kind": auth_kind,
+            "status": if has_oauth_credential { "connected" } else if has_key { "configured" } else { "missing" },
+        });
+        if let Some(tandem_core::ProviderCredential::OAuth(oauth)) = oauth_credential {
+            payload["expires_at_ms"] = json!(oauth.expires_at_ms);
+            payload["email"] = json!(oauth.email);
+            payload["display_name"] = json!(oauth.display_name);
+            payload["managed_by"] = json!(oauth.managed_by);
+            payload["account_id"] = json!(oauth.account_id);
+            if oauth.expires_at_ms <= crate::now_ms() {
+                payload["status"] = json!("reauth_required");
+                payload["connected"] = json!(false);
+            }
+        }
+        providers.insert(provider_id, payload);
     }
 
     Json(json!({ "providers": providers }))
 }
 
-pub(super) async fn provider_oauth_authorize() -> Json<Value> {
-    Json(json!({"authorizationUrl": null}))
+pub(super) async fn provider_oauth_authorize(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<Value> {
+    let provider_id = canonical_provider_id(&id);
+    if provider_id != OPENAI_CODEX_PROVIDER_ID {
+        return Json(json!({
+            "ok": false,
+            "error": format!("oauth is not supported for provider `{provider_id}`"),
+        }));
+    }
+
+    let session_id = Uuid::new_v4().to_string();
+    let created_at_ms = crate::now_ms();
+    let expires_at_ms = created_at_ms.saturating_add(10 * 60 * 1000);
+    let (code_verifier, code_challenge) = generate_pkce_pair();
+    let state_token = generate_oauth_state();
+    let redirect_uri = provider_oauth_redirect_uri(&state, &provider_id);
+    let authorization_url =
+        build_openai_codex_authorization_url(&redirect_uri, &code_challenge, &state_token);
+
+    state.provider_oauth_sessions.write().await.insert(
+        session_id.clone(),
+        ProviderOAuthSessionRecord {
+            session_id: session_id.clone(),
+            provider_id,
+            status: "pending".to_string(),
+            created_at_ms,
+            expires_at_ms,
+            redirect_uri,
+            state: state_token,
+            code_verifier,
+            authorization_url: authorization_url.clone(),
+            error: None,
+            email: None,
+        },
+    );
+
+    Json(json!({
+        "ok": true,
+        "provider_id": OPENAI_CODEX_PROVIDER_ID,
+        "session_id": session_id,
+        "authorizationUrl": authorization_url,
+        "expires_at_ms": expires_at_ms,
+    }))
 }
 
-pub(super) async fn provider_oauth_callback() -> Json<Value> {
-    Json(json!({"ok": true}))
+pub(super) async fn provider_oauth_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ProviderOAuthStatusQuery>,
+) -> Json<Value> {
+    let provider_id = canonical_provider_id(&id);
+    if provider_id != OPENAI_CODEX_PROVIDER_ID {
+        return Json(json!({
+            "ok": false,
+            "error": format!("oauth is not supported for provider `{provider_id}`"),
+        }));
+    }
+
+    let _ = refresh_openai_codex_oauth_if_needed(&state).await;
+
+    if let Some(session_id) = query.session_id.as_deref() {
+        if let Some(session) = state.provider_oauth_sessions.read().await.get(session_id) {
+            return Json(json!({
+                "ok": true,
+                "session_id": session.session_id,
+                "status": session.status,
+                "error": session.error,
+                "email": session.email,
+                "expires_at_ms": session.expires_at_ms,
+            }));
+        }
+    }
+
+    if let Some(tandem_core::ProviderCredential::OAuth(oauth)) =
+        tandem_core::load_provider_credentials().remove(OPENAI_CODEX_PROVIDER_ID)
+    {
+        return Json(json!({
+            "ok": true,
+            "status": if oauth.expires_at_ms <= crate::now_ms() { "reauth_required" } else { "connected" },
+            "connected": oauth.expires_at_ms > crate::now_ms(),
+            "email": oauth.email,
+            "display_name": oauth.display_name,
+            "managed_by": oauth.managed_by,
+            "account_id": oauth.account_id,
+            "expires_at_ms": oauth.expires_at_ms,
+        }));
+    }
+
+    Json(json!({
+        "ok": true,
+        "status": "missing",
+        "connected": false,
+    }))
+}
+
+pub(super) async fn provider_oauth_callback_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(input): Query<ProviderOAuthCallbackInput>,
+) -> Response {
+    let payload = finish_provider_oauth_callback(state, id, input).await;
+    let ok = payload.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let title = if ok {
+        "Codex Account Connected"
+    } else {
+        "Codex Account Connection Failed"
+    };
+    let detail = if ok {
+        payload
+            .get("email")
+            .and_then(Value::as_str)
+            .map(|email| {
+                format!("Connected as {email}. You can close this tab and return to Tandem.")
+            })
+            .unwrap_or_else(|| {
+                "Codex account connected. You can close this tab and return to Tandem.".to_string()
+            })
+    } else {
+        payload
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("The OAuth callback could not be completed.")
+            .to_string()
+    };
+
+    Html(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title><style>body{{font-family:system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;color:#e2e8f0;padding:32px}}main{{max-width:560px;margin:0 auto;border:1px solid rgba(148,163,184,.3);border-radius:16px;padding:24px;background:rgba(15,23,42,.8)}}h1{{font-size:24px;margin:0 0 12px}}p{{line-height:1.5;color:#cbd5e1}}</style></head><body><main><h1>{title}</h1><p>{detail}</p></main></body></html>"
+    ))
+    .into_response()
+}
+
+pub(super) async fn provider_oauth_callback_post(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<ProviderOAuthCallbackInput>,
+) -> Json<Value> {
+    Json(finish_provider_oauth_callback(state, id, input).await)
+}
+
+pub(super) async fn provider_oauth_disconnect(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<Value> {
+    let provider_id = canonical_provider_id(&id);
+    if provider_id != OPENAI_CODEX_PROVIDER_ID {
+        return Json(json!({
+            "ok": false,
+            "error": format!("oauth is not supported for provider `{provider_id}`"),
+        }));
+    }
+
+    let persisted_removed =
+        tandem_core::delete_provider_credential(OPENAI_CODEX_PROVIDER_ID).unwrap_or(false);
+    let runtime_removed = state
+        .config
+        .delete_runtime_provider_key(OPENAI_CODEX_PROVIDER_ID)
+        .await
+        .is_ok();
+    state.auth.write().await.remove(OPENAI_CODEX_PROVIDER_ID);
+
+    if persisted_removed || runtime_removed {
+        let _ = crate::audit::append_protected_audit_event(
+            &state,
+            "provider.oauth.deleted",
+            &tandem_types::TenantContext::local_implicit(),
+            None,
+            json!({
+                "providerID": OPENAI_CODEX_PROVIDER_ID,
+                "runtimeRemoved": runtime_removed,
+                "persistedRemoved": persisted_removed,
+            }),
+        )
+        .await;
+        ensure_openai_codex_runtime_provider(&state).await;
+        state
+            .providers
+            .reload(state.config.get().await.into())
+            .await;
+    }
+
+    Json(json!({
+        "ok": persisted_removed || runtime_removed,
+    }))
 }
 
 pub(super) async fn set_auth(
@@ -528,6 +790,9 @@ enum ProviderCatalogFetchResult {
     Remote {
         models: HashMap<String, WireProviderModel>,
     },
+    Static {
+        models: HashMap<String, WireProviderModel>,
+    },
     Unavailable {
         message: String,
     },
@@ -574,6 +839,7 @@ fn known_provider_name(provider_id: &str) -> Option<&'static str> {
     match canonical_provider_id(provider_id).as_str() {
         "openrouter" => Some("OpenRouter"),
         "openai" => Some("OpenAI"),
+        "openai-codex" => Some("OpenAI Codex"),
         "anthropic" => Some("Anthropic"),
         "ollama" => Some("Ollama"),
         "llama_cpp" => Some("llama.cpp"),
@@ -593,6 +859,7 @@ fn ensure_known_provider_entries(wire: &mut WireProviderCatalog) {
     for provider_id in [
         "openrouter",
         "openai",
+        "openai-codex",
         "anthropic",
         "ollama",
         "llama_cpp",
@@ -688,6 +955,7 @@ fn provider_default_url(provider_id: &str) -> Option<&'static str> {
     match canonical_provider_id(provider_id).as_str() {
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "openai" => Some("https://api.openai.com/v1"),
+        "openai-codex" => Some(OPENAI_CODEX_API_BASE_URL),
         "llama_cpp" => Some("http://127.0.0.1:8080/v1"),
         "groq" => Some("https://api.groq.com/openai/v1"),
         "mistral" => Some("https://api.mistral.ai/v1"),
@@ -696,8 +964,44 @@ fn provider_default_url(provider_id: &str) -> Option<&'static str> {
     }
 }
 
+fn codex_starter_models() -> HashMap<String, WireProviderModel> {
+    HashMap::from([
+        (
+            "gpt-5.4".to_string(),
+            WireProviderModel {
+                name: Some("GPT-5.4".to_string()),
+                limit: Some(WireProviderModelLimit {
+                    context: Some(272_000),
+                }),
+            },
+        ),
+        (
+            "gpt-5.4-mini".to_string(),
+            WireProviderModel {
+                name: Some("GPT-5.4 Mini".to_string()),
+                limit: Some(WireProviderModelLimit {
+                    context: Some(272_000),
+                }),
+            },
+        ),
+        (
+            "gpt-5.4-pro".to_string(),
+            WireProviderModel {
+                name: Some("GPT-5.4 Pro".to_string()),
+                limit: Some(WireProviderModelLimit {
+                    context: Some(272_000),
+                }),
+            },
+        ),
+    ])
+}
+
 fn remote_catalog_support_message(provider_id: &str) -> String {
     match provider_id {
+        "openai-codex" => {
+            "Codex account models use a Tandem starter catalog. Live discovery is not enabled here."
+                .to_string()
+        }
         "azure" | "vertex" | "bedrock" | "copilot" | "ollama" => {
             "Live model discovery is unavailable for this provider. Enter a model ID manually."
                 .to_string()
@@ -1061,6 +1365,9 @@ async fn fetch_remote_provider_models(
     persisted_auth: &HashMap<String, String>,
 ) -> ProviderCatalogFetchResult {
     match provider_id {
+        "openai-codex" => ProviderCatalogFetchResult::Static {
+            models: codex_starter_models(),
+        },
         "openrouter" => match fetch_openrouter_models(cfg, runtime_auth, persisted_auth).await {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {
@@ -1156,6 +1463,473 @@ fn provider_has_env_secret(provider_id: &str) -> bool {
         std::env::var(&key)
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
+    })
+}
+
+fn provider_requires_api_key(provider_id: &str) -> bool {
+    !matches!(
+        canonical_provider_id(provider_id).as_str(),
+        "local" | "ollama" | "llama_cpp"
+    )
+}
+
+fn provider_oauth_redirect_uri(state: &AppState, provider_id: &str) -> String {
+    let base = state
+        .server_base_url
+        .read()
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:39731".to_string());
+    format!("{base}/provider/{provider_id}/oauth/callback")
+}
+
+fn generate_oauth_state() -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+        "{}:{}",
+        Uuid::new_v4(),
+        Uuid::new_v4()
+    ))
+}
+
+fn generate_pkce_pair() -> (String, String) {
+    let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+        "{}:{}",
+        Uuid::new_v4(),
+        Uuid::new_v4()
+    ));
+    let digest = sha2::Sha256::digest(verifier.as_bytes());
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    (verifier, challenge)
+}
+
+fn build_openai_codex_authorization_url(
+    redirect_uri: &str,
+    code_challenge: &str,
+    state: &str,
+) -> String {
+    let query = vec![
+        ("response_type", "code".to_string()),
+        ("client_id", OPENAI_CODEX_OAUTH_CLIENT_ID.to_string()),
+        ("redirect_uri", redirect_uri.to_string()),
+        (
+            "scope",
+            "openid profile email offline_access api.connectors.read api.connectors.invoke"
+                .to_string(),
+        ),
+        ("code_challenge", code_challenge.to_string()),
+        ("code_challenge_method", "S256".to_string()),
+        ("id_token_add_organizations", "true".to_string()),
+        ("codex_cli_simplified_flow", "true".to_string()),
+        ("state", state.to_string()),
+        ("originator", "tandem".to_string()),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={}", urlencoding::encode(&value)))
+    .collect::<Vec<_>>()
+    .join("&");
+    format!("{OPENAI_CODEX_OAUTH_ISSUER}/oauth/authorize?{query}")
+}
+
+fn decode_jwt_claims(token: &str) -> Option<Value> {
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let payload = parts.next()?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    serde_json::from_slice::<Value>(&decoded).ok()
+}
+
+fn jwt_string_claim(claims: &Value, key: &str) -> Option<String> {
+    claims
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn jwt_nested_string_claim(claims: &Value, scope: &str, key: &str) -> Option<String> {
+    claims
+        .get(scope)
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn resolve_openai_codex_identity(
+    access_token: &str,
+    id_token: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>, u64) {
+    let access_claims = decode_jwt_claims(access_token);
+    let id_claims = id_token.and_then(decode_jwt_claims);
+    let claims = id_claims.as_ref().or(access_claims.as_ref());
+
+    let email = claims
+        .and_then(|value| jwt_nested_string_claim(value, "https://api.openai.com/profile", "email"))
+        .or_else(|| claims.and_then(|value| jwt_string_claim(value, "email")));
+    let account_id = claims
+        .and_then(|value| jwt_string_claim(value, "chatgpt_account_id"))
+        .or_else(|| {
+            claims.and_then(|value| {
+                jwt_nested_string_claim(
+                    value,
+                    "https://api.openai.com/auth",
+                    "chatgpt_account_user_id",
+                )
+            })
+        })
+        .or_else(|| {
+            claims.and_then(|value| {
+                jwt_nested_string_claim(value, "https://api.openai.com/auth", "chatgpt_user_id")
+            })
+        })
+        .or_else(|| claims.and_then(|value| jwt_string_claim(value, "sub")));
+    let display_name = email.clone().or_else(|| {
+        account_id.as_deref().map(|value| {
+            format!(
+                "id-{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value)
+            )
+        })
+    });
+    let expires_at_ms = access_claims
+        .as_ref()
+        .and_then(|value| value.get("exp"))
+        .and_then(|value| value.as_i64())
+        .and_then(|value| u64::try_from(value).ok())
+        .map(|value| value.saturating_mul(1000))
+        .unwrap_or_else(|| crate::now_ms().saturating_add(50 * 60 * 1000));
+
+    (account_id, email, display_name, expires_at_ms)
+}
+
+async fn exchange_openai_codex_code(
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> anyhow::Result<OpenAiCodexTokenExchangeResponse> {
+    let body = format!(
+        "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
+        urlencoding::encode(code),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(OPENAI_CODEX_OAUTH_CLIENT_ID),
+        urlencoding::encode(code_verifier),
+    );
+    let response = reqwest::Client::new()
+        .post(format!("{OPENAI_CODEX_OAUTH_ISSUER}/oauth/token"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("token exchange failed with status {status}: {text}");
+    }
+    Ok(serde_json::from_str::<OpenAiCodexTokenExchangeResponse>(
+        &text,
+    )?)
+}
+
+async fn exchange_openai_codex_api_key(id_token: &str) -> anyhow::Result<String> {
+    let body = format!(
+        "grant_type={}&client_id={}&requested_token={}&subject_token={}&subject_token_type={}",
+        urlencoding::encode("urn:ietf:params:oauth:grant-type:token-exchange"),
+        urlencoding::encode(OPENAI_CODEX_OAUTH_CLIENT_ID),
+        urlencoding::encode("api_key"),
+        urlencoding::encode(id_token),
+        urlencoding::encode("urn:ietf:params:oauth:token-type:id_token"),
+    );
+    let response = reqwest::Client::new()
+        .post(format!("{OPENAI_CODEX_OAUTH_ISSUER}/oauth/token"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("api key exchange failed with status {status}: {text}");
+    }
+    Ok(serde_json::from_str::<OpenAiCodexApiKeyExchangeResponse>(&text)?.access_token)
+}
+
+async fn refresh_openai_codex_oauth_if_needed(state: &AppState) -> anyhow::Result<()> {
+    let Some(mut credential) =
+        tandem_core::load_provider_oauth_credential(OPENAI_CODEX_PROVIDER_ID)
+    else {
+        return Ok(());
+    };
+    if credential.managed_by != "tandem" {
+        return Ok(());
+    }
+    let now = crate::now_ms();
+    if credential.expires_at_ms > now.saturating_add(OPENAI_CODEX_OAUTH_REFRESH_SKEW_MS) {
+        return Ok(());
+    }
+
+    let response = reqwest::Client::new()
+        .post(format!("{OPENAI_CODEX_OAUTH_ISSUER}/oauth/token"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "client_id": OPENAI_CODEX_OAUTH_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": credential.refresh_token,
+        }))
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("refresh failed with status {status}: {text}");
+    }
+    let refresh = serde_json::from_str::<OpenAiCodexTokenExchangeResponse>(&text)?;
+    if let Some(access_token) = refresh.access_token.as_deref() {
+        credential.access_token = access_token.to_string();
+    }
+    if let Some(refresh_token) = refresh.refresh_token.as_deref() {
+        credential.refresh_token = refresh_token.to_string();
+    }
+    let id_token = refresh.id_token.as_deref();
+    let (account_id, email, display_name, expires_at_ms) =
+        resolve_openai_codex_identity(&credential.access_token, id_token);
+    credential.account_id = account_id.or(credential.account_id);
+    credential.email = email.or(credential.email);
+    credential.display_name = display_name.or(credential.display_name);
+    credential.expires_at_ms = expires_at_ms;
+    if let Some(id_token) = id_token {
+        if let Ok(api_key) = exchange_openai_codex_api_key(id_token).await {
+            credential.api_key = Some(api_key.clone());
+            state
+                .auth
+                .write()
+                .await
+                .insert(OPENAI_CODEX_PROVIDER_ID.to_string(), api_key);
+        }
+    }
+    let _ = tandem_core::set_provider_oauth_credential(OPENAI_CODEX_PROVIDER_ID, credential)?;
+    ensure_openai_codex_runtime_provider(state).await;
+    state
+        .providers
+        .reload(state.config.get().await.into())
+        .await;
+    Ok(())
+}
+
+async fn ensure_openai_codex_runtime_provider(state: &AppState) {
+    let _ = state
+        .config
+        .patch_runtime(json!({
+            "providers": {
+                OPENAI_CODEX_PROVIDER_ID: {
+                    "url": OPENAI_CODEX_API_BASE_URL,
+                    "default_model": OPENAI_CODEX_DEFAULT_MODEL,
+                }
+            }
+        }))
+        .await;
+}
+
+async fn finish_provider_oauth_callback(
+    state: AppState,
+    id: String,
+    input: ProviderOAuthCallbackInput,
+) -> Value {
+    let provider_id = canonical_provider_id(&id);
+    if provider_id != OPENAI_CODEX_PROVIDER_ID {
+        return json!({
+            "ok": false,
+            "error": format!("oauth is not supported for provider `{provider_id}`"),
+        });
+    }
+
+    let Some(state_token) = input
+        .state
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return json!({"ok": false, "error": "missing oauth state"});
+    };
+
+    let session_id = {
+        let sessions = state.provider_oauth_sessions.read().await;
+        sessions.iter().find_map(|(session_id, session)| {
+            (session.provider_id == provider_id && session.state == state_token)
+                .then(|| session_id.clone())
+        })
+    };
+    let Some(session_id) = session_id else {
+        return json!({"ok": false, "error": "oauth session not found or expired"});
+    };
+
+    if let Some(error) = input
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let detail = input
+            .error_description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| error.to_string());
+        if let Some(session) = state
+            .provider_oauth_sessions
+            .write()
+            .await
+            .get_mut(&session_id)
+        {
+            session.status = "error".to_string();
+            session.error = Some(detail.clone());
+        }
+        return json!({"ok": false, "error": detail});
+    }
+
+    let Some(code) = input
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return json!({"ok": false, "error": "missing authorization code"});
+    };
+
+    let session = {
+        state
+            .provider_oauth_sessions
+            .read()
+            .await
+            .get(&session_id)
+            .cloned()
+    };
+    let Some(session) = session else {
+        return json!({"ok": false, "error": "oauth session not found"});
+    };
+    if session.expires_at_ms <= crate::now_ms() {
+        return json!({"ok": false, "error": "oauth session expired before callback completed"});
+    }
+
+    let exchanged =
+        match exchange_openai_codex_code(code, &session.redirect_uri, &session.code_verifier).await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(entry) = state
+                    .provider_oauth_sessions
+                    .write()
+                    .await
+                    .get_mut(&session_id)
+                {
+                    entry.status = "error".to_string();
+                    entry.error = Some(error.to_string());
+                }
+                return json!({"ok": false, "error": error.to_string()});
+            }
+        };
+
+    let access_token = exchanged
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let refresh_token = exchanged
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let id_token = exchanged
+        .id_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let (Some(access_token), Some(refresh_token)) = (access_token, refresh_token) else {
+        return json!({"ok": false, "error": "oauth token exchange returned incomplete credentials"});
+    };
+
+    let api_key = match id_token.as_deref() {
+        Some(token) => exchange_openai_codex_api_key(token).await.ok(),
+        None => None,
+    };
+    let (account_id, email, display_name, expires_at_ms) =
+        resolve_openai_codex_identity(&access_token, id_token.as_deref());
+    let oauth_credential = tandem_core::OAuthProviderCredential {
+        provider_id: OPENAI_CODEX_PROVIDER_ID.to_string(),
+        access_token: access_token.clone(),
+        refresh_token,
+        expires_at_ms,
+        account_id,
+        email: email.clone(),
+        display_name: display_name.clone(),
+        managed_by: "tandem".to_string(),
+        api_key: api_key.clone(),
+    };
+
+    let backend = match tandem_core::set_provider_oauth_credential(
+        OPENAI_CODEX_PROVIDER_ID,
+        oauth_credential,
+    ) {
+        Ok(tandem_core::ProviderAuthBackend::Keychain) => "keychain",
+        Ok(tandem_core::ProviderAuthBackend::File) => "file",
+        Err(error) => return json!({"ok": false, "error": error.to_string()}),
+    };
+
+    ensure_openai_codex_runtime_provider(&state).await;
+    if let Some(api_key) = api_key {
+        state
+            .auth
+            .write()
+            .await
+            .insert(OPENAI_CODEX_PROVIDER_ID.to_string(), api_key);
+    }
+    state
+        .providers
+        .reload(state.config.get().await.into())
+        .await;
+
+    if let Some(entry) = state
+        .provider_oauth_sessions
+        .write()
+        .await
+        .get_mut(&session_id)
+    {
+        entry.status = "connected".to_string();
+        entry.error = None;
+        entry.email = email.clone();
+    }
+
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "provider.oauth.updated",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "providerID": OPENAI_CODEX_PROVIDER_ID,
+            "backend": backend,
+            "managedBy": "tandem",
+            "email": email,
+        }),
+    )
+    .await;
+
+    json!({
+        "ok": true,
+        "provider_id": OPENAI_CODEX_PROVIDER_ID,
+        "session_id": session_id,
+        "email": email,
+        "display_name": display_name,
+        "expires_at_ms": expires_at_ms,
     })
 }
 

@@ -54,7 +54,7 @@ pub(crate) mod bug_monitor;
 mod capabilities;
 mod channels_api;
 mod coder;
-mod config_providers;
+pub(crate) mod config_providers;
 pub(crate) mod context_packs;
 mod context_run_ledger;
 mod context_run_mutation_checkpoints;

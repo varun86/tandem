@@ -4,24 +4,17 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.30 (Released 2026-04-16)
 
-This release hardens workflow release safety while improving schedule visibility in the Automations calendar.
+This release adds the first real Tandem path for using a Codex account allocation instead of burning API-key credits on every heavy local run.
 
-- **Workflow replay suite**: Added focused replay coverage for escaped resume/job-search workflow failures so exact-source-read and upstream-synthesis regressions are easier to pin before release.
-- **Workflow calibration docs**: Added an internal replay template and a planner/runtime/validator contract matrix so new workflow-runtime bugs can be turned into reproducible coverage instead of one-off firefights.
-- **Workflow learning loop foundation**: Tandem now persists session distillation facts into governed session-tier memory, creates reviewable workflow learning candidates from those facts and repeated run failures, and exposes API flows to review, promote, and spin approved prompt/graph learnings into planner revisions.
-- **Workflow learning API, state, runtime, candidate-generation, planner-revision, distillation, and evidence coverage**: Added focused HTTP, state, runtime, and memory-layer coverage for workflow learning candidate listing, review, promotion, revision-spawn guardrails, candidate dedupe, status transitions, approved-learning prompt injection, run-summary persistence, terminal-run candidate generation thresholds, prompt/graph planner revision session creation, distillation writer accounting, and richer candidate evidence payloads so the new surfaces keep deterministic behavior as the feature hardens.
-- **Workflow distillation route coverage**: Added an end-to-end `/memory/context/distill` regression that runs through a stubbed provider, proves governed session-tier persistence, checks the richer `stored_count` / `deduped_count` / `memory_ids` / `candidate_ids` response shape, and verifies repeated distillation dedupes memory facts and memory-fact candidates by workflow scope.
-- **Workflow learning revision error payloads**: Planner-revision spawning now returns explicit conflict payloads for missing or incompatible stored plan bundles, and the HTTP coverage asserts the `needs_plan_bundle` path updates candidate state and surfaces a deterministic machine-readable error.
-- **Workflow learning evaluation window**: Applied learnings now wait for a minimum post-change sample window before they can be marked regressed, and state coverage now proves the status stays stable through early noise before flipping only after enough failed post-change runs accumulate.
-- **Workflow learning forensic evidence**: Failure-derived learning candidates now carry richer structured validator, repair, and artifact-validation summaries plus explicit forensic receipt links when attempt ledgers or attempt-forensic records are available, making candidate review much more actionable.
-- **Synthesis validator calibration**: Rich-upstream report validation now has explicit coverage for generic summaries, single-anchor reports, and repaired multi-anchor syntheses.
-- **Complex fallback decomposition guard**: Added a planner regression that keeps complex fallback workflows from collapsing back into a single vague step when the prompt names concrete files and tools.
-- **Automation calendar drill-down**: The control panel calendar now supports hour-level drill-down so crowded schedule cells can be inspected without guessing which automation owns a slot.
-- **Interval automation visibility**: Calendar views now expand interval schedules alongside cron schedules, using the automation anchor time to generate visible occurrences instead of hiding interval-based runs.
-- **Run debugger task density**: The run debugger now keeps task cards collapsed by default and expands them in place on selection, which makes large runs much easier to scan.
-- **Settings layout cleanup**: Settings now uses the full width of the main panel after removing the empty right rail, and the shared split-view layout expands correctly when there is no aside.
-- **Control panel icon recovery**: Restored the missing control-panel icon wiring so the built-in shell icons render again without frontend lookup errors.
-- **Calendar timezone and slot drill-down**: Calendar previews now respect the automation timezone and browser-local display time, and clicking a slot opens the exact 30-minute block instead of just switching the whole day.
+- **Codex account auth foundation**: Tandem now supports `openai-codex` as a first-class provider with engine-owned OAuth credential records instead of flattening everything into saved API keys.
+- **Engine-owned local OAuth flow**: Added provider OAuth authorize, callback, status, disconnect, PKCE/state handling, credential persistence, and refresh-aware auth lifecycle for local Codex account sign-in.
+- **Structured provider credentials**: Provider auth can now store typed API-key and OAuth records with expiry, account identity, and ownership metadata, which is the groundwork needed for account-connected auth to coexist cleanly with normal API keys.
+- **Control panel `Connect Codex Account` flow**: The local control panel now exposes browser-based Codex account sign-in, pending-state polling, connected account identity, reconnect, and disconnect actions.
+- **OAuth-aware provider readiness**: Provider status and onboarding now understand OAuth-backed account connections instead of assuming every remote provider is API-key-only.
+- **Distinct `openai-codex` routing**: Codex account usage now routes through a separate provider/catalog entry with starter models so it can be managed independently from the normal OpenAI API-key path.
+- **Safer auth failure behavior**: Expired or invalid Codex sessions now surface explicit `reauth_required` state rather than silently behaving like a healthy saved-key provider.
+- **Cost-control path for local testing**: This release is the first real step toward moving test-heavy local runs off OpenRouter spend and onto a Codex subscription allocation when one is available.
+- **Research and rollout docs**: Added an internal Codex account auth research report plus a delivery Kanban covering the phased strategy, tradeoffs, and remaining follow-up items such as Tauri parity and local Codex CLI session reuse.
 
 ## v0.4.29 (Released 2026-04-15)
 

@@ -52,6 +52,14 @@ export const providerHints = {
     keyUrl: "https://platform.openai.com/api-keys",
     placeholder: "sk-proj-...",
   },
+  "openai-codex": {
+    label: "Codex Account",
+    keyUrl: "",
+    placeholder: "Browser sign-in required",
+    authMode: "oauth",
+    description:
+      "Use your ChatGPT/Codex subscription on this machine without pasting a separate API key.",
+  },
   anthropic: {
     label: "Anthropic",
     keyUrl: "https://console.anthropic.com/settings/keys",

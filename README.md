@@ -28,6 +28,7 @@ It provides durable coordination primitives, including blackboards, workboards, 
 - **Entrypoints are clients, not separate engines:** The Tauri desktop app, TUI, web control panel, and SDKs all talk to the same engine runtime.
 - **Engine-owned orchestration:** Shared task state, replay, approvals, and deterministic workflow projections natively solve coordination failures.
 - **Provider agnostic:** Use OpenRouter, Anthropic, OpenAI, OpenCode Zen, or local Ollama endpoints effortlessly.
+- **Codex account auth for local Tandem:** Connect a Codex account through the local control panel so heavy testing can use your ChatGPT/Codex allocation instead of requiring a separate OpenAI API key or more OpenRouter spend.
 
 `Durable State → Workboards → Agent Swarm → Artifacts`
 
@@ -48,10 +49,12 @@ tandem panel open
 
 Use this when you want the browser-based control center backed by the engine.
 
+For local installs, you can now open **Settings -> Providers -> openai-codex** and choose **Connect Codex Account** to sign in through the browser instead of pasting an OpenAI API key.
+
 ### Desktop
 
 1. Download and launch Tandem: [tandem.ac](https://tandem.ac/)
-2. Open **Settings** and add a provider API key.
+2. Open **Settings** and add a provider API key, or use the local control panel to connect a Codex account for `openai-codex`.
 3. Select a workspace folder.
 4. Start with a task prompt and choose **Immediate** or **Plan Mode**.
 
@@ -157,6 +160,7 @@ graph TD
 ### Security and local-first controls
 
 - API keys encrypted in local SecureKeyStore (AES-256-GCM)
+- Local Codex OAuth credentials stay engine-owned; browser UIs initiate sign-in but do not persist refresh tokens
 - Workspace access is scoped to folders you explicitly grant
 - Write/delete operations require approval via supervised tool flow
 - Sensitive paths denied by default (`.env`, `.ssh/*`, `*.pem`, `*.key`, secrets folders)
@@ -220,14 +224,20 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
 
 Configure providers in **Settings**.
 
-| Provider          | Description                                      | Get API key                                                          |
-| ----------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
-| **OpenRouter** ⭐ | Access many models through one API               | [openrouter.ai/keys](https://openrouter.ai/keys)                     |
-| **OpenCode Zen**  | Fast, cost-effective models optimized for coding | [opencode.ai/zen](https://opencode.ai/zen)                           |
-| **Anthropic**     | Anthropic models (Sonnet, Opus, Haiku)           | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
-| **OpenAI**        | GPT models and OpenAI endpoints                  | [platform.openai.com](https://platform.openai.com/api-keys)          |
-| **Ollama**        | Local models (no remote API key required)        | [Setup Guide](docs/OLLAMA_GUIDE.md)                                  |
-| **Custom**        | OpenAI-compatible API endpoint                   | Configure endpoint URL                                               |
+| Provider                 | Description                                      | Get API key                                                          |
+| ------------------------ | ------------------------------------------------ | -------------------------------------------------------------------- |
+| **OpenAI Codex Account** | Browser sign-in for local Codex-account usage    | Local control panel: **Settings -> Providers -> openai-codex**       |
+| **OpenRouter** ⭐        | Access many models through one API               | [openrouter.ai/keys](https://openrouter.ai/keys)                     |
+| **OpenCode Zen**         | Fast, cost-effective models optimized for coding | [opencode.ai/zen](https://opencode.ai/zen)                           |
+| **Anthropic**            | Anthropic models (Sonnet, Opus, Haiku)           | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **OpenAI**               | GPT models and OpenAI endpoints                  | [platform.openai.com](https://platform.openai.com/api-keys)          |
+| **Ollama**               | Local models (no remote API key required)        | [Setup Guide](docs/OLLAMA_GUIDE.md)                                  |
+| **Custom**               | OpenAI-compatible API endpoint                   | Configure endpoint URL                                               |
+
+Notes:
+
+- `openai-codex` is currently intended for local engine-backed Tandem setups.
+- Standard OpenAI API keys remain supported for the normal `openai` provider.
 
 ## Web search setup
 
