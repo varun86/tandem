@@ -778,4 +778,95 @@ mod tests {
         std::env::remove_var("TANDEM_PROVIDER_MAX_TOKENS_OPENROUTER");
         assert_eq!(provider_max_tokens_for("openrouter"), 16_384);
     }
+
+    // OpenAI sends usage in a separate trailing chunk (choices:[]) when
+    // stream_options.include_usage is set.  The Done event must carry that
+    // usage even though it arrives after the finish_reason chunk.
+    #[tokio::test]
+    async fn chat_completions_trailing_usage_chunk_reaches_done_event() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener address");
+        let (tx, rx) = oneshot::channel::<(String, String, String)>();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            let request = read_single_http_request(&mut socket).await;
+            // finish_reason chunk arrives first, usage chunk arrives separately
+            let response_body = concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
+                "data: [DONE]\n\n",
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.as_bytes().len(),
+                response_body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+            socket.shutdown().await.expect("shutdown");
+            tx.send(request).expect("send");
+        });
+
+        let provider = OpenAICompatibleProvider {
+            id: "openai".to_string(),
+            name: "OpenAI".to_string(),
+            base_url: format!("http://{}/v1", addr),
+            api_key: Some("sk-test".to_string()),
+            default_model: "gpt-4o-mini".to_string(),
+            client: Client::new(),
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            attachments: Vec::new(),
+        }];
+        let cancel = CancellationToken::new();
+        let stream = provider
+            .stream(messages, None, ToolMode::Auto, None, cancel)
+            .await
+            .expect("stream");
+
+        let mut chunks = Vec::new();
+        futures::pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("chunk");
+            let is_done = matches!(chunk, StreamChunk::Done { .. });
+            chunks.push(chunk);
+            if is_done {
+                break;
+            }
+        }
+
+        let (_, _, body) = rx.await.expect("request");
+        server.await.expect("server");
+
+        assert!(
+            body.contains("\"include_usage\":true"),
+            "request body must include stream_options.include_usage: {body}"
+        );
+
+        let done = chunks
+            .iter()
+            .find_map(|c| match c {
+                StreamChunk::Done {
+                    finish_reason,
+                    usage,
+                } => Some((
+                    finish_reason.as_str(),
+                    usage.as_ref().map(|u| u.total_tokens),
+                )),
+                _ => None,
+            })
+            .expect("done chunk");
+        assert_eq!(done.0, "stop");
+        assert_eq!(
+            done.1,
+            Some(15),
+            "trailing usage chunk must reach the Done event"
+        );
+    }
 }

@@ -273,6 +273,11 @@ impl Provider for OpenAICompatibleProvider {
         let stream = try_stream! {
             let mut buffer = String::new();
             let mut tool_call_real_ids = HashMap::new();
+            // With stream_options.include_usage, OpenAI sends usage in a trailing
+            // chunk with choices:[] that arrives AFTER the finish_reason chunk but
+            // BEFORE [DONE].  Defer the Done yield to [DONE] so we always capture it.
+            let mut pending_finish_reason: Option<String> = None;
+            let mut pending_usage: Option<TokenUsage> = None;
             while let Some(chunk) = bytes.next().await {
                 if cancel.is_cancelled() {
                     yield StreamChunk::Done {
@@ -294,9 +299,12 @@ impl Provider for OpenAICompatibleProvider {
                         }
                         let payload = line.trim_start_matches("data: ").trim();
                         if payload == "[DONE]" {
+                            let finish_reason = pending_finish_reason
+                                .take()
+                                .unwrap_or_else(|| "stop".to_string());
                             yield StreamChunk::Done {
-                                finish_reason: "stop".to_string(),
-                                usage: None,
+                                finish_reason,
+                                usage: pending_usage.take(),
                             };
                             continue;
                         }
@@ -307,6 +315,12 @@ impl Provider for OpenAICompatibleProvider {
 
                         if let Some(detail) = extract_openai_error(&value) {
                             Err(anyhow::anyhow!(detail))?;
+                        }
+
+                        // Capture usage from any chunk — the usage-only trailing chunk
+                        // (choices:[]) arrives before [DONE] when include_usage is set.
+                        if let Some(u) = extract_usage(&value) {
+                            pending_usage = Some(u);
                         }
 
                         let choices = value
@@ -361,16 +375,19 @@ impl Provider for OpenAICompatibleProvider {
 
                             if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
                                 if !reason.is_empty() {
-                                    let usage = extract_usage(&value);
-                                    yield StreamChunk::Done {
-                                        finish_reason: reason.to_string(),
-                                        usage,
-                                    };
+                                    pending_finish_reason = Some(reason.to_string());
                                 }
                             }
                         }
                     }
                 }
+            }
+            // Stream ended without [DONE] — flush any pending finish.
+            if let Some(reason) = pending_finish_reason.take() {
+                yield StreamChunk::Done {
+                    finish_reason: reason,
+                    usage: pending_usage.take(),
+                };
             }
         };
 
