@@ -163,13 +163,7 @@ async fn run_automation_v2_executor_multi(state: AppState) {
                     Err(meta) => {
                         let mut meta = meta;
                         meta.tenant_context = run.tenant_context.clone();
-                        let mut scheduler = state.automation_scheduler.write().await;
-                        scheduler.track_queue_state(&run.run_id, meta.clone());
-                        if run.scheduler.as_ref() != Some(&meta) {
-                            let _ = state
-                                .set_automation_v2_run_scheduler_metadata(&run.run_id, meta)
-                                .await;
-                        }
+                        persist_queue_metadata_if_changed(&state, &run, meta).await;
                     }
                 }
             }
@@ -294,4 +288,139 @@ async fn execute_run_and_release_wrapped(state: AppState, run: AutomationV2RunRe
     // Explicitly release capacity and lock
     let mut scheduler = state.automation_scheduler.write().await;
     scheduler.release_run(&run_id);
+}
+
+async fn persist_queue_metadata_if_changed(
+    state: &AppState,
+    run: &AutomationV2RunRecord,
+    meta: crate::app::state::automation::SchedulerMetadata,
+) {
+    {
+        let mut scheduler = state.automation_scheduler.write().await;
+        scheduler.track_queue_state(&run.run_id, meta.clone());
+    }
+
+    if run.scheduler.as_ref() != Some(&meta) {
+        let _ = state
+            .set_automation_v2_run_scheduler_metadata(&run.run_id, meta)
+            .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::tests::ready_test_state;
+    use crate::{
+        AutomationAgentMcpPolicy, AutomationAgentProfile, AutomationAgentToolPolicy,
+        AutomationExecutionPolicy, AutomationFlowNode, AutomationFlowSpec, AutomationV2Schedule,
+        AutomationV2ScheduleType, AutomationV2Spec, AutomationV2Status, RoutineMisfirePolicy,
+    };
+    use serde_json::json;
+
+    fn test_automation(workspace_root: &str) -> AutomationV2Spec {
+        AutomationV2Spec {
+            automation_id: "auto-queue-metadata-deadlock-test".to_string(),
+            name: "Queue Metadata Deadlock Test".to_string(),
+            description: None,
+            status: AutomationV2Status::Active,
+            schedule: AutomationV2Schedule {
+                schedule_type: AutomationV2ScheduleType::Manual,
+                cron_expression: None,
+                interval_seconds: None,
+                timezone: "UTC".to_string(),
+                misfire_policy: RoutineMisfirePolicy::RunOnce,
+            },
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+            agents: vec![AutomationAgentProfile {
+                agent_id: "agent_researcher".to_string(),
+                template_id: None,
+                display_name: "Researcher".to_string(),
+                avatar_url: None,
+                model_policy: Some(json!({
+                    "default_model": "openai-codex/gpt-5.4-mini"
+                })),
+                skills: Vec::new(),
+                tool_policy: AutomationAgentToolPolicy {
+                    allowlist: vec!["*".to_string()],
+                    denylist: Vec::new(),
+                },
+                mcp_policy: AutomationAgentMcpPolicy {
+                    allowed_servers: Vec::new(),
+                    allowed_tools: None,
+                },
+                approval_policy: None,
+            }],
+            flow: AutomationFlowSpec {
+                nodes: vec![AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                    node_id: "assess".to_string(),
+                    agent_id: "agent_researcher".to_string(),
+                    objective: "Assess the workspace.".to_string(),
+                    depends_on: Vec::new(),
+                    input_refs: Vec::new(),
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    max_tool_calls: None,
+                    stage_kind: None,
+                    gate: None,
+                    metadata: None,
+                }],
+            },
+            execution: AutomationExecutionPolicy {
+                max_parallel_agents: Some(1),
+                max_total_runtime_ms: None,
+                max_total_tool_calls: None,
+                max_total_tokens: None,
+                max_total_cost_usd: None,
+            },
+            output_targets: Vec::new(),
+            created_at_ms: crate::now_ms(),
+            updated_at_ms: crate::now_ms(),
+            creator_id: "test".to_string(),
+            workspace_root: Some(workspace_root.to_string()),
+            metadata: None,
+            next_fire_at_ms: None,
+            last_fired_at_ms: None,
+            scope_policy: None,
+            watch_conditions: Vec::new(),
+            handoff_config: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_queue_metadata_if_changed_returns_without_scheduler_deadlock() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-queue-meta-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+        let workspace_root = workspace_root.to_string_lossy().to_string();
+        let state = ready_test_state().await;
+        let automation = test_automation(&workspace_root);
+        let run = state
+            .create_automation_v2_run(&automation, "manual")
+            .await
+            .expect("create queued run");
+
+        let meta = crate::app::state::automation::SchedulerMetadata {
+            tenant_context: tandem_types::TenantContext::local_implicit(),
+            queue_reason: Some(crate::app::state::automation::QueueReason::WorkspaceLock),
+            resource_key: Some(workspace_root.clone()),
+            rate_limited_provider: None,
+            queued_at_ms: crate::util::time::now_ms(),
+        };
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            persist_queue_metadata_if_changed(&state, &run, meta.clone()),
+        )
+        .await
+        .expect("queue metadata update should not deadlock");
+
+        let persisted = state
+            .get_automation_v2_run(&run.run_id)
+            .await
+            .expect("persisted run");
+        assert_eq!(persisted.scheduler, Some(meta));
+    }
 }

@@ -1490,9 +1490,13 @@ impl AppState {
                     }
                 }
                 AutomationRunStatus::Paused | AutomationRunStatus::AwaitingApproval => {
+                    let workspace_root = if automation_status_holds_workspace_lock(&run.status) {
+                        self.automation_v2_run_workspace_root(&run).await
+                    } else {
+                        None
+                    };
                     let mut scheduler = self.automation_scheduler.write().await;
                     if automation_status_holds_workspace_lock(&run.status) {
-                        let workspace_root = self.automation_v2_run_workspace_root(&run).await;
                         scheduler.reserve_workspace(&run.run_id, workspace_root.as_deref());
                     }
                     for (node_id, output) in &run.checkpoint.node_outputs {
