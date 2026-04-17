@@ -173,6 +173,7 @@ impl EngineLoop {
             let code_workflow_requested = infer_code_workflow_from_text(&text);
             let mut email_action_executed = false;
             let mut latest_email_action_note: Option<String> = None;
+            let mut email_tools_ever_offered = false;
             let intent = classify_intent(&text);
             let router_enabled = tool_router_enabled();
             let retrieval_enabled = semantic_tool_retrieval_enabled();
@@ -502,6 +503,9 @@ impl EngineLoop {
                     .iter()
                     .map(|schema| normalize_tool_name(&schema.name))
                     .collect::<HashSet<_>>();
+                if !email_tools_ever_offered && has_email_action_tools(&tool_schemas) {
+                    email_tools_ever_offered = true;
+                }
                 let offered_tool_preview = tool_schemas
                     .iter()
                     .take(8)
@@ -517,6 +521,7 @@ impl EngineLoop {
                         "selectedToolCount": allowed_tool_names.len(),
                     }),
                 ));
+                let estimated_prompt_chars: usize = messages.iter().map(|m| m.content.len()).sum();
                 let provider_connect_timeout =
                     Duration::from_millis(provider_stream_connect_timeout_ms() as u64);
                 let stream_result = tokio::time::timeout(
@@ -1549,16 +1554,45 @@ impl EngineLoop {
                     }
                 }
 
-                if let Some(usage) = provider_usage {
+                {
+                    let (prompt_tokens, completion_tokens, total_tokens, usage_source) =
+                        if let Some(usage) = provider_usage {
+                            (
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                                usage.total_tokens,
+                                "provider",
+                            )
+                        } else {
+                            // Provider did not return usage (e.g. streaming without
+                            // include_usage, or a backend that omits it). Estimate from
+                            // accumulated char counts using the ~4 chars-per-token heuristic.
+                            let est_prompt = (estimated_prompt_chars / 4) as u64;
+                            let est_completion = (completion.len() / 4) as u64;
+                            tracing::debug!(
+                                session_id = %session_id,
+                                provider_id = %provider_id,
+                                "provider.usage missing from stream; using char-count estimate \
+                                 (prompt_chars={estimated_prompt_chars} completion_chars={})",
+                                completion.len()
+                            );
+                            (
+                                est_prompt,
+                                est_completion,
+                                est_prompt.saturating_add(est_completion),
+                                "estimated",
+                            )
+                        };
                     self.event_bus.publish(EngineEvent::new(
                         "provider.usage",
                         json!({
                             "sessionID": session_id,
                             "correlationID": correlation_ref,
                             "messageID": user_message_id,
-                            "promptTokens": usage.prompt_tokens,
-                            "completionTokens": usage.completion_tokens,
-                            "totalTokens": usage.total_tokens,
+                            "promptTokens": prompt_tokens,
+                            "completionTokens": completion_tokens,
+                            "totalTokens": total_tokens,
+                            "usageSource": usage_source,
                         }),
                     ));
                 }
@@ -1902,11 +1936,15 @@ impl EngineLoop {
                     "I couldn't produce a final response for that run. Please retry your request."
                         .to_string();
             }
-            // M-3: Gate fires unconditionally when email was requested but no email
-            // action tool was executed. The completion text is NOT consulted — this
-            // prevents the model from bypassing the gate by rephrasing, and prevents
-            // false positives on legitimate text containing email keywords.
-            if email_delivery_requested && !email_action_executed {
+            // M-3: Gate fires when email was requested AND email-action tools were
+            // actually offered to the agent during at least one iteration but no
+            // email action tool was executed. The completion text is NOT consulted —
+            // this prevents the model from bypassing the gate by rephrasing, and
+            // prevents false positives on legitimate text containing email keywords.
+            // Skipping when no email tools were ever offered avoids clobbering
+            // legitimate output with a delivery-failure message the agent could not
+            // have avoided (e.g. prompts that mention gmail tool names as context).
+            if email_delivery_requested && email_tools_ever_offered && !email_action_executed {
                 let mut fallback = "I could not verify that an email was sent in this run. I did not complete the delivery action."
                     .to_string();
                 if let Some(note) = latest_email_action_note.as_ref() {

@@ -1459,9 +1459,37 @@ impl AppState {
                         recovered += 1;
                     }
                 }
-                AutomationRunStatus::Paused
-                | AutomationRunStatus::Pausing
-                | AutomationRunStatus::AwaitingApproval => {
+                AutomationRunStatus::Pausing => {
+                    // `Pausing` is a transient state — the executor task that
+                    // was about to finish pausing is gone after a restart and
+                    // will never complete the transition. Settle the run to
+                    // `Paused` so it (a) releases its workspace lock (Pausing
+                    // holds it, Paused does not) and (b) becomes eligible for
+                    // `/recover` via the API. Without this, the Pausing lock
+                    // perpetuates across every restart and blocks every new
+                    // run on the same workspace.
+                    let detail =
+                        "automation run settled to paused after server restart".to_string();
+                    if self
+                        .update_automation_v2_run(&run.run_id, |row| {
+                            row.status = AutomationRunStatus::Paused;
+                            if row.pause_reason.is_none() {
+                                row.pause_reason = Some(detail.clone());
+                            }
+                            automation::record_automation_lifecycle_event(
+                                row,
+                                "run_pausing_settled_on_restart",
+                                Some(detail.clone()),
+                                None,
+                            );
+                        })
+                        .await
+                        .is_some()
+                    {
+                        recovered += 1;
+                    }
+                }
+                AutomationRunStatus::Paused | AutomationRunStatus::AwaitingApproval => {
                     let mut scheduler = self.automation_scheduler.write().await;
                     if automation_status_holds_workspace_lock(&run.status) {
                         let workspace_root = self.automation_v2_run_workspace_root(&run).await;

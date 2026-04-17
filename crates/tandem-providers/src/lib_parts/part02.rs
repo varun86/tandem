@@ -162,6 +162,7 @@ impl Provider for OpenAICompatibleProvider {
             "model": model,
             "messages": wire_messages,
             "stream": true,
+            "stream_options": { "include_usage": true },
             "max_tokens": max_tokens,
         });
         if has_tools {
@@ -645,6 +646,7 @@ impl Provider for OpenAIResponsesProvider {
             let mut tool_call_names: HashMap<String, String> = HashMap::new();
             let mut started_tool_calls: HashSet<String> = HashSet::new();
             let mut ended_tool_calls: HashSet<String> = HashSet::new();
+            let mut tool_call_deltas_seen: HashSet<String> = HashSet::new();
             let mut emitted_message_text: HashSet<String> = HashSet::new();
             let mut emitted_reasoning_text: HashSet<String> = HashSet::new();
             let mut saw_completion = false;
@@ -827,6 +829,7 @@ impl Provider for OpenAIResponsesProvider {
                                     .unwrap_or_default()
                                     .to_string();
                                 if !delta.is_empty() {
+                                    tool_call_deltas_seen.insert(call_key.clone());
                                     yield StreamChunk::ToolCallDelta {
                                         id: call_key,
                                         args_delta: delta,
@@ -887,6 +890,7 @@ impl Provider for OpenAIResponsesProvider {
                                             }
                                         }
                                     } else if item_type == "function_call" {
+                                        saw_tool_calls = true;
                                         let call_id = item
                                             .get("call_id")
                                             .and_then(|v| v.as_str())
@@ -902,8 +906,38 @@ impl Provider for OpenAIResponsesProvider {
                                             item_id,
                                             value.get("output_index").and_then(|v| v.as_u64()),
                                         );
-                                        if !call_key.is_empty() && ended_tool_calls.insert(call_key.clone()) {
-                                            yield StreamChunk::ToolCallEnd { id: call_key };
+                                        if !call_key.is_empty() {
+                                            if started_tool_calls.insert(call_key.clone()) {
+                                                let name = responses_tool_call_name(item, &alias_to_original);
+                                                if !name.is_empty() {
+                                                    tool_call_names.insert(call_key.clone(), name.clone());
+                                                }
+                                                yield StreamChunk::ToolCallStart {
+                                                    id: call_key.clone(),
+                                                    name: if name.is_empty() {
+                                                        "tool".to_string()
+                                                    } else {
+                                                        name
+                                                    },
+                                                };
+                                            }
+                                            if !tool_call_deltas_seen.contains(&call_key) {
+                                                if let Some(args) = item
+                                                    .get("arguments")
+                                                    .and_then(|v| v.as_str())
+                                                {
+                                                    if !args.is_empty() {
+                                                        tool_call_deltas_seen.insert(call_key.clone());
+                                                        yield StreamChunk::ToolCallDelta {
+                                                            id: call_key.clone(),
+                                                            args_delta: args.to_string(),
+                                                        };
+                                                    }
+                                                }
+                                            }
+                                            if ended_tool_calls.insert(call_key.clone()) {
+                                                yield StreamChunk::ToolCallEnd { id: call_key };
+                                            }
                                         }
                                     }
                                 }
@@ -927,6 +961,66 @@ impl Provider for OpenAIResponsesProvider {
                                     finish_reason = "toolUse".to_string();
                                 }
                                 if !saw_completion {
+                                    if let Some(output) = response.get("output").and_then(|v| v.as_array()) {
+                                        for (index, item_value) in output.iter().enumerate() {
+                                            let Some(item) = item_value.as_object() else {
+                                                continue;
+                                            };
+                                            if item.get("type").and_then(|v| v.as_str()) != Some("function_call") {
+                                                continue;
+                                            }
+                                            saw_tool_calls = true;
+                                            let call_id = item
+                                                .get("call_id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .trim();
+                                            let item_id = item
+                                                .get("id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .trim();
+                                            let call_key = responses_tool_call_key(
+                                                call_id,
+                                                item_id,
+                                                Some(index as u64),
+                                            );
+                                            if call_key.is_empty() {
+                                                continue;
+                                            }
+                                            if started_tool_calls.insert(call_key.clone()) {
+                                                let name = responses_tool_call_name(item, &alias_to_original);
+                                                if !name.is_empty() {
+                                                    tool_call_names.insert(call_key.clone(), name.clone());
+                                                }
+                                                yield StreamChunk::ToolCallStart {
+                                                    id: call_key.clone(),
+                                                    name: if name.is_empty() {
+                                                        "tool".to_string()
+                                                    } else {
+                                                        name
+                                                    },
+                                                };
+                                            }
+                                            if !tool_call_deltas_seen.contains(&call_key) {
+                                                if let Some(args) = item
+                                                    .get("arguments")
+                                                    .and_then(|v| v.as_str())
+                                                {
+                                                    if !args.is_empty() {
+                                                        tool_call_deltas_seen.insert(call_key.clone());
+                                                        yield StreamChunk::ToolCallDelta {
+                                                            id: call_key.clone(),
+                                                            args_delta: args.to_string(),
+                                                        };
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if finish_reason == "stop" && saw_tool_calls {
+                                            finish_reason = "toolUse".to_string();
+                                        }
+                                    }
                                     for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
                                         if ended_tool_calls.insert(call_id.clone()) {
                                             yield StreamChunk::ToolCallEnd { id: call_id };

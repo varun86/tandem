@@ -290,8 +290,64 @@ pub(crate) fn render_automation_repair_brief(
         String::new()
     };
 
+    // Detect the "declared-output mistaken for input" failure mode: the prior
+    // attempt claimed a required source file was missing, but the filename is
+    // actually a declared OUTPUT for this node. Inject a corrective note so
+    // the next attempt treats the path as a write target instead of reading
+    // it and blocking on ENOENT.
+    let declared_artifacts =
+        super::prompting_impl::automation_node_declared_artifacts_to_create(node, None);
+    let misread_artifacts: Vec<String> = if declared_artifacts.is_empty() {
+        Vec::new()
+    } else {
+        let prior_summary = prior_output
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let prior_blocked_reason = prior_output
+            .get("blocked_reason")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let haystack = format!("{} {}", prior_summary, prior_blocked_reason).to_ascii_lowercase();
+        let mentions_missing = haystack.contains("missing")
+            || haystack.contains("not present")
+            || haystack.contains("enoent")
+            || haystack.contains("no such file")
+            || haystack.contains("does not exist")
+            || haystack.contains("not found");
+        if !mentions_missing {
+            Vec::new()
+        } else {
+            declared_artifacts
+                .iter()
+                .filter(|path| {
+                    let lowered_path = path.to_ascii_lowercase();
+                    let filename = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .map(|v| v.to_ascii_lowercase());
+                    haystack.contains(&lowered_path)
+                        || filename.is_some_and(|name| haystack.contains(&name))
+                })
+                .cloned()
+                .collect()
+        }
+    };
+    let declared_output_corrective_line = if misread_artifacts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nCORRECTIVE — declared outputs were misread as inputs:\n- The previous attempt blocked claiming these files were missing as sources: {}.\n- These paths are DECLARED OUTPUTS for THIS node to CREATE. They do NOT exist as prerequisite inputs and were never expected to.\n- For this retry: do NOT call `read` on them. Use `write`, `edit`, or `apply_patch` to create them with their full content. ENOENT on these paths is expected; proceed with `write` anyway.\n- Do NOT return a blocked status because these paths were absent — create them.",
+            misread_artifacts
+                .iter()
+                .map(|path| format!("`{}`", path))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}{}",
         node.node_id,
         reason,
         validation_basis_line,
@@ -308,6 +364,7 @@ pub(crate) fn render_automation_repair_brief(
         repair_attempts_remaining.saturating_sub(1),
         code_workflow_line,
         final_attempt_line,
+        declared_output_corrective_line,
     ))
 }
 

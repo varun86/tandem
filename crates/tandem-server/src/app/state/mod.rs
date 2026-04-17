@@ -130,6 +130,7 @@ pub struct AppState {
     pub routine_runs_path: PathBuf,
     pub automations_v2_path: PathBuf,
     pub automation_v2_runs_path: PathBuf,
+    pub automation_v2_runs_archive_path: PathBuf,
     pub optimization_campaigns_path: PathBuf,
     pub optimization_experiments_path: PathBuf,
     pub bug_monitor_config_path: PathBuf,

@@ -349,6 +349,56 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         }
     });
 
+    // --- Automation v2 runs archiver (runs at startup, then every 24h) ---
+    // Moves terminal (completed/failed/blocked/cancelled) runs older than
+    // TANDEM_AUTOMATION_V2_RUNS_RETENTION_DAYS (default 7) from the hot runs
+    // file to a sidecar archive file. The hot file is rewritten on every run
+    // status change, so keeping it small is critical for persistence
+    // throughput. Without this, the file grows unbounded and state writes
+    // slow to the point that in-memory state lags on-disk state by minutes.
+    let archiver_state = state.clone();
+    let _automation_v2_archiver = tokio::spawn(async move {
+        // Wait for startup to reach Ready so runtime-backed state is safe.
+        loop {
+            if archiver_state.is_automation_scheduler_stopping() {
+                return;
+            }
+            let startup = archiver_state.startup_snapshot().await;
+            if matches!(startup.status, crate::app::startup::StartupStatus::Ready) {
+                break;
+            }
+            if matches!(startup.status, crate::app::startup::StartupStatus::Failed) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        loop {
+            let retention_days: u64 = std::env::var("TANDEM_AUTOMATION_V2_RUNS_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(7);
+            if retention_days > 0 {
+                match archiver_state
+                    .archive_stale_automation_v2_runs(retention_days)
+                    .await
+                {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(
+                            archived = n,
+                            retention_days,
+                            "automation v2 archiver: pruned stale terminal runs"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "automation v2 archiver: archive failed");
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+        }
+    });
+
     // Channel listeners are started during runtime initialization
     // (`initialize_runtime()` in `engine/src/main.rs`) so `serve()` only owns
     // the HTTP server lifecycle.

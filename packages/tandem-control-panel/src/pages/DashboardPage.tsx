@@ -12,26 +12,13 @@ import {
   Toolbar,
 } from "../ui/index.tsx";
 import { EmptyState, formatJson } from "./ui";
+import { formatCompactNumber, formatUsd } from "../lib/format";
 import type { AppPageProps } from "./pageTypes";
 
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.[key])) return input[key];
   return [];
-}
-
-function formatCompactNumber(value: number) {
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
-    Number(value || 0)
-  );
-}
-
-function formatUsd(value: number) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
 }
 
 function normalizeStatusKey(value: any) {
@@ -45,6 +32,7 @@ function normalizeStatusKey(value: any) {
 export function DashboardPage(props: AppPageProps) {
   const { api, client, navigate, providerStatus } = props;
   const [selectedWorkflowContextRunId, setSelectedWorkflowContextRunId] = useState("");
+  const [tokenGranularity, setTokenGranularity] = useState<"day" | "week" | "month">("day");
   const visibleContextRunTypes = new Set(["workflow", "bug_monitor_triage"]);
 
   const health = useQuery({
@@ -135,6 +123,63 @@ export function DashboardPage(props: AppPageProps) {
         .toLowerCase()
     )
   );
+
+  const tokenUsageBuckets = useMemo(() => {
+    type Bucket = { label: string; runs: number; tokens: number; cost: number };
+    const map = new Map<string, Bucket>();
+    const now = Date.now();
+
+    let windowMs: number;
+    let bucketCount: number;
+    let keyFn: (d: Date) => string;
+    let labelFn: (key: string) => string;
+    if (tokenGranularity === "day") {
+      windowMs = 14 * 24 * 60 * 60 * 1000;
+      bucketCount = 14;
+      keyFn = (d) => d.toISOString().slice(0, 10);
+      labelFn = (k) => {
+        const [, m, day] = k.split("-");
+        return `${m}/${day}`;
+      };
+    } else if (tokenGranularity === "week") {
+      windowMs = 8 * 7 * 24 * 60 * 60 * 1000;
+      bucketCount = 8;
+      keyFn = (d) => {
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        return monday.toISOString().slice(0, 10);
+      };
+      labelFn = (k) => {
+        const [, m, day] = k.split("-");
+        return `w/${m}/${day}`;
+      };
+    } else {
+      windowMs = 6 * 30 * 24 * 60 * 60 * 1000;
+      bucketCount = 6;
+      keyFn = (d) => d.toISOString().slice(0, 7);
+      labelFn = (k) => {
+        const [y, m] = k.split("-");
+        return `${m}/${y.slice(2)}`;
+      };
+    }
+
+    const cutoff = now - windowMs;
+    for (const run of automationRunRows) {
+      const ts = Number(run?.created_at_ms || run?.updated_at_ms || 0);
+      if (!ts || ts < cutoff) continue;
+      const d = new Date(ts);
+      const key = keyFn(d);
+      const existing = map.get(key) ?? { label: labelFn(key), runs: 0, tokens: 0, cost: 0 };
+      existing.runs += 1;
+      existing.tokens += Number(run?.total_tokens || 0);
+      existing.cost += Number(run?.estimated_cost_usd || 0);
+      map.set(key, existing);
+    }
+
+    const sorted = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const maxTokens = Math.max(1, ...sorted.map(([, b]) => b.tokens));
+    return { buckets: sorted.map(([, b]) => b), maxTokens, bucketCount };
+  }, [automationRunRows, tokenGranularity]);
 
   const overviewStats = useMemo(
     () => [
@@ -289,6 +334,56 @@ export function DashboardPage(props: AppPageProps) {
             </div>
           </div>
         </div>
+      </PanelCard>
+
+      <PanelCard>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="tcp-page-eyebrow">Usage</div>
+            <h2 className="font-semibold">Token usage over time</h2>
+          </div>
+          <div className="flex gap-1">
+            {(["day", "week", "month"] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                className={`tcp-btn h-7 px-2 text-xs capitalize ${tokenGranularity === g ? "tcp-btn-active" : ""}`}
+                onClick={() => setTokenGranularity(g)}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
+        {tokenUsageBuckets.buckets.length === 0 ? (
+          <p className="tcp-subtle text-xs">No token data in this window yet.</p>
+        ) : (
+          <div className="grid gap-2">
+            {tokenUsageBuckets.buckets.map((bucket) => (
+              <div key={bucket.label} className="dashboard-bar-row">
+                <div className="dashboard-bar-meta">
+                  <span className="font-mono text-xs">{bucket.label}</span>
+                  <span className="dashboard-bar-count">
+                    {formatCompactNumber(bucket.tokens)} tok
+                    {bucket.cost > 0 ? ` · ${formatUsd(bucket.cost)}` : ""}
+                    {" · "}
+                    <span className="tcp-subtle">
+                      {bucket.runs} run{bucket.runs !== 1 ? "s" : ""}
+                    </span>
+                  </span>
+                </div>
+                <div className="dashboard-bar-track">
+                  <span
+                    className={`dashboard-bar-fill ${bucket.tokens > 0 ? "running" : "manual"}`}
+                    style={{
+                      width: `${Math.max(4, (bucket.tokens / tokenUsageBuckets.maxTokens) * 100)}%`,
+                    }}
+                  ></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </PanelCard>
 
       <SplitView

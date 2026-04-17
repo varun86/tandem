@@ -1,6 +1,6 @@
 {
   "name": "@frumu/tandem-panel",
-  "version": "0.4.30",
+  "version": "0.4.31",
   "description": "Full web control center for Tandem Engine (chat, routines, swarm, memory, channels, and ops)",
   "type": "module",
   "bin": {
@@ -58,7 +58,7 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.10.3",
+    "@preact/preset-vite": "^2.10.5",
     "@tailwindcss/forms": "^0.5.11",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

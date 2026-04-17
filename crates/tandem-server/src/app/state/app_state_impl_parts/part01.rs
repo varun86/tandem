@@ -62,6 +62,8 @@ impl AppState {
             routine_runs_path: config::paths::resolve_routine_runs_path(),
             automations_v2_path: config::paths::resolve_automations_v2_path(),
             automation_v2_runs_path: config::paths::resolve_automation_v2_runs_path(),
+            automation_v2_runs_archive_path: config::paths::resolve_automation_v2_runs_archive_path(
+            ),
             optimization_campaigns_path: config::paths::resolve_optimization_campaigns_path(),
             optimization_experiments_path: config::paths::resolve_optimization_experiments_path(),
             bug_monitor_config_path: config::paths::resolve_bug_monitor_config_path(),
@@ -1209,6 +1211,92 @@ impl AppState {
         }
         fs::write(&self.automation_v2_runs_path, &payload).await?;
         Ok(())
+    }
+
+    // Archive terminal automation v2 runs (completed/failed/blocked/cancelled)
+    // whose last update is older than `retention_days` to a sidecar file.
+    // Without this, the main runs file grows unbounded (we have seen 130MB+)
+    // which is then rewritten on every status change during a run — a severe
+    // write amplification that slows persistence, lags in-memory vs. on-disk
+    // state, and degrades the whole scheduler under load. Archiving preserves
+    // the historical records for audit/UI fallback while keeping the hot file
+    // small enough that rewrites are cheap. Returns the number of runs moved.
+    pub async fn archive_stale_automation_v2_runs(
+        &self,
+        retention_days: u64,
+    ) -> anyhow::Result<usize> {
+        let cutoff_ms = {
+            let now = now_ms();
+            let window = retention_days.saturating_mul(24 * 60 * 60 * 1000);
+            now.saturating_sub(window)
+        };
+        let archived: std::collections::HashMap<String, AutomationV2RunRecord> = {
+            let mut guard = self.automation_v2_runs.write().await;
+            let stale_ids: Vec<String> = guard
+                .iter()
+                .filter(|(_, run)| {
+                    matches!(
+                        run.status,
+                        AutomationRunStatus::Completed
+                            | AutomationRunStatus::Failed
+                            | AutomationRunStatus::Blocked
+                            | AutomationRunStatus::Cancelled
+                    ) && run.updated_at_ms <= cutoff_ms
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            let mut archived = std::collections::HashMap::new();
+            for id in &stale_ids {
+                if let Some(run) = guard.remove(id) {
+                    archived.insert(id.clone(), run);
+                }
+            }
+            archived
+        };
+        if archived.is_empty() {
+            return Ok(0);
+        }
+        let archived_count = archived.len();
+
+        // Merge into existing archive (read, merge, write). Existing archive
+        // file may be missing or unreadable; treat either as "start fresh"
+        // rather than refusing to archive — we do not want a bad archive
+        // file to prevent the hot file from being pruned.
+        let mut merged: std::collections::HashMap<String, AutomationV2RunRecord> =
+            if self.automation_v2_runs_archive_path.exists() {
+                match fs::read_to_string(&self.automation_v2_runs_archive_path).await {
+                    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+                    Err(_) => std::collections::HashMap::new(),
+                }
+            } else {
+                std::collections::HashMap::new()
+            };
+        for (id, run) in archived {
+            merged.insert(id, run);
+        }
+        let archive_payload = serde_json::to_string_pretty(&merged)?;
+
+        if let Some(parent) = self.automation_v2_runs_archive_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        // Atomic write: tmp file + rename. If the engine crashes mid-write we
+        // keep the previous archive intact rather than truncating it.
+        let tmp = self
+            .automation_v2_runs_archive_path
+            .with_extension("json.tmp");
+        fs::write(&tmp, archive_payload.as_bytes()).await?;
+        fs::rename(&tmp, &self.automation_v2_runs_archive_path).await?;
+
+        // Persist the shrunk hot file so the next startup loads a small map.
+        self.persist_automation_v2_runs().await?;
+
+        tracing::info!(
+            archived = archived_count,
+            retention_days,
+            archive_path = %self.automation_v2_runs_archive_path.display(),
+            "archived stale automation v2 runs"
+        );
+        Ok(archived_count)
     }
 
     pub async fn load_optimization_campaigns(&self) -> anyhow::Result<()> {

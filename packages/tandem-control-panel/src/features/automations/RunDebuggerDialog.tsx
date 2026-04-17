@@ -11,6 +11,7 @@ import { WorkflowRunTelemetryPanel } from "./WorkflowRunTelemetryPanel";
 import { WorkflowRunSummaryPanel } from "./WorkflowRunSummaryPanel";
 import { WorkflowTaskSignalsPanel } from "./WorkflowTaskSignalsPanel";
 import { formatJson } from "../../pages/ui";
+import { formatCompactNumber, formatUsd } from "../../lib/format";
 
 export function RunDebuggerDialog({ state, actions, helpers }: any) {
   const {
@@ -178,6 +179,12 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                 {" · "}active sessions: {workflowActiveSessionCount(selectedRun)}
               </div>
             ) : null}
+            <div className="tcp-subtle text-xs">
+              tokens: {formatCompactNumber(Number(selectedRun?.total_tokens || 0))}
+              {" ("}prompt {formatCompactNumber(Number(selectedRun?.prompt_tokens || 0))}
+              {" · "}completion {formatCompactNumber(Number(selectedRun?.completion_tokens || 0))}
+              {") · "}cost: {formatUsd(Number(selectedRun?.estimated_cost_usd || 0))}
+            </div>
           </div>
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
             <span className={statusColor(runStatus)}>{runStatus || "unknown"}</span>
@@ -433,6 +440,34 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                           ).trim() ? (
                             <span className="tcp-badge-warn">artifact rejected</span>
                           ) : null}
+                        </div>
+                      ) : null}
+                      {selectedBoardTaskOutput?.cost_provenance ? (
+                        <div className="tcp-subtle text-xs">
+                          node tokens:{" "}
+                          {formatCompactNumber(
+                            Number(selectedBoardTaskOutput.cost_provenance.tokens_in || 0) +
+                              Number(selectedBoardTaskOutput.cost_provenance.tokens_out || 0)
+                          )}
+                          {" (in "}
+                          {formatCompactNumber(
+                            Number(selectedBoardTaskOutput.cost_provenance.tokens_in || 0)
+                          )}
+                          {" · out "}
+                          {formatCompactNumber(
+                            Number(selectedBoardTaskOutput.cost_provenance.tokens_out || 0)
+                          )}
+                          {") · node cost: "}
+                          {formatUsd(
+                            Number(selectedBoardTaskOutput.cost_provenance.computed_cost_usd || 0)
+                          )}
+                          {" · cumulative: "}
+                          {formatUsd(
+                            Number(
+                              selectedBoardTaskOutput.cost_provenance
+                                .cumulative_run_cost_usd_at_step_end || 0
+                            )
+                          )}
                         </div>
                       ) : null}
                       {!selectedBoardTaskIsWorkflowNode ? (

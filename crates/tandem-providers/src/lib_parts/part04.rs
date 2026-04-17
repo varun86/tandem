@@ -399,6 +399,122 @@ mod tests {
         assert_eq!(done.1, Some(12));
     }
 
+    #[tokio::test]
+    async fn openai_codex_stream_recovers_function_call_args_without_deltas() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener address");
+        let (tx, rx) = oneshot::channel();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            let request = read_single_http_request(&mut socket).await;
+            let response_body = concat!(
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_abc\",\"name\":\"write\"}}\n\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_abc\",\"name\":\"write\",\"arguments\":\"{\\\"path\\\":\\\"assess.json\\\",\\\"content\\\":\\\"{}\\\"}\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_abc\",\"name\":\"write\",\"arguments\":\"{\\\"path\\\":\\\"assess.json\\\",\\\"content\\\":\\\"{}\\\"}\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":20,\"total_tokens\":30}}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.as_bytes().len(),
+                response_body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            socket.shutdown().await.expect("shutdown socket");
+            tx.send(request).expect("send request");
+        });
+
+        let provider = OpenAIResponsesProvider {
+            id: "openai-codex".to_string(),
+            name: "OpenAI Codex".to_string(),
+            base_url: format!("http://{}/codex", addr),
+            api_key: Some("codex-test-token".to_string()),
+            default_model: "gpt-5.4-mini".to_string(),
+            models: codex_supported_models(272_000),
+            client: Client::new(),
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "write a file".to_string(),
+            attachments: Vec::new(),
+        }];
+        let tools = vec![ToolSchema::new(
+            "write",
+            "Write a file.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                },
+                "required": ["path", "content"]
+            }),
+        )];
+        let cancel = CancellationToken::new();
+        let stream = provider
+            .stream(messages, None, ToolMode::Auto, Some(tools), cancel)
+            .await
+            .expect("stream");
+
+        let mut chunks = Vec::new();
+        futures::pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("stream chunk");
+            let is_done = matches!(chunk, StreamChunk::Done { .. });
+            chunks.push(chunk);
+            if is_done {
+                break;
+            }
+        }
+
+        let _ = rx.await.expect("request");
+        server.await.expect("server task");
+
+        let tool_start_count = chunks
+            .iter()
+            .filter(|chunk| matches!(chunk, StreamChunk::ToolCallStart { .. }))
+            .count();
+        assert_eq!(tool_start_count, 1, "expected exactly one ToolCallStart");
+
+        let tool_end_count = chunks
+            .iter()
+            .filter(|chunk| matches!(chunk, StreamChunk::ToolCallEnd { .. }))
+            .count();
+        assert_eq!(tool_end_count, 1, "expected exactly one ToolCallEnd");
+
+        let accumulated_args = chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                StreamChunk::ToolCallDelta { args_delta, .. } => Some(args_delta.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        assert!(
+            accumulated_args.contains("\"path\":\"assess.json\""),
+            "recovered args missing path: {accumulated_args}"
+        );
+        assert!(
+            accumulated_args.contains("\"content\""),
+            "recovered args missing content key: {accumulated_args}"
+        );
+
+        let done = chunks
+            .iter()
+            .find_map(|chunk| match chunk {
+                StreamChunk::Done { finish_reason, .. } => Some(finish_reason.as_str()),
+                _ => None,
+            })
+            .expect("done chunk");
+        assert_eq!(done, "toolUse");
+    }
+
     #[test]
     fn codex_supported_models_include_extended_catalog() {
         let models = codex_supported_models(272_000);

@@ -422,6 +422,15 @@ fn derive_terminal_run_state(
             .unwrap_or(0);
         let max_attempts = crate::app::state::automation_node_max_attempts(node);
         if pending_nodes.contains(&node.node_id) && attempts >= max_attempts {
+            // Don't flag a node as failed if its latest attempt is still
+            // mid-execution. The attempt counter bumps on node_started; until
+            // the outcome lands, pending + attempts>=max is an in-flight run,
+            // not an exhaustion. A true exhaustion leaves a terminal-status
+            // outcome in node_outputs (handled below).
+            let has_outcome = run.checkpoint.node_outputs.contains_key(&node.node_id);
+            if !has_outcome {
+                continue;
+            }
             failed_nodes.push(node.node_id.clone());
         }
     }
@@ -1001,7 +1010,9 @@ pub async fn run_automation_v2_run(
                         .map(|row| {
                             matches!(
                                 row.status,
-                                AutomationRunStatus::Running | AutomationRunStatus::Queued
+                                AutomationRunStatus::Running
+                                    | AutomationRunStatus::Queued
+                                    | AutomationRunStatus::Failed
                             )
                         })
                         .unwrap_or(false);
@@ -1113,6 +1124,14 @@ pub async fn run_automation_v2_run(
                                         if !row.checkpoint.pending_nodes.iter().any(|id| id == reset_id) {
                                             row.checkpoint.pending_nodes.push(reset_id.clone());
                                         }
+                                        // Reset the attempt counter for rolled-back nodes so
+                                        // they have a fresh budget to re-run. Without this,
+                                        // an ancestor that previously completed at attempt N
+                                        // would enter re-execution with attempts==N; while
+                                        // its next attempt is mid-flight, derive_terminal_run_state
+                                        // can see (pending + attempts>=max) and falsely mark
+                                        // the run as failed.
+                                        row.checkpoint.node_attempts.remove(reset_id);
                                     }
                                     row.status = AutomationRunStatus::Queued;
                                     row.checkpoint.last_failure = None;
@@ -1263,6 +1282,37 @@ pub async fn run_automation_v2_run(
                             );
                             if !blocked && !needs_repair && !verify_failed {
                                 crate::app::state::record_milestone_promotions(&automation, row, &node_id);
+                            }
+                            // Rescue: if this node just succeeded but the run is Failed because
+                            // of this node (concurrent batch-mate set it before our Ok landed),
+                            // clear the failure and resume so downstream nodes can still run.
+                            if matches!(row.status, AutomationRunStatus::Failed)
+                                && !blocked
+                                && !needs_repair
+                                && !verify_failed
+                                && row
+                                    .checkpoint
+                                    .last_failure
+                                    .as_ref()
+                                    .is_some_and(|f| f.node_id == node_id)
+                            {
+                                row.checkpoint.last_failure = None;
+                                row.status = AutomationRunStatus::Running;
+                                row.detail = Some(format!(
+                                    "recovered: node `{}` succeeded after execution error",
+                                    node_id
+                                ));
+                                crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
+                                    row,
+                                    "node_recovered",
+                                    Some(format!("node `{}` recovered from execution error; run resuming", node_id)),
+                                    None,
+                                    Some(json!({
+                                        "node_id": node_id,
+                                        "attempt": attempt,
+                                        "session_id": session_id,
+                                    })),
+                                );
                             }
                             crate::app::state::refresh_automation_runtime_state(&automation, row);
                         })
@@ -1423,7 +1473,9 @@ pub async fn run_automation_v2_run(
                                     });
                             })
                             .await;
-                        break;
+                        // Don't break early — continue processing remaining outcomes so
+                        // sibling nodes that succeeded in the same batch still get recorded.
+                        continue;
                     }
                     let _ = state
                         .update_automation_v2_run(&run_id, |row| {

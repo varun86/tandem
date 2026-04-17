@@ -11,11 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow output path previewing**: The Studio workflow editor now shows draft, saved, and next-run-resolved output paths so operators can see exactly how timestamped filenames will materialize before saving or running.
 - **Workflow output token guidance**: Studio now documents the supported runtime filename tokens directly in workflow settings and stage editing, reducing guesswork when authoring timestamped reports and artifacts.
+- **Declared output artifacts in node prompts**: Automation prompts now include a dedicated "Declared Output Artifacts (CREATE — do not READ)" section when a node has `metadata.artifacts`, `builder.output_files`, or `builder.must_write_files`. Agents are told explicitly these paths are outputs to create, ENOENT on them is expected, and returning a "missing source file" blocker is not acceptable — fixing a class of stalled runs where agents misread their own outputs as prerequisite inputs.
+- **Declared-output repair corrective**: The repair brief now detects when a prior attempt claimed a declared output was a missing source file and prepends a targeted corrective instruction on the next attempt, so the retry doesn't repeat the misinterpretation.
+- **Token usage capture on streaming chat completions**: OpenAI-compatible chat-completions streaming now requests `stream_options.include_usage`, restoring real per-call prompt/completion/total token counts (and downstream cost attribution) that were previously silently zero.
+- **Dashboard token usage panel**: The control panel dashboard now shows token usage and estimated cost bucketed by day/week/month, not just aggregate totals.
+- **Run debugger token/cost display**: The run debugger now surfaces prompt, completion, total tokens, and estimated USD cost per run so operators can see real spend without leaving the UI.
+- **Daily automation run archiver**: A background task now moves terminal (`completed`/`failed`/`blocked`/`cancelled`) automation runs older than `TANDEM_AUTOMATION_V2_RUNS_RETENTION_DAYS` (default 7) out of the hot `automation_v2_runs.json` and into `automation_v2_runs_archive.json`. Runs at startup and every 24 hours. Archive file is written atomically via temp-file + rename.
+- **Executor supervisor self-healing**: The automation v2 executor now wraps its main loop in `catch_unwind` and respawns on panic, so a single state panic can no longer strand queued runs forever with no polling.
 
 ### Changed
 
 - **Workflow output path canonicalization**: Legacy filename placeholders such as `YYYY-MM-DD_HH-MM-SS`, `YYYY-MM-DD_HHMM`, and `{{date}}` are now normalized to Tandem-native runtime tokens on automation save/load instead of being stored literally.
 - **Workflow planner timeout defaults**: Workflow generation now gives Codex-backed planning more time before aborting, making long-form workflow drafting and mission-plan generation less brittle.
+- **Provider picker decluttering**: Non-settings provider/model selectors now show only configured or connected providers, and internal channel/MCP config providers are filtered out so the global catalog stays available where it matters without cluttering everyday pickers.
+- **Control panel number/currency formatters hoisted**: `formatCompactNumber` and `formatUsd` moved from `DashboardPage.tsx` into shared `src/lib/format.ts` so run debugger, dashboard, and other pages render token/cost values identically.
 
 ### Fixed
 
@@ -24,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Saved automation auto-heal**: Already-persisted malformed workflows now repair their output contracts, upstream input refs, and output path templates automatically on load/save instead of requiring manual JSON surgery.
 - **Timestamped workflow filenames**: Automation prompts, validators, and artifact reconciliation now resolve runtime filename placeholders consistently, so workflows that ask for timestamped outputs stop writing to literal `YYYY-MM-DD...` paths or failing validation against unresolved targets.
 - **Studio output-path authoring UX**: Workflow authors now get inline warnings when an output path still contains ambiguous placeholder text, making bad timestamp/path patterns much easier to catch before a run.
+- **Email-delivery gate false positives**: The engine-loop email gate that overwrites the agent's completion text only fires when email-action tools were actually offered during at least one iteration, not just from substring-matching "send" + "email" in the rendered prompt. Previously, unrelated nodes (e.g. blog authors that saw gmail tool names in an MCP catalog listing) had their legitimate output clobbered with "I could not verify that an email was sent".
+- **Concurrent-batch outcome loss in the executor**: When one outcome in a `join_all` batch produced a terminal `Err`, the remaining sibling outcomes in the same batch were silently dropped. The loop now `continue`s instead of `break`ing, preserving successful siblings.
+- **Spurious run-level failure from batch-mates**: A node that succeeded now rescues a run that was prematurely flipped to `Failed` by a batch-mate's terminal error (clears `last_failure` for that node, resets status to `Running`, and emits `node_recovered`).
+- **Approval rollback attempt budget**: When an approval rollback re-queues upstream nodes, their `node_attempts` counters now reset. Previously a rolled-back ancestor inherited its prior attempt count, so its next run could hit max attempts mid-flight and cause `derive_terminal_run_state` to false-positive the whole run as failed.
+- **Mid-execution failure false positive**: `derive_terminal_run_state` no longer flags a pending node as `failed` purely because its `attempts >= max_attempts`. It now also requires a terminal outcome in `node_outputs`, so a node whose latest attempt is still in flight doesn't get counted as exhausted.
+- **Executor startup race**: `run_automation_v2_executor` now waits for the startup snapshot to report `Ready` before calling `recover_in_flight_runs`. The executor task no longer panics on `AppState::deref` when the runtime `OnceLock` isn't yet populated, which previously left queued runs stranded with no polling for the lifetime of the engine.
+- **`Pausing` zombie workspace lock**: Automation v2 runs stuck in `Pausing` state across a restart are now settled to `Paused` at recovery time so they release their workspace lock. Previously a stale `Pausing` run from days ago could perpetually re-acquire its lock on every startup and block every new run on the same workspace.
+
+### Deprecated
+
+- **`TANDEM_AUTOMATION_V2_RUNS_RETENTION_DAYS`** (new env var): retention window for terminal runs in the hot automation runs file. Default `7`. Set to `0` to disable archiving entirely; set higher for longer hot-file retention.
 
 ## [0.4.30] - Released 2026-04-16
 

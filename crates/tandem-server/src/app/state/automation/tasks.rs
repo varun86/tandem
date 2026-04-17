@@ -13,14 +13,60 @@ use crate::automation_v2::types::{AutomationRunStatus, AutomationStopKind, Autom
 const STALE_RUNNING_AUTOMATION_RUN_MS: u64 = 300_000;
 
 pub async fn run_automation_v2_executor(state: AppState) {
-    // Step 6: Call recover_in_flight_runs on startup
+    // Self-supervise: if any panic escapes, log it and respawn the inner loop
+    // so queued automation runs don't get stranded forever when a single
+    // deref-or-lookup panics deep in state code. Without this, one bad run
+    // can kill the executor task permanently for the lifetime of the engine.
+    loop {
+        let state_clone = state.clone();
+        let result = AssertUnwindSafe(run_automation_v2_executor_supervised(state_clone))
+            .catch_unwind()
+            .await;
+        match result {
+            Ok(()) => return,
+            Err(_) => {
+                tracing::error!(
+                    "automation_v2_executor panicked; respawning in 1s so queued runs can be polled"
+                );
+                if state.is_automation_scheduler_stopping() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+async fn run_automation_v2_executor_supervised(state: AppState) {
+    // Wait for startup to reach Ready before touching runtime-backed state.
+    // `recover_in_flight_runs` derefs `AppState::runtime`; if the OnceLock
+    // isn't populated yet, the deref panics and kills this task permanently,
+    // which leaves queued automation runs stranded with no executor polling.
+    loop {
+        if state.is_automation_scheduler_stopping() {
+            return;
+        }
+        let startup = state.startup_snapshot().await;
+        if matches!(startup.status, crate::app::startup::StartupStatus::Ready) {
+            break;
+        }
+        if matches!(startup.status, crate::app::startup::StartupStatus::Failed) {
+            tracing::warn!("automation_v2_executor exiting: startup failed");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    tracing::info!("automation_v2_executor: startup ready, beginning recovery");
     let _ = state.recover_in_flight_runs().await;
+    tracing::info!("automation_v2_executor: recovery complete, entering main loop");
 
     if crate::config::env::resolve_scheduler_mode() == crate::config::env::SchedulerMode::Multi {
         run_automation_v2_executor_multi(state).await;
     } else {
         run_automation_v2_executor_single(state).await;
     }
+    tracing::info!("automation_v2_executor: main loop exited");
 }
 
 async fn run_automation_v2_executor_single(state: AppState) {

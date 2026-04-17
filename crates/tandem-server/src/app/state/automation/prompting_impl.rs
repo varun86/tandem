@@ -23,6 +23,49 @@ fn automation_prompt_render_path_bullets(paths: &[String]) -> String {
         .join("\n")
 }
 
+pub(crate) fn automation_node_declared_artifacts_to_create(
+    node: &AutomationFlowNode,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push_from = |out: &mut Vec<String>, values: &[String]| {
+        for raw in values {
+            let replaced = automation_runtime_placeholder_replace(raw, runtime_values);
+            let trimmed = replaced.trim().trim_matches('`').trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+        }
+    };
+    if let Some(metadata) = node.metadata.as_ref() {
+        if let Some(list) = metadata.get("artifacts").and_then(Value::as_array) {
+            let vals: Vec<String> = list
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            push_from(&mut out, &vals);
+        }
+    }
+    push_from(
+        &mut out,
+        &automation_node_builder_string_array(node, "output_files"),
+    );
+    push_from(
+        &mut out,
+        &automation_node_builder_string_array(node, "must_write_files"),
+    );
+    let read_only_files: HashSet<String> =
+        enforcement::automation_node_read_only_source_of_truth_files(node)
+            .into_iter()
+            .map(|p| p.to_ascii_lowercase())
+            .collect();
+    out.retain(|path| !read_only_files.contains(&path.to_ascii_lowercase()));
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn automation_prompt_extract_workspace_paths(
     text: &str,
     allow_bare_filenames: bool,
@@ -743,7 +786,7 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             task_id, task_kind, repo_root, write_scope, acceptance_criteria, task_dependencies, verification_state, task_owner, verification_command, if project_backlog_tasks { "yes" } else { "no" }
         ));
     }
-    if let Some(output_path) = required_output_path {
+    if let Some(ref output_path) = required_output_path {
         let approved_write_targets_rule = if required_workspace_write_targets.is_empty() {
             "- Only write declared workflow artifact files.".to_string()
         } else {
@@ -779,6 +822,28 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         sections.push(format!(
             "Required Workspace Writes:\n- These workspace files are part of the node objective and are approved write targets for this run.\n{}\n- Keep these writes inside the workspace root and use full file contents when creating a file.",
             automation_prompt_render_path_bullets(&required_workspace_write_targets)
+        ));
+    }
+    // Declared output artifacts (e.g. metadata.artifacts, builder.output_files,
+    // builder.must_write_files): agents sometimes misread these filenames as
+    // prerequisite inputs and block the run with "required source file missing"
+    // after `read` returns ENOENT. Surface them explicitly as OUTPUTS TO CREATE
+    // so the model treats an ENOENT as expected and proceeds to `write`.
+    let declared_output_artifacts =
+        automation_node_declared_artifacts_to_create(node, runtime_values);
+    let declared_output_artifacts = declared_output_artifacts
+        .into_iter()
+        .filter(|path| {
+            required_output_path
+                .as_ref()
+                .is_none_or(|output_path| path != output_path)
+        })
+        .filter(|path| !required_workspace_write_targets.contains(path))
+        .collect::<Vec<_>>();
+    if !declared_output_artifacts.is_empty() {
+        sections.push(format!(
+            "Declared Output Artifacts (CREATE — do not READ):\n- These filenames are OUTPUTS this node must create in this turn; they are NOT prerequisite inputs.\n- Do NOT call `read` on them expecting existing content. If a `read` on one of these paths returns ENOENT, that is expected — proceed directly to `write`/`edit`/`apply_patch` with the full file body.\n- Do NOT block the run with a \"required source file missing\" status because one of these paths is absent. Create it.\n{}\n- Write tools are available when this section is present; if you receive this prompt, treat `apply_patch`, `edit`, or `write` as usable for these paths.",
+            automation_prompt_render_path_bullets(&declared_output_artifacts)
         ));
     }
     let triage_gate = node

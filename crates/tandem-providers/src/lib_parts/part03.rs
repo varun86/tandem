@@ -167,17 +167,10 @@ fn extract_responses_usage(
     response: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<TokenUsage> {
     let usage = response.get("usage")?.as_object()?;
-    let cached_tokens = usage
-        .get("input_tokens_details")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| obj.get("cached_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
     let prompt_tokens = usage
         .get("input_tokens")
         .and_then(|v| v.as_u64())
-        .unwrap_or(0)
-        .saturating_sub(cached_tokens);
+        .unwrap_or(0);
     let completion_tokens = usage
         .get("output_tokens")
         .and_then(|v| v.as_u64())
@@ -372,4 +365,3 @@ fn extract_openai_error(value: &serde_json::Value) -> Option<String> {
                 .map(|s| s.to_string())
         })
 }
-

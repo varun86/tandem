@@ -278,7 +278,9 @@ export function WorkflowTaskActionsPanel({
             </div>
           </div>
         ) : null}
-        {selectedBoardTaskStateNormalized === "blocked" && continueBlockedNodeId ? (
+        {canTaskContinue &&
+        selectedBoardTaskStateNormalized === "blocked" &&
+        continueBlockedNodeId ? (
           <div className="space-y-1">
             <button
               type="button"
