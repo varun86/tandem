@@ -1,4 +1,5 @@
 import { formatJson } from "../../pages/ui";
+import { normalizeManagedFilesExplorerPath } from "../files/explorerHandoff";
 
 type WorkflowTaskSignalsPanelProps = {
   selectedBoardTask: any;
@@ -11,6 +12,7 @@ type WorkflowTaskSignalsPanelProps = {
   selectedBoardTaskBlockerCategory: string;
   selectedBoardTaskValidationBasis: any;
   selectedBoardTaskReceiptTimeline: any[];
+  onOpenPath?: (path: string) => void;
 };
 
 export function WorkflowTaskSignalsPanel({
@@ -24,6 +26,7 @@ export function WorkflowTaskSignalsPanel({
   selectedBoardTaskBlockerCategory,
   selectedBoardTaskValidationBasis,
   selectedBoardTaskReceiptTimeline,
+  onOpenPath,
 }: WorkflowTaskSignalsPanelProps) {
   return (
     <>
@@ -67,12 +70,19 @@ export function WorkflowTaskSignalsPanel({
               {selectedBoardTaskTouchedFiles.length ? (
                 <div className="flex flex-wrap gap-1">
                   {selectedBoardTaskTouchedFiles.map((file) => (
-                    <span
+                    <button
                       key={file}
-                      className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                      type="button"
+                      className={`rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300 ${normalizeManagedFilesExplorerPath(file) && onOpenPath ? "cursor-pointer hover:border-sky-500/40 hover:text-sky-100" : "cursor-default"}`.trim()}
+                      onClick={() => {
+                        const normalized = normalizeManagedFilesExplorerPath(file);
+                        if (!normalized || !onOpenPath) return;
+                        onOpenPath(normalized);
+                      }}
+                      disabled={!normalizeManagedFilesExplorerPath(file) || !onOpenPath}
                     >
                       {file}
-                    </span>
+                    </button>
                   ))}
                 </div>
               ) : (
@@ -137,6 +147,23 @@ export function WorkflowTaskSignalsPanel({
               accepted path:{" "}
               {String(selectedBoardTaskArtifactValidation?.accepted_artifact_path || "").trim() ||
                 "n/a"}
+              {normalizeManagedFilesExplorerPath(
+                String(selectedBoardTaskArtifactValidation?.accepted_artifact_path || "")
+              ) && onOpenPath ? (
+                <button
+                  type="button"
+                  className="ml-2 rounded-md border border-sky-500/30 bg-sky-950/20 px-2 py-0.5 text-[10px] text-sky-100"
+                  onClick={() =>
+                    onOpenPath(
+                      normalizeManagedFilesExplorerPath(
+                        String(selectedBoardTaskArtifactValidation?.accepted_artifact_path || "")
+                      )
+                    )
+                  }
+                >
+                  Open in Files
+                </button>
+              ) : null}
             </div>
             <div>
               rejected reason:{" "}

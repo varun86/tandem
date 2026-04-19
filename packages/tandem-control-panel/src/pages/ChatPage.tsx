@@ -12,6 +12,7 @@ import {
   saveStoredSessionId,
 } from "../features/chat/session";
 import { normalizeMessages, type ChatMessage } from "../features/chat/messages";
+import { openFilesExplorer } from "../features/files/explorerHandoff";
 import {
   extractRunId,
   extractToolCallId,
@@ -30,7 +31,7 @@ import {
 } from "../features/chat/streaming";
 import { subscribeSse } from "../services/sse.js";
 
-const CHAT_UPLOAD_DIR = "control-panel";
+const CHAT_UPLOAD_DIR = "uploads";
 const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 const EXT_MIME: Record<string, string> = {
@@ -1406,6 +1407,11 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             showThinking={showThinking}
             thinkingText="Thinking"
             attachments={uploads.map((u) => ({ path: u.path, name: u.path, size: u.size }))}
+            onOpenAttachment={(index) => {
+              const file = uploads[index];
+              if (!file?.path) return;
+              openFilesExplorer(navigate, { path: file.path });
+            }}
             onRemoveAttachment={(index) => setUploads((prev) => prev.filter((_, i) => i !== index))}
             onAttach={() => fileInputRef.current?.click()}
             attachDisabled={sending}

@@ -78,7 +78,7 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
   },
   files: {
     title: "Files",
-    subtitle: "Uploaded assets and workspace-adjacent file management.",
+    subtitle: "Managed uploads, artifacts, and exports.",
   },
   "packs-detail": {
     title: "Packs",

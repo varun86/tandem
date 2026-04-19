@@ -55,19 +55,14 @@ function normalizeProjects(raw: any) {
           ...(record as any),
         }))
       : [];
-  return rows
-    .map((row: any) => ({
-      slug: String(row?.slug || "").trim(),
-      repoUrl: String(row?.repo_url || row?.repoUrl || "").trim(),
-      taskSource: row?.task_source || row?.taskSource || {},
-      implicit: row?.implicit === true,
-    }))
-    .filter((row: any) => row.slug);
-
   const bySignature = new Map<string, any>();
   for (const row of rows) {
-    const taskSource = row?.taskSource || {};
+    const taskSource = row?.task_source || row?.taskSource || {};
     const taskType = String(taskSource?.type || "").trim();
+    const repo = row?.repo || {};
+    const repoUrl = String(
+      row?.repo_url || row?.repoUrl || repo?.clone_url || repo?.cloneUrl || ""
+    ).trim();
     const signature =
       taskType === "github_project" &&
       String(taskSource?.owner || "").trim() &&
@@ -76,25 +71,56 @@ function normalizeProjects(raw: any) {
         ? `github:${String(taskSource.owner).trim().toLowerCase()}/${String(taskSource.repo)
             .trim()
             .toLowerCase()}#${String(taskSource.project).trim()}`
-        : row.repoUrl
-          ? `repo:${row.repoUrl.toLowerCase()}`
+        : repoUrl
+          ? `repo:${repoUrl.toLowerCase()}`
           : `slug:${row.slug}`;
     const current = bySignature.get(signature);
     if (!current) {
       bySignature.set(signature, row);
       continue;
     }
-    const currentScore = (current.implicit ? 0 : 10) + (current.repoUrl ? 1 : 0);
-    const nextScore = (row.implicit ? 0 : 10) + (row.repoUrl ? 1 : 0);
+    const currentRepo = current?.repo || {};
+    const currentRepoUrl = String(
+      current?.repo_url || current?.repoUrl || currentRepo?.clone_url || currentRepo?.cloneUrl || ""
+    ).trim();
+    const currentScore = (current.implicit ? 0 : 10) + (currentRepoUrl ? 1 : 0);
+    const nextScore = (row.implicit ? 0 : 10) + (repoUrl ? 1 : 0);
     if (nextScore > currentScore) {
       bySignature.set(signature, row);
     }
   }
 
-  return Array.from(bySignature.values()).sort((a: any, b: any) => {
-    if (a.implicit !== b.implicit) return a.implicit ? 1 : -1;
-    return a.slug.localeCompare(b.slug);
-  });
+  return Array.from(bySignature.values())
+    .map((row: any) => {
+      const repo = row?.repo || {};
+      return {
+        slug: String(row?.slug || "").trim(),
+        name: String(row?.name || row?.display_name || row?.displayName || row?.slug || "").trim(),
+        repoUrl: String(
+          row?.repo_url || row?.repoUrl || repo?.clone_url || repo?.cloneUrl || ""
+        ).trim(),
+        repoPath: String(repo?.path || row?.repo_path || row?.repoPath || "").trim(),
+        worktreeRoot: String(
+          repo?.worktree_root || row?.worktree_root || row?.worktreeRoot || ""
+        ).trim(),
+        defaultBranch: String(
+          repo?.default_branch || row?.default_branch || row?.defaultBranch || "main"
+        ).trim(),
+        remoteName: String(
+          repo?.remote_name || row?.remote_name || row?.remoteName || "origin"
+        ).trim(),
+        credentialFile: String(
+          repo?.credential_file || row?.credential_file || row?.credentialFile || ""
+        ).trim(),
+        taskSource,
+        implicit: row?.implicit === true,
+      };
+    })
+    .filter((row: any) => row.slug)
+    .sort((a: any, b: any) => {
+      if (a.implicit !== b.implicit) return a.implicit ? 1 : -1;
+      return a.slug.localeCompare(b.slug);
+    });
 }
 
 function normalizeGithubBoard(raw: any) {
@@ -379,6 +405,16 @@ function buildTaskSourcePayload(
   };
 }
 
+function isSafeManagedPath(raw: string) {
+  const text = String(raw || "")
+    .trim()
+    .replace(/\\/g, "/");
+  if (!text) return true;
+  if (text.startsWith("/") || /^[A-Za-z]:/.test(text)) return false;
+  const parts = text.split("/").filter(Boolean);
+  return parts.length > 0 && !parts.some((part) => part === "." || part === "..");
+}
+
 function parseSseEnvelope(data: string) {
   try {
     const parsed = JSON.parse(String(data || "{}"));
@@ -401,7 +437,13 @@ export function CodingWorkflowsPage({
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedLogName, setSelectedLogName] = useState("");
   const [newProjectSlug, setNewProjectSlug] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
   const [newRepoUrl, setNewRepoUrl] = useState("");
+  const [newRepoPath, setNewRepoPath] = useState("");
+  const [newWorktreeRoot, setNewWorktreeRoot] = useState("");
+  const [newDefaultBranch, setNewDefaultBranch] = useState("main");
+  const [newRemoteName, setNewRemoteName] = useState("origin");
+  const [newCredentialFile, setNewCredentialFile] = useState("");
   const [taskSourceType, setTaskSourceType] = useState<TaskSourceType>("github_project");
   const [taskSourcePrompt, setTaskSourcePrompt] = useState("");
   const [taskSourcePath, setTaskSourcePath] = useState("");
@@ -427,6 +469,7 @@ export function CodingWorkflowsPage({
   const caps = useCapabilities();
   const acaAvailable = caps.data?.aca_integration === true;
   const engineAvailable = caps.data?.engine_healthy === true;
+  const hostedManaged = caps.data?.hosted_managed === true;
   const integrationsEnabled = acaAvailable || engineAvailable;
 
   useEffect(() => {
@@ -456,6 +499,11 @@ export function CodingWorkflowsPage({
   const projectsQuery = useQuery({
     queryKey: ["coding-workflows", "aca-projects"],
     queryFn: () => api("/api/aca/projects"),
+    enabled: acaAvailable,
+  });
+  const workspaceGuideQuery = useQuery({
+    queryKey: ["coding-workflows", "aca-workspace-guide"],
+    queryFn: () => api("/api/aca/workspace/guide"),
     enabled: acaAvailable,
   });
   const runsQuery = useQuery({
@@ -778,9 +826,22 @@ export function CodingWorkflowsPage({
 
   async function registerProject() {
     const slug = newProjectSlug.trim();
+    const name = newProjectName.trim();
     const repoUrl = newRepoUrl.trim();
+    const repoPath = newRepoPath.trim();
+    const worktreeRoot = newWorktreeRoot.trim();
+    const defaultBranch = newDefaultBranch.trim();
+    const remoteName = newRemoteName.trim();
+    const credentialFile = newCredentialFile.trim();
     if (!slug) {
       toast("warn", "Project slug is required.");
+      return;
+    }
+    if (
+      (repoPath && !isSafeManagedPath(repoPath)) ||
+      (worktreeRoot && !isSafeManagedPath(worktreeRoot))
+    ) {
+      toast("warn", "Repo paths must stay within the managed workspace root.");
       return;
     }
     const taskSource = buildTaskSourcePayload(taskSourceType, {
@@ -810,14 +871,29 @@ export function CodingWorkflowsPage({
     try {
       const params = new URLSearchParams({ slug });
       if (repoUrl) params.set("repo_url", repoUrl);
+      if (name) params.set("name", name);
+      if (repoPath) params.set("repo_path", repoPath);
+      if (worktreeRoot) params.set("worktree_root", worktreeRoot);
+      if (defaultBranch) params.set("default_branch", defaultBranch);
+      if (remoteName) params.set("remote_name", remoteName);
+      if (credentialFile) params.set("credential_file", credentialFile);
       await api(`/api/aca/projects?${params.toString()}`, {
         method: "POST",
         body: JSON.stringify(taskSource),
       });
       await queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-projects"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["coding-workflows", "aca-workspace-guide"],
+      });
       setSelectedProjectSlug(slug);
       setNewProjectSlug("");
+      setNewProjectName("");
       setNewRepoUrl("");
+      setNewRepoPath("");
+      setNewWorktreeRoot("");
+      setNewDefaultBranch("main");
+      setNewRemoteName("origin");
+      setNewCredentialFile("");
       toast("ok", `Registered ACA project ${slug}.`);
     } catch (error) {
       toast("err", error instanceof Error ? error.message : String(error));
@@ -1243,7 +1319,7 @@ export function CodingWorkflowsPage({
                   {!projects.length ? <option value="">No ACA projects found</option> : null}
                   {projects.map((project: any) => (
                     <option key={project.slug} value={project.slug}>
-                      {project.slug}
+                      {project.name ? `${project.name} · ${project.slug}` : project.slug}
                     </option>
                   ))}
                 </select>
@@ -1696,7 +1772,7 @@ export function CodingWorkflowsPage({
           <div className="grid gap-4 xl:grid-cols-2">
             <PanelCard
               title="Register project"
-              subtitle="Bind a repository and task source into ACA"
+              subtitle="Bind a repository, managed checkout, and task source into ACA"
             >
               <div className="grid gap-3">
                 <input
@@ -1707,10 +1783,66 @@ export function CodingWorkflowsPage({
                 />
                 <input
                   className="tcp-input"
+                  placeholder="Project display name (optional)"
+                  value={newProjectName}
+                  onInput={(event) => setNewProjectName((event.target as HTMLInputElement).value)}
+                />
+                <input
+                  className="tcp-input"
                   placeholder="Repo URL (optional)"
                   value={newRepoUrl}
                   onInput={(event) => setNewRepoUrl((event.target as HTMLInputElement).value)}
                 />
+                {hostedManaged ? (
+                  <>
+                    <input
+                      className="tcp-input"
+                      placeholder="Managed checkout path, e.g. repos/team-alpha"
+                      value={newRepoPath}
+                      onInput={(event) => setNewRepoPath((event.target as HTMLInputElement).value)}
+                    />
+                    <input
+                      className="tcp-input"
+                      placeholder="Worktree root (optional)"
+                      value={newWorktreeRoot}
+                      onInput={(event) =>
+                        setNewWorktreeRoot((event.target as HTMLInputElement).value)
+                      }
+                    />
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input
+                        className="tcp-input"
+                        placeholder="Default branch (optional)"
+                        value={newDefaultBranch}
+                        onInput={(event) =>
+                          setNewDefaultBranch((event.target as HTMLInputElement).value)
+                        }
+                      />
+                      <input
+                        className="tcp-input"
+                        placeholder="Remote name (optional)"
+                        value={newRemoteName}
+                        onInput={(event) =>
+                          setNewRemoteName((event.target as HTMLInputElement).value)
+                        }
+                      />
+                    </div>
+                    <input
+                      className="tcp-input"
+                      placeholder="Token file for private repos (optional)"
+                      value={newCredentialFile}
+                      onInput={(event) =>
+                        setNewCredentialFile((event.target as HTMLInputElement).value)
+                      }
+                    />
+                  </>
+                ) : null}
+                {hostedManaged ? (
+                  <div className="rounded-2xl border border-lime-500/20 bg-lime-500/10 px-3 py-2 text-xs text-lime-100">
+                    Hosted installs can use these fields to register named repos and managed
+                    checkout directories without exposing an interactive shell.
+                  </div>
+                ) : null}
                 <select
                   className="tcp-input"
                   value={taskSourceType}
@@ -1867,6 +1999,43 @@ export function CodingWorkflowsPage({
                 <div className="tcp-subtle mt-1 text-xs">{runs.length} visible through ACA</div>
               </div>
             </div>
+          </PanelCard>
+
+          <PanelCard title="Workspace guide" subtitle="What the agent should inspect first">
+            {workspaceGuideQuery.data ? (
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="text-sm font-semibold">Active project</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {String(workspaceGuideQuery.data?.active_project?.name || "None").trim()}
+                    {workspaceGuideQuery.data?.active_project?.repo?.path
+                      ? ` · ${String(workspaceGuideQuery.data.active_project.repo.path)}`
+                      : ""}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="text-sm font-semibold">Layout</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {String(workspaceGuideQuery.data?.layout?.worktree_root || "managed root")}
+                  </div>
+                </div>
+                <ul className="grid gap-2 text-xs text-slate-200">
+                  {(Array.isArray(workspaceGuideQuery.data?.instructions)
+                    ? workspaceGuideQuery.data.instructions
+                    : []
+                  ).map((line: string, index: number) => (
+                    <li
+                      key={`${index}-${line}`}
+                      className="rounded-xl border border-white/10 bg-black/10 px-3 py-2"
+                    >
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <EmptyState text="Workspace guide unavailable yet." />
+            )}
           </PanelCard>
 
           <PanelCard

@@ -44,6 +44,7 @@ type ChatInterfacePanelProps = {
   thinkingText?: string;
   autoFocusKey?: string | number;
   attachments?: Array<{ path: string; name?: string; size?: number }>;
+  onOpenAttachment?: (index: number) => void;
   onRemoveAttachment?: (index: number) => void;
   onAttach?: () => void;
   attachDisabled?: boolean;
@@ -73,6 +74,7 @@ export function ChatInterfacePanel({
   thinkingText = "Thinking",
   autoFocusKey,
   attachments = [],
+  onOpenAttachment,
   onRemoveAttachment,
   onAttach,
   attachDisabled = false,
@@ -265,6 +267,16 @@ export function ChatInterfacePanel({
                           ? `${(file.size / 1024).toFixed(1)}KB`
                           : `${(file.size / 1024 / 1024).toFixed(1)}MB`}
                     </span>
+                  ) : null}
+                  {onOpenAttachment ? (
+                    <button
+                      type="button"
+                      className="chat-file-pill-btn"
+                      title="Open in Files"
+                      onClick={() => onOpenAttachment(index)}
+                    >
+                      <i data-lucide="folder-open"></i>
+                    </button>
                   ) : null}
                   {onRemoveAttachment ? (
                     <button

@@ -12,6 +12,7 @@ import { WorkflowRunSummaryPanel } from "./WorkflowRunSummaryPanel";
 import { WorkflowTaskSignalsPanel } from "./WorkflowTaskSignalsPanel";
 import { formatJson } from "../../pages/ui";
 import { formatCompactNumber, formatUsd } from "../../lib/format";
+import { normalizeManagedFilesExplorerPath, openFilesExplorer } from "../files/explorerHandoff";
 
 export function RunDebuggerDialog({ state, actions, helpers }: any) {
   const {
@@ -109,6 +110,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     onFocusNode,
     onToggleArtifact,
     onCopyFullDebugContext,
+    navigate,
     workflowTaskContinueMutation,
     workflowTaskRetryMutation,
     workflowTaskRequeueMutation,
@@ -131,6 +133,13 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     sessionLabel,
     formatTimestampLabel,
   } = helpers;
+
+  const openManagedPathInFiles = (path: string) => {
+    const normalized = normalizeManagedFilesExplorerPath(path);
+    if (!normalized || !navigate) return;
+    openFilesExplorer(navigate, { path: normalized });
+  };
+  const selectedBoardTaskOutputPath = String((selectedBoardTask as any)?.output_path || "").trim();
   const pendingRunAction = runActionMutation.isPending
     ? String(runActionMutation.variables?.action || "").trim()
     : "";
@@ -705,8 +714,22 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                               {String((selectedBoardTask as any).repo_root || "").trim() || "n/a"}
                             </div>
                             <div>
-                              output path:{" "}
-                              {String((selectedBoardTask as any).output_path || "").trim() || "n/a"}
+                              <span>output path: </span>
+                              <span className="break-all">
+                                {selectedBoardTaskOutputPath || "n/a"}
+                              </span>
+                              {selectedBoardTaskOutputPath &&
+                              normalizeManagedFilesExplorerPath(selectedBoardTaskOutputPath) ? (
+                                <button
+                                  type="button"
+                                  className="ml-2 rounded-md border border-sky-500/30 bg-sky-950/20 px-2 py-0.5 text-[10px] text-sky-100"
+                                  onClick={() =>
+                                    openManagedPathInFiles(selectedBoardTaskOutputPath)
+                                  }
+                                >
+                                  Open in Files
+                                </button>
+                              ) : null}
                             </div>
                             <div>
                               write scope:{" "}
@@ -1025,6 +1048,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                         selectedBoardTaskBlockerCategory={selectedBoardTaskBlockerCategory}
                         selectedBoardTaskValidationBasis={selectedBoardTaskValidationBasis}
                         selectedBoardTaskReceiptTimeline={selectedBoardTaskReceiptTimeline}
+                        onOpenPath={openManagedPathInFiles}
                       />
                       {selectedBoardTask.error_message ? (
                         <div className="whitespace-pre-wrap break-words rounded-lg border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">
@@ -1090,6 +1114,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                     selectedArtifactKey={selectedRunArtifactKey}
                     isWorkflowRun={isWorkflowRun}
                     onToggleArtifact={onToggleArtifact}
+                    onOpenPath={openManagedPathInFiles}
                   />
                 </div>
                 <div className="tcp-list-item min-h-0">

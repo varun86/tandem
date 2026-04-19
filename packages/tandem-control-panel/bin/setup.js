@@ -24,6 +24,7 @@ import { createSwarmApiHandler, getOrchestratorMetrics } from "../server/routes/
 import { createAcaApiHandler } from "../server/routes/aca.js";
 import { createCapabilitiesHandler, getCapabilitiesMetrics } from "../server/routes/capabilities.js";
 import { createControlPanelConfigHandler } from "../server/routes/control-panel-config.js";
+import { createKnowledgebaseApiHandler } from "../server/routes/knowledgebase.js";
 import { createControlPanelPreferencesHandler } from "../server/routes/control-panel-preferences.js";
 
 function parseDotEnv(content) {
@@ -192,6 +193,15 @@ const ENGINE_URL = (
 const ACA_BASE_URL = String(process.env.ACA_BASE_URL || "")
   .trim()
   .replace(/\/+$/, "");
+const KB_ADMIN_URL = String(process.env.TANDEM_KB_ADMIN_URL || process.env.KB_ADMIN_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
+const KB_ADMIN_API_KEY_FILE = String(
+  process.env.TANDEM_KB_ADMIN_API_KEY_FILE || process.env.KB_ADMIN_API_KEY_FILE || ""
+).trim();
+const KB_DEFAULT_COLLECTION_ID = String(
+  process.env.TANDEM_KB_DEFAULT_COLLECTION_ID || process.env.KB_DEFAULT_COLLECTION_ID || ""
+).trim();
 const CONTROL_PANEL_CONFIG_FILE = String(process.env.TANDEM_CONTROL_PANEL_CONFIG_FILE || "").trim();
 const CONTROL_PANEL_PREFERENCES_FILE = resolveControlPanelPreferencesPath({
   env: process.env,
@@ -229,11 +239,6 @@ const SESSION_TTL_MS =
 const FILES_ROOT = resolve(
   process.env.TANDEM_CONTROL_PANEL_FILES_ROOT || resolveDefaultChannelUploadsRoot()
 );
-const FILES_SCOPE = String(process.env.TANDEM_CONTROL_PANEL_FILES_SCOPE || "control-panel")
-  .trim()
-  .replace(/\\/g, "/")
-  .replace(/^\/+/, "")
-  .replace(/\/+$/, "");
 const MAX_UPLOAD_BYTES = Math.max(
   1,
   Number.parseInt(
@@ -277,12 +282,31 @@ const MIME_TYPES = {
   ".html": "text/html",
   ".js": "text/javascript",
   ".css": "text/css",
+  ".md": "text/markdown",
+  ".markdown": "text/markdown",
+  ".csv": "text/csv",
+  ".yml": "application/yaml",
+  ".yaml": "application/yaml",
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".json": "application/json",
   ".ico": "image/x-icon",
   ".txt": "text/plain",
 };
+
+const FILE_BUCKETS = ["uploads", "artifacts", "exports"];
+const LEGACY_UPLOAD_BUCKET = "control-panel";
+const FILE_BUCKET_PHYSICAL_NAMES = {
+  uploads: LEGACY_UPLOAD_BUCKET,
+  artifacts: "artifacts",
+  exports: "exports",
+};
+const MAX_PREVIEW_BYTES = Math.max(1, Math.min(MAX_UPLOAD_BYTES, 2 * 1024 * 1024));
 
 const sessions = new Map();
 let engineProcess = null;
@@ -1336,6 +1360,38 @@ async function engineHealth(token = "") {
   }
 }
 
+async function probeEngineHealth(token = "") {
+  try {
+    const response = await fetch(`${ENGINE_URL}/global/health`, {
+      headers: token
+        ? {
+            authorization: `Bearer ${token}`,
+            "x-tandem-token": token,
+          }
+        : {},
+      signal: AbortSignal.timeout(1800),
+    });
+    const text = await response.text().catch(() => "");
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = null;
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      payload: null,
+    };
+  }
+}
+
 async function executeEngineTool(token, tool, args = {}) {
   const response = await fetch(`${ENGINE_URL}/tool/execute`, {
     method: "POST",
@@ -1507,18 +1563,58 @@ function sanitizeStaticPath(rawUrl) {
   return full;
 }
 
-function toSafeRelPath(raw) {
+function normalizeVisibleFilesPath(raw, allowEmpty = true) {
   const normalized = String(raw || "")
     .trim()
     .replace(/\\/g, "/")
-    .replace(/^\/+/, "");
-  if (!normalized) return "";
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalized) return allowEmpty ? "" : null;
   if (normalized.includes("\0")) return null;
-  const full = resolve(FILES_ROOT, normalized);
+  const parts = normalized.split("/").filter(Boolean);
+  if (!parts.length) return allowEmpty ? "" : null;
+  if (parts.some((part) => part === "." || part === "..")) return null;
+  const [first, ...rest] = parts;
+  if (first === LEGACY_UPLOAD_BUCKET) return ["uploads", ...rest].join("/");
+  if (!FILE_BUCKETS.includes(first)) return null;
+  return [first, ...rest].join("/");
+}
+
+function visibleFilesPathToPhysicalPath(raw) {
+  const normalized = String(raw || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  if (!parts.length) return "";
+  const [first, ...rest] = parts;
+  const physicalBucket = FILE_BUCKET_PHYSICAL_NAMES[first] || first;
+  return [physicalBucket, ...rest].filter(Boolean).join("/");
+}
+
+function physicalFilesPathToVisiblePath(raw) {
+  const normalized = String(raw || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  if (!parts.length) return "";
+  const [first, ...rest] = parts;
+  if (first === LEGACY_UPLOAD_BUCKET) return ["uploads", ...rest].join("/");
+  return [first, ...rest].join("/");
+}
+
+function toSafeRelPath(raw, allowEmpty = true) {
+  const visible = normalizeVisibleFilesPath(raw, allowEmpty);
+  if (visible === null) return null;
+  if (!visible) return "";
+  const full = resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(visible));
   if (full !== FILES_ROOT && !full.startsWith(`${FILES_ROOT}/`)) return null;
-  if (FILES_SCOPE && normalized !== FILES_SCOPE && !normalized.startsWith(`${FILES_SCOPE}/`))
-    return null;
-  return normalized;
+  return visible;
 }
 
 function toSafeRelFileName(rawName) {
@@ -1527,19 +1623,48 @@ function toSafeRelFileName(rawName) {
   return cleaned;
 }
 
-async function ensureUniqueRelPath(relativePath) {
-  const ext = extname(relativePath);
-  const stem = ext ? relativePath.slice(0, -ext.length) : relativePath;
-  let candidate = relativePath;
+function parentVisiblePath(raw) {
+  const normalized = String(raw || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalized) return null;
+  const idx = normalized.lastIndexOf("/");
+  if (idx < 0) return null;
+  return normalized.slice(0, idx);
+}
+
+function inferFileMime(pathname = "") {
+  const ext = extname(String(pathname || "")).toLowerCase();
+  return MIME_TYPES[ext] || "application/octet-stream";
+}
+
+function inferFilePreviewKind(pathname = "", mime = "") {
+  const ext = extname(String(pathname || "")).toLowerCase();
+  if (mime === "application/pdf" || ext === ".pdf") return "pdf";
+  if (String(mime || "").startsWith("image/")) return "image";
+  if (ext === ".md" || ext === ".markdown" || mime === "text/markdown") return "markdown";
+  if (ext === ".json" || mime === "application/json") return "json";
+  if (ext === ".yaml" || ext === ".yml" || mime === "application/yaml") return "yaml";
+  if (String(mime || "").startsWith("text/") || mime === "application/xml") return "text";
+  return "binary";
+}
+
+async function ensureUniqueVisibleRelPath(visiblePath) {
+  const ext = extname(visiblePath);
+  const stem = ext ? visiblePath.slice(0, -ext.length) : visiblePath;
+  let candidate = visibleFilesPathToPhysicalPath(visiblePath);
   let counter = 1;
   while (true) {
     const full = resolve(FILES_ROOT, candidate);
     try {
       await stat(full);
       counter += 1;
-      candidate = `${stem}-${counter}${ext}`;
+      const nextVisible = `${stem}-${counter}${ext}`;
+      candidate = visibleFilesPathToPhysicalPath(nextVisible);
     } catch {
-      return candidate;
+      return physicalFilesPathToVisiblePath(candidate);
     }
   }
 }
@@ -1550,31 +1675,77 @@ async function handleFilesApi(req, res, _session) {
 
   if (pathname === "/api/files/list" && req.method === "GET") {
     const incomingDir = url.searchParams.get("dir") || "";
-    const defaultDir = FILES_SCOPE || "";
-    const dirRelRaw = toSafeRelPath(incomingDir || defaultDir);
+    const dirRelRaw = toSafeRelPath(incomingDir, true);
     if (dirRelRaw === null) {
       sendJson(res, 400, { ok: false, error: "Invalid directory path." });
       return true;
     }
     const dirRel = dirRelRaw || "";
-    const dirFull = resolve(FILES_ROOT, dirRel);
     try {
+      if (!dirRel) {
+        const directories = await Promise.all(
+          FILE_BUCKETS.map(async (bucket) => {
+            const physicalRel = visibleFilesPathToPhysicalPath(bucket);
+            const info = await stat(resolve(FILES_ROOT, physicalRel)).catch(() => null);
+            return {
+              name: bucket,
+              path: bucket,
+              updatedAt: info?.mtimeMs || 0,
+              previewKind: "directory",
+            };
+          })
+        );
+        sendJson(res, 200, {
+          ok: true,
+          root: FILES_ROOT,
+          dir: "",
+          parent: null,
+          directories,
+          files: [],
+        });
+        return true;
+      }
+
+      const physicalDirRel = visibleFilesPathToPhysicalPath(dirRel);
+      const dirFull = resolve(FILES_ROOT, physicalDirRel);
       await mkdir(dirFull, { recursive: true });
       const entries = await readdir(dirFull, { withFileTypes: true });
+      const directories = [];
       const files = [];
       for (const entry of entries) {
-        const childRel = dirRel ? `${dirRel}/${entry.name}` : entry.name;
-        if (!entry.isFile()) continue;
-        const info = await stat(resolve(FILES_ROOT, childRel)).catch(() => null);
-        files.push({
-          name: entry.name,
-          path: childRel,
-          size: info?.size || 0,
-          updatedAt: info?.mtimeMs || 0,
-        });
+        const physicalChildRel = physicalDirRel ? `${physicalDirRel}/${entry.name}` : entry.name;
+        const visibleChildRel = physicalFilesPathToVisiblePath(physicalChildRel);
+        const info = await stat(resolve(FILES_ROOT, physicalChildRel)).catch(() => null);
+        if (entry.isDirectory()) {
+          directories.push({
+            name: entry.name,
+            path: visibleChildRel,
+            updatedAt: info?.mtimeMs || 0,
+            previewKind: "directory",
+          });
+        } else if (entry.isFile()) {
+          const mime = inferFileMime(visibleChildRel || entry.name);
+          files.push({
+            name: entry.name,
+            path: visibleChildRel,
+            size: info?.size || 0,
+            updatedAt: info?.mtimeMs || 0,
+            mime,
+            previewKind: inferFilePreviewKind(visibleChildRel || entry.name, mime),
+            downloadUrl: `/api/files/download?path=${encodeURIComponent(visibleChildRel)}`,
+          });
+        }
       }
-      files.sort((a, b) => b.updatedAt - a.updatedAt);
-      sendJson(res, 200, { ok: true, root: FILES_ROOT, files });
+      directories.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      files.sort((a, b) => b.updatedAt - a.updatedAt || String(a.name).localeCompare(String(b.name)));
+      sendJson(res, 200, {
+        ok: true,
+        root: FILES_ROOT,
+        dir: dirRel,
+        parent: parentVisiblePath(dirRel),
+        directories,
+        files,
+      });
     } catch (e) {
       sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -1593,16 +1764,16 @@ async function handleFilesApi(req, res, _session) {
     }
 
     const incomingDir = url.searchParams.get("dir") || "";
-    const defaultDir = FILES_SCOPE || "";
-    const dirRelRaw = toSafeRelPath(incomingDir || defaultDir);
+    const defaultDir = "uploads";
+    const dirRelRaw = toSafeRelPath(incomingDir || defaultDir, true);
     if (dirRelRaw === null) {
       sendJson(res, 400, { ok: false, error: "Invalid upload directory." });
       return true;
     }
     const dirRel = dirRelRaw || "";
     let relPath = dirRel ? `${dirRel}/${safeName}` : safeName;
-    relPath = await ensureUniqueRelPath(relPath);
-    const fullPath = resolve(FILES_ROOT, relPath);
+    relPath = await ensureUniqueVisibleRelPath(relPath);
+    const fullPath = resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(relPath));
     const folder = dirname(fullPath);
 
     try {
@@ -1620,6 +1791,8 @@ async function handleFilesApi(req, res, _session) {
       });
       await pipeline(req, guard, createWriteStream(fullPath, { flags: "wx" }));
       const meta = await stat(fullPath);
+      const mime = inferFileMime(relPath);
+      const previewKind = inferFilePreviewKind(relPath, mime);
       sendJson(res, 200, {
         ok: true,
         root: FILES_ROOT,
@@ -1627,6 +1800,8 @@ async function handleFilesApi(req, res, _session) {
         path: relPath,
         absPath: fullPath,
         size: meta.size,
+        mime,
+        previewKind,
         downloadUrl: `/api/files/download?path=${encodeURIComponent(relPath)}`,
       });
     } catch (e) {
@@ -1640,17 +1815,33 @@ async function handleFilesApi(req, res, _session) {
   }
 
   if (pathname === "/api/files/read" && req.method === "GET") {
-    const rel = toSafeRelPath(url.searchParams.get("path") || "");
+    const rel = toSafeRelPath(url.searchParams.get("path") || "", false);
     if (!rel) {
       sendJson(res, 400, { ok: false, error: "Missing or invalid file path." });
       return true;
     }
-    const full = resolve(FILES_ROOT, rel);
+    const physicalRel = visibleFilesPathToPhysicalPath(rel);
+    const full = resolve(FILES_ROOT, physicalRel);
     try {
       const info = await stat(full);
       if (!info.isFile()) throw new Error("Not a file");
-      if (info.size > MAX_UPLOAD_BYTES) {
-        sendJson(res, 413, { ok: false, error: "File too large to read through API." });
+      const mime = inferFileMime(rel);
+      const previewKind = inferFilePreviewKind(rel, mime);
+      const previewable = ["text", "markdown", "json", "yaml"].includes(previewKind);
+      if (!previewable || info.size > MAX_PREVIEW_BYTES) {
+        sendJson(res, 200, {
+          ok: true,
+          root: FILES_ROOT,
+          path: rel,
+          absPath: full,
+          name: basename(full),
+          size: info.size,
+          mime,
+          previewKind,
+          previewable: false,
+          reason: !previewable ? "not_previewable" : "too_large",
+          downloadUrl: `/api/files/download?path=${encodeURIComponent(rel)}`,
+        });
         return true;
       }
       const text = await readFile(full, "utf8");
@@ -1659,7 +1850,12 @@ async function handleFilesApi(req, res, _session) {
         root: FILES_ROOT,
         path: rel,
         absPath: full,
+        name: basename(full),
         size: info.size,
+        mime,
+        previewKind,
+        previewable: true,
+        downloadUrl: `/api/files/download?path=${encodeURIComponent(rel)}`,
         text,
       });
     } catch {
@@ -1671,7 +1867,7 @@ async function handleFilesApi(req, res, _session) {
   if (pathname === "/api/files/write" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const rel = toSafeRelPath(body?.path || "");
+      const rel = toSafeRelPath(body?.path || "", false);
       const text = String(body?.text ?? "");
       const overwrite = body?.overwrite !== false;
       if (!rel) {
@@ -1682,7 +1878,7 @@ async function handleFilesApi(req, res, _session) {
         sendJson(res, 413, { ok: false, error: "Text payload exceeds max upload bytes limit." });
         return true;
       }
-      const full = resolve(FILES_ROOT, rel);
+      const full = resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(rel));
       await mkdir(dirname(full), { recursive: true });
       await writeFile(full, text, { encoding: "utf8", flag: overwrite ? "w" : "wx" });
       const info = await stat(full);
@@ -1704,17 +1900,16 @@ async function handleFilesApi(req, res, _session) {
   }
 
   if (pathname === "/api/files/download" && req.method === "GET") {
-    const rel = toSafeRelPath(url.searchParams.get("path") || "");
+    const rel = toSafeRelPath(url.searchParams.get("path") || "", false);
     if (!rel) {
       sendJson(res, 400, { ok: false, error: "Missing or invalid file path." });
       return true;
     }
-    const full = resolve(FILES_ROOT, rel);
+    const full = resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(rel));
     try {
       const info = await stat(full);
       if (!info.isFile()) throw new Error("Not a file");
-      const ext = extname(full);
-      const mime = MIME_TYPES[ext] || "application/octet-stream";
+      const mime = inferFileMime(rel);
       res.writeHead(200, {
         "content-type": mime,
         "content-length": String(info.size),
@@ -1730,12 +1925,12 @@ async function handleFilesApi(req, res, _session) {
   if (pathname === "/api/files/delete" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const rel = toSafeRelPath(body?.path || "");
+      const rel = toSafeRelPath(body?.path || "", false);
       if (!rel) {
         sendJson(res, 400, { ok: false, error: "Missing or invalid file path." });
         return true;
       }
-      await rm(resolve(FILES_ROOT, rel), { force: true });
+      await rm(resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(rel)), { force: true });
       sendJson(res, 200, { ok: true, path: rel });
     } catch (e) {
       sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -4784,6 +4979,14 @@ const handleControlPanelPreferences = createControlPanelPreferencesHandler({
   readJsonBody,
 });
 
+const handleKnowledgebaseApi = createKnowledgebaseApiHandler({
+  PORTAL_PORT,
+  TANDEM_KB_ADMIN_URL: KB_ADMIN_URL,
+  KB_ADMIN_API_KEY_FILE,
+  KB_DEFAULT_COLLECTION_ID,
+  sendJson,
+});
+
 async function handleApi(req, res) {
   const pathname = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`).pathname;
 
@@ -4909,11 +5112,13 @@ async function handleApi(req, res) {
   }
 
   if (pathname === "/api/auth/login" && req.method === "POST") {
+    res.setHeader("cache-control", "no-store, max-age=0");
     await handleAuthLogin(req, res);
     return true;
   }
 
   if (pathname === "/api/auth/logout" && req.method === "POST") {
+    res.setHeader("cache-control", "no-store, max-age=0");
     const current = getSession(req);
     if (current?.sid) sessions.delete(current.sid);
     clearSessionCookie(res);
@@ -4922,10 +5127,28 @@ async function handleApi(req, res) {
   }
 
   if (pathname === "/api/auth/me" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store, max-age=0");
     const session = requireSession(req, res);
     if (!session) return true;
-    const health = await engineHealth(session.token);
-    if (!health) {
+    const probe = await probeEngineHealth(session.token);
+    if (!probe.ok) {
+      if (probe.status === 401 || probe.status === 403) {
+        sessions.delete(session.sid);
+        clearSessionCookie(res);
+        sendJson(res, 401, {
+          ok: false,
+          error: "Session token is no longer valid for the configured engine.",
+        });
+        return true;
+      }
+      sendJson(res, 503, {
+        ok: false,
+        error: "Engine is temporarily unavailable while restoring your session.",
+      });
+      return true;
+    }
+    const health = probe.payload;
+    if (!health || typeof health !== "object") {
       sessions.delete(session.sid);
       clearSessionCookie(res);
       sendJson(res, 401, {
@@ -4959,6 +5182,12 @@ async function handleApi(req, res) {
     const session = requireSession(req, res);
     if (!session) return true;
     return handleControlPanelConfig(req, res);
+  }
+
+  if (pathname.startsWith("/api/knowledgebase")) {
+    const session = requireSession(req, res);
+    if (!session) return true;
+    return handleKnowledgebaseApi(req, res);
   }
 
   if (pathname.startsWith("/api/swarm") || pathname.startsWith("/api/orchestrator")) {
@@ -5085,7 +5314,7 @@ async function main() {
     log(`Engine URL:    ${ENGINE_URL}`);
     log(`Engine mode:   ${isLocalEngineUrl(ENGINE_URL) ? "local" : "remote"}`);
     log(`Files root:    ${FILES_ROOT}`);
-    log(`Files scope:   ${FILES_SCOPE || "(full root)"}`);
+    log(`Files buckets: uploads, artifacts, exports`);
     log(`Build:         ${CONTROL_PANEL_BUILD_FINGERPRINT}`);
     log("=========================================");
   });

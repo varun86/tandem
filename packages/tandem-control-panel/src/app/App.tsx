@@ -29,6 +29,7 @@ import {
 import { renderIcons } from "./icons.js";
 import { api, isTransientEngineError } from "../lib/api";
 import { useCapabilities, useSwarmStatus, useSystemHealth } from "../features/system/queries";
+import { GlowLayer, PanelCard, StatusPulse } from "../ui/index.tsx";
 import type { RouteId } from "./routes";
 import type { NavigationLockState } from "../pages/pageTypes";
 
@@ -160,6 +161,101 @@ function useBugMonitorStatus(enabled: boolean) {
   });
 }
 
+function ReconnectingPage({
+  controlPanelName,
+  controlPanelMode,
+  controlPanelModeReason,
+  errorMessage,
+  onRetry,
+  onCheckEngine,
+}: {
+  controlPanelName: string;
+  controlPanelMode?: string;
+  controlPanelModeReason?: string;
+  errorMessage: string;
+  onRetry: () => void;
+  onCheckEngine: () => Promise<string>;
+}) {
+  const [message, setMessage] = useState("");
+  const [ok, setOk] = useState(false);
+
+  return (
+    <main className="relative min-h-screen overflow-hidden px-5 py-8">
+      <GlowLayer className="tcp-shell-background">
+        <div className="tcp-shell-glow tcp-shell-glow-a"></div>
+        <div className="tcp-shell-glow tcp-shell-glow-b"></div>
+      </GlowLayer>
+
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-6xl items-center gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+        <section className="grid gap-4">
+          <div className="tcp-page-eyebrow">Tandem Control</div>
+          <h1 className="tcp-page-title max-w-3xl">Reconnecting your session.</h1>
+          <p className="tcp-subtle max-w-2xl text-base">
+            The control panel still has your session, but the engine is temporarily unavailable.
+            We&apos;ll reconnect automatically as soon as it responds again.
+          </p>
+        </section>
+
+        <PanelCard
+          title={controlPanelName}
+          subtitle={
+            controlPanelMode === "aca"
+              ? "ACA install detected. Waiting for the Tandem engine to restore the existing session."
+              : "Standalone install detected. Waiting for the Tandem engine to restore the existing session."
+          }
+        >
+          <div className="grid gap-3">
+            <div className="rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="font-medium">Session recovery</div>
+                <StatusPulse
+                  tone={ok ? "ok" : "warn"}
+                  text={ok ? "Engine reachable" : "Reconnecting"}
+                />
+              </div>
+              <p className="tcp-subtle text-xs">
+                Existing auth is intact. The panel is waiting for the engine before reloading the
+                app shell.
+              </p>
+              {controlPanelModeReason ? (
+                <p className="tcp-subtle mt-2 text-xs">{controlPanelModeReason}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button type="button" className="tcp-btn-primary w-full" onClick={onRetry}>
+                <i data-lucide="refresh-cw"></i>
+                Retry now
+              </button>
+              <button
+                type="button"
+                className="tcp-btn w-full"
+                onClick={async () => {
+                  try {
+                    const result = await onCheckEngine();
+                    setOk(true);
+                    setMessage(result);
+                  } catch (error) {
+                    setOk(false);
+                    setMessage(error instanceof Error ? error.message : String(error));
+                  }
+                }}
+              >
+                <i data-lucide="activity"></i>
+                Check engine
+              </button>
+            </div>
+
+            <div className={`min-h-[1.2rem] text-sm ${ok ? "text-lime-300" : "text-amber-200"}`}>
+              {message || errorMessage}
+            </div>
+          </div>
+        </PanelCard>
+      </div>
+    </main>
+  );
+}
+
 function AppBody() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -181,12 +277,16 @@ function AppBody() {
 
   const authQuery = useQuery({
     queryKey: ["auth", "me"],
-    retry: false,
-    refetchInterval: 30000,
-    queryFn: () => api("/api/auth/me", { method: "GET" }),
+    retry: (failureCount, error) => isTransientEngineError(error) && failureCount < 4,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
+    refetchInterval: (query) =>
+      isTransientEngineError(query.state.error) ? 5000 : query.state.data ? 30000 : false,
+    refetchOnWindowFocus: true,
+    queryFn: () => api("/api/auth/me", { method: "GET", cache: "no-store" }),
   });
 
-  const authed = authQuery.isSuccess;
+  const authTransient = isTransientEngineError(authQuery.error);
+  const authed = authQuery.data?.ok === true;
   const client = useMemo(
     () => (authed ? new TandemClient({ baseUrl: "/api/engine", token: "session" }) : null),
     [authed]
@@ -269,7 +369,7 @@ function AppBody() {
   });
 
   useEffect(() => {
-    if (authed || loginMutation.isPending || autoLoginAttempted.current) return;
+    if (authed || authTransient || loginMutation.isPending || autoLoginAttempted.current) return;
     const savedToken = getSavedToken().trim();
     if (!savedToken) {
       autoLoginAttempted.current = true;
@@ -277,7 +377,7 @@ function AppBody() {
     }
     autoLoginAttempted.current = true;
     loginMutation.mutate({ token: savedToken, remember: true });
-  }, [authed, loginMutation]);
+  }, [authTransient, authed, loginMutation]);
 
   const logout = useCallback(async () => {
     await api("/api/auth/logout", { method: "POST" }).catch(() => {});
@@ -461,6 +561,27 @@ function AppBody() {
   });
 
   if (!authed) {
+    if (authTransient) {
+      return (
+        <ReconnectingPage
+          controlPanelName={identity.controlPanelName}
+          controlPanelMode={controlPanelMode}
+          controlPanelModeReason={String(
+            capabilitiesQuery.data?.control_panel_mode_reason || ""
+          ).trim()}
+          errorMessage={authQuery.error?.message || "Engine is reconnecting."}
+          onRetry={() => {
+            void authQuery.refetch();
+          }}
+          onCheckEngine={async () => {
+            const health = await api("/api/system/health", { cache: "no-store" });
+            const status =
+              health?.engine?.ready || health?.engine?.healthy ? "healthy" : "unhealthy";
+            return `Engine check: ${status} at ${health?.engineUrl || "n/a"}`;
+          }}
+        />
+      );
+    }
     return (
       <LoginPage
         loginMutation={loginMutation as any}

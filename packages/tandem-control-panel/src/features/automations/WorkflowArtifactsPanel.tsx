@@ -1,4 +1,5 @@
 import { formatJson } from "../../pages/ui";
+import { normalizeManagedFilesExplorerPath } from "../files/explorerHandoff";
 
 type WorkflowArtifactEntry = {
   key: string;
@@ -14,6 +15,7 @@ type WorkflowArtifactsPanelProps = {
   selectedArtifactKey: string;
   isWorkflowRun: boolean;
   onToggleArtifact: (key: string) => void;
+  onOpenPath?: (path: string) => void;
 };
 
 export function WorkflowArtifactsPanel({
@@ -22,6 +24,7 @@ export function WorkflowArtifactsPanel({
   selectedArtifactKey,
   isWorkflowRun,
   onToggleArtifact,
+  onOpenPath,
 }: WorkflowArtifactsPanelProps) {
   return (
     <div className="tcp-list-item overflow-visible">
@@ -50,12 +53,19 @@ export function WorkflowArtifactsPanel({
               {entry.paths.length ? (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {entry.paths.map((path) => (
-                    <span
+                    <button
                       key={path}
-                      className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                      type="button"
+                      className={`rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300 ${normalizeManagedFilesExplorerPath(path) && onOpenPath ? "cursor-pointer hover:border-sky-500/40 hover:text-sky-100" : "cursor-default"}`.trim()}
+                      onClick={() => {
+                        const normalized = normalizeManagedFilesExplorerPath(path);
+                        if (!normalized || !onOpenPath) return;
+                        onOpenPath(normalized);
+                      }}
+                      disabled={!normalizeManagedFilesExplorerPath(path) || !onOpenPath}
                     >
                       {path}
-                    </span>
+                    </button>
                   ))}
                 </div>
               ) : null}

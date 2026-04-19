@@ -991,6 +991,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           onToggleArtifact: (key: string) =>
             setSelectedRunArtifactKey((current: string) => (current === key ? "" : key)),
           onCopyFullDebugContext,
+          navigate,
           workflowTaskContinueMutation,
           workflowTaskRetryMutation,
           workflowTaskRequeueMutation,
