@@ -3305,8 +3305,7 @@ export function SettingsPage({
                           {searchSettingsQuery.data?.managed_env_path || "/etc/tandem/engine.env"}
                         </div>
                         <div className="tcp-subtle mt-2 text-xs">
-                          {searchSettingsQuery.data?.restart_hint ||
-                            "Restart tandem-engine after saving search settings."}
+                          {searchSettingsQuery.data?.restart_hint || "Changes apply immediately."}
                         </div>
                       </div>
 

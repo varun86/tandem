@@ -75,20 +75,9 @@ impl ToolRegistry {
         map.insert("webfetch".to_string(), Arc::new(WebFetchTool));
         map.insert("webfetch_html".to_string(), Arc::new(WebFetchHtmlTool));
         map.insert("mcp_debug".to_string(), Arc::new(McpDebugTool));
-        let search_backend = SearchBackend::from_env();
-        if search_backend.is_enabled() {
-            map.insert(
-                "websearch".to_string(),
-                Arc::new(WebSearchTool {
-                    backend: search_backend,
-                }),
-            );
-        } else {
-            tracing::info!(
-                reason = search_backend.disabled_reason().unwrap_or("unknown"),
-                "builtin websearch disabled because no search backend is configured"
-            );
-        }
+        // `websearch` stays registered and resolves the live managed settings on demand so
+        // control-panel changes take effect without restarting tandem-engine.
+        map.insert("websearch".to_string(), Arc::new(WebSearchTool::default()));
         map.insert("codesearch".to_string(), Arc::new(CodeSearchTool));
         let todo_tool: Arc<dyn Tool> = Arc::new(TodoWriteTool);
         map.insert("todo_write".to_string(), todo_tool.clone());
@@ -370,11 +359,11 @@ enum SearchBackend {
 
 impl SearchBackend {
     fn from_env() -> Self {
-        let explicit = std::env::var("TANDEM_SEARCH_BACKEND")
-            .ok()
+        let managed_env = load_managed_search_env();
+        let explicit = search_setting_value(&managed_env, &["TANDEM_SEARCH_BACKEND"])
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty());
-        let timeout_ms = search_backend_timeout_ms();
+        let timeout_ms = search_backend_timeout_ms(&managed_env);
 
         match explicit.as_deref() {
             Some("none") | Some("disabled") => {
@@ -383,28 +372,30 @@ impl SearchBackend {
                 };
             }
             Some("auto") => {
-                return search_backend_from_auto_env(timeout_ms);
+                return search_backend_from_auto_env(&managed_env, timeout_ms);
             }
             Some("tandem") => {
-                return search_backend_from_tandem_env(timeout_ms, true);
+                return search_backend_from_tandem_env(&managed_env, timeout_ms, true);
             }
             Some("searxng") => {
-                return search_backend_from_searxng_env(timeout_ms).unwrap_or_else(|| {
-                    Self::Disabled {
+                return search_backend_from_searxng_env(&managed_env, timeout_ms).unwrap_or_else(
+                    || Self::Disabled {
                         reason: "TANDEM_SEARCH_BACKEND=searxng but TANDEM_SEARXNG_URL is missing"
                             .to_string(),
+                    },
+                );
+            }
+            Some("exa") => {
+                return search_backend_from_exa_env(&managed_env, timeout_ms).unwrap_or_else(|| {
+                    Self::Disabled {
+                        reason:
+                            "TANDEM_SEARCH_BACKEND=exa but EXA_API_KEY/TANDEM_EXA_API_KEY is missing"
+                                .to_string(),
                     }
                 });
             }
-            Some("exa") => {
-                return search_backend_from_exa_env(timeout_ms).unwrap_or_else(|| Self::Disabled {
-                    reason:
-                        "TANDEM_SEARCH_BACKEND=exa but EXA_API_KEY/TANDEM_EXA_API_KEY is missing"
-                            .to_string(),
-                });
-            }
             Some("brave") => {
-                return search_backend_from_brave_env(timeout_ms).unwrap_or_else(|| {
+                return search_backend_from_brave_env(&managed_env, timeout_ms).unwrap_or_else(|| {
                     Self::Disabled {
                         reason:
                             "TANDEM_SEARCH_BACKEND=brave but BRAVE_SEARCH_API_KEY/TANDEM_BRAVE_SEARCH_API_KEY is missing"
@@ -421,11 +412,7 @@ impl SearchBackend {
             }
             None => {}
         }
-        search_backend_from_auto_env(timeout_ms)
-    }
-
-    fn is_enabled(&self) -> bool {
-        !matches!(self, Self::Disabled { .. })
+        search_backend_from_auto_env(&managed_env, timeout_ms)
     }
 
     fn kind(&self) -> SearchBackendKind {
@@ -447,13 +434,6 @@ impl SearchBackend {
             SearchBackendKind::Searxng => "searxng",
             SearchBackendKind::Exa => "exa",
             SearchBackendKind::Brave => "brave",
-        }
-    }
-
-    fn disabled_reason(&self) -> Option<&str> {
-        match self {
-            Self::Disabled { reason } => Some(reason.as_str()),
-            _ => None,
         }
     }
 
@@ -480,27 +460,88 @@ impl SearchBackend {
     }
 }
 
-fn has_nonempty_env_var(name: &str) -> bool {
-    std::env::var(name)
+const DEFAULT_MANAGED_SEARCH_SETTINGS_PATH: &str = "/etc/tandem/engine.env";
+
+fn managed_search_settings_path() -> PathBuf {
+    std::env::var("TANDEM_SEARCH_SETTINGS_FILE")
         .ok()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_MANAGED_SEARCH_SETTINGS_PATH))
 }
 
-fn search_backend_timeout_ms() -> u64 {
-    std::env::var("TANDEM_SEARCH_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
+fn load_managed_search_env() -> HashMap<String, String> {
+    let path = managed_search_settings_path();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+
+    let mut env = HashMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut value = value.trim().to_string();
+        if (value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))
+        {
+            if value.len() >= 2 {
+                value = value[1..value.len() - 1].to_string();
+            }
+        }
+        env.insert(key.to_string(), value);
+    }
+    env
+}
+
+fn search_setting_value(file_env: &HashMap<String, String>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = file_env.get(*key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    for key in keys {
+        if let Ok(value) = std::env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn has_nonempty_search_setting(file_env: &HashMap<String, String>, name: &str) -> bool {
+    search_setting_value(file_env, &[name]).is_some()
+}
+
+fn search_backend_timeout_ms(file_env: &HashMap<String, String>) -> u64 {
+    search_setting_value(file_env, &["TANDEM_SEARCH_TIMEOUT_MS"])
+        .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(10_000)
         .clamp(1_000, 120_000)
 }
 
-fn search_backend_from_tandem_env(timeout_ms: u64, allow_default_url: bool) -> SearchBackend {
+fn search_backend_from_tandem_env(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+    allow_default_url: bool,
+) -> SearchBackend {
     const DEFAULT_TANDEM_SEARCH_URL: &str = "https://search.tandem.ac";
-    let base_url = std::env::var("TANDEM_SEARCH_URL")
-        .ok()
+    let base_url = search_setting_value(file_env, &["TANDEM_SEARCH_URL"])
         .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
         .or_else(|| allow_default_url.then(|| DEFAULT_TANDEM_SEARCH_URL.to_string()));
     match base_url {
         Some(base_url) => SearchBackend::Tandem {
@@ -513,14 +554,16 @@ fn search_backend_from_tandem_env(timeout_ms: u64, allow_default_url: bool) -> S
     }
 }
 
-fn search_backend_from_searxng_env(timeout_ms: u64) -> Option<SearchBackend> {
-    let base_url = std::env::var("TANDEM_SEARXNG_URL").ok()?;
+fn search_backend_from_searxng_env(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+) -> Option<SearchBackend> {
+    let base_url = search_setting_value(file_env, &["TANDEM_SEARXNG_URL"])?;
     let base_url = base_url.trim().trim_end_matches('/').to_string();
     if base_url.is_empty() {
         return None;
     }
-    let engines = std::env::var("TANDEM_SEARXNG_ENGINES")
-        .ok()
+    let engines = search_setting_value(file_env, &["TANDEM_SEARXNG_ENGINES"])
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     Some(SearchBackend::Searxng {
@@ -530,11 +573,18 @@ fn search_backend_from_searxng_env(timeout_ms: u64) -> Option<SearchBackend> {
     })
 }
 
-fn search_backend_from_exa_env(timeout_ms: u64) -> Option<SearchBackend> {
-    let api_key = std::env::var("TANDEM_EXA_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("TANDEM_EXA_SEARCH_API_KEY").ok())
-        .or_else(|| std::env::var("EXA_API_KEY").ok())?;
+fn search_backend_from_exa_env(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+) -> Option<SearchBackend> {
+    let api_key = search_setting_value(
+        file_env,
+        &[
+            "TANDEM_EXA_API_KEY",
+            "TANDEM_EXA_SEARCH_API_KEY",
+            "EXA_API_KEY",
+        ],
+    )?;
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         return None;
@@ -545,10 +595,14 @@ fn search_backend_from_exa_env(timeout_ms: u64) -> Option<SearchBackend> {
     })
 }
 
-fn search_backend_from_brave_env(timeout_ms: u64) -> Option<SearchBackend> {
-    let api_key = std::env::var("TANDEM_BRAVE_SEARCH_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("BRAVE_SEARCH_API_KEY").ok())?;
+fn search_backend_from_brave_env(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+) -> Option<SearchBackend> {
+    let api_key = search_setting_value(
+        file_env,
+        &["TANDEM_BRAVE_SEARCH_API_KEY", "BRAVE_SEARCH_API_KEY"],
+    )?;
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         return None;
@@ -559,23 +613,26 @@ fn search_backend_from_brave_env(timeout_ms: u64) -> Option<SearchBackend> {
     })
 }
 
-fn search_backend_auto_candidates(timeout_ms: u64) -> Vec<SearchBackend> {
+fn search_backend_auto_candidates(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+) -> Vec<SearchBackend> {
     let mut backends = Vec::new();
 
-    if has_nonempty_env_var("TANDEM_SEARCH_URL") {
-        backends.push(search_backend_from_tandem_env(timeout_ms, false));
+    if has_nonempty_search_setting(file_env, "TANDEM_SEARCH_URL") {
+        backends.push(search_backend_from_tandem_env(file_env, timeout_ms, false));
     }
-    if let Some(config) = search_backend_from_searxng_env(timeout_ms) {
+    if let Some(config) = search_backend_from_searxng_env(file_env, timeout_ms) {
         backends.push(config);
     }
-    if let Some(config) = search_backend_from_brave_env(timeout_ms) {
+    if let Some(config) = search_backend_from_brave_env(file_env, timeout_ms) {
         backends.push(config);
     }
-    if let Some(config) = search_backend_from_exa_env(timeout_ms) {
+    if let Some(config) = search_backend_from_exa_env(file_env, timeout_ms) {
         backends.push(config);
     }
     if backends.is_empty() {
-        backends.push(search_backend_from_tandem_env(timeout_ms, true));
+        backends.push(search_backend_from_tandem_env(file_env, timeout_ms, true));
     }
 
     backends
@@ -584,8 +641,11 @@ fn search_backend_auto_candidates(timeout_ms: u64) -> Vec<SearchBackend> {
         .collect()
 }
 
-fn search_backend_from_auto_env(timeout_ms: u64) -> SearchBackend {
-    let backends = search_backend_auto_candidates(timeout_ms);
+fn search_backend_from_auto_env(
+    file_env: &HashMap<String, String>,
+    timeout_ms: u64,
+) -> SearchBackend {
+    let backends = search_backend_auto_candidates(file_env, timeout_ms);
     match backends.len() {
         0 => SearchBackend::Disabled {
             reason:

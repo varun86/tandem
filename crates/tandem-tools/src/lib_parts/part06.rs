@@ -52,6 +52,15 @@ mod tests {
     }
 
     fn clear_search_env() {
+        let test_settings_path = std::env::temp_dir().join(format!(
+            "tandem-search-settings-test-{}.env",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&test_settings_path);
+        std::env::set_var(
+            "TANDEM_SEARCH_SETTINGS_FILE",
+            test_settings_path.to_string_lossy().to_string(),
+        );
         std::env::remove_var("TANDEM_SEARCH_BACKEND");
         std::env::remove_var("TANDEM_SEARCH_URL");
         std::env::remove_var("TANDEM_SEARXNG_URL");
@@ -564,7 +573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_registry_omits_websearch_when_search_backend_explicitly_disabled() {
+    async fn tool_registry_keeps_websearch_registered_when_search_backend_explicitly_disabled() {
         let _guard = search_env_lock().lock().expect("env lock");
         clear_search_env();
         std::env::set_var("TANDEM_SEARCH_BACKEND", "none");
@@ -577,7 +586,48 @@ mod tests {
             .map(|schema| schema.name)
             .collect::<Vec<_>>();
 
-        assert!(!names.iter().any(|name| name == "websearch"));
+        assert!(names.iter().any(|name| name == "websearch"));
+
+        clear_search_env();
+    }
+
+    #[test]
+    fn search_backend_reads_managed_settings_file_live_without_restart() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let settings_path = temp_dir.path().join("engine.env");
+        std::env::set_var(
+            "TANDEM_SEARCH_SETTINGS_FILE",
+            settings_path.to_string_lossy().to_string(),
+        );
+
+        std::fs::write(
+            &settings_path,
+            "TANDEM_SEARCH_BACKEND=brave\nTANDEM_BRAVE_SEARCH_API_KEY=brave-live-key\n",
+        )
+        .expect("write brave settings");
+        let first = SearchBackend::from_env();
+        match first {
+            SearchBackend::Brave { api_key, .. } => {
+                assert_eq!(api_key, "brave-live-key");
+            }
+            other => panic!("expected brave backend, got {other:?}"),
+        }
+
+        std::fs::write(
+            &settings_path,
+            "TANDEM_SEARCH_BACKEND=exa\nTANDEM_EXA_API_KEY=exa-live-key\n",
+        )
+        .expect("write exa settings");
+        let second = SearchBackend::from_env();
+        match second {
+            SearchBackend::Exa { api_key, .. } => {
+                assert_eq!(api_key, "exa-live-key");
+            }
+            other => panic!("expected exa backend, got {other:?}"),
+        }
 
         clear_search_env();
     }

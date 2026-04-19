@@ -649,15 +649,15 @@ impl Tool for McpDebugTool {
     }
 }
 
-struct WebSearchTool {
-    backend: SearchBackend,
-}
+#[derive(Default)]
+struct WebSearchTool;
 #[async_trait]
 impl Tool for WebSearchTool {
     fn schema(&self) -> ToolSchema {
+        let backend = SearchBackend::from_env();
         tool_schema_with_capabilities(
             "websearch",
-            self.backend.schema_description(),
+            backend.schema_description(),
             json!({
                 "type": "object",
                 "properties": {
@@ -701,8 +701,9 @@ impl Tool for WebSearchTool {
             });
         }
         let num_results = extract_websearch_limit(&args).unwrap_or(8);
-        let outcome = execute_websearch_backend(&self.backend, &query, num_results).await?;
-        let configured_backend = self.backend.name();
+        let backend = SearchBackend::from_env();
+        let outcome = execute_websearch_backend(&backend, &query, num_results).await?;
+        let configured_backend = backend.name();
         let backend_used = outcome
             .backend_used
             .as_deref()

@@ -3,7 +3,7 @@
 import { spawn } from "child_process";
 import { createServer } from "http";
 import { readFileSync, existsSync, createReadStream, createWriteStream } from "fs";
-import { mkdir, readdir, stat, rm, readFile, writeFile } from "fs/promises";
+import { mkdir, readdir, stat, rm, readFile, rename, writeFile } from "fs/promises";
 import { createHash, randomBytes } from "crypto";
 import { join, dirname, extname, normalize, resolve, basename, relative } from "path";
 import { Transform } from "stream";
@@ -49,6 +49,28 @@ function parseDotEnv(content) {
 
 function serializeEnv(entries) {
   return `${entries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`;
+}
+
+async function writeTextFileAtomic(pathname, content) {
+  const targetPath = String(pathname || "").trim();
+  if (!targetPath) throw new Error("Missing path for atomic write");
+  const targetDir = dirname(targetPath);
+  await mkdir(targetDir, { recursive: true });
+  let mode = 0o640;
+  try {
+    mode = (await stat(targetPath)).mode & 0o777;
+  } catch {}
+  const tempPath = join(
+    targetDir,
+    `${basename(targetPath)}.${process.pid}.${Date.now()}.${randomBytes(6).toString("hex")}.tmp`
+  );
+  await writeFile(tempPath, content, { encoding: "utf8", mode });
+  try {
+    await rename(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function loadDotEnvFile(pathname) {
@@ -865,7 +887,7 @@ async function installServices() {
   const engineEnvBody = Object.entries(engineEnv)
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
-  await writeFile(engineEnvPath, `${engineEnvBody}\n`, "utf8");
+  await writeTextFileAtomic(engineEnvPath, `${engineEnvBody}\n`);
   await runCmd("chmod", ["640", engineEnvPath]);
 
   const panelAutoStart = serviceMode === "panel" ? "1" : "0";
@@ -882,7 +904,7 @@ async function installServices() {
   const panelEnvBody = Object.entries(panelEnv)
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
-  await writeFile(panelEnvPath, `${panelEnvBody}\n`, "utf8");
+  await writeTextFileAtomic(panelEnvPath, `${panelEnvBody}\n`);
   await runCmd("chmod", ["640", panelEnvPath]);
 
   if (installEngine) {
@@ -1107,7 +1129,7 @@ function readManagedSearchSettings() {
     writable: localEngine,
     managed_env_path: envPath,
     restart_required: false,
-    restart_hint: "Restart tandem-engine after saving search settings.",
+    restart_hint: "Changes apply immediately.",
     settings: {
       backend: normalizeSearchBackend(env.TANDEM_SEARCH_BACKEND || "auto"),
       tandem_url: normalizeSearchUrl(env.TANDEM_SEARCH_URL || ""),
@@ -1186,10 +1208,10 @@ async function writeManagedSearchSettings(payload = {}) {
   for (const [key, value] of Object.entries(nextEnv)) {
     if (!preferredKeys.includes(key)) ordered.push([key, value]);
   }
-  await writeFile(envPath, serializeEnv(ordered), "utf8");
+  await writeTextFileAtomic(envPath, serializeEnv(ordered));
   return {
     ...readManagedSearchSettings(),
-    restart_required: true,
+    restart_required: false,
   };
 }
 
@@ -1250,7 +1272,7 @@ async function writeManagedSchedulerSettings(payload = {}) {
   for (const [key, value] of Object.entries(nextEnv)) {
     if (!preferredKeys.includes(key)) ordered.push([key, value]);
   }
-  await writeFile(envPath, serializeEnv(ordered), "utf8");
+  await writeTextFileAtomic(envPath, serializeEnv(ordered));
   return {
     ...getManagedSchedulerSettings(),
     restart_required: true,
