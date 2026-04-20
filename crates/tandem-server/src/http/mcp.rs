@@ -446,15 +446,51 @@ fn mcp_public_base_url(state: &AppState, cfg: &Value) -> String {
 }
 
 fn mcp_public_base_url_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(origin) = headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(parsed) = reqwest::Url::parse(origin) {
+            if let Some(host) = parsed.host_str() {
+                let mut out = format!("{}://{}", parsed.scheme(), host);
+                if let Some(port) = parsed.port() {
+                    out.push(':');
+                    out.push_str(&port.to_string());
+                }
+                return Some(out);
+            }
+        }
+    }
+
+    if let Some(referer) = headers
+        .get("referer")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(parsed) = reqwest::Url::parse(referer) {
+            if let Some(host) = parsed.host_str() {
+                let mut out = format!("{}://{}", parsed.scheme(), host);
+                if let Some(port) = parsed.port() {
+                    out.push(':');
+                    out.push_str(&port.to_string());
+                }
+                return Some(out);
+            }
+        }
+    }
+
     let host = headers
         .get("x-forwarded-host")
         .and_then(|value| value.to_str().ok())
-        .map(str::trim)
+        .map(|value| value.split(',').next().unwrap_or(value).trim())
         .filter(|value| !value.is_empty())?;
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|value| value.to_str().ok())
-        .map(str::trim)
+        .map(|value| value.split(',').next().unwrap_or(value).trim())
         .filter(|value| !value.is_empty())
         .unwrap_or("http");
     Some(format!("{proto}://{host}"))
