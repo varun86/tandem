@@ -48,6 +48,7 @@ impl AppState {
             external_actions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_runtime_status: Arc::new(RwLock::new(BugMonitorRuntimeStatus::default())),
             provider_oauth_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            mcp_oauth_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflows: Arc::new(RwLock::new(WorkflowRegistry::default())),
             workflow_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_hook_overrides: Arc::new(RwLock::new(std::collections::HashMap::new())),

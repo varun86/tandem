@@ -468,6 +468,73 @@ impl McpRegistry {
         true
     }
 
+    pub async fn record_server_auth_challenge(
+        &self,
+        name: &str,
+        challenge: McpAuthChallenge,
+        last_error: Option<String>,
+    ) -> bool {
+        let mut servers = self.servers.write().await;
+        let Some(server) = servers.get_mut(name) else {
+            return false;
+        };
+        let tool_key = canonical_tool_key(&challenge.tool_name);
+        server.connected = false;
+        server.pid = None;
+        server.last_error = last_error.or_else(|| Some(challenge.message.clone()));
+        server.last_auth_challenge = Some(challenge.clone());
+        server.mcp_session_id = None;
+        server.pending_auth_by_tool.clear();
+        server
+            .pending_auth_by_tool
+            .insert(tool_key, pending_auth_from_challenge(&challenge));
+        drop(servers);
+        self.persist_state().await;
+        true
+    }
+
+    pub async fn clear_server_auth_challenge(&self, name: &str) -> bool {
+        let mut servers = self.servers.write().await;
+        let Some(server) = servers.get_mut(name) else {
+            return false;
+        };
+        server.last_auth_challenge = None;
+        server.pending_auth_by_tool.clear();
+        drop(servers);
+        self.persist_state().await;
+        true
+    }
+
+    pub async fn set_bearer_token(&self, name: &str, token: &str) -> Result<bool, String> {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            return Err("oauth access token cannot be empty".to_string());
+        }
+        let current_tenant = local_tenant_context();
+        let mut servers = self.servers.write().await;
+        let Some(server) = servers.get_mut(name) else {
+            return Ok(false);
+        };
+        let header_name = "Authorization".to_string();
+        let secret_id = mcp_header_secret_id(name, &header_name);
+        tandem_core::set_provider_auth(&secret_id, &format!("Bearer {trimmed}"))
+            .map_err(|error| error.to_string())?;
+        server.secret_headers.insert(
+            header_name.clone(),
+            McpSecretRef::Store {
+                secret_id: secret_id.clone(),
+                tenant_context: current_tenant,
+            },
+        );
+        server
+            .secret_header_values
+            .insert(header_name.clone(), format!("Bearer {trimmed}"));
+        server.headers.remove(&header_name);
+        drop(servers);
+        self.persist_state().await;
+        Ok(true)
+    }
+
     pub async fn list_tools(&self) -> Vec<McpRemoteTool> {
         let mut out = self
             .servers

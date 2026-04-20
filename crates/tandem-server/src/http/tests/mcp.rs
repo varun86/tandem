@@ -79,6 +79,151 @@ async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandl
     (endpoint, server)
 }
 
+#[derive(Clone)]
+struct FakeHostedMcpOauthState {
+    base_url: String,
+}
+
+async fn spawn_fake_hosted_mcp_oauth_server() -> (String, tokio::task::JoinHandle<()>) {
+    async fn protected_resource(
+        axum::extract::State(state): axum::extract::State<FakeHostedMcpOauthState>,
+    ) -> axum::Json<Value> {
+        axum::Json(json!({
+            "resource": format!("{}/mcp", state.base_url),
+            "authorization_servers": [state.base_url],
+            "bearer_methods_supported": ["header"],
+            "resource_name": "Fake Notion MCP"
+        }))
+    }
+
+    async fn authorization_server(
+        axum::extract::State(state): axum::extract::State<FakeHostedMcpOauthState>,
+    ) -> axum::Json<Value> {
+        axum::Json(json!({
+            "issuer": state.base_url,
+            "authorization_endpoint": format!("{}/authorize", state.base_url),
+            "token_endpoint": format!("{}/token", state.base_url),
+            "registration_endpoint": format!("{}/register", state.base_url),
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "code_challenge_methods_supported": ["S256"]
+        }))
+    }
+
+    async fn register_client() -> axum::Json<Value> {
+        axum::Json(json!({
+            "client_id": "fake-mcp-client"
+        }))
+    }
+
+    async fn token_exchange() -> axum::Json<Value> {
+        axum::Json(json!({
+            "access_token": "access-token-123",
+            "refresh_token": "refresh-token-123",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        }))
+    }
+
+    async fn handle_mcp(
+        axum::extract::State(state): axum::extract::State<FakeHostedMcpOauthState>,
+        headers: axum::http::HeaderMap,
+        axum::Json(payload): axum::Json<Value>,
+    ) -> impl axum::response::IntoResponse {
+        let auth = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        if auth != "Bearer access-token-123" {
+            let www_authenticate = format!(
+                "Bearer realm=\"OAuth\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"",
+                state.base_url
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                [("www-authenticate", www_authenticate)],
+                Json(json!({
+                    "error": "invalid_token",
+                    "error_description": "Missing or invalid access token"
+                })),
+            )
+                .into_response();
+        }
+        let id = payload.get("id").cloned().unwrap_or_else(|| json!(1));
+        let method = payload.get("method").and_then(Value::as_str).unwrap_or("");
+        let response = match method {
+            "initialize" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "serverInfo": {
+                        "name": "fake-hosted-notion",
+                        "version": "1.0.0"
+                    }
+                }
+            }),
+            "tools/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "notion_search",
+                            "description": "Search Notion",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "query": { "type": "string" }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }),
+            _ => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32601,
+                    "message": "Method not found"
+                }
+            }),
+        };
+        (StatusCode::OK, Json(response)).into_response()
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake hosted mcp oauth server");
+    let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let state = FakeHostedMcpOauthState {
+        base_url: base_url.clone(),
+    };
+    let app = axum::Router::new()
+        .route("/mcp", axum::routing::post(handle_mcp))
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            axum::routing::get(protected_resource),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            axum::routing::get(authorization_server),
+        )
+        .route("/register", axum::routing::post(register_client))
+        .route("/token", axum::routing::post(token_exchange))
+        .with_state(state);
+    let endpoint = format!("{base_url}/mcp");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve fake hosted mcp oauth server");
+    });
+    (endpoint, server)
+}
+
 #[tokio::test]
 async fn mcp_list_returns_connected_inventory() {
     let state = test_state().await;
@@ -323,6 +468,103 @@ async fn mcp_authenticate_clears_pending_oauth_challenge() {
     assert!(server_row.connected);
     assert!(server_row.last_auth_challenge.is_none());
     assert!(server_row.pending_auth_by_tool.is_empty());
+
+    drop(server);
+}
+
+#[tokio::test]
+async fn mcp_connect_discovers_www_authenticate_oauth_and_callback_connects_server() {
+    let state = test_state().await;
+    let (endpoint, server) = spawn_fake_hosted_mcp_oauth_server().await;
+
+    state
+        .mcp
+        .add_or_update("notion".to_string(), endpoint, HashMap::new(), true)
+        .await;
+    assert!(state.mcp.set_auth_kind("notion", "oauth".to_string()).await);
+
+    let app = app_router(state.clone());
+    let connect_req = Request::builder()
+        .method("POST")
+        .uri("/mcp/notion/connect")
+        .body(Body::empty())
+        .expect("connect request");
+    let connect_resp = app
+        .clone()
+        .oneshot(connect_req)
+        .await
+        .expect("connect response");
+    assert_eq!(connect_resp.status(), StatusCode::OK);
+    let connect_body = to_bytes(connect_resp.into_body(), usize::MAX)
+        .await
+        .expect("connect body");
+    let connect_payload: Value = serde_json::from_slice(&connect_body).expect("connect json");
+    assert_eq!(
+        connect_payload.get("ok").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        connect_payload.get("pendingAuth").and_then(Value::as_bool),
+        Some(true)
+    );
+    let authorization_url = connect_payload
+        .get("authorizationUrl")
+        .and_then(Value::as_str)
+        .expect("authorizationUrl");
+    assert!(authorization_url.starts_with("http://127.0.0.1:"));
+    assert!(authorization_url.contains("/authorize?"));
+    assert!(authorization_url.contains("redirect_uri="));
+    assert!(authorization_url.contains("%2Fapi%2Fengine%2Fmcp%2Fnotion%2Fauth%2Fcallback"));
+
+    let pending_challenge = state
+        .mcp
+        .list()
+        .await
+        .get("notion")
+        .and_then(|row| row.last_auth_challenge.clone())
+        .expect("pending auth challenge");
+    assert_eq!(pending_challenge.authorization_url, authorization_url);
+
+    let session = state
+        .mcp_oauth_sessions
+        .read()
+        .await
+        .values()
+        .find(|session| session.server_name == "notion")
+        .cloned()
+        .expect("mcp oauth session");
+
+    let callback_req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/mcp/notion/auth/callback?code=test-code&state={}",
+            urlencoding::encode(&session.state)
+        ))
+        .body(Body::empty())
+        .expect("callback request");
+    let callback_resp = app.oneshot(callback_req).await.expect("callback response");
+    assert_eq!(callback_resp.status(), StatusCode::OK);
+
+    let notion = state
+        .mcp
+        .list()
+        .await
+        .get("notion")
+        .cloned()
+        .expect("notion row");
+    assert!(notion.connected);
+    assert!(notion.last_auth_challenge.is_none());
+    assert!(notion
+        .tool_cache
+        .iter()
+        .any(|tool| tool.tool_name == "notion_search"));
+    assert_eq!(
+        notion
+            .secret_header_values
+            .get("Authorization")
+            .map(String::as_str),
+        Some("Bearer access-token-123")
+    );
 
     drop(server);
 }

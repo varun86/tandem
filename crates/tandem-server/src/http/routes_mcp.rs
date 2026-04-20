@@ -14,7 +14,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         )
         .route("/mcp/{name}/refresh", post(refresh_mcp))
         .route("/mcp/{name}/auth", post(auth_mcp).delete(delete_auth_mcp))
-        .route("/mcp/{name}/auth/callback", post(callback_mcp))
+        .route(
+            "/mcp/{name}/auth/callback",
+            get(callback_mcp_get).post(callback_mcp),
+        )
         .route("/mcp/{name}/auth/authenticate", post(authenticate_mcp))
         .route("/mcp/catalog", get(mcp_catalog_index))
         .route("/mcp/catalog/{slug}/toml", get(mcp_catalog_toml))
