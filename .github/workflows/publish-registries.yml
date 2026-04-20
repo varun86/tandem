@@ -346,26 +346,32 @@ jobs:
           set -euo pipefail
           pnpm -C packages/tandem-client-ts install --frozen-lockfile
 
-      - name: Configure npm for tokenless Trusted Publishing
+      - name: Configure npm for Trusted Publishing
         shell: bash
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PUBLISH_FORCE_TOKEN: ${{ vars.NPM_PUBLISH_FORCE_TOKEN }}
         run: |
           set -euo pipefail
-          # Prefer Trusted Publishing (OIDC). If NPM_TOKEN is present, fall back
-          # to token auth for repos/packages that have not yet enabled trusted
-          # publishing in npm package settings.
+          # Prefer Trusted Publishing (OIDC) by default. NPM_TOKEN is only used
+          # when token auth is explicitly forced, which avoids stale org tokens
+          # shadowing working OIDC package grants and surfacing as npm E404s.
           cat > "$RUNNER_TEMP/.npmrc" <<'EOF'
           registry=https://registry.npmjs.org/
           @frumu:registry=https://registry.npmjs.org/
           EOF
           auth_mode="trusted-publishing"
-          if [[ -n "${NPM_TOKEN:-}" ]]; then
+          force_token_auth="${NPM_PUBLISH_FORCE_TOKEN:-false}"
+          force_token_auth="$(printf '%s' "$force_token_auth" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$force_token_auth" == "true" && -n "${NPM_TOKEN:-}" ]]; then
             {
               echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
               echo "always-auth=true"
             } >> "$RUNNER_TEMP/.npmrc"
             auth_mode="token"
+          elif [[ "$force_token_auth" == "true" ]]; then
+            echo "NPM_PUBLISH_FORCE_TOKEN=true but NPM_TOKEN is not set" >&2
+            exit 1
           fi
           {
             echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/.npmrc"

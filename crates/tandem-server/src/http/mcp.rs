@@ -987,6 +987,17 @@ async fn finish_mcp_oauth_callback(
         .set_bearer_token(&name, &access_token)
         .await
         .map_err(|error| format!("failed to store mcp oauth token: {error}"))?;
+    state
+        .mcp
+        .set_oauth_refresh_config(
+            &name,
+            mcp_oauth_provider_id(&name),
+            session.token_endpoint.clone(),
+            session.client_id.clone(),
+            session.client_secret.clone(),
+        )
+        .await
+        .map_err(|error| format!("failed to store mcp oauth refresh metadata: {error}"))?;
     let _ = tandem_core::set_provider_oauth_credential(
         &mcp_oauth_provider_id(&name),
         tandem_core::OAuthProviderCredential {

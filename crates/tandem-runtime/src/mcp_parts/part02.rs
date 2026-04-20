@@ -92,6 +92,13 @@ fn mcp_header_secret_id(server_name: &str, header_name: &str) -> String {
     )
 }
 
+fn mcp_oauth_client_secret_id(server_name: &str) -> String {
+    format!(
+        "mcp_oauth_client_secret::{}",
+        sanitize_namespace_segment(server_name)
+    )
+}
+
 fn parse_stdio_transport(transport: &str) -> Option<&str> {
     transport.strip_prefix("stdio:").map(str::trim)
 }
@@ -412,6 +419,97 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn should_retry_mcp_oauth_refresh(server: &McpServer, error: &str) -> bool {
+    server.auth_kind.trim().eq_ignore_ascii_case("oauth")
+        && server.oauth.is_some()
+        && (error.contains("HTTP 401")
+            || error.contains("invalid_token")
+            || error.to_ascii_lowercase().contains("unauthorized"))
+}
+
+#[derive(Debug, Deserialize)]
+struct McpRefreshTokenResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<u64>,
+}
+
+async fn refresh_mcp_oauth_credential(
+    oauth: &McpOAuthConfig,
+    credential: &tandem_core::OAuthProviderCredential,
+) -> Result<tandem_core::OAuthProviderCredential, String> {
+    let refresh_token = credential.refresh_token.trim();
+    if refresh_token.is_empty() {
+        return Err("missing MCP OAuth refresh token".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent(format!("tandem/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| format!("failed to build MCP OAuth refresh client: {error}"))?;
+    let mut params = vec![
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh_token.to_string()),
+        ("client_id", oauth.client_id.clone()),
+    ];
+    if let Some(client_secret) = oauth
+        .client_secret_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        params.push(("client_secret", client_secret.to_string()));
+    }
+    let response = client
+        .post(&oauth.token_endpoint)
+        .header(ACCEPT, "application/json")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|error| format!("mcp oauth token refresh failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read MCP OAuth refresh response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "mcp oauth token refresh failed with HTTP {}: {}",
+            status.as_u16(),
+            body.chars().take(240).collect::<String>()
+        ));
+    }
+    let exchanged: McpRefreshTokenResponse = serde_json::from_str(&body)
+        .map_err(|error| format!("invalid mcp oauth refresh response: {error}"))?;
+    let access_token = exchanged
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "mcp oauth refresh returned no access token".to_string())?
+        .to_string();
+    let next_refresh_token = exchanged
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| credential.refresh_token.clone());
+
+    Ok(tandem_core::OAuthProviderCredential {
+        provider_id: credential.provider_id.clone(),
+        access_token,
+        refresh_token: next_refresh_token,
+        expires_at_ms: now_ms()
+            .saturating_add(exchanged.expires_in.unwrap_or(3600).saturating_mul(1000)),
+        account_id: credential.account_id.clone(),
+        email: credential.email.clone(),
+        display_name: credential.display_name.clone(),
+        managed_by: credential.managed_by.clone(),
+        api_key: credential.api_key.clone(),
+    })
+}
+
 fn build_headers(headers: &HashMap<String, String>) -> Result<HeaderMap, String> {
     let mut map = HeaderMap::new();
     map.insert(
@@ -670,4 +768,3 @@ async fn spawn_stdio_process(command_text: &str) -> Result<Child, String> {
         .stderr(std::process::Stdio::null());
     command.spawn().map_err(|e| e.to_string())
 }
-

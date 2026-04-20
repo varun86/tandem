@@ -82,6 +82,7 @@ async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandl
 #[derive(Clone)]
 struct FakeHostedMcpOauthState {
     base_url: String,
+    valid_access_token: std::sync::Arc<tokio::sync::RwLock<String>>,
 }
 
 async fn spawn_fake_hosted_mcp_oauth_server() -> (String, tokio::task::JoinHandle<()>) {
@@ -117,10 +118,23 @@ async fn spawn_fake_hosted_mcp_oauth_server() -> (String, tokio::task::JoinHandl
         }))
     }
 
-    async fn token_exchange() -> axum::Json<Value> {
+    async fn token_exchange(
+        axum::extract::State(state): axum::extract::State<FakeHostedMcpOauthState>,
+        axum::Form(params): axum::Form<std::collections::HashMap<String, String>>,
+    ) -> axum::Json<Value> {
+        let grant_type = params
+            .get("grant_type")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let (access_token, refresh_token) = if grant_type == "refresh_token" {
+            ("access-token-456", "refresh-token-456")
+        } else {
+            ("access-token-123", "refresh-token-123")
+        };
+        *state.valid_access_token.write().await = access_token.to_string();
         axum::Json(json!({
-            "access_token": "access-token-123",
-            "refresh_token": "refresh-token-123",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "expires_in": 3600,
             "token_type": "Bearer"
         }))
@@ -135,7 +149,8 @@ async fn spawn_fake_hosted_mcp_oauth_server() -> (String, tokio::task::JoinHandl
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .unwrap_or("");
-        if auth != "Bearer access-token-123" {
+        let expected = state.valid_access_token.read().await.clone();
+        if auth != format!("Bearer {expected}") {
             let www_authenticate = format!(
                 "Bearer realm=\"OAuth\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"",
                 state.base_url
@@ -201,6 +216,9 @@ async fn spawn_fake_hosted_mcp_oauth_server() -> (String, tokio::task::JoinHandl
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
     let state = FakeHostedMcpOauthState {
         base_url: base_url.clone(),
+        valid_access_token: std::sync::Arc::new(tokio::sync::RwLock::new(
+            "access-token-123".to_string(),
+        )),
     };
     let app = axum::Router::new()
         .route("/mcp", axum::routing::post(handle_mcp))
@@ -441,6 +459,7 @@ async fn mcp_authenticate_clears_pending_oauth_challenge() {
     let Json(connected_payload) = authenticate_mcp(
         axum::extract::State(state.clone()),
         axum::extract::Path("notion".to_string()),
+        HeaderMap::new(),
     )
     .await;
     assert!(connected_payload
@@ -565,6 +584,91 @@ async fn mcp_connect_discovers_www_authenticate_oauth_and_callback_connects_serv
             .map(String::as_str),
         Some("Bearer access-token-123")
     );
+
+    drop(server);
+}
+
+#[tokio::test]
+async fn mcp_refresh_silently_renews_expired_oauth_token() {
+    let state = test_state().await;
+    let (endpoint, server) = spawn_fake_hosted_mcp_oauth_server().await;
+
+    state
+        .mcp
+        .add_or_update("notion".to_string(), endpoint, HashMap::new(), true)
+        .await;
+    assert!(state.mcp.set_auth_kind("notion", "oauth".to_string()).await);
+
+    let app = app_router(state.clone());
+    let connect_req = Request::builder()
+        .method("POST")
+        .uri("/mcp/notion/connect")
+        .body(Body::empty())
+        .expect("connect request");
+    let connect_resp = app
+        .clone()
+        .oneshot(connect_req)
+        .await
+        .expect("connect response");
+    assert_eq!(connect_resp.status(), StatusCode::OK);
+
+    let session = state
+        .mcp_oauth_sessions
+        .read()
+        .await
+        .values()
+        .find(|session| session.server_name == "notion")
+        .cloned()
+        .expect("mcp oauth session");
+
+    let callback_req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/mcp/notion/auth/callback?code=test-code&state={}",
+            urlencoding::encode(&session.state)
+        ))
+        .body(Body::empty())
+        .expect("callback request");
+    let callback_resp = app.oneshot(callback_req).await.expect("callback response");
+    assert_eq!(callback_resp.status(), StatusCode::OK);
+
+    tandem_core::set_provider_oauth_credential(
+        "mcp-oauth::notion",
+        tandem_core::OAuthProviderCredential {
+            provider_id: "mcp-oauth::notion".to_string(),
+            access_token: "access-token-123".to_string(),
+            refresh_token: "refresh-token-123".to_string(),
+            expires_at_ms: crate::now_ms().saturating_sub(1_000),
+            account_id: None,
+            email: None,
+            display_name: None,
+            managed_by: "tandem".to_string(),
+            api_key: None,
+        },
+    )
+    .expect("store expired oauth credential");
+
+    let tools = state.mcp.refresh("notion").await.expect("refresh notion");
+    assert!(!tools.is_empty());
+
+    let notion = state
+        .mcp
+        .list()
+        .await
+        .get("notion")
+        .cloned()
+        .expect("notion row");
+    assert_eq!(
+        notion
+            .secret_header_values
+            .get("Authorization")
+            .map(String::as_str),
+        Some("Bearer access-token-456")
+    );
+    let stored = tandem_core::load_provider_oauth_credential("mcp-oauth::notion")
+        .expect("refreshed oauth credential");
+    assert_eq!(stored.access_token, "access-token-456");
+    assert_eq!(stored.refresh_token, "refresh-token-456");
 
     drop(server);
 }
