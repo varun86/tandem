@@ -4,6 +4,18 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.36 (Released 2026-04-20)
 
+This release adds fine-grained MCP access control, letting operators expose exact tools per server and per workflow instead of opening an entire MCP server to every session.
+
+### Fine-grained MCP access control
+
+- **Per-server MCP tool toggles**: Connected MCP servers now list their discovered tools directly in the MCP management UI, and each tool can be individually enabled or disabled without disconnecting the rest of the server.
+- **Runtime-enforced MCP tool hiding**: Server-level MCP tool allowlists now flow through the runtime and registry, so hidden tools disappear from the exposed MCP toolset instead of remaining callable after a UI-only toggle.
+- **Scoped `mcp_list` output**: `mcp_list` now respects exact MCP tool policies as well as server-wide `mcp.<server>.*` scopes, which means public or restricted sessions only see the MCP tools they are actually allowed to use.
+- **Workflow-level MCP narrowing**: Automation workflow editing and Studio agent editing now let operators choose exact MCP tools on top of MCP server selection, which is useful for public Discord/Telegram knowledge bots, automation runs, and any other environment where a shared MCP should not expose every remote action.
+- **No accidental widening from exact tool picks**: Exact MCP tool selections in automation policy no longer get silently promoted to full `mcp.<server>.*` exposure just because the server had to be connected for discovery.
+
+## v0.4.35 (Released 2026-04-20)
+
 This release smooths the first-run flow for Tandem-hosted managed servers, makes hosted-only settings visible without relying on a localhost engine URL, hardens hosted Codex sign-in and recovery, and improves OAuth-backed MCP setup for provisioned installs.
 
 ### Control panel onboarding
@@ -25,14 +37,6 @@ This release smooths the first-run flow for Tandem-hosted managed servers, makes
 - **Pending OAuth recovery**: Tandem now keeps OAuth-backed MCP servers in a visible pending state, shows the authorization link and completion action, and automatically rechecks pending sessions while the page is open so operators do not need to spam manual refresh.
 - **Real MCP OAuth bootstrap**: Tandem now handles Notion-style MCP OAuth discovery from the remote server's `401` challenge, follows protected-resource and authorization-server metadata, performs dynamic client registration plus PKCE, accepts the hosted callback, stores the bearer token on the MCP server, and reconnects the server automatically after sign-in.
 - **Browser-origin MCP callbacks**: MCP OAuth redirects now prefer the forwarded control-panel/browser origin, so local or LAN control-panel installs no longer send Notion back to `127.0.0.1:39731` and fail behind the raw engine API-token check.
-
-### Fine-grained MCP access control
-
-- **Per-server MCP tool toggles**: Connected MCP servers now list their discovered tools directly in the MCP management UI, and each tool can be individually enabled or disabled without disconnecting the rest of the server.
-- **Runtime-enforced MCP tool hiding**: Server-level MCP tool allowlists now flow through the runtime and registry, so hidden tools disappear from the exposed MCP toolset instead of remaining callable after a UI-only toggle.
-- **Scoped `mcp_list` output**: `mcp_list` now respects exact MCP tool policies as well as server-wide `mcp.<server>.*` scopes, which means public or restricted sessions only see the MCP tools they are actually allowed to use.
-- **Workflow-level MCP narrowing**: Automation workflow editing and Studio agent editing now let operators choose exact MCP tools on top of MCP server selection, which is useful for public Discord/Telegram knowledge bots, automation runs, and any other environment where a shared MCP should not expose every remote action.
-- **No accidental widening from exact tool picks**: Exact MCP tool selections in automation policy no longer get silently promoted to full `mcp.<server>.*` exposure just because the server had to be connected for discovery.
 
 ## v0.4.33 (Released 2026-04-19)
 

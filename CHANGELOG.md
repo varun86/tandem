@@ -9,11 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-server MCP tool allowlists**: Connected MCP servers now expose their discovered tools as individual allowlist entries, so operators can disable specific MCP tools without disconnecting the whole server.
+- **Workflow and Studio MCP tool narrowing**: Automation workflow editing and Studio agent editing now support exact MCP tool selection in addition to server-level MCP selection, enabling public knowledge bots and other constrained agents to inherit only the MCP tools they should see.
+
+### Fixed
+
+- **Exact MCP policy enforcement**: MCP inventory, `mcp_list`, and automation session scoping now honor exact MCP tool allowlists instead of broadening exact tool selections back into `mcp.<server>.*` server-wide exposure.
+- **Server policy propagation into the runtime**: MCP server edits now persist the tool allowlist, resync registered tools immediately, and remove hidden MCP tools from the exposed registry instead of continuing to offer stale tool schemas after policy changes.
+
+## [0.4.35] - Released 2026-04-20
+
+### Added
+
 - **Hosted Codex auth import**: Tandem-hosted managed servers can now import a Codex `auth.json` from Settings, and the VM stores it under the persistent Codex home so the session survives restarts.
 - **Hosted Codex sign-in recovery**: Pending Codex browser sign-ins now survive a control-panel refresh in the current browser session, so operators can return to Settings without losing the in-progress handoff.
 - **Provider auth-source visibility**: The control panel now carries the default provider's auth source and management mode through provider status, so hosted Codex setups can surface that they are running from an imported `auth.json` or a mirrored local Codex session.
-- **Per-server MCP tool allowlists**: Connected MCP servers now expose their discovered tools as individual allowlist entries, so operators can disable specific MCP tools without disconnecting the whole server.
-- **Workflow and Studio MCP tool narrowing**: Automation workflow editing and Studio agent editing now support exact MCP tool selection in addition to server-level MCP selection, enabling public knowledge bots and other constrained agents to inherit only the MCP tools they should see.
 
 ### Fixed
 
@@ -23,8 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP OAuth hosted handoff UX**: OAuth-backed MCP packs such as Notion now clearly steer operators into browser sign-in, keep pending auth visible in both MCP surfaces, and recheck pending sessions automatically without requiring a manual refresh loop.
 - **MCP OAuth protocol bootstrap**: Remote MCP OAuth servers such as Notion can now start authorization from a `401` + `WWW-Authenticate` challenge, complete PKCE client registration and callback handling server-side, store the returned bearer token, and reconnect automatically after browser sign-in.
 - **MCP callback origin correction**: MCP OAuth callbacks now use the forwarded control-panel/browser origin instead of falling back to the raw engine bind address, which fixes local-IP installs that were redirecting to `127.0.0.1:39731` and tripping the engine API-token gate.
-- **Exact MCP policy enforcement**: MCP inventory, `mcp_list`, and automation session scoping now honor exact MCP tool allowlists instead of broadening exact tool selections back into `mcp.<server>.*` server-wide exposure.
-- **Server policy propagation into the runtime**: MCP server edits now persist the tool allowlist, resync registered tools immediately, and remove hidden MCP tools from the exposed registry instead of continuing to offer stale tool schemas after policy changes.
 
 ## [0.4.33] - Released 2026-04-19
 
