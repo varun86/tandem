@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { motion } from "motion/react";
+import { McpToolAllowlistEditor } from "../../components/McpToolAllowlistEditor";
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
 import { renderIcons } from "../../app/icons.js";
 import { ScheduleBuilder } from "./ScheduleBuilder";
@@ -8,6 +9,21 @@ import { WatchConditionEditor } from "./WatchConditionEditor";
 import { ScopePolicyEditor } from "./ScopePolicyEditor";
 import { HandoffConfigEditor } from "./HandoffConfigEditor";
 import { HandoffPanel } from "./HandoffPanel";
+
+function normalizeMcpNamespaceSegment(raw: string) {
+  let out = "";
+  let previousUnderscore = false;
+  for (const ch of String(raw || "").trim()) {
+    if (/^[a-z0-9]$/i.test(ch)) {
+      out += ch.toLowerCase();
+      previousUnderscore = false;
+    } else if (!previousUnderscore) {
+      out += "_";
+      previousUnderscore = true;
+    }
+  }
+  return out.replace(/^_+|_+$/g, "") || "mcp";
+}
 
 function useDialogIconRender(active: boolean) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -689,34 +705,65 @@ export function WorkflowAutomationEditDialog({
 
             <AccordionSection title="MCP Servers">
               {mcpServers.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {mcpServers.map((server: any) => {
-                    const isSelected = workflowEditDraft.selectedMcpServers.includes(server.name);
-                    return (
-                      <button
-                        key={server.name}
-                        className={`tcp-btn h-7 px-2 text-xs ${
-                          isSelected ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""
-                        }`}
-                        onClick={() =>
-                          setWorkflowEditDraft((current: any) =>
-                            current
-                              ? {
-                                  ...current,
-                                  selectedMcpServers: isSelected
-                                    ? current.selectedMcpServers.filter(
-                                        (name: string) => name !== server.name
-                                      )
-                                    : [...current.selectedMcpServers, server.name].sort(),
-                                }
-                              : current
-                          )
-                        }
-                      >
-                        {server.name} {server.connected ? "• connected" : "• disconnected"}
-                      </button>
-                    );
-                  })}
+                <div className="grid gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    {mcpServers.map((server: any) => {
+                      const isSelected = workflowEditDraft.selectedMcpServers.includes(server.name);
+                      return (
+                        <button
+                          key={server.name}
+                          className={`tcp-btn h-7 px-2 text-xs ${
+                            isSelected ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""
+                          }`}
+                          onClick={() =>
+                            setWorkflowEditDraft((current: any) => {
+                              if (!current) return current;
+                              const serverPrefix = `mcp.${normalizeMcpNamespaceSegment(server.name)}.`;
+                              const nextSelectedServers = isSelected
+                                ? current.selectedMcpServers.filter(
+                                    (name: string) => name !== server.name
+                                  )
+                                : [...current.selectedMcpServers, server.name].sort();
+                              const nextSelectedTools = isSelected
+                                ? Array.isArray(current.selectedMcpTools)
+                                  ? current.selectedMcpTools.filter(
+                                      (toolName: string) =>
+                                        !String(toolName || "").startsWith(serverPrefix)
+                                    )
+                                  : current.selectedMcpTools
+                                : current.selectedMcpTools;
+                              return {
+                                ...current,
+                                selectedMcpServers: nextSelectedServers,
+                                selectedMcpTools: nextSelectedTools,
+                              };
+                            })
+                          }
+                        >
+                          {server.name} {server.connected ? "• connected" : "• disconnected"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {workflowEditDraft.selectedMcpServers.length ? (
+                    <McpToolAllowlistEditor
+                      title="Workflow MCP tool access"
+                      subtitle="Leave all discovered tools selected to inherit full access from the chosen MCP servers, or uncheck tools to save an exact MCP allowlist for this workflow."
+                      discoveredTools={mcpServers
+                        .filter((server: any) =>
+                          workflowEditDraft.selectedMcpServers.includes(server.name)
+                        )
+                        .flatMap((server: any) =>
+                          Array.isArray(server.toolCache) ? server.toolCache : []
+                        )}
+                      value={workflowEditDraft.selectedMcpTools}
+                      onChange={(next) =>
+                        setWorkflowEditDraft((current: any) =>
+                          current ? { ...current, selectedMcpTools: next } : current
+                        )
+                      }
+                    />
+                  ) : null}
                 </div>
               ) : (
                 <div className="text-xs text-slate-400">No MCP servers configured yet.</div>

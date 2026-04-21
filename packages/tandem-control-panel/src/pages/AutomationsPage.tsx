@@ -39,6 +39,7 @@ import { describeScheduleValue } from "../features/automations/scheduleBuilder";
 import { AdvancedMissionBuilderPanel } from "./AdvancedMissionBuilderPanel";
 import { PageCard, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
+import { splitMcpAllowedTools } from "../features/mcp/mcpTools";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ interface McpServerOption {
   name: string;
   connected: boolean;
   enabled: boolean;
+  toolCache: string[];
+  allowedTools: string[] | null;
 }
 
 interface WorkflowEditDraft {
@@ -69,6 +72,8 @@ interface WorkflowEditDraft {
   toolAccessMode: WorkflowToolAccessMode;
   customToolsText: string;
   selectedMcpServers: string[];
+  selectedMcpTools: string[] | null;
+  mcpOtherAllowedTools: string[];
   nodes: WorkflowNodeEditDraft[];
   scopeSnapshot: any | null;
   planPackageBundle: any | null;
@@ -109,6 +114,24 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
           name,
           connected: !!row?.connected,
           enabled: row?.enabled !== false,
+          toolCache: Array.isArray(row?.tool_cache || row?.toolCache)
+            ? (row.tool_cache || row.toolCache)
+                .map((tool: any) =>
+                  String(
+                    tool?.namespaced_name ||
+                      tool?.namespacedName ||
+                      tool?.tool_name ||
+                      tool?.name ||
+                      ""
+                  ).trim()
+                )
+                .filter(Boolean)
+            : [],
+          allowedTools: Array.isArray(row?.allowed_tools || row?.allowedTools)
+            ? (row.allowed_tools || row.allowedTools)
+                .map((tool: any) => String(tool || "").trim())
+                .filter(Boolean)
+            : null,
         };
       })
       .filter((row): row is McpServerOption => !!row)
@@ -124,6 +147,24 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
           name: cleanName,
           connected: !!(cfg as any).connected,
           enabled: (cfg as any).enabled !== false,
+          toolCache: Array.isArray((cfg as any).tool_cache || (cfg as any).toolCache)
+            ? (((cfg as any).tool_cache || (cfg as any).toolCache) as any[])
+                .map((tool: any) =>
+                  String(
+                    tool?.namespaced_name ||
+                      tool?.namespacedName ||
+                      tool?.tool_name ||
+                      tool?.name ||
+                      ""
+                  ).trim()
+                )
+                .filter(Boolean)
+            : [],
+          allowedTools: Array.isArray((cfg as any).allowed_tools || (cfg as any).allowedTools)
+            ? (((cfg as any).allowed_tools || (cfg as any).allowedTools) as any[])
+                .map((tool: any) => String(tool || "").trim())
+                .filter(Boolean)
+            : null,
         };
       })
       .filter((row): row is McpServerOption => !!row)
@@ -310,12 +351,19 @@ function formatCustomToolText(raw: string[]) {
 function compileWorkflowToolAllowlist(
   selectedMcpServers: string[],
   toolAccessMode: WorkflowToolAccessMode,
-  customToolsText: string
+  customToolsText: string,
+  selectedMcpTools: string[] | null,
+  mcpOtherAllowedTools: string[]
 ) {
   if (toolAccessMode === "all") return ["*"];
+  const mcpEntries =
+    selectedMcpTools === null
+      ? selectedMcpServers.map((server) => `mcp.${normalizeMcpServerNamespace(server)}.*`)
+      : selectedMcpTools;
   return normalizeAllowedTools([
     ...parseCustomToolText(customToolsText),
-    ...selectedMcpServers.map((server) => `mcp.${normalizeMcpServerNamespace(server)}.*`),
+    ...mcpOtherAllowedTools,
+    ...mcpEntries,
   ]);
 }
 
@@ -359,12 +407,19 @@ function workflowToolAccessFromAutomation(automation: any) {
       .filter(Boolean)
   );
   if (!allowlist.length || allowlist.includes("*")) {
-    return { toolAccessMode: "all" as const, customToolsText: "" };
+    return {
+      toolAccessMode: "all" as const,
+      customToolsText: "",
+      selectedMcpTools: null,
+      mcpOtherAllowedTools: [],
+    };
   }
-  const customTools = allowlist.filter((tool) => !tool.startsWith("mcp."));
+  const { mcpTools, otherTools } = splitMcpAllowedTools(allowlist);
   return {
     toolAccessMode: "custom" as const,
-    customToolsText: formatCustomToolText(customTools),
+    customToolsText: formatCustomToolText(otherTools),
+    selectedMcpTools: mcpTools.length ? mcpTools : null,
+    mcpOtherAllowedTools: otherTools,
   };
 }
 
@@ -672,6 +727,8 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     selectedMcpServers: selectedMcpServers
       .map((row: any) => String(row || "").trim())
       .filter(Boolean),
+    selectedMcpTools: toolAccess.selectedMcpTools,
+    mcpOtherAllowedTools: toolAccess.mcpOtherAllowedTools,
     nodes,
     scopeSnapshot,
     planPackageBundle,

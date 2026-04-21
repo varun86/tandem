@@ -1,5 +1,8 @@
 import { EmptyState, PageCard } from "./ui";
+import { McpToolAllowlistEditor } from "../components/McpToolAllowlistEditor";
+import type { StudioRole } from "../features/studio/schema";
 import {
+  ROLE_OPTIONS,
   composePromptSections,
   joinCsv,
   modelsForProvider,
@@ -22,6 +25,7 @@ type InspectorPanelsProps = {
   repairState: StudioRepairState | null;
   providerOptions: ProviderOption[];
   mcpServers: string[];
+  mcpServerRows: Array<{ name: string; toolCache: string[] }>;
   removeSelectedNode: () => void;
   removeSelectedAgent: () => void;
   updateNode: (nodeId: string, patch: any) => void;
@@ -46,6 +50,7 @@ export function WorkflowStudioInspectorPanels(props: InspectorPanelsProps) {
     repairState,
     providerOptions,
     mcpServers,
+    mcpServerRows,
     removeSelectedNode,
     removeSelectedAgent,
     updateNode,
@@ -616,6 +621,23 @@ export function WorkflowStudioInspectorPanels(props: InspectorPanelsProps) {
                   placeholder={joinCsv(mcpServers) || "No MCP servers detected"}
                 />
               </label>
+              {selectedAgent.mcpAllowedServers.length ? (
+                <div className="md:col-span-2">
+                  <McpToolAllowlistEditor
+                    title="Agent MCP tool access"
+                    subtitle="Leave all discovered tools selected to inherit full access from the chosen MCP servers, or uncheck tools to save an exact MCP allowlist for this agent."
+                    discoveredTools={mcpServerRows
+                      .filter((server) => selectedAgent.mcpAllowedServers.includes(server.name))
+                      .flatMap((server) => server.toolCache)}
+                    value={selectedAgent.mcpAllowedTools}
+                    onChange={(next) =>
+                      updateAgent(selectedAgent.agentId, {
+                        mcpAllowedTools: next,
+                      })
+                    }
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div className="grid gap-3">

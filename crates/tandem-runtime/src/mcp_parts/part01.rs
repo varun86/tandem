@@ -54,6 +54,8 @@ pub struct McpServer {
     pub tools_fetched_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pending_auth_by_tool: HashMap<String, PendingMcpAuth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
     #[serde(default, skip)]
     pub secret_header_values: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -260,12 +262,28 @@ impl McpRegistry {
             tool_cache: existing_tool_cache,
             tools_fetched_at_ms: existing_fetched_at,
             pending_auth_by_tool: HashMap::new(),
+            allowed_tools: existing.as_ref().and_then(|row| row.allowed_tools.clone()),
             secret_header_values,
             oauth: existing.as_ref().and_then(|row| row.oauth.clone()),
         };
         servers.insert(normalized_name, server);
         drop(servers);
         self.persist_state().await;
+    }
+
+    pub async fn set_allowed_tools(&self, name: &str, allowed_tools: Option<Vec<String>>) -> bool {
+        let mut servers = self.servers.write().await;
+        let Some(server) = servers.get_mut(name) else {
+            return false;
+        };
+        let normalized = allowed_tools.map(normalize_allowed_tool_names);
+        if server.allowed_tools == normalized {
+            return true;
+        }
+        server.allowed_tools = normalized;
+        drop(servers);
+        self.persist_state().await;
+        true
     }
 
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> bool {
@@ -1072,6 +1090,19 @@ impl Default for McpRegistry {
 
 fn default_enabled() -> bool {
     true
+}
+
+fn normalize_allowed_tool_names(raw: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for tool in raw {
+        let value = tool.trim().to_string();
+        if value.is_empty() || !seen.insert(value.clone()) {
+            continue;
+        }
+        normalized.push(value);
+    }
+    normalized
 }
 
 fn persist_state_blocking(path: &Path, snapshot: &HashMap<String, McpServer>) {

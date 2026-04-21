@@ -23,6 +23,7 @@ import {
 import { EmptyState, PageCard } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
+import { WorkflowStudioInspectorPanels } from "./WorkflowStudioInspectorPanels";
 import {
   AGENT_CATALOG_HANDOFF_KEY,
   AUTOMATIONS_STUDIO_HANDOFF_KEY,
@@ -36,9 +37,11 @@ import {
   buildModelPolicy,
   buildSchedulePayload,
   buildStudioMetadata,
+  buildTemplatePayload,
   canonicalizeStudioDraftOutputTemplates,
   canonicalizeStudioOutputPathTemplate,
   collectStudioOutputPathWarnings,
+  composeNodeExecutionPrompt,
   composePromptSections,
   computeNodeDepths,
   confirmAutomationDeleted,
@@ -57,9 +60,13 @@ import {
   normalizeAgentDraft,
   normalizeNodeDraft,
   normalizeNodeAwareToolAllowlist,
+  normalizeNodesForSave,
   normalizeStudioRole,
   normalizeTemplateRow,
   normalizeWorkspaceToolAllowlist,
+  preflightDraft,
+  promptSectionsFromFreeform,
+  repairDraftTemplateLinks,
   resolveDefaultModel,
   resolveStudioOutputPathTemplate,
   safeString,
@@ -68,11 +75,17 @@ import {
   slugify,
   splitCsv,
   studioOutputPathWarning,
+  STUDIO_OUTPUT_TOKEN_GUIDE,
   syncInputRefs,
   timestampLabel,
   toArray,
   validateWorkspaceRootInput,
 } from "./workflowStudioUtils";
+
+type StudioMcpServerRow = {
+  name: string;
+  toolCache: string[];
+};
 export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const healthQuery = useSystemHealth(true);
@@ -192,6 +205,28 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
     return map;
   }, [studioWorkflowRunsQuery.data]);
   const mcpServers = useMemo(() => extractMcpServers(mcpQuery.data), [mcpQuery.data]);
+  const mcpServerRows = useMemo<StudioMcpServerRow[]>(() => {
+    const rows = Array.isArray((mcpQuery.data as any)?.servers)
+      ? (mcpQuery.data as any).servers
+      : [];
+    return rows
+      .map((row: any) => {
+        const name = safeString(row?.name);
+        if (!name) return null;
+        const toolCache = Array.isArray(row?.tool_cache || row?.toolCache)
+          ? (row.tool_cache || row.toolCache)
+              .map((tool: any) =>
+                safeString(
+                  tool?.namespaced_name || tool?.namespacedName || tool?.tool_name || tool?.name
+                )
+              )
+              .filter(Boolean)
+          : [];
+        return { name, toolCache };
+      })
+      .filter((row): row is StudioMcpServerRow => !!row)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [mcpQuery.data]);
   const [draft, setDraft] = useState<StudioWorkflowDraft>(() =>
     createWorkflowDraftFromTemplate(STUDIO_TEMPLATE_CATALOG[0], "")
   );
@@ -761,29 +796,37 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
           .map((entry) => safeString(entry))
           .filter(Boolean),
         agents: workingDraft.agents.map((agent) => ({
-          agent_id: safeString(agent.agentId),
-          template_id: saveReusableTemplates
-            ? linkedTemplateIds.get(agent.agentId) ||
-              safeString(agent.linkedTemplateId) ||
-              undefined
-            : undefined,
-          display_name: safeString(agent.displayName) || safeString(agent.agentId),
-          avatar_url: safeString(agent.avatarUrl) || undefined,
-          model_policy: buildModelPolicy(agent),
-          skills: agent.skills.map((skill) => safeString(skill)).filter(Boolean),
-          tool_policy: {
-            allowlist: normalizeNodeAwareToolAllowlist(
-              agent.toolAllowlist,
-              normalizedNodes.filter((node) => node.agentId === agent.agentId)
-            ),
-            denylist: agent.toolDenylist.map((entry) => safeString(entry)).filter(Boolean),
-          },
-          mcp_policy: {
-            allowed_servers: agent.mcpAllowedServers
-              .map((entry) => safeString(entry))
-              .filter(Boolean),
-            allowed_tools: [],
-          },
+          ...(() => {
+            const mcpAllowedTools = Array.isArray(agent.mcpAllowedTools)
+              ? [...agent.mcpOtherAllowedTools, ...agent.mcpAllowedTools]
+              : agent.mcpOtherAllowedTools;
+            return {
+              agent_id: safeString(agent.agentId),
+              template_id: saveReusableTemplates
+                ? linkedTemplateIds.get(agent.agentId) ||
+                  safeString(agent.linkedTemplateId) ||
+                  undefined
+                : undefined,
+              display_name: safeString(agent.displayName) || safeString(agent.agentId),
+              avatar_url: safeString(agent.avatarUrl) || undefined,
+              model_policy: buildModelPolicy(agent),
+              skills: agent.skills.map((skill) => safeString(skill)).filter(Boolean),
+              tool_policy: {
+                allowlist: normalizeNodeAwareToolAllowlist(
+                  agent.toolAllowlist,
+                  normalizedNodes.filter((node) => node.agentId === agent.agentId)
+                ),
+                denylist: agent.toolDenylist.map((entry) => safeString(entry)).filter(Boolean),
+              },
+              mcp_policy: {
+                allowed_servers: agent.mcpAllowedServers
+                  .map((entry) => safeString(entry))
+                  .filter(Boolean),
+                allowed_tools:
+                  agent.mcpAllowedTools === null ? null : mcpAllowedTools.filter(Boolean),
+              },
+            };
+          })(),
         })),
         flow: {
           nodes: normalizedNodes.map((node) => {
@@ -1978,6 +2021,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               repairState={repairState}
               providerOptions={providerOptions}
               mcpServers={mcpServers}
+              mcpServerRows={mcpServerRows}
               removeSelectedNode={removeSelectedNode}
               removeSelectedAgent={removeSelectedAgent}
               updateNode={updateNode}

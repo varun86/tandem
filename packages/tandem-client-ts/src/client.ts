@@ -31,6 +31,7 @@ import type {
   ChannelToolPreferences,
   ChannelToolPreferencesInput,
   AddMcpServerOptions,
+  PatchMcpServerOptions,
   MemoryPutOptions,
   MemoryPutResponse,
   MemorySearchOptions,
@@ -1265,12 +1266,16 @@ class Mcp {
     });
   }
 
-  /** Enable or disable an MCP server. */
-  async setEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+  async patch(name: string, patch: PatchMcpServerOptions): Promise<{ ok: boolean }> {
     return this.req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, {
       method: "PATCH",
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(patch ?? {}),
     });
+  }
+
+  /** Enable or disable an MCP server. */
+  async setEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+    return this.patch(name, { enabled });
   }
 
   async delete(name: string): Promise<{ ok?: boolean; deleted?: boolean }> {

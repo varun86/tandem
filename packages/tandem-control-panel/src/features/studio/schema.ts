@@ -29,6 +29,8 @@ export type StudioAgentDraft = {
   toolAllowlist: string[];
   toolDenylist: string[];
   mcpAllowedServers: string[];
+  mcpAllowedTools: string[] | null;
+  mcpOtherAllowedTools: string[];
 };
 
 export type StudioNodeDraft = {
@@ -120,6 +122,8 @@ export function createEmptyAgentDraft(
     toolAllowlist: ["read", "write", "glob"],
     toolDenylist: [],
     mcpAllowedServers: [],
+    mcpAllowedTools: null,
+    mcpOtherAllowedTools: [],
     ...overrides,
   };
 }

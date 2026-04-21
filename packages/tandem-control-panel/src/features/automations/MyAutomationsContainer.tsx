@@ -749,7 +749,9 @@ export function MyAutomationsContainer({
       const toolAllowlist = compileWorkflowToolAllowlist(
         selectedMcpServers,
         draft.toolAccessMode,
-        draft.customToolsText
+        draft.customToolsText,
+        draft.selectedMcpTools,
+        draft.mcpOtherAllowedTools
       );
       const connectorBindings = parseConnectorBindingsJson(draft.connectorBindingsJson);
       const sharedContextPackIds = uniqueStrings(
@@ -808,7 +810,12 @@ export function MyAutomationsContainer({
               mcp_policy: {
                 ...(agent?.mcp_policy || {}),
                 allowed_servers: selectedMcpServers,
-                allowed_tools: null,
+                allowed_tools:
+                  draft.toolAccessMode === "all"
+                    ? null
+                    : Array.isArray(draft.selectedMcpTools)
+                      ? [...draft.mcpOtherAllowedTools, ...draft.selectedMcpTools]
+                      : draft.mcpOtherAllowedTools,
               },
             };
           })

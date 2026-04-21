@@ -205,7 +205,9 @@ pub(crate) fn automation_attempt_evidence_read_paths(tool_telemetry: &Value) -> 
         .unwrap_or_default()
 }
 
-pub(crate) fn automation_attempt_evidence_web_research_status(tool_telemetry: &Value) -> Option<String> {
+pub(crate) fn automation_attempt_evidence_web_research_status(
+    tool_telemetry: &Value,
+) -> Option<String> {
     automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
         .and_then(|value| value.get("evidence"))
         .and_then(|value| value.get("web_research"))
@@ -214,7 +216,9 @@ pub(crate) fn automation_attempt_evidence_web_research_status(tool_telemetry: &V
         .map(str::to_string)
 }
 
-pub(crate) fn automation_attempt_evidence_delivery_status(tool_telemetry: &Value) -> Option<String> {
+pub(crate) fn automation_attempt_evidence_delivery_status(
+    tool_telemetry: &Value,
+) -> Option<String> {
     automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
         .and_then(|value| value.get("delivery"))
         .and_then(|value| value.get("status"))
@@ -222,7 +226,9 @@ pub(crate) fn automation_attempt_evidence_delivery_status(tool_telemetry: &Value
         .map(str::to_string)
 }
 
-pub(crate) fn automation_attempt_evidence_missing_capabilities(tool_telemetry: &Value) -> Vec<String> {
+pub(crate) fn automation_attempt_evidence_missing_capabilities(
+    tool_telemetry: &Value,
+) -> Vec<String> {
     automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
         .and_then(|value| value.get("capability_resolution"))
         .and_then(|value| value.get("missing_capabilities"))
@@ -236,7 +242,10 @@ pub(crate) fn automation_attempt_evidence_missing_capabilities(tool_telemetry: &
         .unwrap_or_default()
 }
 
-pub(crate) fn automation_capability_resolution_email_tools(tool_telemetry: &Value, key: &str) -> Vec<String> {
+pub(crate) fn automation_capability_resolution_email_tools(
+    tool_telemetry: &Value,
+    key: &str,
+) -> Vec<String> {
     tool_telemetry
         .get("capability_resolution")
         .and_then(|value| value.get("email_tool_diagnostics"))
@@ -251,7 +260,10 @@ pub(crate) fn automation_capability_resolution_email_tools(tool_telemetry: &Valu
         .unwrap_or_default()
 }
 
-pub(crate) fn automation_capability_resolution_mcp_tools(tool_telemetry: &Value, key: &str) -> Vec<String> {
+pub(crate) fn automation_capability_resolution_mcp_tools(
+    tool_telemetry: &Value,
+    key: &str,
+) -> Vec<String> {
     tool_telemetry
         .get("capability_resolution")
         .and_then(|value| value.get("mcp_tool_diagnostics"))
@@ -353,7 +365,10 @@ pub(crate) fn automation_normalize_server_list(raw: &[String]) -> Vec<String> {
     servers
 }
 
-pub(crate) fn automation_tool_names_for_mcp_server(tool_names: &[String], server_name: &str) -> Vec<String> {
+pub(crate) fn automation_tool_names_for_mcp_server(
+    tool_names: &[String],
+    server_name: &str,
+) -> Vec<String> {
     let prefix = format!(
         "mcp.{}.",
         crate::http::mcp::mcp_namespace_segment(server_name)
@@ -407,6 +422,25 @@ pub(crate) fn automation_selected_mcp_servers_from_allowlist(
             normalized == format!("mcp.{namespace}.*")
                 || normalized.starts_with(&format!("mcp.{namespace}."))
         }) {
+            selected.push(server_name.clone());
+        }
+    }
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+pub(crate) fn automation_selected_mcp_wildcard_servers_from_allowlist(
+    allowlist: &[String],
+    known_server_names: &[String],
+) -> Vec<String> {
+    let mut selected = Vec::new();
+    for server_name in known_server_names {
+        let namespace = crate::http::mcp::mcp_namespace_segment(server_name);
+        if allowlist
+            .iter()
+            .any(|entry| entry.trim() == format!("mcp.{namespace}.*"))
+        {
             selected.push(server_name.clone());
         }
     }
@@ -476,7 +510,9 @@ pub(crate) fn automation_connector_hint_text(node: &AutomationFlowNode) -> Strin
     .join("\n")
 }
 
-pub(crate) fn automation_tool_telemetry_selected_mcp_servers(tool_telemetry: &Value) -> Vec<String> {
+pub(crate) fn automation_tool_telemetry_selected_mcp_servers(
+    tool_telemetry: &Value,
+) -> Vec<String> {
     tool_telemetry
         .get("capability_resolution")
         .and_then(|value| value.get("mcp_tool_diagnostics"))
@@ -588,10 +624,21 @@ async fn sync_automation_allowed_mcp_servers(
         &enabled_server_names,
         automation_node_requires_email_delivery(node),
     );
+    let mut wildcard_selected_servers = automation_normalize_server_list(allowed_servers);
+    wildcard_selected_servers.extend(automation_selected_mcp_wildcard_servers_from_allowlist(
+        allowlist,
+        &enabled_server_names,
+    ));
+    if selected_source == "email_fallback" {
+        wildcard_selected_servers.extend(enabled_server_names.iter().cloned());
+    }
+    wildcard_selected_servers.sort();
+    wildcard_selected_servers.dedup();
     if selected_servers.is_empty() {
         return json!({
             "selected_servers": [],
             "selected_source": "none",
+            "wildcard_selected_servers": [],
             "servers": [],
             "remote_tools": [],
             "registered_tools": [],
@@ -711,6 +758,7 @@ async fn sync_automation_allowed_mcp_servers(
     json!({
         "selected_servers": selected_servers,
         "selected_source": selected_source,
+        "wildcard_selected_servers": wildcard_selected_servers,
         "servers": server_rows,
         "remote_tools": all_remote_names,
         "registered_tools": all_registered_names,
@@ -777,7 +825,9 @@ pub(crate) fn value_object_path_field(value: &Value, key: &str) -> Option<String
         .map(str::to_string)
 }
 
-pub(crate) fn render_research_finalize_upstream_summary(upstream_inputs: &[Value]) -> Option<String> {
+pub(crate) fn render_research_finalize_upstream_summary(
+    upstream_inputs: &[Value],
+) -> Option<String> {
     let source_inventory =
         automation_upstream_output_for_alias(upstream_inputs, "source_inventory")
             .and_then(automation_upstream_structured_handoff);
@@ -1062,7 +1112,10 @@ pub(crate) fn automation_prompt_render_canonical_html_body(text: &str, run_id: &
     }
 }
 
-pub(crate) fn render_deterministic_delivery_body(upstream_inputs: &[Value], run_id: &str) -> Option<String> {
+pub(crate) fn render_deterministic_delivery_body(
+    upstream_inputs: &[Value],
+    run_id: &str,
+) -> Option<String> {
     let mut best = upstream_inputs
         .iter()
         .filter_map(|input| {
@@ -1244,7 +1297,9 @@ pub(crate) fn automation_filter_runnable_by_open_phase(
     }
 }
 
-pub(crate) fn automation_plan_package(automation: &AutomationV2Spec) -> Option<compiler_api::PlanPackage> {
+pub(crate) fn automation_plan_package(
+    automation: &AutomationV2Spec,
+) -> Option<compiler_api::PlanPackage> {
     automation
         .metadata
         .as_ref()

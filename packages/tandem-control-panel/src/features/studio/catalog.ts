@@ -99,6 +99,10 @@ export function createWorkflowDraftFromTemplate(
       toolAllowlist: [...entry.toolAllowlist],
       toolDenylist: [...entry.toolDenylist],
       mcpAllowedServers: [...entry.mcpAllowedServers],
+      mcpAllowedTools: Array.isArray(entry.mcpAllowedTools) ? [...entry.mcpAllowedTools] : null,
+      mcpOtherAllowedTools: Array.isArray(entry.mcpOtherAllowedTools)
+        ? [...entry.mcpOtherAllowedTools]
+        : [],
       prompt: { ...entry.prompt },
     })),
     nodes: template.nodes.map((entry) => ({

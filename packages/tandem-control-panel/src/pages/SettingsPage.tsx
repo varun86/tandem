@@ -5,6 +5,7 @@ import type { JsonObject } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
+import { McpToolAllowlistEditor } from "../components/McpToolAllowlistEditor";
 import {
   AnimatedPage,
   Badge,
@@ -403,6 +404,7 @@ type McpServerRow = {
   authorizationUrl?: string;
   headers: Record<string, string>;
   toolCache: any[];
+  allowedTools: string[] | null;
 };
 
 type McpCatalogServer = {
@@ -572,6 +574,11 @@ function normalizeMcpServerRow(input: any, fallbackName = ""): McpServerRow | nu
     toolCache: Array.isArray(row.tool_cache || row.toolCache)
       ? row.tool_cache || row.toolCache
       : [],
+    allowedTools: Array.isArray(row.allowed_tools || row.allowedTools)
+      ? (row.allowed_tools || row.allowedTools)
+          .map((entry: any) => String(entry || "").trim())
+          .filter(Boolean)
+      : null,
   };
 }
 
@@ -2061,6 +2068,24 @@ export function SettingsPage({
     async () => queryClient.invalidateQueries({ queryKey: ["settings", "mcp"] }),
     [queryClient]
   );
+  const mcpToolPolicyMutation = useMutation({
+    mutationFn: async ({
+      serverName,
+      allowedTools,
+    }: {
+      serverName: string;
+      allowedTools: string[] | null;
+    }) =>
+      client.mcp.patch(serverName, {
+        allowed_tools: allowedTools ?? undefined,
+        clear_allowed_tools: allowedTools === null,
+      }),
+    onSuccess: async () => {
+      await invalidateMcp();
+      toast("ok", "MCP tool access updated.");
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
   const mcpActionMutation = useMutation({
     mutationFn: async ({ action, server }: { action: string; server?: McpServerRow }) => {
       if (!server) throw new Error("No MCP server selected.");
@@ -4981,6 +5006,21 @@ export function SettingsPage({
                                 ? `Auth headers: ${headerKeys.join(", ")}`
                                 : "No stored auth headers."}
                             </div>
+                            <McpToolAllowlistEditor
+                              title="Tool access"
+                              subtitle="Leave all discovered tools selected to expose the full MCP server, or uncheck tools to hide them from agents and workflows."
+                              discoveredTools={
+                                Array.isArray(server.toolCache) ? server.toolCache : []
+                              }
+                              value={server.allowedTools}
+                              disabled={mcpToolPolicyMutation.isPending}
+                              onChange={(next) =>
+                                mcpToolPolicyMutation.mutate({
+                                  serverName: server.name,
+                                  allowedTools: next,
+                                })
+                              }
+                            />
                             <div className="flex flex-wrap gap-2">
                               <button className="tcp-btn" onClick={() => openMcpModal(server)}>
                                 Edit

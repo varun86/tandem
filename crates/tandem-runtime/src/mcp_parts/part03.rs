@@ -168,6 +168,7 @@ mod tests {
             }],
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            allowed_tools: None,
             secret_header_values: HashMap::new(),
         };
 
@@ -213,6 +214,7 @@ mod tests {
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            allowed_tools: None,
             secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(
@@ -254,6 +256,7 @@ mod tests {
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            allowed_tools: None,
             secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(
@@ -291,6 +294,7 @@ mod tests {
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            allowed_tools: None,
             secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(

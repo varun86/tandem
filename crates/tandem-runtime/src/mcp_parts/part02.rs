@@ -121,9 +121,30 @@ fn parse_remote_endpoint(transport: &str) -> Option<String> {
 
 fn server_tool_rows(server: &McpServer) -> Vec<McpRemoteTool> {
     let server_slug = sanitize_namespace_segment(&server.name);
+    let allowed_tools = server.allowed_tools.as_ref();
     server
         .tool_cache
         .iter()
+        .filter(|tool| {
+            let Some(allowed_tools) = allowed_tools else {
+                return true;
+            };
+            if allowed_tools.is_empty() {
+                return false;
+            }
+            let tool_slug = sanitize_namespace_segment(&tool.tool_name);
+            let namespaced_name = format!("mcp.{server_slug}.{tool_slug}");
+            allowed_tools.iter().any(|entry| {
+                let pattern = entry.trim();
+                if pattern.is_empty() {
+                    return false;
+                }
+                pattern == "*"
+                    || pattern == tool.tool_name.trim()
+                    || pattern == namespaced_name
+                    || pattern == format!("mcp.{server_slug}.*")
+            })
+        })
         .map(|tool| {
             let tool_slug = sanitize_namespace_segment(&tool.tool_name);
             McpRemoteTool {

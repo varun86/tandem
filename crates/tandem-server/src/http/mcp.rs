@@ -234,11 +234,14 @@ pub(super) struct McpAddInput {
     pub headers: Option<HashMap<String, String>>,
     pub secret_headers: Option<HashMap<String, tandem_runtime::McpSecretRef>>,
     pub enabled: Option<bool>,
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct McpPatchInput {
     pub enabled: Option<bool>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub clear_allowed_tools: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -285,6 +288,12 @@ pub(super) async fn add_mcp(
             input.enabled.unwrap_or(true),
         )
         .await;
+    if let Some(allowed_tools) = input.allowed_tools.clone() {
+        let _ = state
+            .mcp
+            .set_allowed_tools(&name, Some(allowed_tools))
+            .await;
+    }
     if !auth_kind.is_empty() {
         let _ = state.mcp.set_auth_kind(&name, auth_kind.clone()).await;
     }
@@ -304,6 +313,7 @@ pub(super) async fn add_mcp(
                 "transport": audit_transport,
             "enabled": input.enabled.unwrap_or(true),
             "auth_kind": auth_kind,
+            "allowed_tools": input.allowed_tools,
         }),
     )
     .await;
@@ -329,6 +339,122 @@ fn mcp_tool_names_for_server(tool_names: &[String], server_name: &str) -> Vec<St
     tools.sort();
     tools.dedup();
     tools
+}
+
+#[derive(Default)]
+struct McpToolScopeFilter {
+    wildcard_server_segments: std::collections::HashSet<String>,
+    exact_tool_names: std::collections::HashSet<String>,
+}
+
+fn parse_mcp_tool_scope_filter(tool_names: &[String]) -> McpToolScopeFilter {
+    let mut filter = McpToolScopeFilter::default();
+    for raw in tool_names {
+        let tool_name = raw.trim();
+        if tool_name.is_empty() {
+            continue;
+        }
+        if let Some(rest) = tool_name.strip_prefix("mcp.") {
+            if let Some((server_segment, tool_segment)) = rest.split_once('.') {
+                if tool_segment == "*" {
+                    filter
+                        .wildcard_server_segments
+                        .insert(server_segment.to_string());
+                } else {
+                    filter
+                        .exact_tool_names
+                        .insert(format!("mcp.{server_segment}.{tool_segment}"));
+                }
+            }
+        }
+    }
+    filter
+}
+
+fn filter_mcp_snapshot_by_tool_scope(snapshot: Value, filter: &McpToolScopeFilter) -> Value {
+    let mut snapshot = snapshot;
+    if filter.wildcard_server_segments.is_empty() && filter.exact_tool_names.is_empty() {
+        return snapshot;
+    }
+
+    if let Some(root) = snapshot.as_object_mut() {
+        if let Some(Value::Array(rows)) = root.get_mut("servers") {
+            rows.retain(|row| {
+                let server_name = row.get("name").and_then(Value::as_str).unwrap_or("");
+                let server_segment = mcp_namespace_segment(server_name);
+                if filter.wildcard_server_segments.contains(&server_segment) {
+                    return true;
+                }
+                let exact_tools = row
+                    .get("remote_tools")
+                    .and_then(Value::as_array)
+                    .map(|tools| {
+                        tools
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .unwrap_or_default();
+                exact_tools
+                    .iter()
+                    .any(|tool_name| filter.exact_tool_names.contains(tool_name))
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("connected_server_names") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|server| {
+                    let segment = mcp_namespace_segment(server);
+                    filter.wildcard_server_segments.contains(&segment)
+                        || filter
+                            .exact_tool_names
+                            .iter()
+                            .any(|tool| tool.starts_with(&format!("mcp.{segment}.")))
+                })
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("enabled_server_names") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|server| {
+                    let segment = mcp_namespace_segment(server);
+                    filter.wildcard_server_segments.contains(&segment)
+                        || filter
+                            .exact_tool_names
+                            .iter()
+                            .any(|tool| tool.starts_with(&format!("mcp.{segment}.")))
+                })
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("remote_tools") {
+            rows.retain(|row| {
+                row.get("server_name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|server| {
+                        let segment = mcp_namespace_segment(server);
+                        if filter.wildcard_server_segments.contains(&segment) {
+                            return true;
+                        }
+                        row.get("namespaced_name")
+                            .and_then(Value::as_str)
+                            .is_some_and(|tool_name| filter.exact_tool_names.contains(tool_name))
+                    })
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("registered_tools") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|tool_name| {
+                    tool_name == "mcp_list"
+                        || filter.exact_tool_names.contains(tool_name)
+                        || filter
+                            .wildcard_server_segments
+                            .iter()
+                            .any(|segment| tool_name.starts_with(&format!("mcp.{segment}.")))
+                })
+            });
+        }
+    }
+
+    snapshot
 }
 
 pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
@@ -389,6 +515,9 @@ pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
             "pending_auth_tools": pending_auth_tools,
             "remote_tool_count": remote_tool_names.len(),
             "registered_tool_count": registered_names.len(),
+            "allowed_tool_count": server.allowed_tools.as_ref().map(|tools| tools.len()).unwrap_or(remote_tool_names.len()),
+            "allowed_tools": server.allowed_tools.clone(),
+            "discovered_tool_count": server.tool_cache.len(),
             "remote_tools": remote_tool_names,
             "registered_tools": registered_names,
         }));
@@ -1103,6 +1232,14 @@ fn filter_mcp_inventory_snapshot_to_servers(snapshot: Value, allowed_servers: &[
     snapshot
 }
 
+fn filter_mcp_snapshot_by_exact_and_wildcard_tools(
+    snapshot: Value,
+    allowed_tools: &[String],
+) -> Value {
+    let filter = parse_mcp_tool_scope_filter(allowed_tools);
+    filter_mcp_snapshot_by_tool_scope(snapshot, &filter)
+}
+
 /// Filter MCP inventory by namespace segments (e.g. `["tandem_mcp"]`) derived
 /// from `session_allowed_tools` patterns like `mcp.tandem_mcp.*`.  Server names
 /// are matched by applying `mcp_namespace_segment` so that `"tandem-mcp"` matches
@@ -1155,6 +1292,10 @@ fn filter_mcp_snapshot_by_namespace_segments(
     snapshot
 }
 
+fn session_mcp_tool_filter(session_tools: &[String]) -> McpToolScopeFilter {
+    parse_mcp_tool_scope_filter(session_tools)
+}
+
 async fn scoped_mcp_servers_for_session(state: &AppState, session_id: &str) -> Vec<String> {
     state
         .automation_v2_session_mcp_servers
@@ -1193,34 +1334,27 @@ impl Tool for McpListTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let mut snapshot = mcp_inventory_snapshot(&self.state).await;
         let session_id = args.get("__session_id").and_then(Value::as_str);
-        let mut allowed_servers = if let Some(sid) = session_id {
+        let allowed_servers = if let Some(sid) = session_id {
             scoped_mcp_servers_for_session(&self.state, sid).await
         } else {
             Vec::new()
         };
         // If no automation-level MCP scoping, check session_allowed_tools
         // (set by per-request tool_allowlist from channel dispatchers).
-        if allowed_servers.is_empty() {
-            if let Some(sid) = session_id {
-                if let Some(rt) = self.state.runtime.get() {
-                    let session_tools = rt.engine_loop.get_session_allowed_tools(sid).await;
-                    let allowed_segments: Vec<String> = session_tools
-                        .iter()
-                        .filter_map(|pattern| {
-                            pattern
-                                .strip_prefix("mcp.")
-                                .and_then(|rest| rest.strip_suffix(".*"))
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-                    if !allowed_segments.is_empty() {
-                        snapshot =
-                            filter_mcp_snapshot_by_namespace_segments(snapshot, &allowed_segments);
-                    }
-                }
+        let mut session_tool_filter = McpToolScopeFilter::default();
+        if let Some(sid) = session_id {
+            if let Some(rt) = self.state.runtime.get() {
+                let session_tools = rt.engine_loop.get_session_allowed_tools(sid).await;
+                session_tool_filter = session_mcp_tool_filter(&session_tools);
             }
-        } else {
+        }
+        if !allowed_servers.is_empty() {
             snapshot = filter_mcp_inventory_snapshot_to_servers(snapshot, &allowed_servers);
+        }
+        if !session_tool_filter.wildcard_server_segments.is_empty()
+            || !session_tool_filter.exact_tool_names.is_empty()
+        {
+            snapshot = filter_mcp_snapshot_by_tool_scope(snapshot, &session_tool_filter);
         }
         let output =
             serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| snapshot.to_string());
@@ -1396,19 +1530,22 @@ pub(super) async fn patch_mcp(
     Json(input): Json<McpPatchInput>,
 ) -> Json<Value> {
     let mut changed = false;
+    let mut should_resync = false;
+    if input.clear_allowed_tools.unwrap_or(false) || input.allowed_tools.is_some() {
+        let next_allowed_tools = if input.clear_allowed_tools.unwrap_or(false) {
+            None
+        } else {
+            input.allowed_tools.clone()
+        };
+        changed |= state.mcp.set_allowed_tools(&name, next_allowed_tools).await;
+        should_resync = true;
+    }
     if let Some(enabled) = input.enabled {
-        changed = state.mcp.set_enabled(&name, enabled).await;
-        if changed {
+        let enabled_changed = state.mcp.set_enabled(&name, enabled).await;
+        changed |= enabled_changed;
+        if enabled_changed {
             if enabled {
                 let _ = state.mcp.connect(&name).await;
-                let count = sync_mcp_tools_for_server(&state, &name).await;
-                state.event_bus.publish(EngineEvent::new(
-                    "mcp.tools.updated",
-                    json!({
-                        "name": name,
-                        "count": count,
-                    }),
-                ));
             } else {
                 let prefix = format!("mcp.{}.", mcp_namespace_segment(&name));
                 let _ = state.tools.unregister_by_prefix(&prefix).await;
@@ -1431,6 +1568,25 @@ pub(super) async fn patch_mcp(
                 }),
             )
             .await;
+            if enabled {
+                should_resync = true;
+            }
+        }
+    }
+    if should_resync {
+        let server = state.mcp.list().await.get(&name).cloned();
+        if server
+            .as_ref()
+            .is_some_and(|server| server.enabled && server.connected)
+        {
+            let count = sync_mcp_tools_for_server(&state, &name).await;
+            state.event_bus.publish(EngineEvent::new(
+                "mcp.tools.updated",
+                json!({
+                    "name": name,
+                    "count": count,
+                }),
+            ));
         }
     }
     Json(json!({"ok": changed}))

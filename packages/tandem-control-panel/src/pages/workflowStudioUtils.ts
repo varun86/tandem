@@ -20,6 +20,7 @@ import {
   createEmptyNodeDraft,
   emptyPromptSections,
 } from "../features/studio/schema";
+import { splitMcpAllowedTools } from "../features/mcp/mcpTools";
 import { EmptyState, PageCard } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -241,7 +242,7 @@ export function joinCsv(values: string[]) {
   return Array.isArray(values) ? values.join(", ") : "";
 }
 
-const STUDIO_OUTPUT_TOKEN_GUIDE = [
+export const STUDIO_OUTPUT_TOKEN_GUIDE = [
   "{current_date}",
   "{current_time}",
   "{current_timestamp}",
@@ -614,6 +615,28 @@ export function computeNodeDepths(nodes: StudioNodeDraft[]) {
 }
 
 export function normalizeAgentDraft(row: any): StudioAgentDraft {
+  const hasExplicitMcpAllowedTools = Array.isArray(row?.mcpAllowedTools || row?.mcp_allowed_tools);
+  const hasExplicitMcpOtherAllowedTools = Array.isArray(
+    row?.mcpOtherAllowedTools || row?.mcp_other_allowed_tools
+  );
+  const rawAllowedTools = hasExplicitMcpAllowedTools
+    ? row.mcpAllowedTools || row.mcp_allowed_tools
+    : Array.isArray(row?.mcp_policy?.allowed_tools)
+      ? row.mcp_policy.allowed_tools
+      : Array.isArray(row?.mcpPolicy?.allowedTools)
+        ? row.mcpPolicy.allowedTools
+        : [];
+  const splitAllowedTools = splitMcpAllowedTools(rawAllowedTools);
+  const mcpAllowedTools = hasExplicitMcpAllowedTools
+    ? (row.mcpAllowedTools || row.mcp_allowed_tools)
+        .map((entry: any) => safeString(entry))
+        .filter(Boolean)
+    : splitAllowedTools.mcpTools;
+  const mcpOtherAllowedTools = hasExplicitMcpOtherAllowedTools
+    ? (row.mcpOtherAllowedTools || row.mcp_other_allowed_tools)
+        .map((entry: any) => safeString(entry))
+        .filter(Boolean)
+    : splitAllowedTools.otherTools;
   return {
     agentId: safeString(row?.agentId || row?.agent_id || row?.id),
     displayName: safeString(row?.displayName || row?.display_name || row?.name),
@@ -661,6 +684,12 @@ export function normalizeAgentDraft(row: any): StudioAgentDraft {
       : Array.isArray(row?.mcp_policy?.allowed_servers)
         ? row.mcp_policy.allowed_servers.map((entry: any) => safeString(entry)).filter(Boolean)
         : [],
+    mcpAllowedTools: hasExplicitMcpAllowedTools
+      ? mcpAllowedTools
+      : mcpAllowedTools.length
+        ? mcpAllowedTools
+        : null,
+    mcpOtherAllowedTools,
   };
 }
 
@@ -874,6 +903,13 @@ export function repairDraftTemplateLinks(
       mcpAllowedServers: agent.mcpAllowedServers.length
         ? agent.mcpAllowedServers
         : fallback?.mcpAllowedServers || [],
+      mcpAllowedTools:
+        agent.mcpAllowedTools !== null && Array.isArray(agent.mcpAllowedTools)
+          ? agent.mcpAllowedTools
+          : (fallback?.mcpAllowedTools ?? null),
+      mcpOtherAllowedTools: agent.mcpOtherAllowedTools.length
+        ? agent.mcpOtherAllowedTools
+        : fallback?.mcpOtherAllowedTools || [],
       modelProvider: safeString(agent.modelProvider) || fallback?.modelProvider || "",
       modelId: safeString(agent.modelId) || fallback?.modelId || "",
       avatarUrl: safeString(agent.avatarUrl) || fallback?.avatarUrl || "",
@@ -968,6 +1004,12 @@ export function draftFromAutomation(
     ? automation.agents.map((agent: any) => {
         const templateId = safeString(agent?.template_id || agent?.templateId);
         const linked = templateId ? templateMap.get(templateId) : null;
+        const policyAllowedTools = Array.isArray(agent?.mcp_policy?.allowed_tools)
+          ? agent.mcp_policy.allowed_tools
+          : Array.isArray(agent?.mcpPolicy?.allowedTools)
+            ? agent.mcpPolicy.allowedTools
+            : [];
+        const splitAllowedTools = splitMcpAllowedTools(policyAllowedTools);
         const starterFallback =
           !linked && starterTemplateId
             ? defaultAgentFromStarter(
@@ -1014,6 +1056,8 @@ export function draftFromAutomation(
           toolDenylist: agent?.tool_policy?.denylist || agent?.toolPolicy?.denylist || [],
           mcpAllowedServers:
             agent?.mcp_policy?.allowed_servers || agent?.mcpPolicy?.allowedServers || [],
+          mcpAllowedTools: splitAllowedTools.mcpTools.length ? splitAllowedTools.mcpTools : null,
+          mcpOtherAllowedTools: splitAllowedTools.otherTools,
         });
       })
     : [];

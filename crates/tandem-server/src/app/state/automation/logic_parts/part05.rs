@@ -1,4 +1,3 @@
-
 async fn record_automation_external_actions_for_session(
     state: &AppState,
     run_id: &str,
@@ -244,7 +243,10 @@ pub(crate) fn automation_binding_matches_tool_name(
             .any(|alias| alias.eq_ignore_ascii_case(tool_name))
 }
 
-pub(crate) fn automation_external_action_target(args: &Value, result: Option<&Value>) -> Option<String> {
+pub(crate) fn automation_external_action_target(
+    args: &Value,
+    result: Option<&Value>,
+) -> Option<String> {
     for candidate in [
         args.pointer("/owner_repo").and_then(Value::as_str),
         args.pointer("/repo").and_then(Value::as_str),
@@ -767,6 +769,16 @@ pub(crate) async fn execute_automation_v2_node(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let selected_mcp_wildcard_server_names = mcp_tool_diagnostics
+        .get("wildcard_selected_servers")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| selected_mcp_server_names.clone());
     let selected_mcp_source = mcp_tool_diagnostics
         .get("selected_source")
         .and_then(Value::as_str)
@@ -775,7 +787,7 @@ pub(crate) async fn execute_automation_v2_node(
     let mut requested_tools = requested_tools;
     requested_tools.extend(automation_requested_server_scoped_mcp_tools(
         node,
-        &selected_mcp_server_names,
+        &selected_mcp_wildcard_server_names,
     ));
     requested_tools.sort();
     requested_tools.dedup();
