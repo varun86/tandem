@@ -97,4 +97,6 @@ All namespaces exist on both the TypeScript and Python clients.
 | `agentTeams`                       | Spawn and manage multi-agent teams                                 |
 | `missions`                         | Multi-agent goals and work item tracking                           |
 
+For the storage model behind the `memory` namespace, see [Memory Internals](../memory-internals/).
+
 For browser automation itself, use standard engine tools such as `browser_open`, `browser_click`, and `browser_screenshot` through `execute_tool(...)` or session-based runs with those tools in the allowlist. The `browser` namespace is for diagnostics and install flows.

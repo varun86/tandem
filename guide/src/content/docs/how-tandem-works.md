@@ -100,6 +100,8 @@ Channel sessions add a second retrieval layer for long-lived chat integrations:
 
 This is the key reason the docs need a canonical under-the-hood page: if someone asks about "Discord session context" or "Telegram channel memory", the correct answer is not "the whole channel transcript is loaded every time". The correct answer is that Tandem keeps the transcript and retrieval memory separate, then archives selected completed exchanges for reuse.
 
+For a deeper storage-level breakdown of the memory layers, see [Memory Internals](./memory-internals/).
+
 ## Channel Flow
 
 Discord, Telegram, and Slack all ride the same engine session contract, but each adapter normalizes inbound messages differently before calling `prompt_async`.
@@ -171,6 +173,7 @@ The wire format uses stable identifiers like `sessionID` and `runID`, and tool p
 
 - [Architecture](./architecture/)
 - [Agents & Sessions](./agents-and-sessions/)
+- [Memory Internals](./memory-internals/)
 - [Channel Integrations](./channel-integrations/)
 - [Protocol Matrix](./protocol-matrix/)
 - [Engine Commands](./reference/engine-commands/)

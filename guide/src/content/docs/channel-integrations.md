@@ -130,6 +130,8 @@ Channel sessions now keep memory in two layers:
 
 This lets future channel sessions recall prior work without loading full transcript history into every run.
 
+For the storage-level breakdown of these layers, see [Memory Internals](./memory-internals/).
+
 ### What gets archived
 
 After a successful channel reply, Tandem writes one `chat_exchange` memory entry containing:

@@ -146,6 +146,8 @@ This is designed so that:
 - memory retrieval stays much smaller than full transcript replay
 - the raw transcript remains preserved even if retrieval memory is compacted later
 
+For the storage-level breakdown of these layers, see [Memory Internals](./memory-internals/).
+
 ## Security Notes
 
 - Use `--api-token` (or `TANDEM_API_TOKEN`) whenever binding beyond localhost.
