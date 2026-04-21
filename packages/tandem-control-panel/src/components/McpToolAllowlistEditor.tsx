@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { ChevronDown } from "lucide-react";
+import { useMemo, useState } from "react";
 import { collapseMcpAllowedToolsSelection, normalizeMcpToolNames } from "../features/mcp/mcpTools";
 
 type McpToolAllowlistEditorProps = {
@@ -9,6 +10,8 @@ type McpToolAllowlistEditorProps = {
   onChange: (next: string[] | null) => void;
   disabled?: boolean;
   emptyText?: string;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
 };
 
 export function McpToolAllowlistEditor({
@@ -19,7 +22,10 @@ export function McpToolAllowlistEditor({
   onChange,
   disabled = false,
   emptyText = "No MCP tools have been discovered for this server yet.",
+  collapsible = false,
+  defaultCollapsed = false,
 }: McpToolAllowlistEditorProps) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const discovered = useMemo(() => normalizeMcpToolNames(discoveredTools), [discoveredTools]);
   const selected = useMemo(() => {
     if (value === null) return [...discovered];
@@ -55,9 +61,24 @@ export function McpToolAllowlistEditor({
   return (
     <div className="grid gap-3 rounded-xl border border-slate-700/70 bg-slate-950/30 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="grid gap-1">
-          <div className="text-sm font-medium text-slate-100">{title}</div>
-          {subtitle ? <div className="text-xs text-slate-400">{subtitle}</div> : null}
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          {collapsible ? (
+            <button
+              type="button"
+              className="mt-0.5 rounded-full border border-slate-700/80 p-1 text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+              aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`}
+              />
+            </button>
+          ) : null}
+          <div className="grid gap-1">
+            <div className="text-sm font-medium text-slate-100">{title}</div>
+            {subtitle ? <div className="text-xs text-slate-400">{subtitle}</div> : null}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
           <span className="rounded-full border border-slate-700 px-2 py-1">
@@ -65,26 +86,30 @@ export function McpToolAllowlistEditor({
               ? "all discovered"
               : `${visibleSelectedCount}/${discovered.length || 0} selected`}
           </span>
-          <button
-            type="button"
-            className="rounded-full border border-slate-700 px-2 py-1 text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || !discovered.length}
-            onClick={() => setSelection(null)}
-          >
-            Select all
-          </button>
-          <button
-            type="button"
-            className="rounded-full border border-slate-700 px-2 py-1 text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || (!selected.length && !extraSelected.length)}
-            onClick={() => setSelection([])}
-          >
-            Clear all
-          </button>
+          {!collapsed ? (
+            <>
+              <button
+                type="button"
+                className="rounded-full border border-slate-700 px-2 py-1 text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled || !discovered.length}
+                onClick={() => setSelection(null)}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-slate-700 px-2 py-1 text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled || (!selected.length && !extraSelected.length)}
+                onClick={() => setSelection([])}
+              >
+                Clear all
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
-      {!discovered.length && !extraSelected.length ? (
+      {collapsed ? null : !discovered.length && !extraSelected.length ? (
         <div className="text-xs text-slate-500">{emptyText}</div>
       ) : (
         <>

@@ -6,6 +6,7 @@ import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { McpToolAllowlistEditor } from "../components/McpToolAllowlistEditor";
+import { normalizeMcpNamespaceSegment } from "../features/mcp/mcpTools";
 import {
   AnimatedPage,
   Badge,
@@ -346,6 +347,7 @@ type ChannelToolPreferencesRow = {
   enabled_tools: string[];
   disabled_tools: string[];
   enabled_mcp_servers: string[];
+  enabled_mcp_tools: string[];
 };
 
 type ChannelScopeRow = {
@@ -725,6 +727,7 @@ function defaultChannelToolPreferences(): ChannelToolPreferencesRow {
     enabled_tools: [],
     disabled_tools: [],
     enabled_mcp_servers: [],
+    enabled_mcp_tools: [],
   };
 }
 
@@ -743,6 +746,9 @@ function normalizeChannelToolPreferences(raw: any): ChannelToolPreferencesRow {
       : [],
     enabled_mcp_servers: Array.isArray(row.enabled_mcp_servers)
       ? uniqueChannelValues(row.enabled_mcp_servers.map((value: any) => String(value)))
+      : [],
+    enabled_mcp_tools: Array.isArray(row.enabled_mcp_tools)
+      ? uniqueChannelValues(row.enabled_mcp_tools.map((value: any) => String(value)))
       : [],
   };
 }
@@ -835,6 +841,34 @@ function nextChannelMcpPreferences(
   return {
     ...prefs,
     enabled_mcp_servers: enabled ? uniqueChannelValues([...servers, server]) : servers,
+  };
+}
+
+function channelExactMcpToolsForServer(
+  prefs: ChannelToolPreferencesRow,
+  serverName: string,
+  _discoveredTools: string[]
+) {
+  const namespace = normalizeMcpNamespaceSegment(serverName);
+  const prefix = `mcp.${namespace}.`;
+  const exactTools = prefs.enabled_mcp_tools.filter((tool) => tool.startsWith(prefix));
+  return exactTools.length ? exactTools : null;
+}
+
+function nextChannelExactMcpPreferences(
+  prefs: ChannelToolPreferencesRow,
+  serverName: string,
+  discoveredTools: string[],
+  selectedTools: string[] | null
+): ChannelToolPreferencesRow {
+  const namespace = normalizeMcpNamespaceSegment(serverName);
+  const prefix = `mcp.${namespace}.`;
+  const discovered = uniqueChannelValues(discoveredTools);
+  const retained = prefs.enabled_mcp_tools.filter((tool) => !tool.startsWith(prefix));
+  const nextSelection = selectedTools === null ? discovered : uniqueChannelValues(selectedTools);
+  return {
+    ...prefs,
+    enabled_mcp_tools: uniqueChannelValues([...retained, ...nextSelection]),
   };
 }
 
@@ -4540,6 +4574,14 @@ export function SettingsPage({
                             | undefined
                         )?.[channel] || defaultChannelToolPreferences()
                       );
+                      const knownExactMcpToolPrefixes = mcpServers.map(
+                        (server) => `mcp.${normalizeMcpNamespaceSegment(server.name)}.`
+                      );
+                      const knownExactMcpTools = new Set(
+                        toolPrefs.enabled_mcp_tools.filter((tool) =>
+                          knownExactMcpToolPrefixes.some((prefix) => tool.startsWith(prefix))
+                        )
+                      );
                       const publicDemo = draft.securityProfile === "public_demo";
                       const hasSavedConfig = channelConfigHasSavedSettings(channel, config);
                       const channelSettingsDirty = !channelDraftMatchesConfig(
@@ -4922,6 +4964,11 @@ export function SettingsPage({
                                 : publicDemo
                                   ? "MCP servers stay disabled in public demo mode."
                                   : `No MCP servers enabled for this ${scopeTargetLabel}.`}
+                              {toolPrefs.enabled_mcp_tools.length
+                                ? ` ${toolPrefs.enabled_mcp_tools.length} exact MCP tool${
+                                    toolPrefs.enabled_mcp_tools.length === 1 ? "" : "s"
+                                  } also selected.`
+                                : ""}
                             </div>
 
                             <AnimatePresence initial={false}>
@@ -5046,6 +5093,106 @@ export function SettingsPage({
                                         </div>
                                       )}
                                     </div>
+
+                                    <div className="grid gap-2">
+                                      <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                        Exact MCP tools
+                                      </div>
+                                      <div className="tcp-subtle text-xs">
+                                        Choose exact tool names for this {scopeTargetLabel}. This
+                                        narrows access without changing the whole-server toggles
+                                        above.
+                                      </div>
+                                      {mcpServers.length ? (
+                                        <div className="grid gap-3">
+                                          {mcpServers.map((server) => {
+                                            const discoveredTools = normalizeMcpTools(
+                                              Array.isArray(server.toolCache)
+                                                ? server.toolCache
+                                                : []
+                                            );
+                                            const selectedExactTools =
+                                              channelExactMcpToolsForServer(
+                                                toolPrefs,
+                                                server.name,
+                                                discoveredTools
+                                              );
+                                            return (
+                                              <McpToolAllowlistEditor
+                                                key={`${channel}-exact-mcp-${server.name}`}
+                                                title={server.name}
+                                                subtitle={
+                                                  server.connected
+                                                    ? server.enabled
+                                                      ? "Connected and enabled globally. Pick the exact tools this scope can use."
+                                                      : "Connected, but disabled globally. Exact selections are saved here and will apply if the server is enabled."
+                                                    : "This server is disconnected. Exact selections are saved here and will apply when it reconnects."
+                                                }
+                                                discoveredTools={discoveredTools}
+                                                value={selectedExactTools}
+                                                disabled={
+                                                  saveChannelToolPreferencesMutation.isPending ||
+                                                  publicDemo
+                                                }
+                                                collapsible
+                                                defaultCollapsed
+                                                emptyText="No MCP tools have been discovered for this server yet."
+                                                onChange={(next) =>
+                                                  saveChannelToolPreferencesMutation.mutate({
+                                                    channel,
+                                                    scopeId: selectedScopeId || null,
+                                                    payload: nextChannelExactMcpPreferences(
+                                                      toolPrefs,
+                                                      server.name,
+                                                      discoveredTools,
+                                                      next
+                                                    ),
+                                                  })
+                                                }
+                                              />
+                                            );
+                                          })}
+                                          {toolPrefs.enabled_mcp_tools.filter(
+                                            (tool) => !knownExactMcpTools.has(tool)
+                                          ).length ? (
+                                            <McpToolAllowlistEditor
+                                              title="Saved exact tools not currently matched"
+                                              subtitle="These exact MCP tools are still stored for this scope, but no discovered server is currently exposing them."
+                                              discoveredTools={[]}
+                                              value={toolPrefs.enabled_mcp_tools.filter(
+                                                (tool) => !knownExactMcpTools.has(tool)
+                                              )}
+                                              disabled={
+                                                saveChannelToolPreferencesMutation.isPending ||
+                                                publicDemo
+                                              }
+                                              emptyText="All saved exact MCP tools currently match a discovered server."
+                                              onChange={(next) =>
+                                                saveChannelToolPreferencesMutation.mutate({
+                                                  channel,
+                                                  scopeId: selectedScopeId || null,
+                                                  payload: {
+                                                    ...toolPrefs,
+                                                    enabled_mcp_tools: uniqueChannelValues([
+                                                      ...toolPrefs.enabled_mcp_tools.filter(
+                                                        (tool) => knownExactMcpTools.has(tool)
+                                                      ),
+                                                      ...(next === null ? [] : next),
+                                                    ]),
+                                                  },
+                                                })
+                                              }
+                                            />
+                                          ) : null}
+                                        </div>
+                                      ) : (
+                                        <div className="tcp-subtle text-xs">
+                                          {publicDemo
+                                            ? "Exact MCP tools stay disabled in public demo mode."
+                                            : "No MCP servers configured yet."}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 </motion.div>
                               ) : null}
@@ -5061,13 +5208,16 @@ export function SettingsPage({
               {activeSection === "mcp" ? (
                 <PanelCard
                   title="MCP connections"
-                  subtitle="Configured MCP servers, connection state, and discovered tool coverage."
+                  subtitle="Configured MCP servers, connection state, and discovered tool coverage. Per-channel exact tool scopes live under Channels."
                   actions={
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Badge tone={connectedMcpCount ? "ok" : "warn"}>
                         {connectedMcpCount}/{mcpServers.length} connected
                       </Badge>
                       <Badge tone="info">{mcpToolIds.length} tools</Badge>
+                      <button className="tcp-btn" onClick={() => setActiveSection("channels")}>
+                        Channel scopes
+                      </button>
                       <button className="tcp-btn-primary" onClick={() => openMcpModal()}>
                         <i data-lucide="plus"></i>
                         Add MCP server
