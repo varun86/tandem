@@ -26,26 +26,30 @@ export const ROUTES = [
   ["teams-detail", "Teams", "users"],
 ];
 
+const NAV_ROUTE_ORDER = [
+  "dashboard",
+  "chat",
+  "planner",
+  "workflows",
+  "marketplace",
+  "studio",
+  "automations",
+  "experiments",
+  "coding",
+  "agents",
+  "orchestrator",
+  "memory",
+  "files",
+  "runs",
+  "settings",
+];
+
 // Sidebar routes used by the control panel and command palette
-export const NAV_ROUTES = ROUTES.filter(([id]) =>
-  [
-    "dashboard",
-    "chat",
-    "planner",
-    "workflows",
-    "marketplace",
-    "studio",
-    "automations",
-    "experiments",
-    "coding",
-    "agents",
-    "orchestrator",
-    "memory",
-    "files",
-    "runs",
-    "settings",
-  ].includes(id)
-);
+export const NAV_ROUTES = NAV_ROUTE_ORDER.map((routeId) => {
+  const route = ROUTES.find(([id]) => id === routeId);
+  if (!route) throw new Error(`Missing navigation route: ${routeId}`);
+  return route;
+});
 
 export const providerHints = {
   openai: {

@@ -494,6 +494,7 @@ fn build_channel_tool_allowlist(
     if tool_prefs.enabled_tools.is_empty()
         && tool_prefs.disabled_tools.is_empty()
         && tool_prefs.enabled_mcp_servers.is_empty()
+        && tool_prefs.enabled_mcp_tools.is_empty()
     {
         return Some(vec!["*".to_string()]);
     }
@@ -564,7 +565,11 @@ fn build_channel_tool_allowlist(
         result.push(format!("mcp.{}.*", mcp_namespace_segment(server)));
     }
 
-    if !tool_prefs.enabled_mcp_servers.is_empty() {
+    for tool in &tool_prefs.enabled_mcp_tools {
+        result.push(tool.clone());
+    }
+
+    if !tool_prefs.enabled_mcp_servers.is_empty() || !tool_prefs.enabled_mcp_tools.is_empty() {
         result.push("mcp_list".to_string());
     }
 
@@ -585,6 +590,7 @@ fn merge_channel_tool_preferences(
             base.enabled_mcp_servers,
             scoped.enabled_mcp_servers,
         ),
+        enabled_mcp_tools: merge_unique_strings(base.enabled_mcp_tools, scoped.enabled_mcp_tools),
     }
 }
 
@@ -1121,4 +1127,3 @@ fn build_channel_session_permissions(
         ],
     }
 }
-

@@ -2,6 +2,25 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.37 (Released 2026-04-21)
+
+This release tightens the control panel experience around KB document browsing, exact channel MCP scopes, and app-native dialogs so destructive actions and naming flows stay consistent across the UI.
+
+### Control panel UX
+
+- **Shared modal dialogs**: Files, Task Planning, and KB document actions now use Tandem-styled prompts and confirms instead of native browser popups.
+- **Sidebar ordering**: `Settings` stays pinned at the bottom of the sidebar, and `Files` remains grouped with the core navigation.
+
+### Knowledgebase viewer
+
+- **Inline document browsing**: KB collections now behave like a browser with click-to-expand previews, edit-in-place, and delete actions for uploaded documents.
+- **Icon-first document controls**: The KB viewer now uses compact icon buttons for preview refresh, copy, edit, collapse, and delete.
+
+### Channel MCP scoping
+
+- **Exact per-channel MCP tools**: Channel tool preferences now keep exact MCP tool allowlists alongside server-wide MCP enables, which is what public channel bots and other constrained sessions need.
+- **No widening on merge or sanitize**: Channel MCP exact-tool selections now survive preference merge and security-profile sanitization without being promoted back to a broad server-wide scope.
+
 ## v0.4.36 (Released 2026-04-20)
 
 This release adds fine-grained MCP access control, letting operators expose exact tools per server and per workflow instead of opening an entire MCP server to every session.

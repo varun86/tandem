@@ -69,6 +69,8 @@ pub struct ChannelToolPreferences {
     pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub enabled_mcp_servers: Vec<String>,
+    #[serde(default)]
+    pub enabled_mcp_tools: Vec<String>,
 }
 
 impl Default for ChannelToolPreferences {
@@ -77,6 +79,7 @@ impl Default for ChannelToolPreferences {
             enabled_tools: Vec::new(),
             disabled_tools: Vec::new(),
             enabled_mcp_servers: Vec::new(),
+            enabled_mcp_tools: Vec::new(),
         }
     }
 }

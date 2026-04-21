@@ -4,6 +4,7 @@ import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { useCapabilities } from "../features/system/queries.ts";
 import { KnowledgebaseUploadPanel } from "../features/knowledgebase/KnowledgebaseUploadPanel";
+import { PromptDialog } from "../components/ControlPanelDialogs";
 import { AnimatedPage, PanelCard, Toolbar, Badge } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
@@ -58,6 +59,10 @@ export function FilesPage({ api, toast }: AppPageProps) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [dir, setDir] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
+  const [createDirectoryDialog, setCreateDirectoryDialog] = useState<{
+    baseDir: string;
+    value: string;
+  } | null>(null);
   const [uploadRows, setUploadRows] = useState<
     Array<{ id: string; name: string; progress: number; error: string }>
   >([]);
@@ -238,16 +243,25 @@ export function FilesPage({ api, toast }: AppPageProps) {
       toast("warn", "Choose a bucket before creating folders.");
       return;
     }
-    const rawName = window.prompt(
-      `Create a new folder inside ${baseDir}`,
-      "knowledgebooks/new-collection"
-    );
-    const cleaned = String(rawName || "")
+    setCreateDirectoryDialog({
+      baseDir,
+      value: "knowledgebooks/new-collection",
+    });
+  };
+
+  const submitCreateDirectory = async () => {
+    const dialog = createDirectoryDialog;
+    if (!dialog) return;
+    const cleaned = String(dialog.value || "")
       .trim()
       .replace(/^\/+|\/+$/g, "")
       .replace(/\/{2,}/g, "/");
-    if (!cleaned) return;
-    void createDirectory.mutateAsync(`${baseDir}/${cleaned}`);
+    if (!cleaned) {
+      toast("warn", "Enter a folder name.");
+      return;
+    }
+    setCreateDirectoryDialog(null);
+    await createDirectory.mutateAsync(`${dialog.baseDir}/${cleaned}`);
   };
 
   const openDirectory = (path: string) => {
@@ -678,6 +692,28 @@ export function FilesPage({ api, toast }: AppPageProps) {
           void uploadFiles((event.target as HTMLInputElement).files);
           (event.target as HTMLInputElement).value = "";
         }}
+      />
+
+      <PromptDialog
+        open={!!createDirectoryDialog}
+        title="Create folder"
+        message={
+          <span>
+            Create a new folder inside{" "}
+            <strong>{createDirectoryDialog?.baseDir || "current path"}</strong>.
+          </span>
+        }
+        label="Folder path"
+        value={createDirectoryDialog?.value || ""}
+        placeholder="knowledgebooks/new-collection"
+        confirmLabel="Create folder"
+        confirmIcon="folder-plus"
+        confirmDisabled={!String(createDirectoryDialog?.value || "").trim()}
+        onCancel={() => setCreateDirectoryDialog(null)}
+        onChange={(value) =>
+          setCreateDirectoryDialog((current) => (current ? { ...current, value } : current))
+        }
+        onConfirm={() => void submitCreateDirectory()}
       />
     </AnimatedPage>
   );

@@ -612,6 +612,25 @@ mod tests {
     }
 
     #[test]
+    fn channel_exact_mcp_tools_are_added_to_tool_allowlist() {
+        let prefs = ChannelToolPreferences {
+            enabled_tools: vec!["read".to_string()],
+            enabled_mcp_tools: vec!["mcp.composio_1.gmail_send_email".to_string()],
+            ..Default::default()
+        };
+
+        let result = build_channel_tool_allowlist(None, &prefs, ChannelSecurityProfile::Operator)
+            .expect("channel allowlist");
+
+        assert!(result.iter().any(|tool| tool == "read"));
+        assert!(result
+            .iter()
+            .any(|tool| tool == "mcp.composio_1.gmail_send_email"));
+        assert!(result.iter().any(|tool| tool == "mcp_list"));
+        assert!(!result.iter().any(|tool| tool == "mcp.composio_1.*"));
+    }
+
+    #[test]
     fn channel_tool_allowlist_includes_browser_tools_for_operator_channels() {
         let prefs = ChannelToolPreferences {
             disabled_tools: vec!["read".to_string()],
@@ -683,6 +702,7 @@ mod tests {
                 enabled_tools: vec!["read".to_string()],
                 disabled_tools: vec!["grep".to_string()],
                 enabled_mcp_servers: vec!["composio-1".to_string()],
+                enabled_mcp_tools: vec!["mcp.composio_1.search_pages".to_string()],
             },
         );
         map.insert(
@@ -695,6 +715,10 @@ mod tests {
         assert_eq!(prefs.enabled_tools, vec!["read".to_string()]);
         assert_eq!(prefs.disabled_tools, vec!["grep".to_string()]);
         assert_eq!(prefs.enabled_mcp_servers, vec!["composio-1".to_string()]);
+        assert_eq!(
+            prefs.enabled_mcp_tools,
+            vec!["mcp.composio_1.search_pages".to_string()]
+        );
     }
 
     #[tokio::test]

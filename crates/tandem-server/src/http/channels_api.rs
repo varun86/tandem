@@ -800,6 +800,8 @@ pub struct ChannelToolPreferences {
     pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub enabled_mcp_servers: Vec<String>,
+    #[serde(default)]
+    pub enabled_mcp_tools: Vec<String>,
 }
 
 const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &[
@@ -856,12 +858,14 @@ fn sanitize_tool_preferences_for_security_profile(
     let enabled_tools = unique_strings(prefs.enabled_tools);
     let disabled_tools = unique_strings(prefs.disabled_tools);
     let enabled_mcp_servers = unique_strings(prefs.enabled_mcp_servers);
+    let enabled_mcp_tools = unique_strings(prefs.enabled_mcp_tools);
 
     if security_profile != tandem_channels::config::ChannelSecurityProfile::PublicDemo {
         return ChannelToolPreferences {
             enabled_tools,
             disabled_tools,
             enabled_mcp_servers,
+            enabled_mcp_tools,
         };
     }
 
@@ -876,6 +880,7 @@ fn sanitize_tool_preferences_for_security_profile(
             .collect(),
         disabled_tools,
         enabled_mcp_servers: Vec::new(),
+        enabled_mcp_tools: Vec::new(),
     }
 }
 
@@ -890,6 +895,7 @@ fn merge_channel_tool_preferences(
             base.enabled_mcp_servers,
             scoped.enabled_mcp_servers,
         ),
+        enabled_mcp_tools: merge_unique_strings(base.enabled_mcp_tools, scoped.enabled_mcp_tools),
     }
 }
 
@@ -986,6 +992,7 @@ pub struct ChannelToolPreferencesInput {
     pub enabled_tools: Option<Vec<String>>,
     pub disabled_tools: Option<Vec<String>>,
     pub enabled_mcp_servers: Option<Vec<String>>,
+    pub enabled_mcp_tools: Option<Vec<String>>,
     pub reset: Option<bool>,
 }
 
@@ -1024,6 +1031,9 @@ pub(super) async fn channel_tool_preferences_put(
             enabled_mcp_servers: input
                 .enabled_mcp_servers
                 .unwrap_or(existing.enabled_mcp_servers),
+            enabled_mcp_tools: input
+                .enabled_mcp_tools
+                .unwrap_or(existing.enabled_mcp_tools),
         }
     };
     let new_prefs = sanitize_tool_preferences_for_security_profile(new_prefs, security_profile);
@@ -1052,6 +1062,10 @@ mod tests {
             ],
             disabled_tools: vec!["read".to_string(), "read".to_string()],
             enabled_mcp_servers: vec!["github".to_string(), "slack".to_string()],
+            enabled_mcp_tools: vec![
+                "mcp.github.create_issue".to_string(),
+                "mcp.slack.post_message".to_string(),
+            ],
         };
 
         let sanitized = sanitize_tool_preferences_for_security_profile(
@@ -1065,6 +1079,7 @@ mod tests {
         );
         assert_eq!(sanitized.disabled_tools, vec!["read".to_string()]);
         assert!(sanitized.enabled_mcp_servers.is_empty());
+        assert!(sanitized.enabled_mcp_tools.is_empty());
     }
 
     #[test]
@@ -1073,6 +1088,10 @@ mod tests {
             enabled_tools: vec!["bash".to_string(), "bash".to_string()],
             disabled_tools: vec!["read".to_string(), "".to_string()],
             enabled_mcp_servers: vec!["github".to_string(), "github".to_string()],
+            enabled_mcp_tools: vec![
+                "mcp.github.create_issue".to_string(),
+                "mcp.github.create_issue".to_string(),
+            ],
         };
 
         let sanitized = sanitize_tool_preferences_for_security_profile(
@@ -1083,6 +1102,10 @@ mod tests {
         assert_eq!(sanitized.enabled_tools, vec!["bash".to_string()]);
         assert_eq!(sanitized.disabled_tools, vec!["read".to_string()]);
         assert_eq!(sanitized.enabled_mcp_servers, vec!["github".to_string()]);
+        assert_eq!(
+            sanitized.enabled_mcp_tools,
+            vec!["mcp.github.create_issue".to_string()]
+        );
     }
 
     #[test]
@@ -1158,11 +1181,16 @@ mod tests {
             enabled_tools: vec!["read".to_string(), "grep".to_string()],
             disabled_tools: vec!["write".to_string()],
             enabled_mcp_servers: vec!["github".to_string()],
+            enabled_mcp_tools: vec!["mcp.github.get_issue".to_string()],
         };
         let scoped = ChannelToolPreferences {
             enabled_tools: vec!["search".to_string(), "read".to_string()],
             disabled_tools: vec!["write".to_string(), "edit".to_string()],
             enabled_mcp_servers: vec!["notion".to_string(), "github".to_string()],
+            enabled_mcp_tools: vec![
+                "mcp.github.create_issue".to_string(),
+                "mcp.notion.search_pages".to_string(),
+            ],
         };
 
         let merged = merge_channel_tool_preferences(base, scoped);
@@ -1178,6 +1206,14 @@ mod tests {
         assert_eq!(
             merged.enabled_mcp_servers,
             vec!["github".to_string(), "notion".to_string()]
+        );
+        assert_eq!(
+            merged.enabled_mcp_tools,
+            vec![
+                "mcp.github.get_issue".to_string(),
+                "mcp.github.create_issue".to_string(),
+                "mcp.notion.search_pages".to_string()
+            ]
         );
     }
 }

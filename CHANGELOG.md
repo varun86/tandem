@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.37] - Released 2026-04-21
+
+### Added
+
+- **Custom control-panel modals**: Native browser alerts, confirms, and prompts have been replaced with Tandem-styled modal dialogs across Files, Task Planning, and KB document actions so naming and destructive flows stay inside the app shell.
+- **Knowledgebase document actions**: The KB viewer now supports inline preview expansion, edit-in-place, and delete for uploaded documents, with icon-first controls and a cleaner accordion-style layout.
+- **Channel exact MCP tool scopes**: Channel tool preferences now support exact MCP tool allowlists in addition to server-level MCP enables, which lets public or constrained channels grant just the tools they need.
+
+### Changed
+
+- **Sidebar ordering**: The control-panel sidebar now uses an explicit route order so `Settings` stays pinned to the bottom and `Files` remains grouped with the core navigation.
+- **KB viewer flow**: The knowledgebase panel now behaves like a document browser rather than a static upload log, with collapsed previews, explicit expansion, and in-place document editing.
+
+### Fixed
+
+- **KB document deletion UX**: KB document deletion now uses the shared modal flow and the existing admin DELETE route instead of a native browser confirm dialog.
+- **Channel MCP allowlist propagation**: Exact MCP tool selections now survive channel sanitization and merge behavior so scoped channels can retain tool-level MCP permissions without being widened back to server-wide exposure.
+
 ## [0.4.36] - Released 2026-04-20
 
 ### Added

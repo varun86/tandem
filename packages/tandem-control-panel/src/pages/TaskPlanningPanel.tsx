@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { renderIcons } from "../app/icons.js";
 import { Badge, DetailDrawer, PanelCard } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
+import { ConfirmDialog, PromptDialog } from "../components/ControlPanelDialogs";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { ChatInterfacePanel } from "../components/ChatInterfacePanel";
 import { renderMarkdownSafe } from "../lib/markdown";
@@ -573,6 +574,14 @@ export function TaskPlanningPanel({
     "idle" | "generating" | "clarifying" | "revising"
   >("idle");
   const [clarification, setClarification] = useState<ClarificationState>({ status: "none" });
+  const [renameSessionDialog, setRenameSessionDialog] = useState<{
+    sessionId: string;
+    value: string;
+  } | null>(null);
+  const [deleteSessionDialog, setDeleteSessionDialog] = useState<{
+    sessionId: string;
+    title: string;
+  } | null>(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [publishStatus, setPublishStatus] = useState("");
   const [lastSavedAtMs, setLastSavedAtMs] = useState<number | null>(null);
@@ -1268,12 +1277,22 @@ export function TaskPlanningPanel({
   const renamePlannerSession = async (sessionId: string) => {
     const session = plannerSessions.find((row) => row.id === sessionId);
     if (!session || !client?.workflowPlannerSessions?.patch) return;
-    const nextTitle = window.prompt("Rename planner session", session.title || "Untitled plan");
-    if (nextTitle === null) return;
-    const title = safeString(nextTitle);
-    if (!title) return;
+    setRenameSessionDialog({
+      sessionId,
+      value: session.title || "Untitled plan",
+    });
+  };
+
+  const confirmRenamePlannerSession = async () => {
+    const dialog = renameSessionDialog;
+    if (!dialog || !client?.workflowPlannerSessions?.patch) return;
+    const title = safeString(dialog.value);
+    if (!title) {
+      toast("warn", "Enter a session name.");
+      return;
+    }
     try {
-      const response = await client.workflowPlannerSessions.patch(sessionId, { title });
+      const response = await client.workflowPlannerSessions.patch(dialog.sessionId, { title });
       const updated = response?.session;
       if (updated?.session_id) {
         setPlannerSessions((current) =>
@@ -1298,10 +1317,11 @@ export function TaskPlanningPanel({
             session: updated,
           },
         }));
-        if (selectedSessionIdRef.current === sessionId) {
+        if (selectedSessionIdRef.current === dialog.sessionId) {
           activatePlannerSession(updated.session_id);
         }
       }
+      setRenameSessionDialog(null);
       toast("ok", "Planner session renamed.");
     } catch (error) {
       toast("err", error instanceof Error ? error.message : String(error));
@@ -1335,23 +1355,26 @@ export function TaskPlanningPanel({
   const deletePlannerSession = async (sessionId: string) => {
     const session = plannerSessions.find((row) => row.id === sessionId);
     if (!session) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Delete planner session "${session.title || "Untitled plan"}"?`)
-    ) {
-      return;
-    }
+    setDeleteSessionDialog({
+      sessionId,
+      title: session.title || "Untitled plan",
+    });
+  };
+
+  const confirmDeletePlannerSession = async () => {
+    const dialog = deleteSessionDialog;
+    if (!dialog) return;
     try {
-      await client.workflowPlannerSessions.delete(sessionId);
-      const remaining = plannerSessions.filter((row) => row.id !== sessionId);
+      await client.workflowPlannerSessions.delete(dialog.sessionId);
+      const remaining = plannerSessions.filter((row) => row.id !== dialog.sessionId);
       setPlannerSessions(remaining);
       setPlannerSessionCache((current) => {
         const next = { ...current };
-        delete next[sessionId];
+        delete next[dialog.sessionId];
         return next;
       });
-      clearPlannerComposerDraft(selectedProjectSlug, sessionId);
-      if (selectedSessionIdRef.current === sessionId) {
+      clearPlannerComposerDraft(selectedProjectSlug, dialog.sessionId);
+      if (selectedSessionIdRef.current === dialog.sessionId) {
         const nextSessionId = remaining[0]?.id || "";
         if (nextSessionId) {
           activatePlannerSession(nextSessionId);
@@ -1359,6 +1382,7 @@ export function TaskPlanningPanel({
           void createNewPlannerSession();
         }
       }
+      setDeleteSessionDialog(null);
       toast("ok", "Planner session deleted.");
     } catch (error) {
       toast("err", error instanceof Error ? error.message : String(error));
@@ -2512,6 +2536,50 @@ export function TaskPlanningPanel({
             </PanelCard>
           </div>
         ) : null}
+
+        <PromptDialog
+          open={!!renameSessionDialog}
+          title="Rename planner session"
+          message={
+            <span>
+              Choose a new name for{" "}
+              <strong>
+                {renameSessionDialog?.sessionId
+                  ? plannerSessions.find((row) => row.id === renameSessionDialog.sessionId)
+                      ?.title || "this session"
+                  : "this session"}
+              </strong>
+              .
+            </span>
+          }
+          label="Session name"
+          value={renameSessionDialog?.value || ""}
+          placeholder="Untitled plan"
+          confirmLabel="Rename"
+          confirmIcon="square-pen"
+          confirmDisabled={!String(renameSessionDialog?.value || "").trim()}
+          onCancel={() => setRenameSessionDialog(null)}
+          onChange={(value) =>
+            setRenameSessionDialog((current) => (current ? { ...current, value } : current))
+          }
+          onConfirm={() => void confirmRenamePlannerSession()}
+        />
+
+        <ConfirmDialog
+          open={!!deleteSessionDialog}
+          title="Delete session"
+          message={
+            <span>
+              This will permanently remove{" "}
+              <strong>{deleteSessionDialog?.title || "this session"}</strong> and all its messages.
+            </span>
+          }
+          confirmLabel="Delete session"
+          confirmIcon="trash-2"
+          confirmTone="danger"
+          onCancel={() => setDeleteSessionDialog(null)}
+          onConfirm={() => void confirmDeletePlannerSession()}
+        />
       </div>
     </div>
   );
