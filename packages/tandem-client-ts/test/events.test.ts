@@ -200,6 +200,12 @@ describe("Workflow planner session SDK coverage", () => {
 
     const originalFetch = globalThis.fetch;
     const calls: Array<{ url: string; method: string; body?: string }> = [];
+    let activeOperation: {
+      kind: "start" | "message";
+      requestId: string;
+      updatedAtMs: number;
+      messages: Array<{ role: string; text: string }>;
+    } | null = null;
     globalThis.fetch = (async (input, init) => {
       const url = String(input);
       const body = typeof init?.body === "string" ? init.body : String(init?.body ?? "");
@@ -248,6 +254,94 @@ describe("Workflow planner session SDK coverage", () => {
       }
 
       if (url.endsWith("/workflow-plans/sessions/wfplan-session-1")) {
+        if (String(init?.method ?? "GET") === "GET" && activeOperation) {
+          const responsePayload =
+            activeOperation.kind === "start"
+              ? {
+                  session: {
+                    session_id: "wfplan-session-1",
+                    project_slug: "planner-project",
+                    title: "Planner session",
+                    workspace_root: "/workspace/repos/demo",
+                    current_plan_id: "wfplan-3",
+                    created_at_ms: 1,
+                    updated_at_ms: activeOperation.updatedAtMs,
+                    operation: {
+                      request_id: activeOperation.requestId,
+                      kind: activeOperation.kind,
+                      status: "completed",
+                      started_at_ms: 5,
+                      finished_at_ms: activeOperation.updatedAtMs,
+                      response: {
+                        session: {
+                          session_id: "wfplan-session-1",
+                          project_slug: "planner-project",
+                          title: "Planner session",
+                          workspace_root: "/workspace/repos/demo",
+                          current_plan_id: "wfplan-3",
+                          created_at_ms: 1,
+                          updated_at_ms: activeOperation.updatedAtMs,
+                        },
+                        plan: {
+                          plan_id: "wfplan-3",
+                          title: "Planner session",
+                          schedule: { type: "manual" },
+                          steps: [],
+                        },
+                        conversation: { messages: [] },
+                        change_summary: [],
+                        planner_diagnostics: { mode: "start" },
+                        clarifier: { status: "none" },
+                      },
+                      error: null,
+                    },
+                  },
+                }
+              : {
+                  session: {
+                    session_id: "wfplan-session-1",
+                    project_slug: "planner-project",
+                    title: "Planner session",
+                    workspace_root: "/workspace/repos/demo",
+                    current_plan_id: "wfplan-3",
+                    created_at_ms: 1,
+                    updated_at_ms: activeOperation.updatedAtMs,
+                    operation: {
+                      request_id: activeOperation.requestId,
+                      kind: activeOperation.kind,
+                      status: "completed",
+                      started_at_ms: 6,
+                      finished_at_ms: activeOperation.updatedAtMs,
+                      response: {
+                        session: {
+                          session_id: "wfplan-session-1",
+                          project_slug: "planner-project",
+                          title: "Planner session",
+                          workspace_root: "/workspace/repos/demo",
+                          current_plan_id: "wfplan-3",
+                          created_at_ms: 1,
+                          updated_at_ms: activeOperation.updatedAtMs,
+                        },
+                        plan: {
+                          plan_id: "wfplan-3",
+                          title: "Planner session",
+                          schedule: { type: "manual" },
+                          steps: [],
+                        },
+                        conversation: { messages: activeOperation.messages },
+                        change_summary: ["updated"],
+                        planner_diagnostics: { mode: "message" },
+                        clarifier: { status: "none" },
+                      },
+                      error: null,
+                    },
+                  },
+                };
+          return new Response(JSON.stringify(responsePayload), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         if (String(init?.method ?? "GET") === "PATCH") {
           return new Response(
             JSON.stringify({
@@ -309,7 +403,13 @@ describe("Workflow planner session SDK coverage", () => {
         );
       }
 
-      if (url.includes("/workflow-plans/sessions/wfplan-session-1/start")) {
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/start-async")) {
+        activeOperation = {
+          kind: "start",
+          requestId: "wfplan-op-start-1",
+          updatedAtMs: 5,
+          messages: [],
+        };
         return new Response(
           JSON.stringify({
             session: {
@@ -320,23 +420,28 @@ describe("Workflow planner session SDK coverage", () => {
               current_plan_id: "wfplan-3",
               created_at_ms: 1,
               updated_at_ms: 5,
+              operation: {
+                request_id: activeOperation.requestId,
+                kind: activeOperation.kind,
+                status: "running",
+                started_at_ms: 5,
+                finished_at_ms: null,
+                response: null,
+                error: null,
+              },
             },
-            plan: {
-              plan_id: "wfplan-3",
-              title: "Planner session",
-              schedule: { type: "manual" },
-              steps: [],
-            },
-            conversation: { messages: [] },
-            change_summary: [],
-            planner_diagnostics: { mode: "start" },
-            clarifier: { status: "none" },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
       }
 
-      if (url.includes("/workflow-plans/sessions/wfplan-session-1/message")) {
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/message-async")) {
+        activeOperation = {
+          kind: "message",
+          requestId: "wfplan-op-message-1",
+          updatedAtMs: 6,
+          messages: [{ role: "assistant", text: "ok" }],
+        };
         return new Response(
           JSON.stringify({
             session: {
@@ -347,17 +452,16 @@ describe("Workflow planner session SDK coverage", () => {
               current_plan_id: "wfplan-3",
               created_at_ms: 1,
               updated_at_ms: 6,
+              operation: {
+                request_id: activeOperation.requestId,
+                kind: activeOperation.kind,
+                status: "running",
+                started_at_ms: 6,
+                finished_at_ms: null,
+                response: null,
+                error: null,
+              },
             },
-            plan: {
-              plan_id: "wfplan-3",
-              title: "Planner session",
-              schedule: { type: "manual" },
-              steps: [],
-            },
-            conversation: { messages: [{ role: "assistant", text: "ok" }] },
-            change_summary: ["updated"],
-            planner_diagnostics: { mode: "message" },
-            clarifier: { status: "none" },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -436,13 +540,17 @@ describe("Workflow planner session SDK coverage", () => {
       expect(calls[2]?.method).toBe("GET");
       expect(calls[3]?.method).toBe("PATCH");
       expect(calls[4]?.method).toBe("POST");
-      expect(calls[5]?.url).toContain("/start");
-      expect(calls[6]?.url).toContain("/message");
-      expect(calls[7]?.url).toContain("/reset");
-      expect(calls[8]?.method).toBe("DELETE");
+      expect(calls.some((call) => call.url.includes("/start-async"))).toBe(true);
+      expect(calls.some((call) => call.url.includes("/message-async"))).toBe(true);
+      expect(calls.some((call) => call.url.includes("/reset"))).toBe(true);
+      expect(calls[calls.length - 1]?.method).toBe("DELETE");
       expect(String(calls[1]?.body || "")).toContain("planner-project");
-      expect(String(calls[5]?.body || "")).toContain("Create a planner session");
-      expect(String(calls[6]?.body || "")).toContain("Revise the plan");
+      expect(String(calls.find((call) => call.url.includes("/start-async"))?.body || "")).toContain(
+        "Create a planner session"
+      );
+      expect(
+        String(calls.find((call) => call.url.includes("/message-async"))?.body || "")
+      ).toContain("Revise the plan");
     } finally {
       globalThis.fetch = originalFetch;
     }
