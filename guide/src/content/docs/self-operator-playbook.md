@@ -7,6 +7,8 @@ Use this guide when an agent is responsible for inspecting Tandem, identifying o
 
 This is the "how to operate what we just built" doc. If you only read one page, read this one first.
 
+> Edition availability: governed recursive authoring and Self-Operator mutation flows require Tandem's premium governance feature set. OSS builds keep the same route and tool names, but premium mutation and approval paths can return explicit availability errors.
+
 ## Read First
 
 Before you start acting, refresh your working context from the canonical docs:

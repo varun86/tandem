@@ -12,6 +12,7 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tandem_enterprise_contract::governance::GovernancePolicyEngine;
 use tandem_memory::types::MemoryTier;
 use tandem_orchestrator::MissionState;
 use tandem_types::{EngineEvent, HostRuntimeContext, MessagePart, ModelSpec, TenantContext};
@@ -78,6 +79,7 @@ pub struct AppState {
     pub routine_runs: Arc<RwLock<std::collections::HashMap<String, RoutineRunRecord>>>,
     pub automations_v2: Arc<RwLock<std::collections::HashMap<String, AutomationV2Spec>>>,
     pub automation_governance: Arc<RwLock<GovernanceState>>,
+    pub governance_engine: Arc<dyn GovernancePolicyEngine>,
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
     pub automation_scheduler: Arc<RwLock<automation::AutomationScheduler>>,
     pub automation_scheduler_stopping: Arc<AtomicBool>,

@@ -186,6 +186,51 @@ async fn pending_lifecycle_approval_id(
         .approval_id
 }
 
+#[cfg(not(feature = "premium-governance"))]
+#[tokio::test]
+async fn governance_routes_fail_closed_without_premium_governance() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/governance/approvals")
+        .body(Body::empty())
+        .expect("approvals list request");
+    let list_resp = app
+        .clone()
+        .oneshot(list_req)
+        .await
+        .expect("approvals list response");
+    assert_eq!(list_resp.status(), StatusCode::NOT_IMPLEMENTED);
+    let list_payload = response_json(list_resp).await;
+    assert_eq!(
+        list_payload.get("code").and_then(Value::as_str),
+        Some("PREMIUM_FEATURE_REQUIRED")
+    );
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/governance/approvals")
+        .header("content-type", "application/json")
+        .header("x-tandem-actor-id", "governance-operator")
+        .body(Body::from(
+            approval_request_payload("agent-oss-build", "creates_agents").to_string(),
+        ))
+        .expect("approval create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("approval create response");
+    assert_eq!(create_resp.status(), StatusCode::NOT_IMPLEMENTED);
+    let create_payload = response_json(create_resp).await;
+    assert_eq!(
+        create_payload.get("code").and_then(Value::as_str),
+        Some("PREMIUM_FEATURE_REQUIRED")
+    );
+}
+
 #[tokio::test]
 async fn automations_v2_create_rejects_lineage_depth_over_limit() {
     let state = test_state().await;

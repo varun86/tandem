@@ -21,6 +21,7 @@ members = [
     "crates/tandem-agent-teams",
     "crates/tandem-workflows",
     "crates/tandem-plan-compiler",
+    "crates/tandem-governance-engine",
 ]
 resolver = "2"
 

@@ -1,5 +1,13 @@
 impl AppState {
     pub fn new_starting(attempt_id: String, in_process: bool) -> Self {
+        #[cfg(feature = "premium-governance")]
+        let governance_engine: Arc<
+            dyn tandem_enterprise_contract::governance::GovernancePolicyEngine,
+        > = Arc::new(tandem_governance_engine::DefaultGovernanceEngine);
+        #[cfg(not(feature = "premium-governance"))]
+        let governance_engine: Arc<
+            dyn tandem_enterprise_contract::governance::GovernancePolicyEngine,
+        > = Arc::new(crate::app::state::governance::UnavailableGovernanceEngine);
         Self {
             runtime: Arc::new(OnceLock::new()),
             startup: Arc::new(RwLock::new(StartupState {
@@ -29,6 +37,7 @@ impl AppState {
             automation_governance: Arc::new(RwLock::new(
                 crate::automation_v2::governance::GovernanceState::default(),
             )),
+            governance_engine,
             automation_v2_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_scheduler: Arc::new(RwLock::new(automation::AutomationScheduler::new(
                 config::env::resolve_scheduler_max_concurrent_runs(),

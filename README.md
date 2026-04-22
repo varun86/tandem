@@ -273,7 +273,7 @@ If Brave is rate-limited and Exa is configured, `auto` can continue with Exa ins
 - **Local-first runtime**: Data and state stay on your machine unless you send prompts/tools to configured providers.
 - **Supervised execution**: AI runs through controlled tools with explicit approvals for write/delete operations.
 - **Provider agnostic**: Route through the model providers you choose.
-- **Open source and auditable**: MIT repo license, `MIT OR Apache-2.0` for most Rust crates, and `BUSL-1.1` for `tandem-plan-compiler` as documented in [docs/LICENSING.md](docs/LICENSING.md).
+- **Open source and auditable**: MIT repo license, `MIT OR Apache-2.0` for most Rust crates, and `BUSL-1.1` for the premium compiler and governance crates as documented in [docs/LICENSING.md](docs/LICENSING.md).
 
 ## Security and privacy
 
@@ -431,7 +431,11 @@ This repository uses a mixed licensing model:
   - Licensed under Business Source License 1.1 (`BSL-1.1`)
   - See `crates/tandem-plan-compiler/LICENSE` for terms
 
-In short: the runtime engine is fully open source (MIT/Apache), the mission/plan compiler is source-available under BSL.
+- Governance engine crate (`tandem-governance-engine`):
+  - Licensed under Business Source License 1.1 (`BSL-1.1`)
+  - See `crates/tandem-governance-engine/LICENSE` for terms
+
+In short: the runtime engine is fully open source (MIT/Apache), while the mission/plan compiler and recursive governance engine are source-available under BSL.
 
 ## Acknowledgments
 

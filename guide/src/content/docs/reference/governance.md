@@ -8,6 +8,8 @@ Tandem keeps governance explicit so agent-authored work stays auditable, scoped,
 If you are looking for the runtime token and transport layer, see [Engine Authentication For Agents](https://docs.tandem.ac/engine-authentication-for-agents/).
 This page is about authorization scope, lineage, approvals, and audit.
 
+> Edition availability: provenance-backed recursive governance is part of Tandem's premium governance feature set. OSS builds preserve the same route and tool names where possible, but approval-bound governance flows can return explicit availability errors.
+
 ## The short version
 
 - Every agent-authored artifact carries provenance.

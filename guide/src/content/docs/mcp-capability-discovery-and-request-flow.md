@@ -10,6 +10,8 @@ Use this guide when an agent needs to answer a capability question safely:
 - what MCPs are uncataloged and therefore need a human decision
 - how to ask for a new capability without pretending it already exists
 
+> Edition availability: discovery flow stays the same across builds. In OSS builds, `mcp_list_catalog` can still be available, but approval-bound mutation paths such as `mcp_request_capability` may return explicit premium-feature errors.
+
 This page is intentionally narrow. It is about discovery and request flow, not execution policy.
 
 ## The Four States

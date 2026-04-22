@@ -7,6 +7,8 @@ Use this page when you need the runtime truth behind governance: what records ex
 
 If you only need the high-level concepts, start with [Governance Reference](./governance/). If you need to operate the system as an LLM, read [Self-Operator Playbook](../self-operator-playbook/).
 
+> Edition availability: this lifecycle describes the premium governance engine. OSS builds preserve the route and tool names, but governance mutation and review surfaces may return explicit availability errors instead of managed state.
+
 ## Core Records
 
 The governance model centers on these records:

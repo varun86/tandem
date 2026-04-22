@@ -552,6 +552,11 @@ async fn mcp_request_capability_impl(
     requested_by: crate::automation_v2::governance::GovernanceActorRef,
     input: McpCapabilityRequestInput,
 ) -> anyhow::Result<Value> {
+    if !state.premium_governance_enabled() {
+        anyhow::bail!(
+            "PREMIUM_FEATURE_REQUIRED: premium governance is not available in this build"
+        );
+    }
     let agent_id = input.agent_id.trim().to_string();
     if agent_id.is_empty() {
         anyhow::bail!("agent_id is required");
@@ -2224,16 +2229,21 @@ pub(super) async fn mcp_request_capability(
         .await
         .map_err(|error| {
             let message = error.to_string();
-            let status = if message.contains("is required") {
-                StatusCode::BAD_REQUEST
+            let (status, code) = if message.contains("PREMIUM_FEATURE_REQUIRED") {
+                (StatusCode::NOT_IMPLEMENTED, "PREMIUM_FEATURE_REQUIRED")
+            } else if message.contains("is required") {
+                (StatusCode::BAD_REQUEST, "MCP_CAPABILITY_REQUEST_FAILED")
             } else {
-                StatusCode::INTERNAL_SERVER_ERROR
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "MCP_CAPABILITY_REQUEST_FAILED",
+                )
             };
             (
                 status,
                 Json(json!({
                     "error": message,
-                    "code": "MCP_CAPABILITY_REQUEST_FAILED",
+                    "code": code,
                 })),
             )
         })?;

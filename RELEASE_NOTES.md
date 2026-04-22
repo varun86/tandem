@@ -2,6 +2,17 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.38 (Unreleased)
+
+This release moves recursive-authoring and governance policy behind a dedicated BUSL crate while keeping Tandem's public governance and agent surfaces stable across premium and OSS builds.
+
+### Premium governance split
+
+- **Dedicated BUSL governance engine**: Recursive-authoring and governance decisions now run through the new `tandem-governance-engine` BUSL crate instead of staying embedded inside the open server crate.
+- **Stable public surfaces across editions**: The open runtime preserves the same route names, SDK methods, and agent tool names, and OSS builds now return explicit premium-feature errors when managed governance is unavailable.
+- **Stable LLM docs across editions**: The Self-Operator and governance docs keep the same operational ordering and canonical names, but now call out edition availability and OSS fallback behavior explicitly.
+- **Lifecycle review logic moved behind premium governance**: Health-check drift detection, expiration review state, retirement shaping, and dependency-revocation policy now evaluate inside the premium governance engine, while the open server remains the transport/persistence layer and treats the internal governance health checker as a no-op in OSS builds.
+
 ## v0.4.37 (Released 2026-04-22)
 
 This release adds the first governance layer for Self-Operator, with provenance, quotas, lineage limits, and approval surfaces enforced server-side, while also tightening the control panel experience around KB document browsing, exact channel MCP scopes, and app-native dialogs.

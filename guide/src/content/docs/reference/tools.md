@@ -56,6 +56,7 @@ For coding tasks, agents usually read first, use `edit` for narrow replacements,
 - **`mcp_request_capability`**: Request human approval for an MCP capability gap without attempting to connect or execute it directly.
   - Input: `agent_id` (string), `mcp_name` (string), optional `catalog_slug` (string), `rationale` (string), optional `requested_tools` (array of strings), optional `context` (object), optional `expires_at_ms` (integer)
   - Use this to file an approval request when the required MCP is not connected or is uncataloged.
+  - Edition note: this keeps the same tool name in OSS builds, but can return an explicit premium-feature error when managed governance is unavailable.
 - **`mcp_debug`**: Call an MCP tool directly by URL.
   - Input: `url` (string), `tool` (string), optional `args` (object), `headers` (object), `timeout_ms` (integer), `max_bytes` (integer)
   - Use this when you already know the MCP server URL and the tool name you want to invoke.

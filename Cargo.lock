@@ -7543,7 +7543,19 @@ dependencies = [
 name = "tandem-enterprise-contract"
 version = "0.4.37"
 dependencies = [
+ "chrono",
+ "http 1.4.0",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "tandem-governance-engine"
+version = "0.4.37"
+dependencies = [
+ "serde_json",
+ "tandem-enterprise-contract",
+ "uuid",
 ]
 
 [[package]]
@@ -7671,6 +7683,7 @@ dependencies = [
  "tandem-channels",
  "tandem-core",
  "tandem-enterprise-contract",
+ "tandem-governance-engine",
  "tandem-memory",
  "tandem-observability",
  "tandem-orchestrator",

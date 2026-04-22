@@ -79,6 +79,88 @@ async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandl
     (endpoint, server)
 }
 
+#[cfg(not(feature = "premium-governance"))]
+#[tokio::test]
+async fn mcp_catalog_stays_available_but_capability_requests_fail_closed_without_premium() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let tool_names = state
+        .tools
+        .list()
+        .await
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect::<Vec<_>>();
+    assert!(tool_names.iter().any(|name| name == "mcp_list_catalog"));
+    assert!(tool_names
+        .iter()
+        .any(|name| name == "mcp_request_capability"));
+
+    let catalog_req = Request::builder()
+        .method("GET")
+        .uri("/mcp/catalog")
+        .body(Body::empty())
+        .expect("catalog request");
+    let catalog_resp = app
+        .clone()
+        .oneshot(catalog_req)
+        .await
+        .expect("catalog response");
+    assert_eq!(catalog_resp.status(), StatusCode::OK);
+    let catalog_body = to_bytes(catalog_resp.into_body(), usize::MAX)
+        .await
+        .expect("catalog body");
+    let catalog_payload: Value = serde_json::from_slice(&catalog_body).expect("catalog json");
+    assert!(catalog_payload
+        .get("servers")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty()));
+
+    let catalog_output = state
+        .tools
+        .execute("mcp_list_catalog", json!({}))
+        .await
+        .expect("execute mcp_list_catalog");
+    let tool_payload: Value =
+        serde_json::from_str(&catalog_output.output).expect("catalog tool json");
+    assert!(tool_payload
+        .get("servers")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty()));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp/request-capability")
+        .header("content-type", "application/json")
+        .header("x-tandem-agent-id", "agent-self-operator")
+        .body(Body::from(
+            json!({
+                "agent_id": "agent-self-operator",
+                "mcp_name": "notion",
+                "catalog_slug": "notion",
+                "rationale": "Need Notion access for the weekly competitor pulse.",
+                "requested_tools": ["notion_search"],
+                "context": {
+                    "gap": "daily competitor pulse",
+                    "source": "self-operator"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("capability request");
+    let resp = app.oneshot(req).await.expect("capability response");
+    assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("capability body");
+    let payload: Value = serde_json::from_slice(&body).expect("capability json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("PREMIUM_FEATURE_REQUIRED")
+    );
+}
+
 #[derive(Clone)]
 struct FakeHostedMcpOauthState {
     base_url: String,

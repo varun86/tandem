@@ -14,7 +14,8 @@ use crate::automation_v2::governance::{
 use super::governance::{
     agent_creation_review_wire, agent_spend_wire, approval_request_wire,
     automation_governance_wire, automation_grant_wire, automation_lifecycle_summary_wire,
-    governance_error_response, resolve_governance_actor, resolve_governance_provenance,
+    governance_error_response, premium_governance_required, resolve_governance_actor,
+    resolve_governance_provenance,
 };
 use crate::AppState;
 
@@ -118,12 +119,15 @@ pub(super) fn apply(router: axum::Router<AppState>) -> axum::Router<AppState> {
         )
 }
 
-pub(super) async fn governance_approvals_list(State(state): State<AppState>) -> Json<Value> {
+pub(super) async fn governance_approvals_list(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let rows = state.list_approval_requests(None, None).await;
-    Json(json!({
+    Ok(Json(json!({
         "approvals": rows.iter().map(approval_request_wire).collect::<Vec<_>>(),
         "count": rows.len(),
-    }))
+    })))
 }
 
 pub(super) async fn governance_approval_create(
@@ -133,6 +137,7 @@ pub(super) async fn governance_approval_create(
     headers: HeaderMap,
     Json(input): Json<GovernanceApprovalCreateInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let requested_by = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let request = state
         .request_approval(
@@ -166,6 +171,7 @@ pub(super) async fn governance_approval_approve(
     Path(approval_id): Path<String>,
     Json(input): Json<GovernanceApprovalDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let reviewer = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let notes = input.notes.clone();
     let Some(reviewed) = state
@@ -244,6 +250,7 @@ pub(super) async fn governance_approval_deny(
     Path(approval_id): Path<String>,
     Json(input): Json<GovernanceApprovalDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let reviewer = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let Some(reviewed) = state
         .decide_approval_request(&approval_id, reviewer, false, input.notes)
@@ -276,6 +283,7 @@ pub(super) async fn automation_governance_get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let Some(record) = state.get_automation_governance(&id).await else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -318,7 +326,10 @@ pub(super) async fn automation_governance_get(
     })))
 }
 
-pub(super) async fn governance_reviews_list(State(state): State<AppState>) -> Json<Value> {
+pub(super) async fn governance_reviews_list(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let agent_reviews = state
         .list_agent_creation_review_summaries()
         .await
@@ -375,26 +386,30 @@ pub(super) async fn governance_reviews_list(State(state): State<AppState>) -> Js
         .map(|request| approval_request_wire(&request))
         .collect::<Vec<_>>();
 
-    Json(json!({
+    Ok(Json(json!({
         "agent_creation_reviews": agent_reviews,
         "automation_lifecycle_reviews": lifecycle_reviews,
         "pending_approvals": pending_approvals,
         "count": agent_reviews.len() + lifecycle_reviews.len() + pending_approvals.len(),
-    }))
+    })))
 }
 
-pub(super) async fn governance_spend_list(State(state): State<AppState>) -> Json<Value> {
+pub(super) async fn governance_spend_list(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let rows = state.list_agent_spend_summaries().await;
-    Json(json!({
+    Ok(Json(json!({
         "spend": rows.iter().map(agent_spend_wire).collect::<Vec<_>>(),
         "count": rows.len(),
-    }))
+    })))
 }
 
 pub(super) async fn governance_spend_get(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let Some(summary) = state.agent_spend_summary(&agent_id).await else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -414,6 +429,7 @@ pub(super) async fn automation_grants_list(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let Some(record) = state.get_automation_governance(&id).await else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -440,6 +456,7 @@ pub(super) async fn automation_grant_create(
     Path(id): Path<String>,
     Json(input): Json<AutomationGrantCreateInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let granted_by = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     if granted_by.kind != GovernanceActorKind::Human {
         return Err((
@@ -483,6 +500,7 @@ pub(super) async fn automation_grant_revoke(
     Path((id, grant_id)): Path<(String, String)>,
     Json(input): Json<AutomationGrantRevokeInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let revoked_by = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     if revoked_by.kind != GovernanceActorKind::Human {
         return Err((
@@ -553,6 +571,7 @@ pub(super) async fn automation_restore(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let actor = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     if actor.kind != GovernanceActorKind::Human {
         return Err((
@@ -598,6 +617,7 @@ pub(super) async fn automation_retire(
     Path(id): Path<String>,
     Json(input): Json<AutomationRetireInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let actor = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     if actor.kind != GovernanceActorKind::Human {
         return Err((
@@ -643,6 +663,7 @@ pub(super) async fn automation_extend(
     Path(id): Path<String>,
     Json(input): Json<AutomationExtendInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    premium_governance_required(&state)?;
     let actor = resolve_governance_actor(&headers, &tenant_context, &request_principal);
     if actor.kind != GovernanceActorKind::Human {
         return Err((

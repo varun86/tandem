@@ -26,13 +26,19 @@ Consumers may choose either license (`MIT OR Apache-2.0`) for the packages below
 
 ## Business Source Licensed Component
 
-| Package                | Path                                     | License    |
-| ---------------------- | ---------------------------------------- | ---------- |
-| `tandem-plan-compiler` | `crates/tandem-plan-compiler/Cargo.toml` | `BUSL-1.1` |
+| Package                    | Path                                         | License    |
+| -------------------------- | -------------------------------------------- | ---------- |
+| `tandem-plan-compiler`     | `crates/tandem-plan-compiler/Cargo.toml`     | `BUSL-1.1` |
+| `tandem-governance-engine` | `crates/tandem-governance-engine/Cargo.toml` | `BUSL-1.1` |
 
 ## App/Desktop/Web Scope
 
 Desktop/web app licensing is unchanged in this pass. This document only changes and clarifies the Rust SDK/runtime package licensing listed above.
+
+In plain language:
+
+- the open runtime executes automations, exposes HTTP/tool surfaces, and handles generic MCP transport
+- the source-available governance layer authorizes recursive and Self-Operator behavior such as agent-authored automation creation, approval-bound capability requests, lineage enforcement, and spend/review guardrails
 
 ## License Texts
 

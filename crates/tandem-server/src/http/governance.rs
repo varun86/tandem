@@ -105,6 +105,21 @@ pub(crate) fn governance_error_response(error: GovernanceError) -> (StatusCode, 
     )
 }
 
+pub(crate) fn premium_governance_required(
+    state: &crate::AppState,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if state.premium_governance_enabled() {
+        return Ok(());
+    }
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "premium governance is not available in this build",
+            "code": "PREMIUM_FEATURE_REQUIRED",
+        })),
+    ))
+}
+
 pub(crate) fn automation_governance_wire(record: &AutomationGovernanceRecord) -> Value {
     json!({
         "automation_id": record.automation_id,
