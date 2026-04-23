@@ -211,6 +211,7 @@ jobs:
               "crates/tandem-workflows",
               "crates/tandem-browser",
               "crates/tandem-plan-compiler",
+              "crates/tandem-governance-engine",
               "crates/tandem-tui",
               "crates/tandem-server",
               "engine",

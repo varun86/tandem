@@ -24,6 +24,7 @@ CRATES=(
     "crates/tandem-core"
     "crates/tandem-runtime"
     "crates/tandem-channels"
+    "crates/tandem-governance-engine"
     "crates/tandem-server"
     "crates/tandem-tui" # Binary, can publish if lib? It's binary.
     "engine" # tandem-engine binary
