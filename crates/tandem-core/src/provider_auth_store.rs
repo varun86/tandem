@@ -147,7 +147,7 @@ struct CodexCliAuthFile {
     #[serde(alias = "accountId")]
     account_id: Option<String>,
     #[serde(alias = "lastRefresh")]
-    last_refresh: Option<u64>,
+    last_refresh: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -825,7 +825,7 @@ mod tests {
                 "refresh_token": "refresh-token-456",
                 "account_id": "acct_456"
             },
-            "last_refresh": 456
+            "last_refresh": "2026-04-23T08:15:30.000Z"
         });
 
         write_codex_cli_auth_json_at(&auth_path, &payload).expect("write auth");
@@ -873,6 +873,53 @@ mod tests {
         assert_eq!(credential.account_id.as_deref(), Some("acct_flat"));
         assert_eq!(credential.email.as_deref(), Some("flat@example.com"));
         assert_eq!(credential.display_name.as_deref(), Some("flat@example.com"));
+        assert!(credential.expires_at_ms > 0);
+    }
+
+    #[test]
+    fn load_codex_cli_oauth_credential_tolerates_string_last_refresh() {
+        let dir = tempdir().expect("tempdir");
+        let auth_path = dir.path().join("auth.json");
+        let jwt = make_jwt(serde_json::json!({
+            "exp": 2_000_000_000,
+            "email": "string-refresh@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_account_user_id": "acct_string_refresh"
+            }
+        }));
+        std::fs::write(
+            &auth_path,
+            serde_json::json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": jwt,
+                    "refresh_token": "refresh-token-string",
+                    "account_id": "acct_string_refresh",
+                    "id_token": "id-token-placeholder"
+                },
+                "last_refresh": "2026-04-23T08:15:30.000Z",
+                "OPENAI_API_KEY": null
+            })
+            .to_string(),
+        )
+        .expect("write auth");
+
+        let credential = load_codex_cli_oauth_credential_at(&auth_path).expect("credential");
+        assert_eq!(credential.provider_id, "openai-codex");
+        assert_eq!(credential.managed_by, "codex-cli");
+        assert_eq!(credential.refresh_token, "refresh-token-string");
+        assert_eq!(
+            credential.account_id.as_deref(),
+            Some("acct_string_refresh")
+        );
+        assert_eq!(
+            credential.email.as_deref(),
+            Some("string-refresh@example.com")
+        );
+        assert_eq!(
+            credential.display_name.as_deref(),
+            Some("string-refresh@example.com")
+        );
         assert!(credential.expires_at_ms > 0);
     }
 }

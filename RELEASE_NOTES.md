@@ -14,6 +14,11 @@ This release makes governed workflow repair durable. Strict-quality automation n
 - **Better repair-tool targeting**: When a repair is specifically missing concrete reads and workspace inspection is already satisfied, the engine now favors `read` over repeated `glob` exploration, making governed recovery attempts more purposeful.
 - **Validator and orchestration alignment**: Server-side repair inference now uses the same repair budget semantics as the engine, so strict governed nodes stay blocked after exhausted evidence-gathering instead of being treated as soft `needs_repair` completions.
 
+### Hosted Codex OAuth import
+
+- **Codex `auth.json` schema drift tolerance**: Hosted control-panel imports now accept Codex CLI auth files whose `last_refresh` metadata is stored as a string timestamp instead of a numeric value.
+- **No more immediate readback failure after upload**: Tandem now ignores that metadata shape difference when reconstructing the uploaded OAuth credential, fixing the hosted-server error that reported “The imported Codex auth.json could not be read back on this machine.”
+
 ## v0.4.38 (Released 2026-04-22)
 
 This release moves recursive-authoring and governance policy behind a dedicated BUSL crate while keeping Tandem's public governance and agent surfaces stable across premium and OSS builds, and it also makes the automation planner much clearer when a long connector-backed plan is still working, needs clarification, or has fallen back after a failed planning run.

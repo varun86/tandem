@@ -123,7 +123,7 @@ async fn provider_oauth_session_import_persists_codex_auth_and_reports_connected
             "refresh_token": "refresh-token-456",
             "account_id": "acct_456"
         },
-        "last_refresh": 456
+        "last_refresh": "2026-04-23T08:15:30.000Z"
     });
     let req = Request::builder()
         .method("POST")

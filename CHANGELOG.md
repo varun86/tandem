@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **False forward progress after exhausted governed repairs**: Strict-quality research and artifact-writing nodes now emit a structured blocked completion with `repair_budget_exhausted` instead of waiving unmet evidence requirements and writing best-effort placeholder outputs.
 - **Governed retry-budget drift**: Node-level `repair_budget` now propagates from automation enforcement into engine execution, eliminating mismatches between validator repair counting and runtime repair retries.
+- **Hosted Codex `auth.json` import readback**: Tandem now tolerates string-valued Codex CLI `last_refresh` metadata when parsing uploaded OAuth sessions, which fixes hosted control-panel imports that immediately failed with “The imported Codex auth.json could not be read back on this machine.”
 
 ## [0.4.38] - Released 2026-04-22
 
