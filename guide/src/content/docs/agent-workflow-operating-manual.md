@@ -29,6 +29,17 @@ Token rules:
 - Do not scan arbitrary files or shell history for secrets.
 - Before workflow work begins, verify the engine with a health check such as `GET /global/health`.
 
+### Agent creation permissions
+
+An agent still needs a valid engine token, but actor classification adds one more gate:
+
+- `x-tandem-agent-id` identifies the creating agent
+- `x-tandem-request-source` determines whether Tandem applies agent-specific governance checks
+
+Control panel automation calls default to `control_panel`, which is treated as human for safety.
+Use a dedicated test path when you need the engine to enforce agent creation rules (`AUTOMATION_V2_AGENT_*` and
+`AUTOMATION_V2_CAPABILITY_ESCALATION_*`).
+
 ## Operating order
 
 1. Call `mcp_list` first.

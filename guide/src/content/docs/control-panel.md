@@ -133,6 +133,23 @@ Enable it with `?composer=1` or `#composer=true` when the workspace has the feat
 
 Legacy `#/agents` links continue to redirect for backwards compatibility.
 
+### AI Composer: Agent-Creation Test Mode
+
+The **AI Composer** includes a test switch for agents:
+
+- send create/run requests with `x-tandem-agent-test-mode: 1`
+- set `x-tandem-request-source: agent`
+- set `x-tandem-agent-id` to a synthetic id you control
+
+Use this mode only for validation:
+
+- to confirm your target agent id and capability set
+- to verify `AUTOMATION_V2_*` governance failures during development
+- to rehearse approval and review behavior before shipping a real external workflow creator
+
+Create calls still use the panel engine token and the same local engine instance; only the actor
+classification and resulting governance checks are switched to agent mode.
+
 Deep-link query state is supported on `#/automations`:
 
 - `tab`

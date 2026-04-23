@@ -8,6 +8,7 @@ import {
   normalizePlannerConversationMessages,
 } from "../../planner/plannerShared";
 import type { NavigationLockState } from "../../../pages/pageTypes";
+import { api } from "../../../lib/api";
 
 type ComposerPhase = "intent_capture" | "clarification" | "draft_ready" | "created";
 
@@ -46,9 +47,12 @@ type ComposerStorage = {
   createdAutomation: any | null;
   createdAutomationId: string;
   payloadMode: "json" | "yaml";
+  agentTestMode: boolean;
+  agentTestAgentId: string;
 };
 
 const AUTOMATION_COMPOSER_STORAGE_KEY = "tandem.automations.composer.v1";
+const DEFAULT_AGENT_ID = "control-panel-agent";
 
 function safeString(value: unknown) {
   return String(value || "").trim();
@@ -182,6 +186,7 @@ function buildAutomationPayloadFromPlan(input: {
   defaultProvider: string;
   defaultModel: string;
   allowedMcpServers: string[];
+  creatorId: string;
 }) {
   const plan = input.plan || {};
   const steps = Array.isArray(plan?.steps) ? plan.steps : [];
@@ -276,7 +281,7 @@ function buildAutomationPayloadFromPlan(input: {
     status: "active",
     schedule: normalizeSchedule(plan?.schedule),
     workspace_root: workspaceRoot,
-    creator_id: "control-panel-composer",
+    creator_id: input.creatorId || "control-panel-composer",
     agents,
     flow: { nodes },
     metadata: {
@@ -359,6 +364,8 @@ export function AutomationComposerPanel({
   const [createdAutomation, setCreatedAutomation] = useState<any | null>(null);
   const [createdAutomationId, setCreatedAutomationId] = useState("");
   const [payloadMode, setPayloadMode] = useState<"json" | "yaml">("json");
+  const [agentTestMode, setAgentTestMode] = useState(false);
+  const [agentTestAgentId, setAgentTestAgentId] = useState(DEFAULT_AGENT_ID);
   const [validationMessage, setValidationMessage] = useState("");
 
   const healthQuery = useQuery({
@@ -404,6 +411,9 @@ export function AutomationComposerPanel({
       defaultProvider,
       defaultModel,
       allowedMcpServers,
+      creatorId: agentTestMode
+        ? safeString(agentTestAgentId) || DEFAULT_AGENT_ID
+        : "control-panel-composer",
     });
   }, [
     allowedMcpServers,
@@ -413,6 +423,8 @@ export function AutomationComposerPanel({
     input,
     planPreview,
     workspaceRoot,
+    agentTestAgentId,
+    agentTestMode,
   ]);
 
   const jsonPreview = useMemo(
@@ -442,11 +454,22 @@ export function AutomationComposerPanel({
     if (!generatedPayload?.flow?.nodes?.length) {
       errors.push("The generated payload did not produce any workflow nodes.");
     }
-    if (!client?.automationsV2?.create) {
+    if (agentTestMode && !safeString(agentTestAgentId)) {
+      errors.push("Agent test mode requires an agent id.");
+    }
+    if (!agentTestMode && !client?.automationsV2?.create) {
       errors.push("This control panel build does not expose automationsV2.create.");
     }
     return errors;
-  }, [client?.automationsV2?.create, generatedPayload, input, planPreview?.title, workspaceRoot]);
+  }, [
+    agentTestAgentId,
+    agentTestMode,
+    client?.automationsV2?.create,
+    generatedPayload,
+    input,
+    planPreview?.title,
+    workspaceRoot,
+  ]);
 
   const latestRun = useMemo(() => {
     const runs = Array.isArray(runsQuery.data?.runs) ? runsQuery.data.runs : [];
@@ -469,6 +492,8 @@ export function AutomationComposerPanel({
         setCreatedAutomationId(parsed.createdAutomationId);
       if (parsed.phase) setPhase(parsed.phase);
       if (parsed.payloadMode) setPayloadMode(parsed.payloadMode);
+      if (typeof parsed.agentTestMode === "boolean") setAgentTestMode(parsed.agentTestMode);
+      if (typeof parsed.agentTestAgentId === "string") setAgentTestAgentId(parsed.agentTestAgentId);
     } catch {
       // Ignore restore failures.
     }
@@ -495,6 +520,8 @@ export function AutomationComposerPanel({
           createdAutomation,
           createdAutomationId,
           payloadMode,
+          agentTestMode,
+          agentTestAgentId,
         } as ComposerStorage)
       );
     } catch {
@@ -508,6 +535,8 @@ export function AutomationComposerPanel({
     draftName,
     input,
     payloadMode,
+    agentTestAgentId,
+    agentTestMode,
     phase,
     planPreview,
     workspaceRootInput,
@@ -522,6 +551,8 @@ export function AutomationComposerPanel({
     setClarification({ status: "none" });
     setCreatedAutomation(null);
     setCreatedAutomationId("");
+    setAgentTestMode(false);
+    setAgentTestAgentId(DEFAULT_AGENT_ID);
     setValidationMessage("");
     try {
       localStorage.removeItem(AUTOMATION_COMPOSER_STORAGE_KEY);
@@ -639,6 +670,40 @@ export function AutomationComposerPanel({
     },
   });
 
+  const agentCreateHeaders = useMemo(() => {
+    if (!agentTestMode) return {};
+    const agentId = safeString(agentTestAgentId) || DEFAULT_AGENT_ID;
+    return {
+      "x-tandem-agent-test-mode": "1",
+      "x-tandem-request-source": "agent",
+      "x-tandem-agent-id": agentId,
+    };
+  }, [agentTestAgentId, agentTestMode]);
+
+  const createAsAgentRequest = async (payload: any) => {
+    const headers = {
+      "content-type": "application/json",
+      ...(agentCreateHeaders || {}),
+    };
+    return api("/api/engine/automations/v2", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const runNowAsAgentRequest = async (automationId: string) => {
+    const nextId = encodeURIComponent(automationId);
+    const headers = {
+      "content-type": "application/json",
+      ...(agentCreateHeaders || {}),
+    };
+    return api(`/api/engine/automations/v2/${nextId}/run_now`, {
+      method: "POST",
+      headers,
+    });
+  };
+
   const createMutation = useMutation({
     mutationFn: async (runAfterCreate: boolean) => {
       if (!generatedPayload) {
@@ -647,7 +712,9 @@ export function AutomationComposerPanel({
       if (validationErrors.length) {
         throw new Error(validationErrors[0]);
       }
-      const response = await client.automationsV2.create(generatedPayload as any);
+      const response = agentTestMode
+        ? await createAsAgentRequest(generatedPayload)
+        : await client.automationsV2.create(generatedPayload as any);
       const automationId = automationIdFromResponse(response);
       const automation = response?.automation || response?.automation_v2 || response || null;
       return { response, automationId, automation, runAfterCreate };
@@ -685,14 +752,16 @@ export function AutomationComposerPanel({
 
   const runNowMutation = useMutation({
     mutationFn: async (automationId: string) => {
-      if (!client?.automationsV2?.runNow) {
+      if (!agentTestMode && !client?.automationsV2?.runNow) {
         throw new Error("This control panel build does not expose automationsV2.runNow.");
       }
       const nextId = safeString(automationId);
       if (!nextId) {
         throw new Error("Create an automation first before running it.");
       }
-      return client.automationsV2.runNow(nextId);
+      return agentTestMode
+        ? await runNowAsAgentRequest(nextId)
+        : await client.automationsV2.runNow(nextId);
     },
     onSuccess: async () => {
       setValidationMessage("");
@@ -832,6 +901,46 @@ export function AutomationComposerPanel({
             Tandem will scope the generated workflow to this workspace before it drafts or creates
             anything.
           </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 rounded-xl border border-white/10 bg-black/25 p-3">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1 accent-amber-400"
+              checked={agentTestMode}
+              onChange={(event) => {
+                setAgentTestMode(event.target.checked);
+                if (!event.target.checked) {
+                  setAgentTestAgentId(DEFAULT_AGENT_ID);
+                  setValidationMessage("");
+                }
+              }}
+            />
+            <div className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                Testing mode
+              </span>
+              <span className="text-sm text-slate-200">
+                Send create/run requests as a synthetic agent
+              </span>
+              <span className="text-xs text-slate-400">
+                Enable this to exercise agent permission checks in governance and capability review
+                flows.
+              </span>
+            </div>
+          </label>
+          {agentTestMode ? (
+            <label className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Agent id</span>
+              <input
+                className="tcp-input h-9"
+                value={agentTestAgentId}
+                onChange={(event) => setAgentTestAgentId(event.target.value)}
+                placeholder="control-panel-agent"
+              />
+            </label>
+          ) : null}
         </div>
       </div>
 

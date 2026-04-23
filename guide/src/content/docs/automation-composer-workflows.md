@@ -36,6 +36,24 @@ Then follow this rhythm:
 
 The composer is intentionally prompt-first. It should feel like talking to a strong operator who can also surface structure.
 
+### Agent Creation Test Path
+
+Use the composer test controls to validate agent governance behavior before shipping a real external
+creator.
+
+- switch on **Testing mode**
+- set a synthetic `agent id`
+- create and run the automation
+
+In this mode the request headers are sent as:
+
+- `x-tandem-agent-test-mode: 1`
+- `x-tandem-request-source: agent`
+- `x-tandem-agent-id: <your synthetic agent id>`
+
+If governance blocks the request, the response includes the same `AUTOMATION_V2_AGENT_*` and
+`AUTOMATION_V2_CAPABILITY_ESCALATION_*` codes you would receive from a non-UI agent client.
+
 ## What a good prompt looks like
 
 ```text

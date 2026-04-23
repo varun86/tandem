@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow planner latency advisory**: The automation create wizard now warns when a connector-heavy or unusually detailed workflow prompt may take a few minutes to plan, which gives operators clearer expectations before the planner call starts.
 - **Automation wizard MCP continuity**: The create wizard now preserves its draft across MCP setup round-trips, shows a return path from the MCP page, and exposes inline connect/authenticate actions for disconnected servers so operators can recover connector-backed plans without re-entering the workflow request.
 - **Async workflow planner session operations**: Workflow planner sessions now persist background start/message operations plus their final response or failure payload, and the client can poll that state instead of relying on one long-lived planner HTTP request surviving the whole run.
+- **AI Composer agent test mode**: The automation composer now exposes a testing switch for synthetic agent creation flows that sends `x-tandem-agent-test-mode`, `x-tandem-request-source: agent`, and `x-tandem-agent-id` when enabled, allowing operators to validate `AUTOMATION_V2_AGENT_*` and escalation checks before using an external agent client.
+- **Agent-classification documentation updates**: Control panel and engine-auth docs now document request-source precedence, agent lineage handling, and the dedicated test path for enforcing agent governance in composer.
 
 ### Changed
 

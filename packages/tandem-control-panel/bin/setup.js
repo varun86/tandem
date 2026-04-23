@@ -2085,6 +2085,18 @@ async function proxyEngineRequest(req, res, session) {
   const forwardedProto =
     String(req.headers["x-forwarded-proto"] || "").trim() ||
     (req.socket && req.socket.encrypted ? "https" : "http");
+  const requestedSource = String(req.headers["x-tandem-request-source"] || "").trim();
+  const requestedAgentId = String(req.headers["x-tandem-agent-id"] || "").trim();
+  const agentTestMode = (() => {
+    const raw = String(
+      req.headers["x-tandem-agent-test-mode"] || req.headers["x-tandem-control-panel-agent-mode"] || ""
+    ).trim()
+      .toLowerCase();
+    return ["1", "true", "yes", "on"].includes(raw);
+  })();
+  const requestSource = agentTestMode
+    ? requestedSource || "agent"
+    : "control_panel";
 
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
@@ -2099,6 +2111,8 @@ async function proxyEngineRequest(req, res, session) {
         "x-tandem-token",
         "x-tandem-agent-id",
         "x-tandem-agent-ancestor-ids",
+        "x-tandem-control-panel-agent-mode",
+        "x-tandem-agent-test-mode",
       ].includes(lower)
     ) {
       continue;
@@ -2108,7 +2122,10 @@ async function proxyEngineRequest(req, res, session) {
   }
   headers.set("authorization", `Bearer ${session.token}`);
   headers.set("x-tandem-token", session.token);
-  headers.set("x-tandem-request-source", "control_panel");
+  headers.set("x-tandem-request-source", requestSource);
+  if (agentTestMode && requestedAgentId) {
+    headers.set("x-tandem-agent-id", requestedAgentId);
+  }
   if (forwardedHost) headers.set("x-forwarded-host", forwardedHost);
   if (forwardedProto) headers.set("x-forwarded-proto", forwardedProto);
 

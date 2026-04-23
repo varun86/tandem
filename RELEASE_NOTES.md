@@ -37,6 +37,11 @@ This release moves recursive-authoring and governance policy behind a dedicated 
 - **Refresh-safe remembered auth**: A hard refresh after rebuilding the control panel no longer emits a noisy `/api/auth/me 401` before the remembered token restores the session.
 - **Wizard step scroll reset**: Moving between automation wizard steps now scrolls the active panel back to the top, so each new step opens at its actual starting position instead of leaving the operator halfway down the previous screen.
 - **Automation browser requests stay human-owned**: The control-panel engine proxy now stamps forwarded automation requests with `x-tandem-request-source: control_panel` and strips browser agent lineage headers, while engine governance honors that source so normal create and run-now actions no longer trip `AUTOMATION_V2_AGENT_ID_REQUIRED`.
+- **AI Composer agent test mode**: The automation composer now includes a testing mode that sends explicit agent-authored metadata (`x-tandem-agent-test-mode`, `x-tandem-request-source: agent`, synthetic `x-tandem-agent-id`) for create/run-now calls, letting operators exercise agent governance and capability escalation checks without a separate external client.
+
+### Agent documentation and governance transparency
+
+- **Agent-classification documentation updates**: Added clear guidance on control-panel vs agent request-source behavior and the headers that switch governance checks, including failure-code expectations (`AUTOMATION_V2_AGENT_*`, `AUTOMATION_V2_CAPABILITY_ESCALATION_*`).
 
 ## v0.4.37 (Released 2026-04-22)
 

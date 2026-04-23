@@ -72,6 +72,17 @@ Use those fields to determine whether the automation is mutable, paused, awaitin
 
 When an automation is created, Tandem records provenance and initializes governance state.
 
+#### Human vs. Agent Classification
+
+Tandem classifies the actor from headers:
+
+- `x-tandem-request-source = control_panel` → always treated as human context
+- `x-tandem-agent-id` present + non-control-panel source → agent context
+- otherwise → tenant actor (if available), then system actor
+
+The control panel's normal route is human-scoped by design. A separate agent test mode can send a
+non-panel source to exercise agent-specific governance checks.
+
 If the creator is an agent, Tandem also applies the creation quota, depth limit, spend policy, and capability escalation checks.
 
 The key creation failure codes are:

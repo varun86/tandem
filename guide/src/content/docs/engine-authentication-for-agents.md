@@ -59,6 +59,41 @@ Important environment variable:
 
 The panel uses that token to talk to the engine.
 
+## How agents become "agent-authored" at the API level
+
+Every request is inspected for two signals:
+
+- `x-tandem-agent-id` (agent identity)
+- `x-tandem-request-source`
+
+If `x-tandem-request-source` is `control_panel`, Tandem treats the request as human-owned even
+when an agent header is present.
+
+That means today’s packaged control panel create path intentionally writes
+`x-tandem-request-source: control_panel` so workflows are treated as human-created unless the
+panel explicitly enables a test path.
+
+## Permission and capability checks for agent-created automations
+
+When an agent is recognized, Tandem enforces extra safety checks before `automations/v2` mutate:
+
+- agent identity must be present (`x-tandem-agent-id`)
+- creation quota and review requirements can apply
+- spend and recursion depth limits are enforced
+- requested capability escalation (for example `creates_agents` or `modifies_grants`) requires prior
+  approval
+
+Those checks still require a valid engine token. Agent mode does not remove authentication;
+it only changes who is recorded as the actor and which governance gate runs.
+
+In the control panel, test mode uses an explicit developer flag that sends:
+
+- `x-tandem-agent-test-mode: 1` (or `true`)
+- `x-tandem-request-source: agent`
+- `x-tandem-agent-id: <agent-id>`
+
+This is currently a debugging/testing control and is not required for normal panel use.
+
 ## Where an agent might get the token
 
 Only use a token source that has been intentionally provided to the agent.
