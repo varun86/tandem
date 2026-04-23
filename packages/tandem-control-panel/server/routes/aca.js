@@ -27,6 +27,67 @@ export function createAcaApiHandler(deps) {
 
     const incoming = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`);
     const targetPath = incoming.pathname.replace(/^\/api\/aca/, "") || "/";
+
+    if (targetPath === "/overview" && req.method === "GET") {
+      const token = String(getAcaToken?.() || "aca-proxy").trim();
+      const headers = copyRequestHeaders(req);
+      if (token) headers.set("authorization", `Bearer ${token}`);
+      headers.set("content-type", "application/json");
+      headers.set("accept", "application/json");
+
+      let upstream;
+      try {
+        upstream = await fetch(`${baseUrl}/mcp`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: "aca-overview",
+            method: "tools/call",
+            params: { name: "describe_aca", arguments: {} },
+          }),
+        });
+      } catch (error) {
+        sendJson(res, 502, {
+          ok: false,
+          error: `ACA overview is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        return true;
+      }
+
+      let payload;
+      try {
+        payload = await upstream.json();
+      } catch {
+        payload = null;
+      }
+
+      if (!upstream.ok) {
+        sendJson(res, upstream.status, {
+          ok: false,
+          error: String(payload?.error?.message || payload?.detail || `ACA overview failed (${upstream.status})`),
+        });
+        return true;
+      }
+
+      const overview = payload?.result?.overview;
+      if (!overview || typeof overview !== "object") {
+        sendJson(res, 502, {
+          ok: false,
+          error: "ACA overview tool returned an unexpected payload.",
+        });
+        return true;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        source: "aca-mcp",
+        fetched_at_ms: Date.now(),
+        overview,
+      });
+      return true;
+    }
+
     const targetUrl = `${baseUrl}${targetPath}${incoming.search}`;
     const token = String(getAcaToken?.() || "aca-proxy").trim();
     const needsAuth = targetPath !== "/health";

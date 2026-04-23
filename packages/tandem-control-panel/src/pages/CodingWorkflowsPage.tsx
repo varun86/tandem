@@ -231,6 +231,21 @@ function formatStatus(status: string) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function safeText(value: any, fallback = "unknown") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function asStringList(value: any) {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function formatOverviewTime(value: any) {
+  const timestamp = Number(value || 0);
+  if (!timestamp) return "not refreshed yet";
+  return new Date(timestamp).toLocaleString();
+}
+
 const ACTIVE_RUN_STALE_AFTER_MS = 30 * 60 * 1000;
 const GITHUB_ITEM_LAUNCH_LOCK_MS = 15 * 1000;
 
@@ -497,6 +512,12 @@ export function CodingWorkflowsPage({
     queryFn: () => api("/api/aca/health"),
     enabled: acaAvailable,
   });
+  const acaOverview = useQuery({
+    queryKey: ["coding-workflows", "aca-overview"],
+    queryFn: () => api("/api/aca/overview"),
+    enabled: acaAvailable,
+    refetchInterval: acaAvailable ? 30000 : false,
+  });
   const projectsQuery = useQuery({
     queryKey: ["coding-workflows", "aca-projects"],
     queryFn: () => api("/api/aca/projects"),
@@ -700,6 +721,7 @@ export function CodingWorkflowsPage({
       const eventType = String(envelope.event_type || "event").trim();
       setLastGlobalEvent(eventType);
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-projects"] });
       if (selectedProjectSlug) {
         void queryClient.invalidateQueries({
@@ -1184,7 +1206,7 @@ export function CodingWorkflowsPage({
             />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
             <PanelCard title="Project selector" subtitle="ACA-backed repository contexts">
               {projects.length ? (
                 <div className="grid gap-3">
@@ -1219,88 +1241,261 @@ export function CodingWorkflowsPage({
               )}
             </PanelCard>
 
-            <PanelCard title="Task intake preview" subtitle="What ACA will try to pick up next">
-              {selectedProjectSlug ? (
-                projectTasksQuery.isLoading ? (
-                  <div className="tcp-subtle text-sm">Loading task preview...</div>
-                ) : projectTasksQuery.isError ? (
+            <div className="grid gap-4">
+              <PanelCard
+                title="ACA snapshot"
+                subtitle="Read-only runtime view the agent can use before intake"
+                actions={
+                  <Badge tone={acaOverview.data ? "ok" : "warn"}>
+                    {acaOverview.data ? "Live" : "Loading"}
+                  </Badge>
+                }
+              >
+                {acaOverview.isLoading ? (
+                  <div className="tcp-subtle text-sm">Loading ACA snapshot...</div>
+                ) : acaOverview.isError ? (
                   <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
-                    {projectTasksQuery.error instanceof Error
-                      ? projectTasksQuery.error.message
-                      : "Could not load task preview."}
+                    {acaOverview.error instanceof Error
+                      ? acaOverview.error.message
+                      : "Could not load ACA snapshot."}
                   </div>
-                ) : projectTasksQuery.data?.task ? (
+                ) : acaOverview.data?.overview ? (
                   <div className="grid gap-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <div className="tcp-subtle text-xs">
-                        GitHub Project intake is refreshed on demand through Tandem&apos;s GitHub
-                        MCP. It does not auto-update here so we can keep GitHub calls down.
-                        {taskPreviewRefreshAt
-                          ? ` Last refreshed ${new Date(taskPreviewRefreshAt).toLocaleTimeString()}.`
-                          : ""}
-                      </div>
-                      <button
-                        type="button"
-                        className="tcp-btn tcp-btn-secondary"
-                        onClick={refreshTaskPreview}
-                        disabled={projectTasksQuery.isFetching}
-                      >
-                        {projectTasksQuery.isFetching ? "Refreshing..." : "Refresh from GitHub"}
-                      </button>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone={acaOverview.data.overview.auth?.required ? "ok" : "warn"}>
+                        {safeText(acaOverview.data.overview.auth?.mode, "bearer_api_key")}
+                      </Badge>
+                      <Badge tone={acaOverview.data.overview.validation?.ok ? "ok" : "warn"}>
+                        {acaOverview.data.overview.validation?.ok
+                          ? "Config valid"
+                          : "Needs attention"}
+                      </Badge>
+                      <Badge tone={acaOverview.data.overview.engine?.healthy ? "ok" : "warn"}>
+                        {acaOverview.data.overview.engine?.healthy
+                          ? "Engine healthy"
+                          : "Engine issue"}
+                      </Badge>
+                      <Badge tone={acaOverview.data.overview.github_mcp?.connected ? "ok" : "warn"}>
+                        {acaOverview.data.overview.github_mcp?.connected
+                          ? "GitHub MCP connected"
+                          : "GitHub MCP pending"}
+                      </Badge>
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="text-sm font-semibold">
-                        {String(projectTasksQuery.data.task.title || "Untitled task")}
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Task source
+                        </div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {safeText(acaOverview.data.overview.task_source?.type, "unset")}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {acaOverview.data.overview.task_source?.owner
+                            ? `${safeText(acaOverview.data.overview.task_source.owner)} / ${safeText(acaOverview.data.overview.task_source.repo)}`
+                            : safeText(
+                                acaOverview.data.overview.task_source?.source_name,
+                                "No source details"
+                              )}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          Project {safeText(acaOverview.data.overview.task_source?.project, "n/a")}
+                          {acaOverview.data.overview.task_source?.item
+                            ? ` · Item ${safeText(acaOverview.data.overview.task_source.item)}`
+                            : ""}
+                        </div>
                       </div>
-                      <div className="tcp-subtle mt-1 text-xs">
-                        {String(projectTasksQuery.data.source_type || "unknown")}
-                        {projectTasksQuery.data.board_path
-                          ? ` · ${String(projectTasksQuery.data.board_path)}`
-                          : ""}
+
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Repository
+                        </div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {safeText(
+                            acaOverview.data.overview.repository?.slug ||
+                              acaOverview.data.overview.repository?.path,
+                            "Unbound"
+                          )}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {acaOverview.data.overview.repository?.path
+                            ? `Path ${safeText(acaOverview.data.overview.repository.path)}`
+                            : "Repository path unavailable"}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          Branch{" "}
+                          {safeText(acaOverview.data.overview.repository?.default_branch, "main")}
+                          {acaOverview.data.overview.repository?.remote_name
+                            ? ` · Remote ${safeText(acaOverview.data.overview.repository.remote_name, "origin")}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Engine and GitHub
+                        </div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {safeText(acaOverview.data.overview.engine?.status, "unknown")} engine
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {acaOverview.data.overview.engine?.base_url
+                            ? `Engine ${safeText(acaOverview.data.overview.engine.base_url)}`
+                            : "Engine URL unavailable"}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          GitHub MCP{" "}
+                          {safeText(acaOverview.data.overview.github_mcp?.scope, "unset")}
+                          {acaOverview.data.overview.github_mcp?.remote_sync
+                            ? ` · Sync ${safeText(acaOverview.data.overview.github_mcp.remote_sync)}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Latest run
+                        </div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {safeText(acaOverview.data.overview.latest_run?.run_id, "No run yet")}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {acaOverview.data.overview.latest_run?.status
+                            ? `Status ${safeText(acaOverview.data.overview.latest_run.status)}`
+                            : "No run status"}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {acaOverview.data.overview.latest_run?.phase
+                            ? `Phase ${safeText(acaOverview.data.overview.latest_run.phase)}`
+                            : "No phase recorded"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold">Allowed next actions</div>
+                          <div className="tcp-subtle mt-1 text-xs">
+                            The agent should choose from these safe follow-ups.
+                          </div>
+                        </div>
+                        <Badge tone="ghost">
+                          Refreshed {formatOverviewTime(acaOverview.dataUpdatedAt)}
+                        </Badge>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <Badge tone={projectTasksQuery.data.eligible ? "ok" : "warn"}>
-                          {projectTasksQuery.data.eligible ? "Eligible" : "Not eligible"}
-                        </Badge>
-                        <Badge tone="info">
-                          ACA intake lane{" "}
-                          {formatStatus(String(projectTasksQuery.data.task.lane || "ready"))}
-                        </Badge>
-                        {projectTasksQuery.data.task?.source ? (
-                          projectTasksQuery.data.task.source.status ? (
-                            <Badge tone="ghost">
-                              GitHub status {String(projectTasksQuery.data.task.source.status)}
-                            </Badge>
-                          ) : (
-                            <Badge tone="ghost">GitHub status unavailable from MCP</Badge>
+                        {asStringList(acaOverview.data.overview.allowed_next_actions).length ? (
+                          asStringList(acaOverview.data.overview.allowed_next_actions).map(
+                            (action) => (
+                              <Badge key={action} tone="info">
+                                {formatStatus(action)}
+                              </Badge>
+                            )
                           )
-                        ) : null}
-                      </div>
-                    </div>
-                    {projectTasksQuery.data?.board_summary ? (
-                      <div className="flex flex-wrap gap-2">
-                        {Object.entries(projectTasksQuery.data.board_summary).map(
-                          ([lane, count]) => (
-                            <Badge key={lane} tone="ghost">
-                              {lane}: {String(count)}
-                            </Badge>
-                          )
+                        ) : (
+                          <span className="tcp-subtle text-xs">No suggested actions.</span>
                         )}
                       </div>
-                    ) : null}
-                    {String(projectTasksQuery.data?.warning || "").trim() ? (
-                      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                        {String(projectTasksQuery.data.warning)}
-                      </div>
-                    ) : null}
+                    </div>
+
+                    <details className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <summary className="cursor-pointer text-sm font-semibold">
+                        Raw snapshot
+                      </summary>
+                      <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
+                        {JSON.stringify(acaOverview.data.overview, null, 2)}
+                      </pre>
+                    </details>
                   </div>
                 ) : (
-                  <EmptyState text="No task preview available yet." />
-                )
-              ) : (
-                <EmptyState text="Select a project to preview task intake." />
-              )}
-            </PanelCard>
+                  <EmptyState text="No ACA snapshot available yet." />
+                )}
+              </PanelCard>
+
+              <PanelCard title="Task intake preview" subtitle="What ACA will try to pick up next">
+                {selectedProjectSlug ? (
+                  projectTasksQuery.isLoading ? (
+                    <div className="tcp-subtle text-sm">Loading task preview...</div>
+                  ) : projectTasksQuery.isError ? (
+                    <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+                      {projectTasksQuery.error instanceof Error
+                        ? projectTasksQuery.error.message
+                        : "Could not load task preview."}
+                    </div>
+                  ) : projectTasksQuery.data?.task ? (
+                    <div className="grid gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+                        <div className="tcp-subtle text-xs">
+                          GitHub Project intake is refreshed on demand through Tandem&apos;s GitHub
+                          MCP. It does not auto-update here so we can keep GitHub calls down.
+                          {taskPreviewRefreshAt
+                            ? ` Last refreshed ${new Date(taskPreviewRefreshAt).toLocaleTimeString()}.`
+                            : ""}
+                        </div>
+                        <button
+                          type="button"
+                          className="tcp-btn tcp-btn-secondary"
+                          onClick={refreshTaskPreview}
+                          disabled={projectTasksQuery.isFetching}
+                        >
+                          {projectTasksQuery.isFetching ? "Refreshing..." : "Refresh from GitHub"}
+                        </button>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-sm font-semibold">
+                          {String(projectTasksQuery.data.task.title || "Untitled task")}
+                        </div>
+                        <div className="tcp-subtle mt-1 text-xs">
+                          {String(projectTasksQuery.data.source_type || "unknown")}
+                          {projectTasksQuery.data.board_path
+                            ? ` · ${String(projectTasksQuery.data.board_path)}`
+                            : ""}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge tone={projectTasksQuery.data.eligible ? "ok" : "warn"}>
+                            {projectTasksQuery.data.eligible ? "Eligible" : "Not eligible"}
+                          </Badge>
+                          <Badge tone="info">
+                            ACA intake lane{" "}
+                            {formatStatus(String(projectTasksQuery.data.task.lane || "ready"))}
+                          </Badge>
+                          {projectTasksQuery.data.task?.source ? (
+                            projectTasksQuery.data.task.source.status ? (
+                              <Badge tone="ghost">
+                                GitHub status {String(projectTasksQuery.data.task.source.status)}
+                              </Badge>
+                            ) : (
+                              <Badge tone="ghost">GitHub status unavailable from MCP</Badge>
+                            )
+                          ) : null}
+                        </div>
+                      </div>
+                      {projectTasksQuery.data?.board_summary ? (
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(projectTasksQuery.data.board_summary).map(
+                            ([lane, count]) => (
+                              <Badge key={lane} tone="ghost">
+                                {lane}: {String(count)}
+                              </Badge>
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                      {String(projectTasksQuery.data?.warning || "").trim() ? (
+                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                          {String(projectTasksQuery.data.warning)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <EmptyState text="No task preview available yet." />
+                  )
+                ) : (
+                  <EmptyState text="Select a project to preview task intake." />
+                )}
+              </PanelCard>
+            </div>
           </div>
         </>
       ) : null}

@@ -112,6 +112,51 @@ test("ACA proxy forwards authenticated project requests through the control pane
         res.end(JSON.stringify({ runs: [{ run_id: "run-1", project_slug: "demo", status: "running" }] }));
         return;
       }
+      if ((req.url || "").startsWith("/mcp")) {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          let parsed = {};
+          try {
+            parsed = JSON.parse(body || "{}");
+          } catch {
+            parsed = {};
+          }
+          if (parsed?.method === "tools/call" && parsed?.params?.name === "describe_aca") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: parsed.id,
+                result: {
+                  overview: {
+                    summary: "ACA is running.",
+                    auth: { mode: "bearer_api_key", required: true },
+                    validation: { ok: true, errors: [] },
+                    task_source: { type: "manual" },
+                    repository: { slug: "demo", path: "repos/demo" },
+                    provider: { id: "openai", model: "gpt-4.1-mini" },
+                    execution: { backend: "local" },
+                    tandem: { base_url: "http://127.0.0.1", startup_mode: "reuse_only", update_policy: "notify" },
+                    engine: { healthy: true, running: true, status: "running" },
+                    github_mcp: { enabled: true, connected: true, scope: "intake_finalize", remote_sync: "status_comment" },
+                    workspace: { summary: {}, workspace: {}, active_project: {}, configured_project: {} },
+                    latest_run: { run_id: "run-1", status: "running", is_running: true },
+                    allowed_next_actions: ["inspect_latest_run"],
+                    doc_refs: [],
+                  },
+                },
+              })
+            );
+            return;
+          }
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "unsupported mcp request" }));
+        });
+        return;
+      }
       res.writeHead(404);
       res.end();
     });
@@ -155,4 +200,9 @@ test("ACA proxy forwards authenticated project requests through the control pane
   assert.equal(runs.status, 200);
   assert.equal(Array.isArray(runs.json().runs), true);
   assert.equal(runs.json().runs[0].project_slug, "demo");
+
+  const overview = await request(baseUrl, "/api/aca/overview", { cookie });
+  assert.equal(overview.status, 200);
+  assert.equal(overview.json().overview.latest_run.run_id, "run-1");
+  assert.equal(overview.json().overview.github_mcp.connected, true);
 });
