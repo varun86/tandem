@@ -1,0 +1,35 @@
+schema_version = 1
+generated_at = "2026-04-23T00:00:00.000Z"
+source = "curated-mcp-overrides"
+catalog_version = "latest"
+catalog_visibility = "public"
+pack_id = "mcp.remote.tandem-mcp"
+slug = "tandem-mcp"
+name = "Tandem Docs"
+description = "Official Tandem documentation MCP server for product guides, references, and docs search."
+documentation_url = "https://docs.tandem.ac/"
+directory_url = "https://tandem.ac/mcp"
+requires_auth = false
+requires_setup = false
+works_with = ["claude", "claude-api", "claude-code", "codex", "openai-api"]
+use_cases = ["documentation", "search", "reference", "tandem"]
+tool_names = []
+visibility = ["curated"]
+
+[server]
+name = "tandem-mcp"
+version = ""
+display_name = "Tandem Docs"
+transport_url = "https://tandem.ac/mcp"
+
+[registry]
+uuid = "curated:tandem-mcp-remote"
+rank = 5
+author_name = "Frumu"
+author_url = "https://tandem.ac/"
+published_on = ""
+updated_on = ""
+
+[[remote]]
+type = "streamable-http"
+url = "https://tandem.ac/mcp"

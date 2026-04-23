@@ -14,6 +14,12 @@ This release makes governed workflow repair durable. Strict-quality automation n
 - **Better repair-tool targeting**: When a repair is specifically missing concrete reads and workspace inspection is already satisfied, the engine now favors `read` over repeated `glob` exploration, making governed recovery attempts more purposeful.
 - **Validator and orchestration alignment**: Server-side repair inference now uses the same repair budget semantics as the engine, so strict governed nodes stay blocked after exhausted evidence-gathering instead of being treated as soft `needs_repair` completions.
 
+### Built-in Tandem Docs MCP
+
+- **Preinstalled across control panels**: Tandem now bootstraps the official `tandem-mcp` server at `https://tandem.ac/mcp` during engine startup, so connected control panels immediately see the Tandem Docs MCP without requiring an operator to add it first.
+- **Same granular controls as other MCP servers**: Because the docs server is registered through the normal MCP registry path, it still shows up in Settings with the usual connected/enabled state, per-tool allowlist controls, and standard connect/refresh/disable behavior.
+- **Catalog visibility for recovery**: Tandem Docs MCP now also has a curated catalog entry, making it discoverable through the MCP browser and easier to restore if an operator removes it intentionally.
+
 ### Hosted Codex OAuth import
 
 - **Codex `auth.json` schema drift tolerance**: Hosted control-panel imports now accept Codex CLI auth files whose `last_refresh` metadata is stored as a string timestamp instead of a numeric value.

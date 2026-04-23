@@ -1,4 +1,46 @@
 use super::*;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+fn mcp_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct McpEnvGuard {
+    _guard: MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl McpEnvGuard {
+    fn new(vars: &[&'static str]) -> Self {
+        let guard = mcp_env_lock().lock().expect("mcp env lock");
+        let saved = vars
+            .iter()
+            .copied()
+            .map(|key| (key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+
+    fn set(&self, key: &'static str, value: impl AsRef<str>) {
+        std::env::set_var(key, value.as_ref());
+    }
+}
+
+impl Drop for McpEnvGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            if let Some(value) = value {
+                std::env::set_var(key, value);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+    }
+}
 
 async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
     async fn handle(axum::Json(payload): axum::Json<Value>) -> axum::Json<Value> {
@@ -77,6 +119,33 @@ async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandl
             .expect("serve fake notion mcp server");
     });
     (endpoint, server)
+}
+
+#[tokio::test]
+async fn bootstrap_mcp_servers_installs_builtin_tandem_docs_server() {
+    let _env = McpEnvGuard::new(&["TANDEM_DOCS_MCP_TRANSPORT_URL"]);
+    let (endpoint, server) = spawn_fake_notion_oauth_mcp_server().await;
+    _env.set("TANDEM_DOCS_MCP_TRANSPORT_URL", &endpoint);
+
+    let state = test_state().await;
+    super::super::bootstrap_mcp_servers(&state).await;
+
+    let server_row = state
+        .mcp
+        .list()
+        .await
+        .get("tandem-mcp")
+        .cloned()
+        .expect("builtin tandem docs mcp server");
+    assert_eq!(server_row.transport, endpoint);
+    assert!(server_row.enabled);
+    assert!(server_row.connected);
+    assert!(server_row
+        .tool_cache
+        .iter()
+        .any(|tool| tool.tool_name == "notion_search"));
+
+    server.abort();
 }
 
 #[cfg(not(feature = "premium-governance"))]

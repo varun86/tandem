@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 const BUILTIN_GITHUB_MCP_SERVER_NAME: &str = "github";
 const BUILTIN_GITHUB_MCP_TRANSPORT_URL: &str = "https://api.githubcopilot.com/mcp/";
+const BUILTIN_TANDEM_DOCS_MCP_SERVER_NAME: &str = "tandem-mcp";
+const BUILTIN_TANDEM_DOCS_MCP_TRANSPORT_URL: &str = "https://tandem.ac/mcp";
 const MCP_OAUTH_SESSION_TTL_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +80,7 @@ pub(super) async fn bootstrap_mcp_servers_when_ready(state: AppState) {
 
 pub(super) async fn bootstrap_mcp_servers(state: &AppState) {
     let _ = ensure_builtin_github_mcp_server(state).await;
+    let _ = ensure_builtin_tandem_docs_mcp_server(state).await;
     let _ = ensure_hosted_kb_mcp_server(state).await;
 
     let mut enabled_servers = state
@@ -118,6 +121,14 @@ pub(super) async fn bootstrap_mcp_servers(state: &AppState) {
             count
         );
     }
+}
+
+fn builtin_tandem_docs_mcp_transport_url() -> String {
+    std::env::var("TANDEM_DOCS_MCP_TRANSPORT_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| BUILTIN_TANDEM_DOCS_MCP_TRANSPORT_URL.to_string())
 }
 
 async fn ensure_hosted_kb_mcp_server(state: &AppState) -> bool {
@@ -252,6 +263,17 @@ pub(super) async fn ensure_builtin_github_mcp_server(state: &AppState) -> bool {
         BUILTIN_GITHUB_MCP_SERVER_NAME,
         BUILTIN_GITHUB_MCP_TRANSPORT_URL,
         headers,
+    )
+    .await
+}
+
+pub(super) async fn ensure_builtin_tandem_docs_mcp_server(state: &AppState) -> bool {
+    let transport = builtin_tandem_docs_mcp_transport_url();
+    ensure_remote_mcp_server(
+        state,
+        BUILTIN_TANDEM_DOCS_MCP_SERVER_NAME,
+        &transport,
+        HashMap::new(),
     )
     .await
 }

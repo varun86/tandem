@@ -10,12 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Request-scoped prewrite repair policy**: Engine-facing prewrite requirements now carry node-derived repair budget and repair-exhaustion behavior so governed automation steps can enforce fail-closed repair semantics without relying only on a global environment toggle.
+- **Built-in Tandem Docs MCP bootstrap**: Control panels now inherit a preinstalled `tandem-mcp` server pointed at `https://tandem.ac/mcp`, so Tandem documentation tools are available on first load without a manual MCP add step.
 
 ### Changed
 
 - **Governed workflow repair enforcement**: Strict-quality workflow nodes now inherit their repair behavior from `output_contract.enforcement`, allowing governed runs to fail closed after repair exhaustion while non-strict nodes keep the existing waive-and-write fallback.
 - **Repair-loop tool targeting**: Concrete-read repair guidance now prefers `read` once workspace inspection is already satisfied, reducing low-signal `glob` loops during governed artifact recovery.
 - **Automation/server repair-state alignment**: Automation validation and repair-state inference now use the same node repair budget and exhaustion semantics as the engine so downstream orchestration sees a consistent blocked state.
+- **Control-panel MCP defaults**: The engine now bootstraps Tandem Docs MCP as a built-in remote server and publishes it through the normal MCP registry path, so it appears in Settings alongside other servers and remains subject to the existing enable/disable and per-tool allowlist controls.
 
 ### Fixed
 
