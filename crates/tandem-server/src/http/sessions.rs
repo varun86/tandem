@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::*;
 use sha2::{Digest, Sha256};
-use tandem_types::Session;
+use tandem_types::{Session, ToolMode};
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -35,6 +35,143 @@ fn publish_tenant_event(
         event_type,
         with_tenant_context(properties, tenant_context),
     ));
+}
+
+fn mcp_namespace_segment_for_grounding(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_underscore = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_underscore = false;
+        } else if !previous_underscore {
+            out.push('_');
+            previous_underscore = true;
+        }
+    }
+    let cleaned = out.trim_matches('_');
+    if cleaned.is_empty() {
+        "server".to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn mcp_server_is_knowledgebase(server: &tandem_runtime::McpServer) -> bool {
+    server.grounding_required
+        || server.purpose.trim().eq_ignore_ascii_case("knowledgebase")
+        || server.name.trim().eq_ignore_ascii_case("kb")
+}
+
+fn explicit_allowlist_patterns_for_mcp_server(
+    allowlist: &[String],
+    server_name: &str,
+) -> Vec<String> {
+    let namespace = mcp_namespace_segment_for_grounding(server_name);
+    let prefix = format!("mcp.{namespace}.");
+    let wildcard = format!("mcp.{namespace}.*");
+    let mut seen = std::collections::HashSet::new();
+    allowlist
+        .iter()
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty() && entry != "*")
+        .filter(|entry| {
+            entry == &wildcard || entry.starts_with(&prefix) || entry == &format!("mcp.{namespace}")
+        })
+        .filter(|entry| seen.insert(entry.clone()))
+        .collect()
+}
+
+fn send_message_request_text(req: &SendMessageRequest) -> String {
+    req.parts
+        .iter()
+        .map(|part| match part {
+            MessagePartInput::Text { text } => text.clone(),
+            MessagePartInput::File {
+                mime,
+                filename,
+                url,
+            } => format!(
+                "[file mime={} name={} url={}]",
+                mime,
+                filename.clone().unwrap_or_else(|| "unknown".to_string()),
+                url
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn kb_grounding_should_skip_query(query: &str) -> bool {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let social = [
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "nice",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    ];
+    lower.len() <= 32 && social.contains(&lower.as_str())
+}
+
+async fn derive_session_kb_grounding_policy(
+    state: &AppState,
+    req: &SendMessageRequest,
+) -> Option<tandem_core::KnowledgebaseGroundingPolicy> {
+    if kb_grounding_should_skip_query(&send_message_request_text(req)) {
+        return None;
+    }
+    let allowlist = req.tool_allowlist.as_deref()?;
+    if allowlist.is_empty() {
+        return None;
+    }
+    let servers = state.mcp.list_public().await;
+    let mut server_names = Vec::new();
+    let mut tool_patterns = Vec::new();
+    for server in servers.values() {
+        if !server.enabled || !mcp_server_is_knowledgebase(server) {
+            continue;
+        }
+        let patterns = explicit_allowlist_patterns_for_mcp_server(allowlist, &server.name);
+        if patterns.is_empty() {
+            continue;
+        }
+        server_names.push(server.name.clone());
+        tool_patterns.extend(patterns);
+    }
+    if tool_patterns.is_empty() {
+        return None;
+    }
+    Some(tandem_core::KnowledgebaseGroundingPolicy {
+        required: true,
+        server_names,
+        tool_patterns,
+    })
+}
+
+fn tool_allowlist_for_kb_grounding(
+    policy: &tandem_core::KnowledgebaseGroundingPolicy,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    policy
+        .tool_patterns
+        .iter()
+        .map(|tool| tool.trim().to_ascii_lowercase())
+        .filter(|tool| !tool.is_empty())
+        .filter(|tool| seen.insert(tool.clone()))
+        .collect::<Vec<_>>()
 }
 
 pub(super) async fn create_session(
@@ -800,11 +937,37 @@ pub(super) async fn execute_run(
     state: AppState,
     session_id: String,
     run_id: String,
-    req: SendMessageRequest,
+    mut req: SendMessageRequest,
     correlation_id: Option<String>,
     _client_id: Option<String>,
     tenant_context: TenantContext,
 ) -> anyhow::Result<()> {
+    if let Some(policy) = derive_session_kb_grounding_policy(&state, &req).await {
+        let kb_tool_allowlist = tool_allowlist_for_kb_grounding(&policy);
+        state
+            .engine_loop
+            .set_session_kb_grounding_policy(&session_id, policy.clone())
+            .await;
+        req.tool_mode = Some(ToolMode::Required);
+        req.tool_allowlist = Some(kb_tool_allowlist.clone());
+        publish_tenant_event(
+            &state,
+            &tenant_context,
+            "kb.grounding.required",
+            json!({
+                "sessionID": session_id,
+                "runID": run_id,
+                "serverNames": policy.server_names,
+                "toolPatterns": policy.tool_patterns,
+                "toolAllowlist": kb_tool_allowlist,
+            }),
+        );
+    } else {
+        state
+            .engine_loop
+            .clear_session_kb_grounding_policy(&session_id)
+            .await;
+    }
     let mut run_fut = Box::pin(state.engine_loop.run_prompt_async_with_context(
         session_id.clone(),
         req,

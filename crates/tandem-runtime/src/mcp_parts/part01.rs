@@ -56,6 +56,10 @@ pub struct McpServer {
     pub pending_auth_by_tool: HashMap<String, PendingMcpAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub purpose: String,
+    #[serde(default)]
+    pub grounding_required: bool,
     #[serde(default, skip)]
     pub secret_header_values: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -263,6 +267,14 @@ impl McpRegistry {
             tools_fetched_at_ms: existing_fetched_at,
             pending_auth_by_tool: HashMap::new(),
             allowed_tools: existing.as_ref().and_then(|row| row.allowed_tools.clone()),
+            purpose: existing
+                .as_ref()
+                .map(|row| row.purpose.clone())
+                .unwrap_or_default(),
+            grounding_required: existing
+                .as_ref()
+                .map(|row| row.grounding_required)
+                .unwrap_or(false),
             secret_header_values,
             oauth: existing.as_ref().and_then(|row| row.oauth.clone()),
         };
@@ -283,6 +295,37 @@ impl McpRegistry {
         server.allowed_tools = normalized;
         drop(servers);
         self.persist_state().await;
+        true
+    }
+
+    pub async fn set_grounding_metadata(
+        &self,
+        name: &str,
+        purpose: Option<String>,
+        grounding_required: Option<bool>,
+    ) -> bool {
+        let mut servers = self.servers.write().await;
+        let Some(server) = servers.get_mut(name) else {
+            return false;
+        };
+        let mut changed = false;
+        if let Some(purpose) = purpose {
+            let normalized = purpose.trim().to_ascii_lowercase();
+            if server.purpose != normalized {
+                server.purpose = normalized;
+                changed = true;
+            }
+        }
+        if let Some(grounding_required) = grounding_required {
+            if server.grounding_required != grounding_required {
+                server.grounding_required = grounding_required;
+                changed = true;
+            }
+        }
+        drop(servers);
+        if changed {
+            self.persist_state().await;
+        }
         true
     }
 

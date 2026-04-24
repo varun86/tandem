@@ -156,7 +156,12 @@ async fn ensure_hosted_kb_mcp_server(state: &AppState) -> bool {
         "mcp bootstrap: ensuring hosted KB MCP server from {}",
         kb_image
     );
-    ensure_remote_mcp_server(state, "kb", &transport, HashMap::new()).await
+    let connected = ensure_remote_mcp_server(state, "kb", &transport, HashMap::new()).await;
+    let _ = state
+        .mcp
+        .set_grounding_metadata("kb", Some("knowledgebase".to_string()), Some(true))
+        .await;
+    connected
 }
 
 fn github_mcp_headers_from_auth() -> Option<HashMap<String, String>> {
@@ -287,6 +292,8 @@ pub(super) struct McpAddInput {
     pub secret_headers: Option<HashMap<String, tandem_runtime::McpSecretRef>>,
     pub enabled: Option<bool>,
     pub allowed_tools: Option<Vec<String>>,
+    pub purpose: Option<String>,
+    pub grounding_required: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -294,6 +301,8 @@ pub(super) struct McpPatchInput {
     pub enabled: Option<bool>,
     pub allowed_tools: Option<Vec<String>>,
     pub clear_allowed_tools: Option<bool>,
+    pub purpose: Option<String>,
+    pub grounding_required: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -346,6 +355,12 @@ pub(super) async fn add_mcp(
             .set_allowed_tools(&name, Some(allowed_tools))
             .await;
     }
+    if input.purpose.is_some() || input.grounding_required.is_some() {
+        let _ = state
+            .mcp
+            .set_grounding_metadata(&name, input.purpose.clone(), input.grounding_required)
+            .await;
+    }
     if !auth_kind.is_empty() {
         let _ = state.mcp.set_auth_kind(&name, auth_kind.clone()).await;
     }
@@ -366,6 +381,8 @@ pub(super) async fn add_mcp(
             "enabled": input.enabled.unwrap_or(true),
             "auth_kind": auth_kind,
             "allowed_tools": input.allowed_tools,
+            "purpose": input.purpose,
+            "grounding_required": input.grounding_required,
         }),
     )
     .await;
@@ -1591,6 +1608,12 @@ pub(super) async fn patch_mcp(
         };
         changed |= state.mcp.set_allowed_tools(&name, next_allowed_tools).await;
         should_resync = true;
+    }
+    if input.purpose.is_some() || input.grounding_required.is_some() {
+        changed |= state
+            .mcp
+            .set_grounding_metadata(&name, input.purpose.clone(), input.grounding_required)
+            .await;
     }
     if let Some(enabled) = input.enabled {
         let enabled_changed = state.mcp.set_enabled(&name, enabled).await;

@@ -983,6 +983,29 @@ impl ServerPromptContextHook {
         lines.push("</memory_scope>".to_string());
         lines.join("\n")
     }
+
+    fn build_kb_grounding_block(policy: &tandem_core::KnowledgebaseGroundingPolicy) -> String {
+        let servers = if policy.server_names.is_empty() {
+            "enabled knowledgebase MCP".to_string()
+        } else {
+            policy.server_names.join(", ")
+        };
+        let patterns = if policy.tool_patterns.is_empty() {
+            "configured KB MCP tools".to_string()
+        } else {
+            policy.tool_patterns.join(", ")
+        };
+        [
+            "<knowledgebase_grounding_policy>".to_string(),
+            format!("- required: {}", policy.required),
+            format!("- servers: {}", servers),
+            format!("- tool_patterns: {}", patterns),
+            "- Before answering factual/project/product questions in this channel, inspect the KB MCP evidence first.".to_string(),
+            "- If the KB has no matching evidence, say that the enabled knowledgebase did not contain the answer instead of relying on model memory.".to_string(),
+            "</knowledgebase_grounding_policy>".to_string(),
+        ]
+        .join("\n")
+    }
 }
 
 impl PromptContextHook for ServerPromptContextHook {
@@ -1036,6 +1059,33 @@ impl PromptContextHook for ServerPromptContextHook {
             }
             if Self::should_skip_memory_injection(&query) {
                 return Ok(messages);
+            }
+            if let Some(policy) = this
+                .state
+                .engine_loop
+                .get_session_kb_grounding_policy(&ctx.session_id)
+                .await
+            {
+                if policy.required {
+                    let kb_block = Self::build_kb_grounding_block(&policy);
+                    messages.push(ChatMessage {
+                        role: "system".to_string(),
+                        content: kb_block.clone(),
+                        attachments: Vec::new(),
+                    });
+                    this.state.event_bus.publish(EngineEvent::new(
+                        "kb.grounding.context.injected",
+                        json!({
+                            "runID": run_id,
+                            "sessionID": ctx.session_id,
+                            "messageID": ctx.message_id,
+                            "iteration": ctx.iteration,
+                            "serverNames": policy.server_names,
+                            "toolPatterns": policy.tool_patterns,
+                            "tokenSizeApprox": kb_block.split_whitespace().count(),
+                        }),
+                    ));
+                }
             }
 
             let docs_hits = this.search_embedded_docs(&query, 6).await;

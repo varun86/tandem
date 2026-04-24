@@ -169,7 +169,10 @@ mod tests {
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
             allowed_tools: None,
+            purpose: String::new(),
+            grounding_required: false,
             secret_header_values: HashMap::new(),
+            oauth: None,
         };
 
         let normalized = normalize_mcp_tool_args(
@@ -215,7 +218,10 @@ mod tests {
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
             allowed_tools: None,
+            purpose: String::new(),
+            grounding_required: false,
             secret_header_values: HashMap::new(),
+            oauth: None,
         };
         server.pending_auth_by_tool.insert(
             "clickup_whoami".to_string(),
@@ -257,7 +263,10 @@ mod tests {
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
             allowed_tools: None,
+            purpose: String::new(),
+            grounding_required: false,
             secret_header_values: HashMap::new(),
+            oauth: None,
         };
         server.pending_auth_by_tool.insert(
             "clickup_whoami".to_string(),
@@ -295,7 +304,10 @@ mod tests {
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
             allowed_tools: None,
+            purpose: String::new(),
+            grounding_required: false,
             secret_header_values: HashMap::new(),
+            oauth: None,
         };
         server.pending_auth_by_tool.insert(
             "gmail_sendemail".to_string(),

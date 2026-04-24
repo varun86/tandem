@@ -74,6 +74,32 @@ Configure and inspect status with:
 - `PUT /channels/{name}`
 - `DELETE /channels/{name}`
 
+## KB-first channel grounding
+
+When a channel enables an MCP server marked as a knowledgebase, Tandem treats that connector as the grounding source for factual or project-specific channel answers.
+
+Knowledgebase MCPs are identified by either:
+
+- `purpose: "knowledgebase"`
+- `grounding_required: true`
+- the hosted default MCP server name `kb`
+
+For those sessions, the runtime injects a compact grounding policy and reshapes the prompt request to `tool_mode: "required"` with a KB-only MCP allowlist. The model must inspect KB evidence before it can produce a final answer. If the KB has no matching evidence, the channel reply should say that the enabled knowledgebase did not contain the answer instead of falling back to model memory.
+
+Enable the hosted KB MCP for a channel scope with the normal channel MCP command:
+
+```text
+/mcp enable kb
+```
+
+Or configure the channel tool preferences so the prompt request receives an explicit allowlist such as:
+
+```json
+["mcp.kb.*"]
+```
+
+This grounding behavior is channel/session scoped. It does not automatically force KB usage for ordinary web chat or automations unless their request/tool policy explicitly enables the KB MCP.
+
 ## Media and file uploads
 
 When adapters are configured for media ingestion:

@@ -901,6 +901,8 @@ class _Mcp:
         secret_headers: Optional[dict[str, Any]] = None,
         enabled: bool = True,
         allowed_tools: Optional[list[str]] = None,
+        purpose: Optional[str] = None,
+        grounding_required: Optional[bool] = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"name": name, "transport": transport, "enabled": enabled}
         if headers:
@@ -909,6 +911,10 @@ class _Mcp:
             payload["secret_headers"] = secret_headers
         if allowed_tools is not None:
             payload["allowed_tools"] = allowed_tools
+        if purpose is not None:
+            payload["purpose"] = purpose
+        if grounding_required is not None:
+            payload["grounding_required"] = grounding_required
         res = await self._http.post("/mcp", json=payload)
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]
@@ -935,6 +941,8 @@ class _Mcp:
         enabled: Optional[bool] = None,
         allowed_tools: Optional[list[str]] = None,
         clear_allowed_tools: Optional[bool] = None,
+        purpose: Optional[str] = None,
+        grounding_required: Optional[bool] = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         if enabled is not None:
@@ -943,6 +951,10 @@ class _Mcp:
             payload["allowed_tools"] = allowed_tools
         if clear_allowed_tools is not None:
             payload["clear_allowed_tools"] = clear_allowed_tools
+        if purpose is not None:
+            payload["purpose"] = purpose
+        if grounding_required is not None:
+            payload["grounding_required"] = grounding_required
         res = await self._http.patch(f"/mcp/{quote(name)}", json=payload)
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]

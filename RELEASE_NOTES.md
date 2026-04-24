@@ -40,6 +40,7 @@ This unreleased build adds chat-native automation drafts for Discord, Telegram, 
 ### Demo readiness
 
 - **Internal runbook**: Added `docs/internal/CHAT_WORKFLOW_PLANNER_DEMO.md` with setup, happy-path, missing-details, blocked-capability, and troubleshooting steps.
+- **KB-first channel grounding**: Hosted and external knowledgebase MCPs can now be marked as grounding-required, and channel sessions that enable those KB MCP tools must inspect KB evidence before returning factual answers instead of relying on model memory.
 
 ## v0.4.40 (Released 2026-04-24)
 

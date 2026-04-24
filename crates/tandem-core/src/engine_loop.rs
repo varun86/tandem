@@ -51,8 +51,9 @@ use types::{EngineToolProgressSink, StreamedToolCall, WritePathRecoveryMode};
 
 pub use prewrite_mode::prewrite_repair_retry_max_attempts;
 pub use types::{
-    PromptContextHook, PromptContextHookContext, SpawnAgentHook, SpawnAgentToolContext,
-    SpawnAgentToolResult, ToolPolicyContext, ToolPolicyDecision, ToolPolicyHook,
+    KnowledgebaseGroundingPolicy, PromptContextHook, PromptContextHookContext, SpawnAgentHook,
+    SpawnAgentToolContext, SpawnAgentToolResult, ToolPolicyContext, ToolPolicyDecision,
+    ToolPolicyHook,
 };
 
 use crate::tool_router::{
@@ -84,6 +85,8 @@ pub struct EngineLoop {
     host_runtime_context: HostRuntimeContext,
     workspace_overrides: std::sync::Arc<RwLock<HashMap<String, u64>>>,
     session_allowed_tools: std::sync::Arc<RwLock<HashMap<String, Vec<String>>>>,
+    session_kb_grounding_policies:
+        std::sync::Arc<RwLock<HashMap<String, KnowledgebaseGroundingPolicy>>>,
     session_auto_approve_permissions: std::sync::Arc<RwLock<HashMap<String, bool>>>,
     spawn_agent_hook: std::sync::Arc<RwLock<Option<std::sync::Arc<dyn SpawnAgentHook>>>>,
     tool_policy_hook: std::sync::Arc<RwLock<Option<std::sync::Arc<dyn ToolPolicyHook>>>>,
@@ -115,6 +118,7 @@ impl EngineLoop {
             host_runtime_context,
             workspace_overrides: std::sync::Arc::new(RwLock::new(HashMap::new())),
             session_allowed_tools: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            session_kb_grounding_policies: std::sync::Arc::new(RwLock::new(HashMap::new())),
             session_auto_approve_permissions: std::sync::Arc::new(RwLock::new(HashMap::new())),
             spawn_agent_hook: std::sync::Arc::new(RwLock::new(None)),
             tool_policy_hook: std::sync::Arc::new(RwLock::new(None)),
@@ -157,6 +161,59 @@ impl EngineLoop {
             .get(session_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub async fn set_session_kb_grounding_policy(
+        &self,
+        session_id: &str,
+        policy: KnowledgebaseGroundingPolicy,
+    ) {
+        let mut seen_servers = HashSet::new();
+        let server_names = policy
+            .server_names
+            .into_iter()
+            .map(|server| server.trim().to_ascii_lowercase())
+            .filter(|server| !server.is_empty())
+            .filter(|server| seen_servers.insert(server.clone()))
+            .collect::<Vec<_>>();
+        let mut seen_patterns = HashSet::new();
+        let tool_patterns = policy
+            .tool_patterns
+            .into_iter()
+            .map(|tool| normalize_tool_name(&tool))
+            .filter(|tool| !tool.trim().is_empty())
+            .filter(|tool| seen_patterns.insert(tool.clone()))
+            .collect::<Vec<_>>();
+        if !policy.required || tool_patterns.is_empty() {
+            self.clear_session_kb_grounding_policy(session_id).await;
+            return;
+        }
+        self.session_kb_grounding_policies.write().await.insert(
+            session_id.to_string(),
+            KnowledgebaseGroundingPolicy {
+                required: true,
+                server_names,
+                tool_patterns,
+            },
+        );
+    }
+
+    pub async fn clear_session_kb_grounding_policy(&self, session_id: &str) {
+        self.session_kb_grounding_policies
+            .write()
+            .await
+            .remove(session_id);
+    }
+
+    pub async fn get_session_kb_grounding_policy(
+        &self,
+        session_id: &str,
+    ) -> Option<KnowledgebaseGroundingPolicy> {
+        self.session_kb_grounding_policies
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
     }
 
     pub async fn set_session_auto_approve_permissions(&self, session_id: &str, enabled: bool) {

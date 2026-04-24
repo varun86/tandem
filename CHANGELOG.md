@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clarification-first drafting**: Missing workflow details now trigger focused follow-up questions about triggers, inputs, outputs, publish behavior, required tools, approval, and memory/files instead of generating a vague draft.
 - **Control-panel handoff and audit events**: Workflow drafts now surface a review banner in the control panel, emit structured planning lifecycle events, and include a short preview plus review link in external replies.
 - **Internal demo runbook**: Added `docs/internal/CHAT_WORKFLOW_PLANNER_DEMO.md` for end-to-end manual testing.
+- **KB-first channel grounding**: MCP servers can now be marked as `purpose: "knowledgebase"` / `grounding_required: true`, and channel sessions that explicitly enable those KB MCP tools force a KB discovery/search turn before answering factual questions from chat.
 
 ### Changed
 

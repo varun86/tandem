@@ -375,12 +375,16 @@ export interface AddMcpServerOptions {
   secret_headers?: Record<string, unknown>;
   enabled?: boolean;
   allowed_tools?: string[];
+  purpose?: string;
+  grounding_required?: boolean;
 }
 
 export interface PatchMcpServerOptions {
   enabled?: boolean;
   allowed_tools?: string[];
   clear_allowed_tools?: boolean;
+  purpose?: string;
+  grounding_required?: boolean;
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────

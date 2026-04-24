@@ -5,6 +5,13 @@ use tandem_types::{EngineEvent, ToolProgressEvent, ToolProgressSink};
 
 use crate::EventBus;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnowledgebaseGroundingPolicy {
+    pub required: bool,
+    pub server_names: Vec<String>,
+    pub tool_patterns: Vec<String>,
+}
+
 #[derive(Default)]
 pub(super) struct StreamedToolCall {
     pub(super) name: String,

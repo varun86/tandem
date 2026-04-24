@@ -132,6 +132,30 @@ curl -sS -X PATCH http://127.0.0.1:39731/mcp/notion \
 
 Tool names inside `allowed_tools` are the remote MCP tool names for that server, not the fully qualified Tandem IDs. For example, if the Tandem tool ID is `mcp.notion.search`, the MCP server allowlist entry is `search`.
 
+### Knowledgebase MCP Grounding Metadata
+
+MCP servers that should be treated as authoritative knowledge sources can opt into KB-first grounding.
+
+Use either field on `POST /mcp` or `PATCH /mcp/{name}`:
+
+```json
+{
+  "purpose": "knowledgebase",
+  "grounding_required": true
+}
+```
+
+The hosted Tandem KB MCP named `kb` is marked this way automatically. External KB MCPs should be marked explicitly.
+
+When a channel/session enables an explicitly grounded KB MCP with an allowlist such as `mcp.kb.*`, the engine:
+
+1. injects a `knowledgebase_grounding_policy` system block,
+2. reshapes the prompt request to `tool_mode: "required"` with only the enabled KB MCP tool patterns,
+3. requires a KB MCP tool result before the model can answer from evidence,
+4. emits `kb.grounding.*` events for observability.
+
+`mcp_list` is useful before the run for discovering KB tool names, but it is not sufficient evidence by itself. During a grounded channel answer, the agent should call an actual KB read/search tool before answering.
+
 ### Provider Notes: Arcade
 
 Arcade MCP Gateways are ideal when you want to curate a smaller, safer tool set for a specific bot.
