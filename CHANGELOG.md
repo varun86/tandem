@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow planning fallthrough**: Bare workflow requests no longer fall through to generic setup when the channel has workflow planning enabled.
 - **Connector-heavy workflow prompts**: Scheduled workflow prompts that mention MCPs or destinations such as Notion now route to workflow planning instead of being mistaken for integration setup.
 - **Planner thread hijacking**: Linked workflow planner sessions no longer capture ordinary informational chat like "what is ..." or "what do I do?", and planner-model setup pauses now explain the admin action instead of asking for an impossible answer.
+- **KB endpoint fail-closed gating**: Control-panel KB upload/browse queries now wait for `/api/knowledgebase/config` to confirm the KB admin service is reachable, avoiding noisy `/collections` and `/documents` 502s when the admin backend is configured but down.
 
 ## [0.4.40] - Released 2026-04-24
 

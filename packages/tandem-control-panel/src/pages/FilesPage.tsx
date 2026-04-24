@@ -4,7 +4,7 @@ import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { useCapabilities } from "../features/system/queries.ts";
 import { KnowledgebaseUploadPanel } from "../features/knowledgebase/KnowledgebaseUploadPanel";
-import { PromptDialog } from "../components/ControlPanelDialogs";
+import { ConfirmDialog, PromptDialog } from "../components/ControlPanelDialogs";
 import { AnimatedPage, PanelCard, Toolbar, Badge } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
@@ -16,6 +16,8 @@ import {
 
 const EXPLORER_BUCKETS = ["uploads", "artifacts", "exports"];
 const TEXT_PREVIEW_KINDS = new Set(["text", "markdown", "json", "yaml"]);
+const FILE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const DEFAULT_FILE_PAGE_SIZE = 25;
 
 type FileRow = {
   name: string;
@@ -52,6 +54,21 @@ function pathDepth(path: string) {
   return clean.split("/").filter(Boolean).length;
 }
 
+function clampPage(page: number, totalPages: number) {
+  if (!Number.isFinite(page) || page < 1) return 1;
+  if (!Number.isFinite(totalPages) || totalPages < 1) return 1;
+  return Math.min(page, totalPages);
+}
+
+function formatPageWindow(page: number, pageSize: number, total: number) {
+  if (!total) return "0 of 0";
+  const safePage = clampPage(page, Math.max(1, Math.ceil(total / Math.max(1, pageSize))));
+  const safeSize = Math.max(1, pageSize);
+  const start = (safePage - 1) * safeSize + 1;
+  const end = Math.min(total, safePage * safeSize);
+  return `${start}-${end} of ${total}`;
+}
+
 export function FilesPage({ api, toast }: AppPageProps) {
   const queryClient = useQueryClient();
   const capabilities = useCapabilities();
@@ -66,6 +83,12 @@ export function FilesPage({ api, toast }: AppPageProps) {
   const [uploadRows, setUploadRows] = useState<
     Array<{ id: string; name: string; progress: number; error: string }>
   >([]);
+  const [filePage, setFilePage] = useState(1);
+  const [filePageSize, setFilePageSize] = useState(DEFAULT_FILE_PAGE_SIZE);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
+  const [deleteFilesConfirm, setDeleteFilesConfirm] = useState<{
+    files: Array<{ path: string; name: string }>;
+  } | null>(null);
 
   useEffect(() => {
     const handoff = consumeFilesExplorerHandoff();
@@ -91,6 +114,33 @@ export function FilesPage({ api, toast }: AppPageProps) {
   const parentDir = String(filesQuery.data?.parent || "").trim();
   const directories = toArray(filesQuery.data, "directories");
   const files = toArray(filesQuery.data, "files") as FileRow[];
+
+  useEffect(() => {
+    const availablePaths = new Set(
+      files.map((file) => String(file.path || "").trim()).filter(Boolean)
+    );
+    setSelectedFilePaths((current) => current.filter((path) => availablePaths.has(path)));
+  }, [files]);
+
+  useEffect(() => {
+    setFilePage(1);
+  }, [dir]);
+
+  const selectedFileSet = useMemo(() => new Set(selectedFilePaths), [selectedFilePaths]);
+  const selectedFiles = useMemo(
+    () => files.filter((file) => selectedFileSet.has(String(file.path || "").trim())),
+    [files, selectedFileSet]
+  );
+  const selectedFileCount = selectedFiles.length;
+  const filePageCount = Math.max(1, Math.ceil(files.length / Math.max(1, filePageSize)));
+  const safeFilePage = clampPage(filePage, filePageCount);
+  const filePageStart = (safeFilePage - 1) * Math.max(1, filePageSize);
+  const pagedFiles = files.slice(filePageStart, filePageStart + Math.max(1, filePageSize));
+  const filePageLabel = formatPageWindow(safeFilePage, filePageSize, files.length);
+
+  useEffect(() => {
+    if (filePage !== safeFilePage) setFilePage(safeFilePage);
+  }, [filePage, safeFilePage]);
 
   const previewCandidate = useMemo(() => {
     return (
@@ -134,6 +184,10 @@ export function FilesPage({ api, toast }: AppPageProps) {
     currentCount,
     directories.length,
     files.length,
+    filePage,
+    filePageSize,
+    pagedFiles.length,
+    selectedFileCount,
     selectedPath,
     selectedPreviewKind,
     selectedDirectory,
@@ -286,11 +340,82 @@ export function FilesPage({ api, toast }: AppPageProps) {
     setSelectedPath("");
   };
 
+  const toggleFileSelection = (path: string) => {
+    const cleaned = String(path || "").trim();
+    if (!cleaned) return;
+    setSelectedFilePaths((current) =>
+      current.includes(cleaned)
+        ? current.filter((entry) => entry !== cleaned)
+        : [...current, cleaned]
+    );
+  };
+
+  const selectAllFiles = () => {
+    const paths = files.map((file) => String(file.path || "").trim()).filter(Boolean);
+    setSelectedFilePaths(Array.from(new Set(paths)));
+  };
+
+  const clearSelectedFiles = () => {
+    setSelectedFilePaths([]);
+  };
+
+  const openDeleteSelectedFiles = () => {
+    if (!selectedFiles.length) {
+      toast("warn", "Select one or more files first.");
+      return;
+    }
+    setDeleteFilesConfirm({
+      files: selectedFiles.map((file) => ({
+        path: String(file.path || "").trim(),
+        name: String(file.name || file.path || "").trim(),
+      })),
+    });
+  };
+
+  const confirmDeleteSelectedFiles = async () => {
+    const targets = deleteFilesConfirm?.files || [];
+    if (!targets.length) {
+      toast("warn", "Select one or more files first.");
+      return;
+    }
+
+    const remaining = new Set(selectedFilePaths);
+    let okCount = 0;
+    let failCount = 0;
+
+    for (const target of targets) {
+      try {
+        await api("/api/files/delete", {
+          method: "POST",
+          body: JSON.stringify({ path: target.path }),
+        });
+        okCount += 1;
+        remaining.delete(target.path);
+      } catch {
+        failCount += 1;
+      }
+    }
+
+    setSelectedFilePaths(Array.from(remaining));
+    setSelectedPath((current) =>
+      targets.some((target) => target.path === current) ? "" : current
+    );
+    setDeleteFilesConfirm(null);
+
+    await queryClient.invalidateQueries({ queryKey: ["files"] });
+    if (okCount && failCount) {
+      toast("warn", `Deleted ${okCount} file(s); ${failCount} failed.`);
+    } else if (okCount) {
+      toast("ok", `Deleted ${okCount} file(s).`);
+    } else {
+      toast("err", `All ${failCount} selected file deletions failed.`);
+    }
+  };
+
   const currentLabel = !rootDir ? "Root" : rootDir;
   const currentPreviewReason = String(selectedTextPreview.data?.reason || "").trim();
   const selectedPreviewText = String(selectedTextPreview.data?.text || "").trim();
   const bucketCount = EXPLORER_BUCKETS.length;
-  const hostedManaged = capabilities.data?.hosted_managed === true;
   const defaultKnowledgebaseCollectionId = String(
     capabilities.data?.hosted_deployment_slug || capabilities.data?.hosted_hostname || ""
   ).trim();
@@ -300,7 +425,6 @@ export function FilesPage({ api, toast }: AppPageProps) {
       <KnowledgebaseUploadPanel
         api={api}
         toast={toast}
-        hostedManaged={hostedManaged}
         defaultCollectionId={defaultKnowledgebaseCollectionId}
       />
       <PanelCard
@@ -496,32 +620,132 @@ export function FilesPage({ api, toast }: AppPageProps) {
                       );
                     })}
 
-                    {files.map((entry: FileRow) => {
-                      const path = String(entry?.path || "");
-                      const active = path === selectedPath;
-                      const kind = String(entry?.previewKind || "file");
-                      return (
-                        <button
-                          key={`file-${path}`}
-                          type="button"
-                          className={`tcp-list-item w-full text-left ${active ? "border-sky-500/40 bg-sky-950/20" : ""}`}
-                          onClick={() => setSelectedPath(path)}
-                        >
-                          <i data-lucide="file-text"></i>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <strong className="truncate">{entry.name || path}</strong>
-                              <span className="tcp-subtle text-xs">{kind}</span>
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs tcp-subtle">
-                              <span className="truncate">{path}</span>
-                              <span>{formatBytes(Number(entry?.size || 0))}</span>
-                              <span>{formatDateTime(Number(entry?.updatedAt || 0))}</span>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                    <div className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="ghost">{filePageLabel}</Badge>
+                          <Badge tone={selectedFileCount ? "info" : "ghost"}>
+                            {selectedFileCount} selected
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={selectAllFiles}
+                            disabled={!files.length}
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={clearSelectedFiles}
+                            disabled={!selectedFileCount}
+                          >
+                            Clear selection
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs border-rose-500/30 text-rose-100 hover:bg-rose-950/20 disabled:opacity-50"
+                            onClick={openDeleteSelectedFiles}
+                            disabled={!selectedFileCount}
+                          >
+                            <i data-lucide="trash-2"></i>
+                            Delete selected
+                          </button>
+                          <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
+                            <span>Per page</span>
+                            <select
+                              className="tcp-input h-8 w-20 text-xs"
+                              value={filePageSize}
+                              onChange={(event) => {
+                                setFilePageSize(
+                                  Number(event.target.value) || DEFAULT_FILE_PAGE_SIZE
+                                );
+                                setFilePage(1);
+                              }}
+                            >
+                              {FILE_PAGE_SIZE_OPTIONS.map((value) => (
+                                <option key={value} value={value}>
+                                  {value}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={() =>
+                              setFilePage((page) => clampPage(page - 1, filePageCount))
+                            }
+                            disabled={safeFilePage <= 1}
+                          >
+                            Prev
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={() =>
+                              setFilePage((page) => clampPage(page + 1, filePageCount))
+                            }
+                            disabled={safeFilePage >= filePageCount}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-2">
+                        {pagedFiles.map((entry: FileRow) => {
+                          const path = String(entry?.path || "");
+                          const active = path === selectedPath;
+                          const checked = selectedFileSet.has(path);
+                          const kind = String(entry?.previewKind || "file");
+                          return (
+                            <motion.div key={`file-${path}`} layout>
+                              <div className="flex items-start gap-3">
+                                <label
+                                  className={`mt-3 flex h-6 w-6 items-center justify-center rounded border ${
+                                    path
+                                      ? "border-white/15 bg-black/20 text-slate-200 cursor-pointer hover:border-sky-500/40"
+                                      : "border-white/10 bg-black/10 text-slate-500"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 accent-sky-400"
+                                    checked={checked}
+                                    onChange={() => toggleFileSelection(path)}
+                                    aria-label={`Select ${entry.name || path}`}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  className={`tcp-list-item min-w-0 flex-1 text-left ${
+                                    active ? "border-sky-500/40 bg-sky-950/20" : ""
+                                  }`}
+                                  onClick={() => setSelectedPath(path)}
+                                >
+                                  <i data-lucide="file-text"></i>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <strong className="truncate">{entry.name || path}</strong>
+                                      <span className="tcp-subtle text-xs">{kind}</span>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs tcp-subtle">
+                                      <span className="truncate">{path}</span>
+                                      <span>{formatBytes(Number(entry?.size || 0))}</span>
+                                      <span>{formatDateTime(Number(entry?.updatedAt || 0))}</span>
+                                    </div>
+                                  </div>
+                                </button>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <EmptyState text="This folder does not contain any files yet." />
@@ -715,6 +939,43 @@ export function FilesPage({ api, toast }: AppPageProps) {
         }
         onConfirm={() => void submitCreateDirectory()}
       />
+
+      <ConfirmDialog
+        open={!!deleteFilesConfirm}
+        title="Delete selected files"
+        message={
+          <span>
+            This will permanently remove{" "}
+            <strong>{deleteFilesConfirm?.files.length || 0} selected file(s)</strong> from{" "}
+            <strong>{currentLabel || "the current folder"}</strong>.
+          </span>
+        }
+        confirmLabel="Delete selected"
+        confirmIcon="trash-2"
+        confirmTone="danger"
+        widthClassName="w-[min(42rem,96vw)]"
+        onCancel={() => setDeleteFilesConfirm(null)}
+        onConfirm={() => void confirmDeleteSelectedFiles()}
+      >
+        {deleteFilesConfirm?.files.length ? (
+          <div className="mt-3 grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-left text-xs">
+            <div className="tcp-subtle uppercase tracking-wide">Selected files</div>
+            <div className="max-h-40 overflow-auto">
+              {deleteFilesConfirm.files.slice(0, 12).map((file) => (
+                <div key={file.path} className="truncate py-1">
+                  <span className="font-medium text-slate-100">{file.name || file.path}</span>
+                  <span className="tcp-subtle"> · {file.path}</span>
+                </div>
+              ))}
+              {deleteFilesConfirm.files.length > 12 ? (
+                <div className="pt-1 text-slate-400">
+                  +{deleteFilesConfirm.files.length - 12} more
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </ConfirmDialog>
     </AnimatedPage>
   );
 }

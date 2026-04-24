@@ -28,6 +28,23 @@ type KnowledgebaseDocument = {
   size_bytes?: number;
 };
 
+type KnowledgebaseDocumentSelection = {
+  collection: string;
+  slug: string;
+  title: string;
+  key: string;
+};
+
+type KnowledgebaseDocumentPage = {
+  collection_id?: string | null;
+  query?: string | null;
+  total?: number;
+  offset?: number;
+  limit?: number;
+  has_more?: boolean;
+  documents?: KnowledgebaseDocument[];
+};
+
 type KnowledgebaseUploadResult = {
   docId: string;
   collectionId: string;
@@ -45,6 +62,8 @@ type UploadRow = {
 
 const MAX_CONCURRENCY = 3;
 const UPLOAD_ACCEPT = ".md,.markdown,.txt,text/plain,text/markdown";
+const DOCUMENT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const DEFAULT_DOCUMENT_PAGE_SIZE = 25;
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -68,13 +87,6 @@ function toDocumentList(payload: any): KnowledgebaseDocument[] {
   return [];
 }
 
-function toCollectionList(payload: any): KnowledgebaseCollection[] {
-  if (Array.isArray(payload)) return payload as KnowledgebaseCollection[];
-  if (Array.isArray(payload?.collections)) return payload.collections as KnowledgebaseCollection[];
-  if (Array.isArray(payload?.items)) return payload.items as KnowledgebaseCollection[];
-  return [];
-}
-
 function docCollectionId(document: KnowledgebaseDocument) {
   const explicit = String(document.collection_id || "").trim();
   if (explicit) return explicit;
@@ -88,49 +100,6 @@ function documentIdentity(document: KnowledgebaseDocument) {
   const docId = String(document.doc_id || document.id || "").trim();
   if (!collection || !docId) return "";
   return `${collection}|${docId}`;
-}
-
-function documentKey(document: KnowledgebaseDocument) {
-  return [
-    String(document.doc_id || document.id || "")
-      .trim()
-      .toLowerCase(),
-    String(document.collection_id || "")
-      .trim()
-      .toLowerCase(),
-    String(document.title || document.filename || document.file_name || "")
-      .trim()
-      .toLowerCase(),
-  ]
-    .filter(Boolean)
-    .join("|");
-}
-
-function dedupeDocuments(documents: KnowledgebaseDocument[]) {
-  const seen = new Set<string>();
-  const next: KnowledgebaseDocument[] = [];
-  for (const document of documents) {
-    const key = documentKey(document);
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
-    next.push(document);
-  }
-  return next;
-}
-
-function documentMatchesCollection(document: KnowledgebaseDocument, collectionId: string) {
-  const target = String(collectionId || "")
-    .trim()
-    .toLowerCase();
-  if (!target) return true;
-  const explicit = String(document.collection_id || "")
-    .trim()
-    .toLowerCase();
-  if (explicit && explicit === target) return true;
-  const docId = String(document.doc_id || document.id || "")
-    .trim()
-    .toLowerCase();
-  return docId.startsWith(`${target}/`);
 }
 
 function formatKbDate(value?: number) {
@@ -175,15 +144,28 @@ function getDocumentSlug(document?: KnowledgebaseDocument | null) {
   return docId;
 }
 
+function clampPage(page: number, totalPages: number) {
+  if (!Number.isFinite(page) || page < 1) return 1;
+  if (!Number.isFinite(totalPages) || totalPages < 1) return 1;
+  return Math.min(page, totalPages);
+}
+
+function formatPageWindow(page: number, pageSize: number, total: number) {
+  if (!total) return "0 of 0";
+  const safePage = clampPage(page, Math.max(1, Math.ceil(total / Math.max(1, pageSize))));
+  const safeSize = Math.max(1, pageSize);
+  const start = (safePage - 1) * safeSize + 1;
+  const end = Math.min(total, safePage * safeSize);
+  return `${start}-${end} of ${total}`;
+}
+
 export function KnowledgebaseUploadPanel({
   api,
   toast,
-  hostedManaged,
   defaultCollectionId,
 }: {
   api: (path: string, init?: RequestInit) => Promise<any>;
   toast: (kind: "ok" | "info" | "warn" | "err", text: string) => void;
-  hostedManaged: boolean;
   defaultCollectionId?: string;
 }) {
   const queryClient = useQueryClient();
@@ -198,17 +180,34 @@ export function KnowledgebaseUploadPanel({
   const [editMode, setEditMode] = useState(false);
   const [editDraft, setEditDraft] = useState("");
   const [editError, setEditError] = useState("");
+  const [documentPage, setDocumentPage] = useState(1);
+  const [documentPageSize, setDocumentPageSize] = useState(DEFAULT_DOCUMENT_PAGE_SIZE);
+  const [selectedDocumentRef, setSelectedDocumentRef] =
+    useState<KnowledgebaseDocumentSelection | null>(null);
+  const [selectedDocumentRecords, setSelectedDocumentRecords] = useState<
+    KnowledgebaseDocumentSelection[]
+  >([]);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     collection: string;
     slug: string;
     title: string;
   } | null>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{
+    documents: Array<{ collection: string; slug: string; title: string; key: string }>;
+  } | null>(null);
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  const kbConfigQuery = useQuery({
+    queryKey: ["knowledgebase", "config"],
+    queryFn: async () => api("/api/knowledgebase/config").catch(() => ({ configured: false })),
+    staleTime: 60_000,
+  });
+  const knowledgebaseAvailable = kbConfigQuery.data?.configured === true;
+
   const collectionsQuery = useQuery({
     queryKey: ["knowledgebase", "collections"],
-    enabled: hostedManaged,
+    enabled: knowledgebaseAvailable,
     queryFn: async () => api("/api/knowledgebase/collections").catch(() => ({ collections: [] })),
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -239,124 +238,96 @@ export function KnowledgebaseUploadPanel({
   }, []);
 
   const currentCollection = collectionId.trim();
+  useEffect(() => {
+    setDocumentPage(1);
+    setSelectedDocumentRecords([]);
+    setSelectedDocumentRef(null);
+    setSelectedDocumentKey("");
+    setPreviewExpanded(true);
+    setEditMode(false);
+    setEditError("");
+  }, [currentCollection]);
+
+  useEffect(() => {
+    setDocumentPage(1);
+  }, [documentSearch]);
+
+  const currentDocumentOffset = (Math.max(1, documentPage) - 1) * Math.max(1, documentPageSize);
+  const documentSearchQuery = documentSearch.trim();
   const documentsQuery = useQuery({
-    queryKey: ["knowledgebase", "documents", currentCollection],
-    enabled: hostedManaged && !!currentCollection,
+    queryKey: [
+      "knowledgebase",
+      "documents",
+      currentCollection || "__all__",
+      documentSearchQuery,
+      documentPage,
+      documentPageSize,
+    ],
+    enabled: knowledgebaseAvailable,
     queryFn: async () => {
-      const [allPayload, scopedPayload] = await Promise.all([
-        api("/api/knowledgebase/documents").catch(() => ({ documents: [] })),
-        api(
-          `/api/knowledgebase/documents?collection_id=${encodeURIComponent(currentCollection)}`
-        ).catch(() => ({ documents: [] })),
-      ]);
-      return {
-        documents: [...toDocumentList(allPayload), ...toDocumentList(scopedPayload)],
-      };
+      const params = new URLSearchParams();
+      if (currentCollection) params.set("collection_id", currentCollection);
+      params.set("limit", String(Math.max(1, documentPageSize)));
+      params.set("offset", String(Math.max(0, currentDocumentOffset)));
+      if (documentSearchQuery) params.set("query", documentSearchQuery);
+      return api(`/api/knowledgebase/documents?${params.toString()}`).catch(() => ({
+        collection_id: currentCollection || null,
+        documents: [],
+        total: 0,
+        offset: currentDocumentOffset,
+        limit: documentPageSize,
+        has_more: false,
+      }));
     },
     staleTime: 15_000,
     refetchInterval: currentCollection ? 30_000 : false,
   });
-  const documents = useMemo(() => {
-    const combined = dedupeDocuments(toDocumentList(documentsQuery.data));
-    return currentCollection
-      ? combined.filter((document) => documentMatchesCollection(document, currentCollection))
-      : combined;
-  }, [currentCollection, documentsQuery.data]);
-
+  const documentPageData = (documentsQuery.data || {}) as KnowledgebaseDocumentPage;
+  const documents = useMemo(() => toDocumentList(documentPageData), [documentPageData]);
+  const documentTotal = Math.max(0, Number(documentPageData.total ?? documents.length ?? 0));
+  const documentLimit = Math.max(
+    1,
+    Number(documentPageData.limit ?? documentPageSize) || documentPageSize
+  );
+  const documentOffset = Math.max(
+    0,
+    Number(documentPageData.offset ?? currentDocumentOffset) || currentDocumentOffset
+  );
+  const visibleDocumentPageCount = Math.max(
+    1,
+    Math.ceil(Math.max(documentTotal, documents.length) / Math.max(1, documentPageSize))
+  );
+  const safeDocumentPage = clampPage(documentPage, visibleDocumentPageCount);
+  const documentPageStart = documentOffset;
+  const pagedDocuments = documents;
+  const documentPageLabel = formatPageWindow(safeDocumentPage, documentLimit, documentTotal);
   useEffect(() => {
-    if (!documents.length) {
-      if (selectedDocumentKey) setSelectedDocumentKey("");
-      return;
-    }
-    const selectionExists = documents.some(
-      (document) => documentIdentity(document) === selectedDocumentKey
-    );
-    if (selectedDocumentKey && !selectionExists) {
-      setSelectedDocumentKey("");
-      setPreviewExpanded(false);
-      setEditMode(false);
-      setEditError("");
-    }
-  }, [documents, selectedDocumentKey]);
-
+    if (documentPage !== safeDocumentPage) setDocumentPage(safeDocumentPage);
+  }, [documentPage, safeDocumentPage]);
   useEffect(() => {
-    setPreviewExpanded(true);
-    setEditMode(false);
-    setEditError("");
+    if (selectedDocumentKey) setPreviewExpanded(true);
   }, [selectedDocumentKey]);
 
   const queryCollections = queryCollectionsRaw;
-  const derivedCollections = useMemo(() => {
-    const map = new Map<string, KnowledgebaseCollection>();
-    for (const document of documents) {
-      const name = docCollectionId(document);
-      if (!name) continue;
-      const existing = map.get(name) || { collection_id: name, document_count: 0, updated_at: 0 };
-      existing.document_count = Number(existing.document_count || 0) + 1;
-      existing.updated_at = Math.max(
-        Number(existing.updated_at || 0),
-        Number(document.updated_at || document.created_at || 0)
-      );
-      map.set(name, existing);
-    }
-    return [...map.values()].sort((a, b) =>
-      String(a.collection_id).localeCompare(String(b.collection_id))
-    );
-  }, [documents]);
-  const collections = useMemo(() => {
-    const map = new Map<string, KnowledgebaseCollection>();
-    for (const collection of queryCollections) {
-      const name = String(collection.collection_id || "").trim();
-      if (!name) continue;
-      map.set(name, collection);
-    }
-    for (const collection of derivedCollections) {
-      const name = String(collection.collection_id || "").trim();
-      if (!name) continue;
-      const current = map.get(name) || collection;
-      map.set(name, {
-        ...current,
-        document_count:
-          Number(current.document_count || 0) ||
-          Number(collection.document_count || 0) ||
-          undefined,
-        updated_at: Math.max(Number(current.updated_at || 0), Number(collection.updated_at || 0)),
-      });
-    }
-    return [...map.values()].sort((a, b) =>
-      String(a.collection_id).localeCompare(String(b.collection_id))
-    );
-  }, [derivedCollections, queryCollections]);
-  const visibleDocuments = useMemo(() => {
-    const term = documentSearch.trim().toLowerCase();
-    if (!term) return documents;
-    return documents.filter((document) => {
-      const haystack = [
-        document.title,
-        document.filename,
-        document.file_name,
-        document.doc_id,
-        document.id,
-        document.collection_id,
-        document.path,
-        document.excerpt,
-      ]
-        .map((value) => String(value || "").toLowerCase())
-        .join(" ");
-      return haystack.includes(term);
-    });
-  }, [documents, documentSearch]);
-  const selectedDocument = useMemo(
-    () => documents.find((document) => documentIdentity(document) === selectedDocumentKey) || null,
-    [documents, selectedDocumentKey]
+  const collections = useMemo(
+    () =>
+      [...queryCollections].sort((a, b) =>
+        String(a.collection_id).localeCompare(String(b.collection_id))
+      ),
+    [queryCollections]
   );
-  const selectedDocumentSlug = getDocumentSlug(selectedDocument);
-  const selectedDocumentCollection = String(
-    docCollectionId(selectedDocument || {}) || currentCollection
-  ).trim();
+  const selectedDocumentSet = useMemo(
+    () => new Set(selectedDocumentRecords.map((record) => record.key)),
+    [selectedDocumentRecords]
+  );
+  const selectedDocuments = selectedDocumentRecords;
+  const selectedDocumentCount = selectedDocuments.length;
+  const selectedDocument = useMemo(() => selectedDocumentRef || null, [selectedDocumentRef]);
+  const selectedDocumentSlug = String(selectedDocument?.slug || "").trim();
+  const selectedDocumentCollection = String(selectedDocument?.collection || "").trim();
   const selectedDocumentQuery = useQuery({
     queryKey: ["knowledgebase", "document", selectedDocumentCollection, selectedDocumentSlug],
-    enabled: hostedManaged && !!selectedDocumentCollection && !!selectedDocumentSlug,
+    enabled: knowledgebaseAvailable && !!selectedDocumentCollection && !!selectedDocumentSlug,
     queryFn: async () =>
       api(
         `/api/knowledgebase/documents/${encodeURIComponent(selectedDocumentCollection)}/${encodeURIComponent(
@@ -373,23 +344,17 @@ export function KnowledgebaseUploadPanel({
       selectedDocumentDetail?.filename ||
       selectedDocumentDetail?.file_name ||
       selectedDocument?.title ||
-      selectedDocument?.filename ||
-      selectedDocument?.file_name ||
-      selectedDocument?.doc_id ||
+      selectedDocument?.slug ||
       "Document"
   ).trim();
   const selectedPreviewPath = String(
     selectedDocumentDetail?.path ||
       selectedDocumentDetail?.doc_id ||
-      selectedDocument?.path ||
-      selectedDocument?.doc_id ||
+      (selectedDocument ? `${selectedDocument.collection}/${selectedDocument.slug}` : "") ||
       ""
   ).trim();
   const selectedPreviewContent = String(
-    selectedDocumentDetail?.content ||
-      selectedDocumentDetail?.excerpt ||
-      selectedDocument?.excerpt ||
-      ""
+    selectedDocumentDetail?.content || selectedDocumentDetail?.excerpt || ""
   );
   const selectedDocumentError = selectedDocumentQuery.error
     ? selectedDocumentQuery.error instanceof Error
@@ -397,15 +362,9 @@ export function KnowledgebaseUploadPanel({
       : String(selectedDocumentQuery.error)
     : "";
   const selectedPreviewUpdatedAt = Number(
-    selectedDocumentDetail?.updated_at ||
-      selectedDocumentDetail?.created_at ||
-      selectedDocument?.updated_at ||
-      selectedDocument?.created_at ||
-      0
+    selectedDocumentDetail?.updated_at || selectedDocumentDetail?.created_at || 0
   );
-  const selectedPreviewSizeBytes = Number(
-    selectedDocumentDetail?.size_bytes || selectedDocument?.size_bytes || 0
-  );
+  const selectedPreviewSizeBytes = Number(selectedDocumentDetail?.size_bytes || 0);
   const selectedDocumentCanMutate = Boolean(selectedDocumentCollection && selectedDocumentSlug);
   const selectedDocumentPanel = selectedDocument ? (
     <div className="flex min-h-0 flex-col rounded-xl border border-white/10 bg-black/20 p-3">
@@ -643,12 +602,19 @@ export function KnowledgebaseUploadPanel({
   }, [
     collections.length,
     rows.length,
+    documentPage,
+    documentPageSize,
+    documentTotal,
+    documentOffset,
+    documentLimit,
     currentCollection,
     isUploading,
-    hostedManaged,
+    knowledgebaseAvailable,
     documents.length,
-    visibleDocuments.length,
+    pagedDocuments.length,
     selectedDocumentKey,
+    selectedDocumentRef,
+    selectedDocumentCount,
     documentSearch,
     selectedDocumentQuery.data,
     selectedDocumentQuery.isFetching,
@@ -769,7 +735,7 @@ export function KnowledgebaseUploadPanel({
   const uploadFiles = async (fileList: FileList | null) => {
     const files = [...(fileList || [])];
     const targetCollection = collectionId.trim();
-    if (!hostedManaged || !files.length) return;
+    if (!knowledgebaseAvailable || !files.length) return;
     if (!targetCollection) {
       toast("warn", "Choose a knowledgebase collection first.");
       return;
@@ -817,6 +783,50 @@ export function KnowledgebaseUploadPanel({
     } catch (error) {
       toast("err", error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const toDocumentSelection = (
+    document: KnowledgebaseDocument
+  ): KnowledgebaseDocumentSelection | null => {
+    const collection = String(docCollectionId(document) || currentCollection).trim();
+    const slug = getDocumentSlug(document);
+    const key = documentIdentity(document);
+    if (!collection || !slug || !key) return null;
+    return {
+      collection,
+      slug,
+      title: String(
+        document.title || document.filename || document.file_name || document.doc_id || slug
+      ).trim(),
+      key,
+    };
+  };
+
+  const toggleDocumentSelection = (document: KnowledgebaseDocument) => {
+    const selection = toDocumentSelection(document);
+    if (!selection) return;
+    setSelectedDocumentRecords((current) =>
+      current.some((entry) => entry.key === selection.key)
+        ? current.filter((entry) => entry.key !== selection.key)
+        : [...current, selection]
+    );
+  };
+
+  const selectVisibleDocuments = () => {
+    const selections = documents
+      .map((document) => toDocumentSelection(document))
+      .filter((value): value is KnowledgebaseDocumentSelection => !!value);
+    setSelectedDocumentRecords((current) => {
+      const map = new Map(current.map((entry) => [entry.key, entry]));
+      for (const selection of selections) {
+        map.set(selection.key, selection);
+      }
+      return [...map.values()];
+    });
+  };
+
+  const clearSelectedDocuments = () => {
+    setSelectedDocumentRecords([]);
   };
 
   const copySelectedDocument = async () => {
@@ -880,6 +890,21 @@ export function KnowledgebaseUploadPanel({
     }
   };
 
+  const openBulkDeleteDialog = () => {
+    if (!selectedDocuments.length) {
+      toast("warn", "Select one or more documents first.");
+      return;
+    }
+    setBulkDeleteConfirm({
+      documents: selectedDocuments.map(({ collection, slug, title, key }) => ({
+        collection,
+        slug,
+        title,
+        key,
+      })),
+    });
+  };
+
   const confirmDeleteSelectedDocument = async () => {
     const collection = String(deleteConfirm?.collection || "").trim();
     const slug = String(deleteConfirm?.slug || "").trim();
@@ -908,7 +933,10 @@ export function KnowledgebaseUploadPanel({
         const message = String(payload?.error || text || `Delete failed (${response.status})`);
         throw new Error(message);
       }
+      const deletedKey = selectedDocumentRef?.key || "";
       setSelectedDocumentKey("");
+      setSelectedDocumentRef(null);
+      setSelectedDocumentRecords((current) => current.filter((entry) => entry.key !== deletedKey));
       setPreviewExpanded(false);
       setEditMode(false);
       setEditDraft("");
@@ -924,7 +952,74 @@ export function KnowledgebaseUploadPanel({
     }
   };
 
-  if (!hostedManaged) return null;
+  const confirmDeleteSelectedDocuments = async () => {
+    const targets = bulkDeleteConfirm?.documents || [];
+    if (!targets.length) {
+      toast("warn", "Select one or more documents first.");
+      return;
+    }
+
+    const remainingSelections = new Map(selectedDocumentRecords.map((entry) => [entry.key, entry]));
+    let okCount = 0;
+    let failCount = 0;
+
+    try {
+      for (const target of targets) {
+        try {
+          const response = await fetch(
+            `/api/knowledgebase/documents/${encodeURIComponent(target.collection)}/${encodeURIComponent(target.slug)}`,
+            {
+              method: "DELETE",
+              credentials: "include",
+            }
+          );
+          const text = await response.text();
+          let payload: any = {};
+          if (text) {
+            try {
+              payload = JSON.parse(text);
+            } catch {
+              payload = {};
+            }
+          }
+          if (!response.ok || payload?.ok === false) {
+            const message = String(payload?.error || text || `Delete failed (${response.status})`);
+            throw new Error(message);
+          }
+          okCount += 1;
+          remainingSelections.delete(target.key);
+        } catch {
+          failCount += 1;
+        }
+      }
+
+      setSelectedDocumentRecords([...remainingSelections.values()]);
+      if (selectedDocumentRef?.key && !remainingSelections.has(selectedDocumentRef.key)) {
+        setSelectedDocumentKey("");
+        setSelectedDocumentRef(null);
+        setPreviewExpanded(false);
+        setEditMode(false);
+        setEditDraft("");
+        setEditError("");
+      }
+      setBulkDeleteConfirm(null);
+      if (okCount && failCount) {
+        toast("warn", `Deleted ${okCount} document(s); ${failCount} failed.`);
+      } else if (okCount) {
+        toast("ok", `Deleted ${okCount} document(s).`);
+      } else {
+        toast("err", `All ${failCount} selected document deletions failed.`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["knowledgebase", "collections"] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledgebase", "documents"] });
+      await documentsQuery.refetch();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast("err", message);
+    }
+  };
+
+  if (!knowledgebaseAvailable) return null;
 
   return (
     <PanelCard
@@ -1131,15 +1226,18 @@ export function KnowledgebaseUploadPanel({
         ) : null}
 
         <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="tcp-subtle text-xs uppercase tracking-wide">Collection documents</div>
               <div className="tcp-subtle mt-1 text-xs">
                 Showing what the selected KB collection currently contains.
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge tone="ghost">{documents.length}</Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="ghost">{documentTotal}</Badge>
+              <Badge tone={selectedDocumentCount ? "info" : "ghost"}>
+                {selectedDocumentCount} selected
+              </Badge>
               <button
                 type="button"
                 className="tcp-btn h-8 px-3 text-xs"
@@ -1164,89 +1262,199 @@ export function KnowledgebaseUploadPanel({
           ) : documents.length ? (
             <div className="grid gap-4">
               <div className="grid min-h-0 gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    className="tcp-input h-9 min-w-[220px] flex-1"
-                    value={documentSearch}
-                    onChange={(event) => setDocumentSearch(event.target.value)}
-                    placeholder="Filter documents"
-                    spellCheck={false}
-                  />
-                  <Badge tone="ghost">
-                    {visibleDocuments.length}/{documents.length}
-                  </Badge>
+                <div className="grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="tcp-input h-9 min-w-[220px] flex-1"
+                      value={documentSearch}
+                      onChange={(event) => setDocumentSearch(event.target.value)}
+                      placeholder="Filter documents"
+                      spellCheck={false}
+                    />
+                    <Badge tone="ghost">{documentPageLabel}</Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="tcp-btn h-8 px-3 text-xs"
+                        onClick={selectVisibleDocuments}
+                        disabled={!documents.length}
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="tcp-btn h-8 px-3 text-xs"
+                        onClick={clearSelectedDocuments}
+                        disabled={!selectedDocumentCount}
+                      >
+                        Clear selection
+                      </button>
+                      <button
+                        type="button"
+                        className="tcp-btn h-8 px-3 text-xs border-rose-500/30 text-rose-100 hover:bg-rose-950/20 disabled:opacity-50"
+                        onClick={openBulkDeleteDialog}
+                        disabled={!selectedDocumentCount}
+                      >
+                        <i data-lucide="trash-2"></i>
+                        Delete selected
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
+                        <span>Per page</span>
+                        <select
+                          className="tcp-input h-8 w-20 text-xs"
+                          value={documentPageSize}
+                          onChange={(event) => {
+                            setDocumentPageSize(
+                              Number(event.target.value) || DEFAULT_DOCUMENT_PAGE_SIZE
+                            );
+                            setDocumentPage(1);
+                          }}
+                        >
+                          {DOCUMENT_PAGE_SIZE_OPTIONS.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="tcp-btn h-8 px-3 text-xs"
+                        onClick={() =>
+                          setDocumentPage((page) => clampPage(page - 1, visibleDocumentPageCount))
+                        }
+                        disabled={safeDocumentPage <= 1}
+                      >
+                        Prev
+                      </button>
+                      <button
+                        type="button"
+                        className="tcp-btn h-8 px-3 text-xs"
+                        onClick={() =>
+                          setDocumentPage((page) => clampPage(page + 1, visibleDocumentPageCount))
+                        }
+                        disabled={safeDocumentPage >= visibleDocumentPageCount}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                {visibleDocuments.length ? (
+                {pagedDocuments.length ? (
                   <div className="grid gap-2">
-                    {visibleDocuments.map((document, index) => {
+                    {pagedDocuments.map((document, index) => {
                       const docId = String(document.doc_id || document.id || "").trim();
                       const title = String(
                         document.title ||
                           document.filename ||
                           document.file_name ||
                           docId ||
-                          `Document ${index + 1}`
+                          `Document ${documentPageStart + index + 1}`
                       ).trim();
                       const collection = String(document.collection_id || currentCollection).trim();
                       const updatedAt = Number(document.updated_at || document.created_at || 0);
-                      const active = documentIdentity(document) === selectedDocumentKey;
+                      const identity = documentIdentity(document);
+                      const selectable = !!identity;
+                      const checked = selectable && selectedDocumentSet.has(identity);
+                      const active = identity === selectedDocumentKey;
                       return (
                         <motion.div key={docId || `${collection}-${title}-${index}`} layout>
-                          <button
-                            type="button"
-                            className={`w-full rounded-xl border p-3 text-left text-sm transition ${
-                              active
-                                ? "border-sky-500/50 bg-sky-950/20"
-                                : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-black/30"
-                            }`.trim()}
-                            onClick={() => {
-                              setSelectedDocumentKey(documentIdentity(document));
-                              setPreviewExpanded(true);
-                              setEditMode(false);
-                              setEditError("");
-                            }}
-                            aria-expanded={active}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="truncate font-medium text-slate-100">{title}</div>
-                                <div className="tcp-subtle mt-1 truncate text-xs">
-                                  {docId || `${collection}/${title}`}
-                                </div>
-                              </div>
-                              <Badge tone={active ? "ok" : "info"}>{collection}</Badge>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs tcp-subtle">
-                              <span>Updated: {formatKbDate(updatedAt)}</span>
-                              {document.content_type ? <span>{document.content_type}</span> : null}
-                            </div>
-                          </button>
+                          <div className="flex items-start gap-3">
+                            <label
+                              className={`mt-3 flex h-6 w-6 items-center justify-center rounded border ${
+                                selectable
+                                  ? "border-white/15 bg-black/20 text-slate-200 cursor-pointer hover:border-sky-500/40"
+                                  : "border-white/10 bg-black/10 text-slate-500"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-sky-400"
+                                checked={checked}
+                                disabled={!selectable}
+                                onChange={() => toggleDocumentSelection(document)}
+                                aria-label={`Select ${title}`}
+                              />
+                            </label>
 
-                          <AnimatePresence initial={false}>
-                            {active ? (
-                              <motion.div
-                                key={`${selectedDocumentKey}-expanded`}
-                                initial={{ opacity: 0, height: 0, y: -8 }}
-                                animate={{ opacity: 1, height: "auto", y: 0 }}
-                                exit={{ opacity: 0, height: 0, y: -8 }}
-                                transition={{ duration: 0.22, ease: "easeOut" }}
-                                className="overflow-hidden"
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                className={`w-full rounded-xl border p-3 text-left text-sm transition ${
+                                  active
+                                    ? "border-sky-500/50 bg-sky-950/20"
+                                    : checked
+                                      ? "border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400/50 hover:bg-emerald-950/30"
+                                      : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-black/30"
+                                }`.trim()}
+                                onClick={() => {
+                                  const selection = toDocumentSelection(document);
+                                  setSelectedDocumentKey(identity);
+                                  if (selection) setSelectedDocumentRef(selection);
+                                  setPreviewExpanded(true);
+                                  setEditMode(false);
+                                  setEditError("");
+                                }}
+                                aria-expanded={active}
                               >
-                                <div className="mt-2">{selectedDocumentPanel}</div>
-                              </motion.div>
-                            ) : null}
-                          </AnimatePresence>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium text-slate-100">
+                                      {title}
+                                    </div>
+                                    <div className="tcp-subtle mt-1 truncate text-xs">
+                                      {docId || `${collection}/${title}`}
+                                    </div>
+                                  </div>
+                                  <Badge tone={active ? "ok" : checked ? "info" : "ghost"}>
+                                    {collection}
+                                  </Badge>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs tcp-subtle">
+                                  <span>Updated: {formatKbDate(updatedAt)}</span>
+                                  {document.content_type ? (
+                                    <span>{document.content_type}</span>
+                                  ) : null}
+                                </div>
+                              </button>
+
+                              <AnimatePresence initial={false}>
+                                {active ? (
+                                  <motion.div
+                                    key={`${selectedDocumentKey}-expanded`}
+                                    initial={{ opacity: 0, height: 0, y: -8 }}
+                                    animate={{ opacity: 1, height: "auto", y: 0 }}
+                                    exit={{ opacity: 0, height: 0, y: -8 }}
+                                    transition={{ duration: 0.22, ease: "easeOut" }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="mt-2">{selectedDocumentPanel}</div>
+                                  </motion.div>
+                                ) : null}
+                              </AnimatePresence>
+                            </div>
+                          </div>
                         </motion.div>
                       );
                     })}
                   </div>
                 ) : (
                   <EmptyState
-                    title="No documents match your filter"
-                    text={`Try another search term or clear the filter to show the full collection.`}
+                    title={
+                      documentSearchQuery ? "No documents match your filter" : "No documents found"
+                    }
+                    text={
+                      documentSearchQuery
+                        ? "Try another search term or clear the filter to show the full collection."
+                        : "This collection does not contain any documents yet."
+                    }
                     action={
-                      documentSearch ? (
+                      documentSearchQuery ? (
                         <button
                           type="button"
                           className="tcp-btn h-8 px-3 text-xs"
@@ -1289,6 +1497,48 @@ export function KnowledgebaseUploadPanel({
           onCancel={() => setDeleteConfirm(null)}
           onConfirm={() => void confirmDeleteSelectedDocument()}
         />
+
+        <ConfirmDialog
+          open={!!bulkDeleteConfirm}
+          title="Delete selected documents"
+          message={
+            <span>
+              This will permanently remove{" "}
+              <strong>{bulkDeleteConfirm?.documents.length || 0} selected document(s)</strong> from{" "}
+              <strong>{currentCollection || "the selected collection"}</strong>.
+            </span>
+          }
+          confirmLabel="Delete selected"
+          confirmIcon="trash-2"
+          confirmTone="danger"
+          widthClassName="w-[min(42rem,96vw)]"
+          onCancel={() => setBulkDeleteConfirm(null)}
+          onConfirm={() => void confirmDeleteSelectedDocuments()}
+        >
+          {bulkDeleteConfirm?.documents.length ? (
+            <div className="mt-3 grid gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-left text-xs">
+              <div className="tcp-subtle uppercase tracking-wide">Selected documents</div>
+              <div className="max-h-40 overflow-auto">
+                {bulkDeleteConfirm.documents.slice(0, 12).map((document) => (
+                  <div key={`${document.collection}|${document.slug}`} className="truncate py-1">
+                    <span className="font-medium text-slate-100">
+                      {document.title || document.slug}
+                    </span>
+                    <span className="tcp-subtle">
+                      {" "}
+                      · {document.collection}/{document.slug}
+                    </span>
+                  </div>
+                ))}
+                {bulkDeleteConfirm.documents.length > 12 ? (
+                  <div className="pt-1 text-slate-400">
+                    +{bulkDeleteConfirm.documents.length - 12} more
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </ConfirmDialog>
       </div>
     </PanelCard>
   );

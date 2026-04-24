@@ -65,6 +65,52 @@ function readKbAdminToken(deps) {
   );
 }
 
+async function probeKbAdminConfig(baseUrl, deps) {
+  const headers = new Headers();
+  headers.set("accept", "application/json");
+  const token = readKbAdminToken(deps);
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  const timeoutMs = Number(deps.TANDEM_KB_ADMIN_PROBE_TIMEOUT_MS || deps.KB_ADMIN_PROBE_TIMEOUT_MS || 2000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 2000);
+  try {
+    const upstream = await fetch(`${baseUrl}/admin/config`, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    const text = await upstream.text().catch(() => "");
+    let payload = {};
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = {};
+      }
+    }
+    if (!upstream.ok) {
+      return {
+        reachable: false,
+        status: upstream.status,
+        error: payload?.error || text || `KB admin config returned ${upstream.status}`,
+      };
+    }
+    return {
+      reachable: true,
+      status: upstream.status,
+      config: payload && typeof payload === "object" ? payload : {},
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      status: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function resolveTargetPath(pathname) {
   const parts = String(pathname || "").split("/").filter(Boolean);
   if (parts[0] !== "api" || parts[1] !== "knowledgebase") return "";
@@ -106,11 +152,16 @@ export function createKnowledgebaseApiHandler(deps) {
     }
 
     if (incoming.pathname === "/api/knowledgebase/config" && req.method === "GET") {
+      const probe = await probeKbAdminConfig(baseUrl, deps);
       sendJson(res, 200, {
         ok: true,
-        configured: true,
+        configured: probe.reachable,
+        reachable: probe.reachable,
+        status: probe.status,
+        error: probe.reachable ? undefined : probe.error,
         admin_url: baseUrl,
         default_collection_id: String(deps.TANDEM_KB_DEFAULT_COLLECTION_ID || deps.KB_DEFAULT_COLLECTION_ID || "").trim(),
+        upstream_config: probe.reachable ? probe.config : undefined,
       });
       return true;
     }
