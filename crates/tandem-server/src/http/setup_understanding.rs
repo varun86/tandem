@@ -252,11 +252,22 @@ pub(super) async fn resolve_setup_request(
     if top_kind == SetupIntentKind::WorkflowPlannerCreate
         && workflow_planner_needs_clarification(&normalized)
     {
-        return clarify_response(
+        let prompt = top_score
+            .slots
+            .goal
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| normalized.trim().to_string());
+        return clarify_response_with_action(
             SetupIntentKind::WorkflowPlannerCreate,
             top_score.clone(),
             &workflow_planner_clarifier_question(&normalized),
             workflow_planner_clarifier_options(&normalized),
+            "workflow_plan_preview",
+            json!({
+                "prompt": prompt,
+                "plan_source": request.surface.as_deref().unwrap_or("chat_setup"),
+            }),
         );
     }
 
@@ -1091,6 +1102,24 @@ fn clarify_response(
     question: &str,
     options: Vec<SetupClarifierOption>,
 ) -> SetupUnderstandResponse {
+    clarify_response_with_action(
+        intent_kind,
+        score,
+        question,
+        options,
+        "show_setup_help",
+        json!({}),
+    )
+}
+
+fn clarify_response_with_action(
+    intent_kind: SetupIntentKind,
+    score: IntentScore,
+    question: &str,
+    options: Vec<SetupClarifierOption>,
+    action_type: &str,
+    payload: Value,
+) -> SetupUnderstandResponse {
     SetupUnderstandResponse {
         decision: SetupDecision::Clarify,
         intent_kind,
@@ -1102,8 +1131,8 @@ fn clarify_response(
             options,
         }),
         proposed_action: SetupProposedAction {
-            action_type: "show_setup_help".to_string(),
-            payload: json!({}),
+            action_type: action_type.to_string(),
+            payload,
         },
     }
 }

@@ -882,21 +882,27 @@ async fn workflow_plan_chat_reset_restores_initial_plan() {
 #[tokio::test]
 async fn workflow_planner_sessions_support_crud_and_duplication() {
     let state = test_state().await;
+    let workspace_root = std::env::current_dir()
+        .expect("current dir")
+        .display()
+        .to_string();
     let app = app_router(state.clone());
-
-    let preview_resp = app
-        .clone()
-        .oneshot(preview_request(json!({
-            "prompt": "Write a small workflow plan for testing session CRUD",
-            "workspace_root": "/tmp/custom-workspace"
-        })))
-        .await
-        .expect("preview response");
-    assert_eq!(preview_resp.status(), StatusCode::OK);
-    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
-        .await
-        .expect("preview body");
-    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+    let plan_payload = llm_plan_json(
+        "Planner CRUD Plan",
+        "Small workflow plan for testing session CRUD",
+        manual_schedule_json(),
+        &workspace_root,
+        vec![step_json(
+            "step-1",
+            "analysis",
+            "Review the session lifecycle",
+            &[],
+            "planner",
+            json!([]),
+            "brief",
+        )],
+        None,
+    );
 
     let create_resp = app
         .clone()
@@ -909,13 +915,11 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
                     json!({
                         "project_slug": "planner-crud",
                         "title": "Planner CRUD",
-                        "workspace_root": "/tmp/custom-workspace",
+                        "workspace_root": workspace_root,
                         "goal": "Write a small workflow plan for testing session CRUD",
-                        "notes": "seeded from preview payload",
+                        "notes": "seeded from test plan payload",
                         "plan_source": "coding_task_planning",
-                        "plan": preview_payload.get("plan").cloned(),
-                        "conversation": preview_payload.get("conversation").cloned(),
-                        "planner_diagnostics": preview_payload.get("planner_diagnostics").cloned(),
+                        "plan": plan_payload,
                     })
                     .to_string(),
                 ))
@@ -923,10 +927,16 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
         )
         .await
         .expect("create response");
-    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_status = create_resp.status();
     let create_body = to_bytes(create_resp.into_body(), usize::MAX)
         .await
         .expect("create body");
+    assert_eq!(
+        create_status,
+        StatusCode::OK,
+        "create body: {}",
+        String::from_utf8_lossy(&create_body)
+    );
     let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
     assert_eq!(
         create_payload
@@ -979,7 +989,19 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
                 .uri(format!("/workflow-plans/sessions/{session_id}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({ "title": "Planner CRUD Renamed" }).to_string(),
+                    json!({
+                        "title": "Planner CRUD Renamed",
+                        "planning": {
+                            "mode": "channel",
+                            "source_platform": "discord",
+                            "source_channel": "channel:release",
+                            "requesting_actor": "alice",
+                            "validation_status": "blocked",
+                            "approval_status": "requested",
+                            "docs_mcp_enabled": true
+                        }
+                    })
+                    .to_string(),
                 ))
                 .expect("patch request"),
         )
@@ -996,6 +1018,116 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
             .and_then(|row| row.get("title"))
             .and_then(Value::as_str),
         Some("Planner CRUD Renamed")
+    );
+    let patch_planning = patch_payload
+        .get("session")
+        .and_then(|row| row.get("planning"))
+        .expect("patch planning");
+    assert_eq!(
+        patch_planning.get("mode").and_then(Value::as_str),
+        Some("workflow_planning")
+    );
+    assert_eq!(
+        patch_planning
+            .get("source_platform")
+            .and_then(Value::as_str),
+        Some("discord")
+    );
+    assert_eq!(
+        patch_planning.get("source_channel").and_then(Value::as_str),
+        Some("channel:release")
+    );
+    assert_eq!(
+        patch_planning
+            .get("validation_status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        patch_planning
+            .get("approval_status")
+            .and_then(Value::as_str),
+        Some("requested")
+    );
+    assert!(patch_planning
+        .get("linked_draft_plan_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty()));
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/workflow-plans/sessions/{session_id}"))
+                .body(Body::empty())
+                .expect("get request"),
+        )
+        .await
+        .expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .expect("get body");
+    let get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+    assert_eq!(
+        get_payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("source_platform"))
+            .and_then(Value::as_str),
+        Some("discord")
+    );
+
+    let patched_list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/workflow-plans/sessions?project_slug=planner-crud")
+                .body(Body::empty())
+                .expect("patched list request"),
+        )
+        .await
+        .expect("patched list response");
+    assert_eq!(patched_list_resp.status(), StatusCode::OK);
+    let patched_list_body = to_bytes(patched_list_resp.into_body(), usize::MAX)
+        .await
+        .expect("patched list body");
+    let patched_list_payload: Value =
+        serde_json::from_slice(&patched_list_body).expect("patched list json");
+    let patched_list_item = patched_list_payload
+        .get("sessions")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row.get("session_id").and_then(Value::as_str) == Some(session_id.as_str())
+            })
+        })
+        .expect("patched list item");
+    assert_eq!(
+        patched_list_item
+            .get("source_platform")
+            .and_then(Value::as_str),
+        Some("discord")
+    );
+    assert_eq!(
+        patched_list_item
+            .get("source_channel")
+            .and_then(Value::as_str),
+        Some("channel:release")
+    );
+    assert_eq!(
+        patched_list_item
+            .get("validation_status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        patched_list_item
+            .get("approval_status")
+            .and_then(Value::as_str),
+        Some("requested")
     );
 
     let duplicate_resp = app

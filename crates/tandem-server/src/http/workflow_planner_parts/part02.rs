@@ -688,17 +688,21 @@ pub(super) async fn workflow_planner_session_patch(
         session.current_plan_id = Some(draft.current_plan.plan_id.clone());
         session.draft = Some(draft);
     }
+    if let Some(planning) = input.planning {
+        session.planning = Some(planning);
+    }
     if let Some(published_at_ms) = input.published_at_ms {
         session.published_at_ms = Some(published_at_ms);
     }
     if let Some(published_tasks) = input.published_tasks {
         session.published_tasks = published_tasks;
     }
+    let now = crate::now_ms();
     if let Some(planning) = session.planning.as_mut() {
         normalize_workflow_planning_record(
             planning,
             session.current_plan_id.as_deref(),
-            crate::now_ms(),
+            now,
         );
     }
     let stored = state

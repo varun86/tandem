@@ -219,6 +219,14 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
     };
   }
   if (response.intent_kind === "workflow_planner_create") {
+    const payload = {
+      ...(response.proposed_action.payload || {}),
+      prompt:
+        String(response.proposed_action.payload?.prompt || response.slots.goal || "").trim() ||
+        undefined,
+      plan_source:
+        String(response.proposed_action.payload?.plan_source || "").trim() || "chat_setup",
+    };
     return {
       title: response.decision === "clarify" ? "Workflow planning questions" : "Workflow planning",
       body:
@@ -227,7 +235,7 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
         "Open the planner to draft a governed workflow plan.",
       cta: "Open Planner",
       actionType: "open_planner",
-      payload: response.proposed_action.payload || {},
+      payload,
       clarifier: response.clarifier || undefined,
     };
   }
