@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-channel draft safety**: Pending draft answers now expire, require the same sender and chat scope, and can be cancelled with `cancel`, `stop`, or `never mind`.
 - **Docs MCP is not authoring permission**: Tandem Docs MCP availability no longer implies workflow-planning permission.
 - **Workflow planning fallthrough**: Bare workflow requests no longer fall through to generic setup when the channel has workflow planning enabled.
+- **Connector-heavy workflow prompts**: Scheduled workflow prompts that mention MCPs or destinations such as Notion now route to workflow planning instead of being mistaken for integration setup.
 
 ## [0.4.40] - Released 2026-04-24
 

@@ -632,6 +632,9 @@ fn score_integration_setup(input: &str, state: &IntegrationSetupState) -> Intent
     {
         score.score -= 8;
     }
+    if has_workflow_authoring_signal(input) {
+        score.score -= 10;
+    }
     if integrations.is_empty() && !has_integration_words {
         score.score = 0;
     }
@@ -730,7 +733,7 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
             "blueprint",
         ],
     );
-    let has_creation_words = contains_any(input, &["create", "build", "make", "draft"]);
+    let has_creation_words = contains_any(input, &["create", "build", "make", "draft", "schedule"]);
     let has_planning_phrase = contains_any(
         input,
         &[
@@ -744,6 +747,7 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
             "make a plan",
         ],
     );
+    let has_workflow_authoring = has_workflow_authoring_signal(input);
 
     if has_workflow_words {
         score.score += 2;
@@ -776,11 +780,19 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
     if has_workflow_words && has_plan_words {
         score.score += 2;
     }
+    if has_workflow_authoring {
+        score.score += 8;
+        score.evidence.push(SetupEvidence {
+            kind: "pattern".to_string(),
+            value: "workflow_authoring_signal".to_string(),
+        });
+    }
     if contains_any(input, SETUP_VERBS) {
         score.score += 1;
     }
     if contains_any(input, AUTOMATION_VERBS)
         && (extract_schedule_hint(input).is_some() || extract_delivery_target(input).is_some())
+        && !has_workflow_authoring
     {
         score.score -= 5;
     }
@@ -790,10 +802,23 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
 
     if score.score >= 4 {
         score.slots.goal = Some(input.trim().to_string());
+        score.slots.schedule_hint = extract_schedule_hint(input);
+        score.slots.delivery_target = extract_delivery_target(input);
+        score.slots.integration_targets = matched_aliases(input, INTEGRATION_ALIASES);
     } else {
         score.score = 0;
     }
     score
+}
+
+fn has_workflow_authoring_signal(input: &str) -> bool {
+    contains_any(input, &["workflow", "workflows"])
+        && contains_any(
+            input,
+            &[
+                "create", "build", "make", "draft", "design", "plan", "schedule", "every ", "when ",
+            ],
+        )
 }
 
 #[derive(Debug, Default)]
@@ -1031,6 +1056,20 @@ fn score_setup_help(input: &str, broad_setup: bool) -> IntentScore {
 }
 
 fn extract_schedule_hint(input: &str) -> Option<String> {
+    if let Some(start) = input.find("every ") {
+        let tail = &input[start..];
+        let words = tail.split_whitespace().take(3).collect::<Vec<_>>();
+        if words.len() >= 3
+            && words[0] == "every"
+            && words[1].chars().all(|ch| ch.is_ascii_digit())
+            && matches!(
+                words[2].trim_matches(|ch: char| !ch.is_ascii_alphabetic()),
+                "minute" | "minutes" | "hour" | "hours" | "day" | "days"
+            )
+        {
+            return Some(words.join(" "));
+        }
+    }
     for phrase in [
         "every morning",
         "every day",
