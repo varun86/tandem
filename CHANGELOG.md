@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **KB endpoint fail-closed gating**: Control-panel KB upload/browse queries now wait for `/api/knowledgebase/config` to confirm the KB admin service is reachable, avoiding noisy `/collections` and `/documents` 502s when the admin backend is configured but down.
 - **KB nested document deletes**: Control-panel KB admin proxy requests now preserve encoded slashes in document slugs, so documents stored under nested paths can be deleted instead of returning 404.
 - **Strict KB snippet hallucinations**: Strict KB answers now fail closed when a likely document cannot be fetched, preserve exact document facts, and avoid inventing unsupported policies, private-contact details, or external platform instructions from partial search excerpts.
+- **Strict KB external-action leakage**: Strict KB answers to external action questions now stay extractive and policy-only, preventing generic platform UI steps such as Discord ban instructions from leaking into channel replies.
+- **Strict KB provider-error repair**: Provider stream decode failures during strict KB turns now get a strict grounding repair pass and a non-streaming synthesis retry before any channel-safe fallback is returned.
 
 ## [0.4.40] - Released 2026-04-24
 

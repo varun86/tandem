@@ -72,6 +72,8 @@ impl Provider for StreamedWriteTestProvider {
 enum StrictKbProviderStep {
     ToolCall { tool: String, args: Value },
     Text(String),
+    StreamError(String),
+    CompleteText(String),
 }
 
 struct ScriptedStrictKbProvider {
@@ -98,7 +100,19 @@ impl Provider for ScriptedStrictKbProvider {
         _prompt: &str,
         _model_override: Option<&str>,
     ) -> anyhow::Result<String> {
-        Ok(String::new())
+        let step = self
+            .steps
+            .lock()
+            .await
+            .pop_front()
+            .expect("scripted strict KB provider complete step");
+        match step {
+            StrictKbProviderStep::CompleteText(text) | StrictKbProviderStep::Text(text) => Ok(text),
+            StrictKbProviderStep::StreamError(error) => anyhow::bail!(error),
+            StrictKbProviderStep::ToolCall { .. } => {
+                anyhow::bail!("unexpected tool call step for completion")
+            }
+        }
     }
 
     async fn stream(
@@ -140,6 +154,12 @@ impl Provider for ScriptedStrictKbProvider {
                     usage: None,
                 }),
             ],
+            StrictKbProviderStep::StreamError(error) => vec![Err(anyhow::anyhow!(error))],
+            StrictKbProviderStep::CompleteText(_) => {
+                vec![Err(anyhow::anyhow!(
+                    "unexpected completion step for stream"
+                ))]
+            }
         };
         Ok(Box::pin(stream::iter(chunks)))
     }
@@ -1400,8 +1420,73 @@ async fn prompt_sync_strict_kb_grounding_blocks_generic_platform_instructions() 
     assert!(!assistant.to_ascii_lowercase().contains("select ban"));
     assert!(!assistant
         .to_ascii_lowercase()
+        .contains("delete recent message history"));
+    assert!(!assistant
+        .to_ascii_lowercase()
         .contains("delete message history"));
+    assert!(!assistant.to_ascii_lowercase().contains("confirm the ban"));
     assert!(!assistant.to_ascii_lowercase().contains("moderation menu"));
+}
+
+#[tokio::test]
+async fn prompt_sync_strict_kb_grounding_repairs_provider_stream_decode_errors() {
+    let state = strict_kb_test_state(
+        r#"{"documents":[{"relative_path":"company-overview.md","content":"Northstar Events is a demo event operations company for hosted knowledge-bot grounding tests."}]}"#,
+        vec![
+            StrictKbProviderStep::ToolCall {
+                tool: "mcp.kb.search_documents".to_string(),
+                args: json!({ "query": "What is Northstar Events?" }),
+            },
+            StrictKbProviderStep::StreamError(
+                "provider stream chunk error: error decoding response body".to_string(),
+            ),
+            StrictKbProviderStep::StreamError(
+                "provider stream chunk error: error decoding response body".to_string(),
+            ),
+            StrictKbProviderStep::CompleteText(
+                json!({
+                    "kb_answer_support": "supported",
+                    "supported_facts": [
+                        "Northstar Events is a demo event operations company for hosted knowledge-bot grounding tests."
+                    ],
+                    "missing_facts": [],
+                    "sources": ["company-overview.md"],
+                    "answer_text": "Northstar Events is a demo event operations company for hosted knowledge-bot grounding tests."
+                })
+                .to_string(),
+            ),
+        ],
+    )
+    .await;
+    let messages = run_prompt_sync_messages(state, "What is Northstar Events?", true).await;
+    let assistant = latest_assistant_text(&messages);
+    assert!(
+        assistant.contains(
+            "Northstar Events is a demo event operations company for hosted knowledge-bot grounding tests."
+        ),
+        "assistant={}",
+        assistant
+    );
+    assert!(assistant.contains("Source: Company Overview"));
+    assert!(
+        !assistant.contains("ENGINE_ERROR"),
+        "assistant={}",
+        assistant
+    );
+    assert!(
+        !assistant
+            .to_ascii_lowercase()
+            .contains("provider stream chunk error"),
+        "assistant={}",
+        assistant
+    );
+    assert!(
+        !assistant
+            .to_ascii_lowercase()
+            .contains("error decoding response body"),
+        "assistant={}",
+        assistant
+    );
 }
 
 #[tokio::test]

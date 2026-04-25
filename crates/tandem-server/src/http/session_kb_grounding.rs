@@ -12,6 +12,8 @@ use super::{sessions::truncate_text, AppState};
 
 const STRICT_KB_FALLBACK: &str = "I do not see that in the connected knowledgebase.";
 const STRICT_KB_FETCH_FALLBACK: &str = "I found a likely matching document, but could not retrieve enough content to answer safely from the knowledgebase.";
+const STRICT_KB_MODEL_FAILURE_FALLBACK: &str =
+    "I found the knowledgebase evidence, but the model response failed while generating the answer. Please try again.";
 const MAX_SOURCE_LABELS: usize = 3;
 const MAX_EVIDENCE_EXCERPTS: usize = 6;
 const MAX_EVIDENCE_CHARS: usize = 700;
@@ -107,44 +109,62 @@ pub(super) async fn apply_strict_kb_grounding_after_run(
                 .flat_map(|item| item.sources.iter().cloned())
                 .collect::<Vec<_>>(),
         )
-    } else if let Some(response) =
-        synthesize_strict_kb_answer(state, &user_text, &evidence, model_override.as_ref()).await
-    {
-        let support = normalize_support_label(&response.kb_answer_support).to_string();
-        let sources = merged_sources(
-            response.sources.clone(),
-            evidence
-                .iter()
-                .flat_map(|item| item.sources.iter().cloned())
-                .collect(),
-        );
-        let mut answer_text = render_strict_kb_answer(&support, &response, &sources);
-        if let Some(unsupported_tokens) = unsupported_strict_kb_fact_tokens(&answer_text, &evidence)
-        {
-            tracing::warn!(
-                unsupported_tokens = ?unsupported_tokens,
-                "strict KB answer contained unsupported numeric/date facts; using extractive fallback"
-            );
-            answer_text = extractive_strict_kb_answer(&user_text, &evidence)
-                .unwrap_or_else(|| STRICT_KB_FALLBACK.to_string());
-        }
-        if strict_kb_answer_has_unsupported_advice(&answer_text, &evidence) {
-            tracing::warn!(
-                "strict KB answer contained unsupported procedural/policy advice; using extractive fallback"
-            );
-            answer_text = extractive_strict_kb_answer(&user_text, &evidence)
-                .unwrap_or_else(|| STRICT_KB_FALLBACK.to_string());
-        }
-        (support, answer_text, sources)
     } else {
-        (
-            "unsupported".to_string(),
-            STRICT_KB_FALLBACK.to_string(),
-            evidence
-                .iter()
-                .flat_map(|item| item.sources.iter().cloned())
-                .collect::<Vec<_>>(),
-        )
+        match synthesize_strict_kb_answer(state, &user_text, &evidence, model_override.as_ref())
+            .await
+        {
+            Ok(Some(response)) => {
+                let support = normalize_support_label(&response.kb_answer_support).to_string();
+                let sources = merged_sources(
+                    response.sources.clone(),
+                    evidence
+                        .iter()
+                        .flat_map(|item| item.sources.iter().cloned())
+                        .collect(),
+                );
+                let mut answer_text = render_strict_kb_answer(&support, &response, &sources);
+                if let Some(unsupported_tokens) =
+                    unsupported_strict_kb_fact_tokens(&answer_text, &evidence)
+                {
+                    tracing::warn!(
+                        unsupported_tokens = ?unsupported_tokens,
+                        "strict KB answer contained unsupported numeric/date facts; using extractive fallback"
+                    );
+                    answer_text = extractive_strict_kb_answer(&user_text, &evidence)
+                        .unwrap_or_else(|| STRICT_KB_FALLBACK.to_string());
+                }
+                if strict_kb_answer_has_unsupported_advice(&answer_text, &evidence) {
+                    tracing::warn!(
+                        "strict KB answer contained unsupported procedural/policy advice; using extractive fallback"
+                    );
+                    answer_text = extractive_strict_kb_answer(&user_text, &evidence)
+                        .unwrap_or_else(|| STRICT_KB_FALLBACK.to_string());
+                }
+                (support, answer_text, sources)
+            }
+            Ok(None) => (
+                "unsupported".to_string(),
+                STRICT_KB_FALLBACK.to_string(),
+                evidence
+                    .iter()
+                    .flat_map(|item| item.sources.iter().cloned())
+                    .collect::<Vec<_>>(),
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "strict KB synthesis failed after evidence retrieval"
+                );
+                (
+                    "partial".to_string(),
+                    STRICT_KB_MODEL_FAILURE_FALLBACK.to_string(),
+                    evidence
+                        .iter()
+                        .flat_map(|item| item.sources.iter().cloned())
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
     };
     sources = merged_sources(sources, Vec::new());
     answer_text = append_source_footer(answer_text, &sources);
@@ -676,7 +696,7 @@ async fn synthesize_strict_kb_answer(
     question: &str,
     evidence: &[KbEvidenceItem],
     model_override: Option<&ModelSpec>,
-) -> Option<StrictKbSynthesisResponse> {
+) -> Result<Option<StrictKbSynthesisResponse>, String> {
     let evidence_block = evidence
         .iter()
         .take(MAX_EVIDENCE_EXCERPTS)
@@ -721,33 +741,98 @@ async fn synthesize_strict_kb_answer(
         .map(|model| model.model_id.as_str())
         .filter(|value| !value.trim().is_empty());
     let cancel = CancellationToken::new();
-    let stream = state
+    let stream = match state
         .providers
         .stream_for_provider(
             provider_id,
             model_id,
-            messages,
+            messages.clone(),
             ToolMode::None,
             None,
             cancel,
         )
         .await
-        .ok()?;
+    {
+        Ok(stream) => stream,
+        Err(error) => {
+            let error_text = error.to_string();
+            if should_retry_strict_kb_completion_fallback(&error_text) {
+                return retry_strict_kb_non_streaming_synthesis(
+                    state,
+                    provider_id,
+                    model_id,
+                    &messages,
+                    &error_text,
+                )
+                .await;
+            }
+            return Err(error_text);
+        }
+    };
     tokio::pin!(stream);
     let mut completion = String::new();
     while let Some(chunk) = stream.next().await {
-        match chunk.ok()? {
-            StreamChunk::TextDelta(delta) => {
+        match chunk {
+            Ok(StreamChunk::TextDelta(delta)) => {
                 let delta = strip_model_control_markers(&delta);
                 if !delta.trim().is_empty() {
                     completion.push_str(&delta);
                 }
             }
-            StreamChunk::Done { .. } => break,
-            _ => {}
+            Ok(StreamChunk::Done { .. }) => break,
+            Ok(_) => {}
+            Err(error) => {
+                let error_text = error.to_string();
+                if should_retry_strict_kb_completion_fallback(&error_text) {
+                    return retry_strict_kb_non_streaming_synthesis(
+                        state,
+                        provider_id,
+                        model_id,
+                        &messages,
+                        &error_text,
+                    )
+                    .await;
+                }
+                return Err(error_text);
+            }
         }
     }
-    parse_strict_synthesis_response(&completion)
+    Ok(parse_strict_synthesis_response(&completion))
+}
+
+async fn retry_strict_kb_non_streaming_synthesis(
+    state: &AppState,
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+    messages: &[ChatMessage],
+    stream_error: &str,
+) -> Result<Option<StrictKbSynthesisResponse>, String> {
+    tracing::warn!(
+        error = %stream_error,
+        "strict KB synthesis stream failed; retrying with non-streamed completion"
+    );
+    let prompt = messages
+        .iter()
+        .map(|message| format!("{}:\n{}", message.role, message.content))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    state
+        .providers
+        .complete_for_provider(provider_id, &prompt, model_id)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|completion| parse_strict_synthesis_response(&completion))
+}
+
+fn should_retry_strict_kb_completion_fallback(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("provider stream chunk error")
+        || lower.contains("error decoding response body")
+        || lower.contains("stream chunk error")
+        || lower.contains("unexpected eof")
+        || lower.contains("incomplete streamed response")
+        || lower.contains("provider_server_error")
+        || lower.contains("provider server error")
 }
 
 fn parse_strict_synthesis_response(raw: &str) -> Option<StrictKbSynthesisResponse> {
@@ -859,13 +944,18 @@ fn deterministic_strict_kb_answer(
         ));
     }
 
-    if asks_for_external_moderation_action(&question_lower)
-        && (evidence_lower.contains("must not ban")
-            || evidence_lower.contains("must not ban, timeout, delete, or moderate")
-            || evidence_lower.contains("must not moderate"))
-    {
-        return extractive_strict_kb_answer(question, evidence)
-            .map(|answer| ("supported".to_string(), answer));
+    if asks_for_external_action(&question_lower) {
+        if let Some(answer) = extract_unsupported_external_action_answer(question, evidence) {
+            return Some(("unsupported_external_action".to_string(), answer));
+        }
+        if asks_for_external_moderation_action(&question_lower)
+            && (evidence_lower.contains("must not ban")
+                || evidence_lower.contains("must not ban, timeout, delete, or moderate")
+                || evidence_lower.contains("must not moderate"))
+        {
+            return extractive_strict_kb_answer(question, evidence)
+                .map(|answer| ("unsupported_external_action".to_string(), answer));
+        }
     }
 
     if asks_for_phone_number(&question_lower)
@@ -937,6 +1027,85 @@ fn asks_for_external_moderation_action(question_lower: &str) -> bool {
             || question_lower.contains("moderate"))
 }
 
+fn asks_for_external_action(question_lower: &str) -> bool {
+    (question_lower.starts_with("can ")
+        || question_lower.starts_with("could ")
+        || question_lower.starts_with("please ")
+        || question_lower.starts_with("will you ")
+        || question_lower.starts_with("would you "))
+        && (question_lower.contains("discord")
+            || question_lower.contains("slack")
+            || question_lower.contains("telegram")
+            || question_lower.contains("github")
+            || question_lower.contains("notion")
+            || question_lower.contains("gmail")
+            || question_lower.contains("linkedin")
+            || question_lower.contains("ban")
+            || question_lower.contains("timeout")
+            || question_lower.contains("delete")
+            || question_lower.contains("post")
+            || question_lower.contains("send")
+            || question_lower.contains("moderate"))
+}
+
+fn extract_unsupported_external_action_answer(
+    question: &str,
+    evidence: &[KbEvidenceItem],
+) -> Option<String> {
+    let evidence_text = evidence_plain_text(evidence);
+    let evidence_lower = evidence_text.to_ascii_lowercase();
+    if !(evidence_lower.contains("bot may")
+        || evidence_lower.contains("must not")
+        || evidence_lower.contains("cannot")
+        || evidence_lower.contains("may only explain")
+        || evidence_lower.contains("moderators may"))
+    {
+        return None;
+    }
+    let sentences = evidence_sentences_from_text(&evidence_text);
+    let mut selected = sentences
+        .into_iter()
+        .filter(|sentence| {
+            let lower = sentence.to_ascii_lowercase();
+            (lower.contains("bot")
+                || lower.contains("must not")
+                || lower.contains("may only explain")
+                || lower.contains("moderators may")
+                || lower.contains("permanent bans")
+                || lower.contains("mira kovac"))
+                && !contains_external_ui_instruction(&lower)
+        })
+        .collect::<Vec<_>>();
+    selected.truncate(4);
+    if selected.is_empty() {
+        return None;
+    }
+    let mut answer = selected.join(" ");
+    if asks_for_external_moderation_action(&question.to_ascii_lowercase())
+        && !answer.to_ascii_lowercase().starts_with("i cannot ban")
+        && (evidence_lower.contains("must not ban") || evidence_lower.contains("may only explain"))
+    {
+        answer = format!("I cannot ban users from here. {answer}");
+    }
+    Some(answer)
+}
+
+fn contains_external_ui_instruction(lower: &str) -> bool {
+    [
+        "right-click",
+        "right click",
+        "select ban",
+        "choose whether to delete",
+        "delete recent message history",
+        "delete message history",
+        "confirm the ban",
+        "moderation menu",
+        "admin instructions",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
+}
+
 fn asks_for_phone_number(question_lower: &str) -> bool {
     question_lower.contains("phone number")
         || question_lower.contains("phone")
@@ -957,8 +1126,12 @@ fn strict_kb_answer_has_unsupported_advice(answer: &str, evidence: &[KbEvidenceI
         "right-click",
         "right click",
         "select ban",
+        "delete recent message history",
         "ban user",
         "delete message history",
+        "confirm the ban",
+        "choose whether to delete",
+        "moderation menu",
         "approved standard channels",
         "standard channels",
         "declined/escalated",

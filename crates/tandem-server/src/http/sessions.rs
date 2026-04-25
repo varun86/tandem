@@ -1058,7 +1058,7 @@ pub(super) async fn execute_run(
         }
     };
 
-    if status == "completed" {
+    if status == "completed" || strict_kb_should_repair_error(error_msg.as_deref()) {
         if let Some(policy) = kb_grounding_policy.as_ref().filter(|policy| policy.strict) {
             match apply_strict_kb_grounding_after_run(
                 &state,
@@ -1339,6 +1339,19 @@ pub(super) fn dispatch_error_code(message: &str) -> &'static str {
     } else {
         "ENGINE_DISPATCH_FAILED"
     }
+}
+
+fn strict_kb_should_repair_error(error: Option<&str>) -> bool {
+    let Some(error) = error else {
+        return false;
+    };
+    let lower = error.to_ascii_lowercase();
+    lower.contains("provider stream chunk error")
+        || lower.contains("error decoding response body")
+        || lower.contains("incomplete streamed response")
+        || lower.contains("provider_server_error")
+        || lower.contains("provider server error")
+        || lower.contains("unexpected eof")
 }
 
 pub(super) fn is_os_mismatch_error(message: &str) -> bool {
