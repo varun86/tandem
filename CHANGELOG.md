@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.42] - Unreleased
+## [0.4.42] - Released 2026-04-26
 
 ### Fixed
 
@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hosted task and board endpoints stop returning `name 'logger' is not defined`**: Two ACA modules (`task_sources.py` and `worker.py`) referenced `logger.debug(...)` without ever importing or defining a logger, so every `GET /projects/{slug}/tasks` and `GET /projects/{slug}/board` raised a `NameError` that FastAPI surfaced as a 400 with `{"detail":"name 'logger' is not defined"}`. The control panel could never render project tasks or boards on hosted servers as a result. Both modules now define a module-level logger.
 - **Files navigation visible by default for hosted/ACA-mode installs**: `ACA_CORE_NAV_ROUTE_IDS` now includes `files` so provisioned hosted servers (which always bundle the KB MCP) show the Files surface in the sidebar by default instead of hiding it under Advanced / experimental sections that operators have to toggle on manually.
 
-## [0.4.41] - Unreleased
+## [0.4.41] - Released 2026-04-26
 
 ### Added
 
