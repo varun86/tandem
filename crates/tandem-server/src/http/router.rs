@@ -12,6 +12,7 @@ pub(super) fn build_router(state: AppState) -> Router {
 
     let mut router: Router<AppState> = Router::new();
 
+    router = super::routes_approvals::apply(router);
     router = super::routes_coder::apply(router);
     router = super::routes_context::apply(router);
     router = super::routes_sessions::apply(router);

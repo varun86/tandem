@@ -49,6 +49,7 @@ use crate::{
     ActiveRun, AppState, DiscordConfigFile, SlackConfigFile, TelegramConfigFile,
 };
 
+mod approvals;
 mod automation_projection_runtime;
 pub(crate) mod bug_monitor;
 mod capabilities;
@@ -80,6 +81,7 @@ mod permissions_questions;
 mod presets;
 mod resources;
 mod router;
+mod routes_approvals;
 mod routes_bug_monitor;
 mod routes_capabilities;
 mod routes_channel_automation_drafts;

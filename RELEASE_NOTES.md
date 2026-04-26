@@ -4,7 +4,13 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.41 (Unreleased)
 
-This unreleased build adds chat-native automation drafts for Discord, Telegram, Slack, and direct channel conversations, while also hardening workflow-planning handoff for explicit planner flows.
+This unreleased build adds chat-native automation drafts for Discord, Telegram, Slack, and direct channel conversations, hardens workflow-planning handoff for explicit planner flows, and lays the foundation for **default approval gates and rich channel UX** (see `docs/internal/approval-gates-and-channel-ux/PLAN.md`).
+
+### Approval-gate foundation
+
+- **Unified approval data model**: New `tandem_types::approvals` module defines `ApprovalRequest`, `ApprovalDecision`, `ApprovalSourceKind`, `ApprovalTenantRef`, `ApprovalActorRef`, `ApprovalDecisionInput`, and `ApprovalListFilter`. Every Tandem subsystem (control panel, channel adapters, future surfaces) consumes one shape regardless of which subsystem owns the underlying pending state. The aggregator and decision routing remain authoritative through subsystem-specific handlers (e.g. `POST /automations/v2/runs/{run_id}/gate_decide`); a unified decide endpoint is intentionally deferred until at least two source subsystems are wired.
+- **Cross-subsystem approvals aggregator**: New `GET /approvals/pending` endpoint returns a unified list of pending approval requests, drawn today from `automation_v2` mission runs whose `checkpoint.awaiting_gate` is set. Coder and workflow sources will plug in once their pause/resume paths are wired. Filterable by `org_id`, `workspace_id`, `source`, and `limit`. Tested against real state via three integration tests covering surface, empty, and source-filter behavior.
+- **Why this matters**: control panel, Slack/Discord/Telegram channel adapters, and future approval surfaces will all read from the same endpoint. The shape is stable; surface implementations slot on top without re-shaping the data.
 
 ### Chat-native automation drafts
 

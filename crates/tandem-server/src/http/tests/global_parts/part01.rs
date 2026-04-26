@@ -713,7 +713,7 @@ async fn wait_for_automation_v2_run_failure(
     }
 }
 
-async fn create_test_automation_v2(
+pub(in crate::http::tests) async fn create_test_automation_v2(
     state: &AppState,
     automation_id: &str,
 ) -> crate::AutomationV2Spec {

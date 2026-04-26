@@ -1,3 +1,4 @@
+pub mod approvals;
 pub mod event;
 pub mod message;
 pub mod provider;
@@ -13,6 +14,7 @@ pub use tandem_enterprise_contract::{
     SecretRefError, TenantContext, TenantContextResolver, TenantSource,
 };
 
+pub use approvals::*;
 pub use event::*;
 pub use message::*;
 pub use provider::*;
