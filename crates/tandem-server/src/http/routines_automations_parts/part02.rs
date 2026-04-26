@@ -1560,7 +1560,7 @@ pub(super) async fn automations_v2_run_cancel(
     ))
 }
 
-pub(super) async fn automations_v2_run_gate_decide(
+pub(crate) async fn automations_v2_run_gate_decide(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
     Json(input): Json<AutomationV2GateDecisionInput>,
@@ -1574,12 +1574,32 @@ pub(super) async fn automations_v2_run_gate_decide(
         ));
     };
     if current.status != AutomationRunStatus::AwaitingApproval {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(
-                json!({"error":"Run is not awaiting approval", "code":"AUTOMATION_V2_RUN_NOT_AWAITING_APPROVAL", "runID": run_id}),
-            ),
-        ));
+        // Race UX: when a second surface tries to decide a gate that has just
+        // been resolved by another surface (Slack click + control-panel click,
+        // etc.), surface the winner's decision so the loser's UI can render
+        // "already decided by …" instead of a raw error. The winner's record
+        // is the most recently appended gate_history entry.
+        let winner = current.checkpoint.gate_history.last();
+        let winner_payload = winner.map(|record| {
+            json!({
+                "node_id": record.node_id,
+                "decision": record.decision,
+                "reason": record.reason,
+                "decided_at_ms": record.decided_at_ms,
+            })
+        });
+        let mut body = json!({
+            "error": "Run is not awaiting approval",
+            "code": "AUTOMATION_V2_RUN_NOT_AWAITING_APPROVAL",
+            "runID": run_id,
+            "currentStatus": current.status,
+        });
+        if let Some(winner_value) = winner_payload {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("winningDecision".to_string(), winner_value);
+            }
+        }
+        return Err((StatusCode::CONFLICT, Json(body)));
     }
     let Some(gate) = current.checkpoint.awaiting_gate.clone() else {
         return Err((

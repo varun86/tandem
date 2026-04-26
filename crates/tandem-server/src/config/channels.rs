@@ -54,6 +54,12 @@ pub struct SlackConfigFile {
     pub model_id: Option<String>,
     #[serde(default)]
     pub security_profile: tandem_channels::config::ChannelSecurityProfile,
+    /// Slack app signing secret. Required when the Slack interactions endpoint
+    /// (`POST /channels/slack/interactions`) is enabled — every interaction
+    /// payload from Slack is HMAC-SHA256 signed using this secret. Stored in
+    /// the OS keystore in production; this field is the in-memory copy.
+    #[serde(default)]
+    pub signing_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

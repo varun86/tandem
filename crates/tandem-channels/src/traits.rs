@@ -119,6 +119,154 @@ pub struct SendMessage {
     pub image_urls: Vec<String>,
 }
 
+/// A rich, interactive card sent back to the channel — typically an approval
+/// request, a draft confirmation, or a status update with action buttons.
+///
+/// Each adapter renders this to its native interactive primitive (Slack Block
+/// Kit, Discord embed + action row, Telegram inline keyboard). The same
+/// `InteractiveCard` shape produces a coherent UX across all three channels.
+///
+/// Buttons carry an `action_id` that round-trips through the platform's
+/// callback (Slack interactions, Discord interactions, Telegram callback_query)
+/// and identifies which decision the user took.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCard {
+    /// Destination (channel_id, chat_id, user_id, etc. — platform-specific).
+    pub recipient: String,
+    /// Short title shown in the card header (e.g. workflow name + step).
+    pub title: String,
+    /// Markdown body explaining what is about to happen. Adapters convert to
+    /// the closest native rich-text format (Slack mrkdwn, Telegram MarkdownV2,
+    /// Discord embed description).
+    pub body_markdown: String,
+    /// Key-value rows shown below the body (e.g. `run_id`, requested-by,
+    /// expires-at). Order is preserved.
+    #[serde(default)]
+    pub fields: Vec<InteractiveCardField>,
+    /// Action buttons. Render order from left to right. Adapters that cap the
+    /// number of buttons per row (Discord: 5) chunk into multiple rows.
+    #[serde(default)]
+    pub buttons: Vec<InteractiveCardButton>,
+    /// If `Some`, the button with `requires_reason: true` triggers a follow-up
+    /// reason prompt with this configuration. Slack/Discord render as a modal;
+    /// Telegram falls back to `force_reply`.
+    #[serde(default)]
+    pub reason_prompt: Option<InteractiveCardReasonPrompt>,
+    /// Optional thread/topic key to anchor the card and subsequent updates
+    /// inside a per-run thread. Adapters that support threading (Slack, Discord)
+    /// use this to keep channels uncluttered; Telegram ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_key: Option<String>,
+    /// Opaque correlation context the interaction handler will receive back
+    /// when a button is clicked. Includes `run_id`, `node_id`, and any
+    /// surface-payload bits the aggregator stamped earlier.
+    #[serde(default)]
+    pub correlation: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCardField {
+    pub label: String,
+    pub value: String,
+}
+
+/// Visual / semantic intent for a button. Each adapter maps to its native
+/// equivalent (Slack `style: primary|danger`, Discord button styles).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractiveCardButtonStyle {
+    /// Default neutral button.
+    Default,
+    /// Affirmative / safe action (Slack `primary`, Discord `Success` green).
+    Primary,
+    /// Destructive / irreversible action (Slack `danger`, Discord `Danger` red).
+    Destructive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCardButton {
+    /// Stable action identifier round-tripped through the platform callback.
+    /// Convention: `approve`, `rework`, `cancel` for approval cards.
+    pub action_id: String,
+    /// Label shown on the button.
+    pub label: String,
+    /// Visual style.
+    #[serde(default = "default_button_style")]
+    pub style: InteractiveCardButtonStyle,
+    /// If true, click triggers the `reason_prompt` modal/force-reply before
+    /// the decision is committed. Used by Rework so the user explains why.
+    #[serde(default)]
+    pub requires_reason: bool,
+    /// Optional confirm dialog (title + body + ok/cancel labels). Adapters
+    /// render where supported (Slack `confirm` block, Discord followup modal).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<InteractiveCardConfirm>,
+}
+
+fn default_button_style() -> InteractiveCardButtonStyle {
+    InteractiveCardButtonStyle::Default
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCardConfirm {
+    pub title: String,
+    pub body: String,
+    pub confirm_label: String,
+    pub deny_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCardReasonPrompt {
+    pub modal_title: String,
+    pub field_label: String,
+    pub field_placeholder: Option<String>,
+    pub submit_label: String,
+}
+
+/// Returned from `Channel::send_card` to give the dispatcher / engine a handle
+/// for later in-place edits ("Approved by @alice at 14:32") and threaded
+/// status updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveCardSent {
+    /// Adapter name (`slack`, `discord`, `telegram`).
+    pub channel: String,
+    /// Native message ID returned by the platform (Slack `ts`, Telegram
+    /// `message_id`, Discord message snowflake).
+    pub message_id: String,
+    /// Recipient/destination this was delivered to.
+    pub recipient: String,
+    /// Thread anchor when the adapter created or used a thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+/// Error returned by `Channel::send_card` when the adapter does not support
+/// rich interactive rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InteractiveCardError {
+    /// Adapter has not implemented `send_card` yet — caller should fall back
+    /// to a text-only `send`.
+    NotImplemented,
+    /// Adapter accepted the card but the platform rejected it (rate limit,
+    /// invalid block, etc.). Carries a short, user-safe reason.
+    PlatformError(String),
+    /// The card's content violates a precondition (oversize body, more
+    /// buttons than the adapter can render, etc.).
+    InvalidCard(String),
+}
+
+impl core::fmt::Display for InteractiveCardError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotImplemented => write!(f, "channel does not implement send_card"),
+            Self::PlatformError(reason) => write!(f, "channel platform error: {reason}"),
+            Self::InvalidCard(reason) => write!(f, "invalid interactive card: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for InteractiveCardError {}
+
 /// All external channel adapters implement this trait.
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -154,6 +302,26 @@ pub trait Channel: Send + Sync {
     /// `true` if the platform supports in-place message editing for streaming
     /// partial responses. Used to enable draft-update mode in the dispatcher.
     fn supports_draft_updates(&self) -> bool {
+        false
+    }
+
+    /// Send a rich interactive card (approval request, status update with
+    /// buttons, etc.). Default impl returns `NotImplemented` so the type
+    /// system tells callers which adapters have implemented rich rendering.
+    /// Callers should fall back to a text-only `send` when this returns
+    /// `InteractiveCardError::NotImplemented`.
+    async fn send_card(
+        &self,
+        _card: &InteractiveCard,
+    ) -> Result<InteractiveCardSent, InteractiveCardError> {
+        Err(InteractiveCardError::NotImplemented)
+    }
+
+    /// `true` when this adapter implements `send_card` end-to-end. The default
+    /// returns `false`; adapters override when their `send_card` is wired.
+    /// Used by the notification fan-out task to decide between rich card and
+    /// text fallback without making a wasted API call.
+    fn supports_interactive_cards(&self) -> bool {
         false
     }
 }

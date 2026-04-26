@@ -685,7 +685,7 @@ pub(super) struct RoutineRunDecisionInput {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct AutomationV2GateDecisionInput {
+pub(crate) struct AutomationV2GateDecisionInput {
     pub decision: String,
     #[serde(default)]
     pub reason: Option<String>,

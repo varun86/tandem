@@ -129,6 +129,79 @@ async fn approvals_pending_endpoint_returns_empty_when_no_gates_pending() {
 }
 
 #[tokio::test]
+async fn gate_decide_409_includes_winning_decision_in_body() {
+    // Race UX (W2.6): when two surfaces try to decide the same gate
+    // concurrently, the loser's 409 response should include the winner's
+    // decision so the loser's UI can render "already decided by ..." instead
+    // of a raw error.
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-race-ux").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+
+    // Simulate the winner already having decided: append the gate_history
+    // entry and move the run out of AwaitingApproval (this is the post-winner
+    // state the loser observes).
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Queued;
+            row.checkpoint.awaiting_gate = None;
+            row.checkpoint
+                .gate_history
+                .push(crate::AutomationGateDecisionRecord {
+                    node_id: "approval".to_string(),
+                    decision: "approve".to_string(),
+                    reason: Some("looks good".to_string()),
+                    decided_at_ms: crate::now_ms(),
+                });
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/gate", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "decision": "approve" }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), 409);
+
+    let body = to_bytes(resp.into_body(), 1_000_000).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_RUN_NOT_AWAITING_APPROVAL")
+    );
+    let winner = payload
+        .get("winningDecision")
+        .expect("winningDecision present in 409 body");
+    assert_eq!(
+        winner.get("decision").and_then(Value::as_str),
+        Some("approve")
+    );
+    assert_eq!(
+        winner.get("node_id").and_then(Value::as_str),
+        Some("approval")
+    );
+    assert_eq!(
+        winner.get("reason").and_then(Value::as_str),
+        Some("looks good")
+    );
+    assert!(winner
+        .get("decided_at_ms")
+        .and_then(Value::as_u64)
+        .is_some());
+}
+
+#[tokio::test]
 async fn approvals_pending_endpoint_filters_by_source_unknown_returns_empty() {
     let state = test_state().await;
     let app = app_router(state.clone());

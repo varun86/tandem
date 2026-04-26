@@ -114,6 +114,7 @@ mod session_kb_grounding;
 mod sessions;
 mod setup_understanding;
 mod skills_memory;
+mod slack_interactions;
 mod system_api;
 mod task_intake;
 pub(crate) mod workflow_planner;
