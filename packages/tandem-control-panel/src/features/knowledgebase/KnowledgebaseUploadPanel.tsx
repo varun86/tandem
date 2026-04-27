@@ -178,6 +178,7 @@ export function KnowledgebaseUploadPanel({
   const [collectionId, setCollectionId] = useState("");
   const [collectionTouched, setCollectionTouched] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [documentListCollapsed, setDocumentListCollapsed] = useState(false);
   const [documentSearch, setDocumentSearch] = useState("");
   const [selectedDocumentKey, setSelectedDocumentKey] = useState("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
@@ -688,6 +689,7 @@ export function KnowledgebaseUploadPanel({
     previewExpanded,
     editMode,
     panelCollapsed,
+    documentListCollapsed,
   ]);
 
   const clearFinishedUploads = () => {
@@ -1154,165 +1156,125 @@ export function KnowledgebaseUploadPanel({
       }
     >
       <div ref={panelRef} className={panelCollapsed ? "hidden" : "grid gap-4 p-4"}>
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="grid gap-2">
-            <label
-              className="tcp-subtle text-xs uppercase tracking-wide"
-              htmlFor="kb-collection-select"
-            >
-              Collection
-            </label>
-            <div
-              className={
-                customCollectionSelected
-                  ? "grid gap-2 md:grid-cols-[minmax(220px,0.7fr)_minmax(220px,1fr)]"
-                  : "grid gap-2 md:grid-cols-[minmax(220px,0.7fr)_auto]"
-              }
-            >
-              <div className="relative">
-                <select
-                  id="kb-collection-select"
-                  className="tcp-select h-10 w-full appearance-none pr-10 font-semibold text-slate-100"
-                  value={collectionSelectValue}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setCollectionTouched(true);
-                    if (next === "__custom__") {
-                      setCollectionId("");
-                      return;
-                    }
-                    setCollectionId(next);
-                  }}
-                >
-                  {collectionOptions.length ? (
-                    collectionOptions.map((collection) => {
-                      const name = String(collection.collection_id || "").trim();
-                      return (
-                        <option key={name} value={name}>
-                          {name}
-                          {typeof collection.document_count === "number"
-                            ? ` (${collection.document_count})`
-                            : ""}
-                        </option>
-                      );
-                    })
-                  ) : (
-                    <option value="">No collections yet</option>
-                  )}
-                  <option value="__custom__">Create new collection...</option>
-                </select>
-                <i
-                  data-lucide="chevron-down"
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                ></i>
-              </div>
-              {customCollectionSelected ? (
-                <input
-                  id="kb-collection-id"
-                  className="tcp-input h-10"
-                  value={collectionId}
-                  onChange={(event) => {
-                    setCollectionTouched(true);
-                    setCollectionId(event.target.value);
-                  }}
-                  placeholder="new-customer-collection"
-                  spellCheck={false}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="tcp-icon-btn h-10 w-10"
-                  title="Create a new collection"
-                  aria-label="Create a new collection"
-                  onClick={() => {
-                    setCollectionTouched(true);
+        <div className="grid gap-2">
+          <label
+            className="tcp-subtle text-xs uppercase tracking-wide"
+            htmlFor="kb-collection-select"
+          >
+            Collection
+          </label>
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+            <div className="relative min-w-[min(100%,18rem)] flex-1">
+              <select
+                id="kb-collection-select"
+                className="tcp-select h-10 w-full appearance-none pr-10 font-semibold text-slate-100"
+                value={collectionSelectValue}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setCollectionTouched(true);
+                  if (next === "__custom__") {
                     setCollectionId("");
-                  }}
-                >
-                  <i data-lucide="plus"></i>
-                </button>
-              )}
+                    return;
+                  }
+                  setCollectionId(next);
+                }}
+              >
+                {collectionOptions.length ? (
+                  collectionOptions.map((collection) => {
+                    const name = String(collection.collection_id || "").trim();
+                    return (
+                      <option key={name} value={name}>
+                        {name}
+                        {typeof collection.document_count === "number"
+                          ? ` (${collection.document_count})`
+                          : ""}
+                      </option>
+                    );
+                  })
+                ) : (
+                  <option value="">No collections yet</option>
+                )}
+                <option value="__custom__">Create new collection...</option>
+              </select>
+              <i
+                data-lucide="chevron-down"
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+              ></i>
             </div>
-            <div className="tcp-subtle text-xs">
-              Pick an existing KB MCP collection, or type a new collection ID before uploading.
+            {customCollectionSelected ? (
+              <input
+                id="kb-collection-id"
+                className="tcp-input h-10 min-w-[min(100%,18rem)] flex-1"
+                value={collectionId}
+                onChange={(event) => {
+                  setCollectionTouched(true);
+                  setCollectionId(event.target.value);
+                }}
+                placeholder="new-customer-collection"
+                spellCheck={false}
+              />
+            ) : (
+              <button
+                type="button"
+                className="tcp-icon-btn h-10 w-10 shrink-0"
+                title="Create a new collection"
+                aria-label="Create a new collection"
+                onClick={() => {
+                  setCollectionTouched(true);
+                  setCollectionId("");
+                }}
+              >
+                <i data-lucide="plus"></i>
+              </button>
+            )}
+            <div className="flex shrink-0 gap-2">
+              <input
+                ref={uploadInputRef}
+                type="file"
+                multiple
+                accept={UPLOAD_ACCEPT}
+                className="hidden"
+                onChange={(event) => {
+                  void uploadFiles(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <input
+                ref={folderInputRef}
+                type="file"
+                multiple
+                accept={UPLOAD_ACCEPT}
+                className="hidden"
+                onChange={(event) => {
+                  void uploadFiles(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button
+                type="button"
+                className="tcp-icon-btn h-10 w-10"
+                title="Select files"
+                aria-label="Select files"
+                onClick={() => uploadInputRef.current?.click()}
+                disabled={!currentCollection || isUploading}
+              >
+                <i data-lucide="files"></i>
+              </button>
+              <button
+                type="button"
+                className="tcp-icon-btn h-10 w-10"
+                onClick={() => folderInputRef.current?.click()}
+                disabled={!currentCollection || isUploading}
+                title="Select a local folder and upload all matching docs inside it"
+                aria-label="Select a local folder"
+              >
+                <i data-lucide="folder-open"></i>
+              </button>
             </div>
           </div>
-          <div className="flex items-end gap-2">
-            <input
-              ref={uploadInputRef}
-              type="file"
-              multiple
-              accept={UPLOAD_ACCEPT}
-              className="hidden"
-              onChange={(event) => {
-                void uploadFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-            <input
-              ref={folderInputRef}
-              type="file"
-              multiple
-              accept={UPLOAD_ACCEPT}
-              className="hidden"
-              onChange={(event) => {
-                void uploadFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-            <button
-              type="button"
-              className="tcp-icon-btn h-10 w-10"
-              title="Select files"
-              aria-label="Select files"
-              onClick={() => uploadInputRef.current?.click()}
-              disabled={!currentCollection || isUploading}
-            >
-              <i data-lucide="files"></i>
-            </button>
-            <button
-              type="button"
-              className="tcp-icon-btn h-10 w-10"
-              onClick={() => folderInputRef.current?.click()}
-              disabled={!currentCollection || isUploading}
-              title="Select a local folder and upload all matching docs inside it"
-              aria-label="Select a local folder"
-            >
-              <i data-lucide="folder-open"></i>
-            </button>
+          <div className="tcp-subtle text-xs">
+            Pick an existing KB MCP collection, or type a new collection ID before uploading.
           </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {collections.length ? (
-            collections.slice(0, 8).map((collection) => {
-              const name = String(collection.collection_id || "").trim();
-              const active = name === currentCollection;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  className={`tcp-btn h-7 px-2 text-xs ${active ? "border-sky-500/40 bg-sky-950/20" : ""}`.trim()}
-                  onClick={() => {
-                    setCollectionTouched(true);
-                    setCollectionId(name);
-                  }}
-                >
-                  {name}
-                  {typeof collection.document_count === "number" ? (
-                    <span className="ml-2 text-[10px] text-slate-400">
-                      {collection.document_count}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })
-          ) : (
-            <span className="tcp-subtle text-sm">
-              No collections reported yet. Uploads can still succeed before the KB service lists the
-              collection.
-            </span>
-          )}
         </div>
 
         <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
@@ -1407,10 +1369,31 @@ export function KnowledgebaseUploadPanel({
               >
                 <i data-lucide="refresh-cw"></i>
               </button>
+              <button
+                type="button"
+                className="tcp-icon-btn h-8 w-8"
+                title={
+                  documentListCollapsed
+                    ? "Expand collection documents"
+                    : "Collapse collection documents"
+                }
+                aria-label={
+                  documentListCollapsed
+                    ? "Expand collection documents"
+                    : "Collapse collection documents"
+                }
+                onClick={() => setDocumentListCollapsed((current) => !current)}
+              >
+                <i data-lucide={documentListCollapsed ? "chevron-down" : "chevron-up"}></i>
+              </button>
             </div>
           </div>
 
-          {!currentCollection ? (
+          {documentListCollapsed ? (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm tcp-subtle">
+              Collection documents are collapsed.
+            </div>
+          ) : !currentCollection ? (
             <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm tcp-subtle">
               Pick or type a collection ID to inspect its documents.
             </div>
