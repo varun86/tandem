@@ -97,6 +97,12 @@ const updateCargo = (relativePath) => {
   const filePath = path.join(rootDir, relativePath);
   const content = fs.readFileSync(filePath, "utf8");
   const lines = content.split(/\r?\n/);
+  // Drop the trailing empty element produced by splitting a file that already
+  // ends with a newline, so the final `${next.join("\n")}\n` write does not
+  // append an extra blank line on every run.
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
   const isLockfile = path.basename(relativePath) === "Cargo.lock";
   let inPackage = false;
   let currentPackageName = "";
@@ -150,6 +156,9 @@ const updatePyproject = (relativePath) => {
   const filePath = path.join(rootDir, relativePath);
   const content = fs.readFileSync(filePath, "utf8");
   const lines = content.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
   let inProject = false;
   const next = lines.map((line) => {
     if (/^\s*\[/.test(line)) {
