@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.43] - Unreleased
+
+### Fixed
+
+- **Slack channel adapter no longer replays recent messages on engine restart**: `SlackChannel::listen` initialised its `last_ts` cursor to an empty string, so the first `conversations.history` poll after every engine start ran with no `oldest` filter and returned the most recent ten messages. Any user message still in that window — for example a `@Tandem` mention from earlier in the day — was reprocessed and answered again, producing duplicate replies after each restart (Discord and Telegram are unaffected because they use streaming/long-poll with server-acked offsets). The Slack listener now seeds `last_ts` to the listener's startup wallclock formatted as a Slack `seconds.microseconds` timestamp, so only messages posted after the engine starts are picked up.
+
 ## [0.4.42] - Released 2026-04-26
 
 ### Fixed

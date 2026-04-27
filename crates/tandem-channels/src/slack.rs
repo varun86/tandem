@@ -261,7 +261,13 @@ impl Channel for SlackChannel {
 
     async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         let bot_user_id = self.get_bot_user_id().await.unwrap_or_default();
-        let mut last_ts = String::new();
+        // Seed to current time so a restart does not re-process recent history
+        // and reply to the same message multiple times. Slack ts format is
+        // `<unix_seconds>.<microseconds>`.
+        let mut last_ts = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(d) => format!("{}.{:06}", d.as_secs(), d.subsec_micros()),
+            Err(_) => String::new(),
+        };
 
         info!("Slack: listening on channel #{}", self.channel_id);
 

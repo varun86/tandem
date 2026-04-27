@@ -2,6 +2,18 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.43 (Unreleased)
+
+This release fixes a Slack-only duplicate-reply bug on hosted Tandem servers that restart through the day.
+
+### Slack channel adapter no longer replays recent messages on engine restart
+
+The Slack channel adapter polls `conversations.history` every three seconds and tracks a `last_ts` cursor so it only forwards messages it has not already processed. The cursor lived only in the listener task's stack frame and was initialised to an empty string at startup, which meant every engine restart hit Slack with no `oldest` filter and pulled back the most recent ten messages. Anything still in that window — most visibly a `@Tandem` mention sent earlier in the day — was reprocessed and answered again, so users on hosted instances saw the same Tandem reply land two or three times across the same Slack thread as the engine cycled.
+
+Discord and Telegram never had this problem: Discord streams events from the gateway, and Telegram long-polls with `getUpdates` offsets the server treats as acks, so neither replays history when the adapter reconnects. Slack's polling adapter has no equivalent server-side ack, which is why the empty-string cursor was visible only on Slack.
+
+The Slack listener now seeds `last_ts` to the listener's startup wallclock formatted as a Slack `seconds.microseconds` timestamp, before the first poll, so only messages posted after the engine starts are picked up. The trade-off is that messages sent during the brief restart window are dropped instead of replayed; for hosted operator chat surfaces that is strongly preferable to spamming the same answer multiple times. A future change can persist `last_ts` per channel under the engine state directory if zero-loss semantics across restarts become important.
+
 ## v0.4.42 (Unreleased)
 
 This release fixes three regressions that were keeping provisioned hosted servers from being usable end-to-end after the 0.4.41 release.
