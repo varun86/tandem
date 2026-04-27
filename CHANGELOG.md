@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Memory path import API and SDK support**: Added `POST /memory/import` for server-side path imports into Tandem memory, including project/session tier validation, import stats, tenant audit events, and TypeScript/Python SDK helpers (`memory.importPath` / `memory.import_path`). The control panel Memory page now includes an import dialog for directory/OpenClaw-style imports, sync-delete control, and import result summaries.
+- **Memory path import API, SDK support, and control-panel UX**: Added `POST /memory/import` for server-side path imports into Tandem memory, including project/session tier validation, import stats, tenant lifecycle events, and TypeScript/Python SDK helpers (`memory.importPath` / `memory.import_path`). The control panel now exposes path import in both expected places: Files has an `Import to Memory` action for selected folders/files and Memory has an `Import Knowledge` shortcut, with directory/OpenClaw format selection, tier fields, sync-delete control, and import result summaries.
 - **Strict KB grounded synthesis toggle**: Added `TANDEM_STRICT_KB_GROUNDED_SYNTHESIS=1` to optionally polish strict-KB answers with an evidence-only synthesis pass. The runtime still validates the result and falls back to deterministic KB rendering when the model introduces unsupported claims.
 
 ### Changed
 
 - **Strict KB channel answers now use a fast direct KB path**: Strict-KB text questions call the configured KB MCP `answer_question` tool directly before entering the general LLM tool loop, dramatically reducing Telegram/Discord demo latency while preserving source receipts and strict grounding.
 - **KB `answer_question` payloads are first-class evidence**: Tandem now treats KB MCP `suggested_answer` and `evidence[].content` as full grounding evidence, so the runtime no longer discards good KB answers just because a follow-up `get_document` call fails.
+- **Files is now a primary memory-seeding surface**: The Files route is visible in the main navigation before Memory, reflecting that file/folder selection is the natural place to choose what Tandem should know while Memory remains the runtime knowledge management surface.
+- **Memory page separates governed knowledge from runtime messages**: The Memory page now defaults to a Knowledge view and includes Runtime/All filters so raw `user_message`, `assistant_final`, and channel-derived records remain inspectable without making the knowledge surface look like a chat transcript.
 
 ### Fixed
 

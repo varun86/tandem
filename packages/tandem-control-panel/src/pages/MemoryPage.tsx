@@ -7,15 +7,37 @@ import { AnimatedPage, Badge, PanelCard, Toolbar } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
+type MemoryView = "knowledge" | "runtime" | "all";
+
+const RUNTIME_SOURCE_TYPES = new Set([
+  "user_message",
+  "assistant_message",
+  "assistant_response",
+  "assistant_final",
+  "channel_message",
+  "session_message",
+]);
+
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.[key])) return input[key];
   return [];
 }
 
+function isRuntimeMemory(item: any, sourceType: string) {
+  const normalized = sourceType.trim().toLowerCase();
+  if (RUNTIME_SOURCE_TYPES.has(normalized)) return true;
+  if (normalized.endsWith("_message") || normalized.includes("message")) return true;
+  const metadata = item?.metadata || {};
+  const provenance = item?.provenance || {};
+  const origin = String(metadata?.origin || provenance?.origin_event_type || "").toLowerCase();
+  return origin.includes("message") || origin.includes("channel");
+}
+
 export function MemoryPage({ api, client, toast }: AppPageProps) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
+  const [memoryView, setMemoryView] = useState<MemoryView>("knowledge");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
@@ -135,10 +157,24 @@ export function MemoryPage({ api, client, toast }: AppPageProps) {
           project,
           visibility,
           runId,
+          runtime: isRuntimeMemory(item, sourceType),
         };
       }),
     [items]
   );
+  const knowledgeCount = rendered.filter((item) => !item.runtime).length;
+  const runtimeCount = rendered.filter((item) => item.runtime).length;
+  const visibleItems = rendered.filter((item) => {
+    if (memoryView === "knowledge") return !item.runtime;
+    if (memoryView === "runtime") return item.runtime;
+    return true;
+  });
+  const emptyText =
+    memoryView === "knowledge"
+      ? "No governed knowledge records found. Import docs or add memory to seed this view."
+      : memoryView === "runtime"
+        ? "No runtime message records found."
+        : "No memory records found.";
 
   return (
     <AnimatedPage className="grid gap-4">
@@ -147,11 +183,17 @@ export function MemoryPage({ api, client, toast }: AppPageProps) {
         subtitle="Search recent records and open full entry details inline."
         actions={
           <>
-            <Badge tone="info">{rendered.length} results</Badge>
+            <Badge tone="info">{visibleItems.length} results</Badge>
             {query.trim() ? (
               <Badge tone="ghost">Filter: {query}</Badge>
             ) : (
-              <Badge tone="ghost">Browsing latest memory</Badge>
+              <Badge tone="ghost">
+                {memoryView === "knowledge"
+                  ? "Governed knowledge"
+                  : memoryView === "runtime"
+                    ? "Runtime messages"
+                    : "All memory"}
+              </Badge>
             )}
             <button type="button" className="tcp-btn-primary" onClick={() => setImportOpen(true)}>
               <i data-lucide="database-zap"></i>
@@ -211,6 +253,26 @@ export function MemoryPage({ api, client, toast }: AppPageProps) {
           </div>
         ) : null}
 
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {[
+            ["knowledge", "Knowledge", knowledgeCount],
+            ["runtime", "Runtime", runtimeCount],
+            ["all", "All", rendered.length],
+          ].map(([id, label, count]) => (
+            <button
+              key={String(id)}
+              type="button"
+              className={`tcp-btn h-8 px-3 text-xs ${
+                memoryView === id ? "border-sky-500/40 bg-sky-950/20 text-sky-100" : ""
+              }`.trim()}
+              onClick={() => setMemoryView(id as MemoryView)}
+            >
+              {label}
+              <span className="tcp-badge tcp-badge-ghost ml-1">{count}</span>
+            </button>
+          ))}
+        </div>
+
         <Toolbar className="mb-3">
           <input
             className="tcp-input flex-1"
@@ -225,8 +287,8 @@ export function MemoryPage({ api, client, toast }: AppPageProps) {
         </Toolbar>
 
         <div className="grid gap-2">
-          {rendered.length ? (
-            rendered.map((item) => {
+          {visibleItems.length ? (
+            visibleItems.map((item) => {
               const expanded = expandedId === item.id;
               return (
                 <motion.article
@@ -295,7 +357,7 @@ export function MemoryPage({ api, client, toast }: AppPageProps) {
               );
             })
           ) : (
-            <EmptyState text="No memory records found." />
+            <EmptyState text={emptyText} />
           )}
         </div>
       </PanelCard>

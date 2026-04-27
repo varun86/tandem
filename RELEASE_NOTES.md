@@ -16,16 +16,20 @@ The direct path also fixes a registry-name bug in full-document fetches. Model-f
 
 Finally, strict KB rendering no longer lets malformed `suggested_answer` values spill raw document bodies into channel replies. Tandem preserves line boundaries while parsing evidence, strips nested `Suggested answer:` prefixes, and cuts off leaked `Source:`, markdown headings, and frontmatter before rendering. A query like “What should staff do if the stream ingest fails?” should now produce a compact answer and safe source label instead of dumping the top of the runbook.
 
-### Memory imports are available through HTTP, SDKs, and the control panel
+### Memory imports are available through HTTP, SDKs, Files, and Memory
 
 The engine now exposes `POST /memory/import` for importing server-side paths into Tandem memory. The first source kind is `path`; supported formats are `directory` and `openclaw`; supported tiers follow the memory system (`project`, `session`, and global-compatible tiers as supported by the importer). The route validates that path imports are non-empty, readable, and correctly scoped: project imports require `project_id`, and session imports require `session_id`.
 
-The response returns import stats (`discovered_files`, `files_processed`, `indexed_files`, `skipped_files`, `deleted_files`, `chunks_created`, `errors`) and emits tenant audit events for started, succeeded, and failed imports. TypeScript and Python clients now include helpers:
+The response returns import stats (`discovered_files`, `files_processed`, `indexed_files`, `skipped_files`, `deleted_files`, `chunks_created`, `errors`) and emits tenant lifecycle events for started, succeeded, and failed imports. TypeScript and Python clients now include helpers:
 
 - `client.memory.importPath(...)`
 - `client.memory.import_path(...)`
 
-The control panel Memory page includes an import dialog for path-based imports, format/tier selection, optional sync-delete, and a result summary. This lets hosted or local operators seed project memory from prepared folders without shelling out to `tandem-engine` manually.
+The control panel now treats memory import as both a Files workflow and a Memory workflow. Files has an `Import to Memory` action so operators can browse the workspace/managed file tree and import the selected folder, or the containing folder for selected files. Memory keeps an `Import Knowledge` shortcut with the same path-based dialog for runtime knowledge management. Both paths support format/tier selection, project/session fields, optional sync-delete, clear error handling, and a result summary card with import stats.
+
+Files is also promoted into the primary navigation before Memory, because it is the natural source-selection surface. Memory remains the runtime management surface for search, inspection, manual memory creation, deletion, and audit-oriented metadata.
+
+The Memory page now defaults to a governed Knowledge view instead of showing every runtime record as one flat feed. Conversation-derived records such as `user_message`, `assistant_final`, and channel message memories are still available under Runtime/All filters, but they no longer make the default knowledge surface look like a channel transcript.
 
 ## v0.4.43 (Released 2026-04-27)
 
