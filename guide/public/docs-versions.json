@@ -3,13 +3,13 @@
   "default_ref": "stable",
   "stable": {
     "ref": "stable",
-    "engine_version": "0.4.41",
+    "engine_version": "0.4.44",
     "git_sha": "local",
-    "built_at": "2026-04-24T14:02:48.990Z"
+    "built_at": "2026-04-27T21:12:08.119Z"
   },
   "next": {
     "ref": "next",
     "git_sha": "local",
-    "built_at": "2026-04-24T14:02:48.990Z"
+    "built_at": "2026-04-27T21:12:08.119Z"
   }
 }

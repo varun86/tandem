@@ -69,6 +69,7 @@ tandem-engine serve --hostname 127.0.0.1 --port 39731
 - `DELETE /channels/{name}`
 - `GET /global/storage/files?path=channel_uploads&limit=200`
 - `POST /admin/reload-config`
+- `POST /memory/import`
 - `POST /memory/put`
 - `POST /memory/search`
 - `GET /memory`
@@ -113,6 +114,28 @@ curl -s -X POST http://127.0.0.1:39731/tool/execute \
   -H "content-type: application/json" \
   -d '{"tool":"browser_open","args":{"url":"https://example.com"}}'
 ```
+
+## Example: Import Docs Into Memory
+
+`POST /memory/import` indexes files that already exist on the engine host. The first import source is path-based; upload and zip imports are separate follow-up surfaces.
+
+```bash
+curl -s -X POST http://127.0.0.1:39731/memory/import \
+  -H "X-Agent-Token: tk_your_token" \
+  -H "content-type: application/json" \
+  -d '{
+    "source": { "kind": "path", "path": "/srv/tandem/imports/company-docs" },
+    "format": "directory",
+    "tier": "project",
+    "project_id": "company-brain-demo",
+    "session_id": null,
+    "sync_deletes": true
+  }'
+```
+
+Supported `format` values are `directory` and `openclaw`. Supported `tier` values are `global`, `project`, and `session`; project imports require `project_id`, and session imports require `session_id`.
+
+The response includes import stats such as `discovered_files`, `indexed_files`, `skipped_files`, `deleted_files`, `chunks_created`, and `errors`.
 
 ## Channel Uploads and Media
 

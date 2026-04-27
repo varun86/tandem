@@ -146,6 +146,8 @@ Memory import utilities for seeding Tandem memory from existing files or an Open
 tandem-engine memory import [OPTIONS]
 ```
 
+The same importer is also exposed at runtime through `POST /memory/import` and the SDK memory import helpers. Use the HTTP or SDK API when an application, automation, or control panel flow should import knowledge without shelling out to the CLI.
+
 ### `memory import`
 
 Import OpenClaw memory files or a markdown/text directory into Tandem memory.
@@ -169,6 +171,24 @@ tandem-engine memory import --path ~/.openclaw --format openclaw
 tandem-engine memory import --path ./notes --tier global
 tandem-engine memory import --path ./docs --tier project --project-id repo-123 --sync-deletes
 ```
+
+Equivalent HTTP request:
+
+```json
+{
+  "source": {
+    "kind": "path",
+    "path": "./docs"
+  },
+  "format": "directory",
+  "tier": "project",
+  "project_id": "repo-123",
+  "session_id": null,
+  "sync_deletes": true
+}
+```
+
+The API returns import stats for discovered files, indexed files, skipped files, deleted files, created chunks, and errors.
 
 ## `run`
 

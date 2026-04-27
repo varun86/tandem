@@ -139,9 +139,86 @@ Tandem stores retrieval memory when something is worth reusing later.
 Typical write paths include:
 
 - `memory.put` for a new governed memory record
+- `memory.import` to index existing markdown/text directories or OpenClaw memory exports
 - `memory.promote` to move something into a more reusable tier
 - `memory.demote` to reduce visibility or scope
 - `contextDistill` to extract durable memories from a session conversation
+
+### File and OpenClaw imports
+
+Path-based imports are the first-class way to seed governed retrieval memory from existing docs.
+
+Use this when you want Tandem agents to retrieve existing project docs, support policies, SOPs, handoffs, run artifacts, or OpenClaw exports without pasting them into a chat session.
+
+Import is available through:
+
+- Control Panel Files: select a folder or file location, then choose **Import to Memory**
+- Control Panel Memory: choose **Import Knowledge**
+- HTTP: `POST /memory/import`
+- SDKs: `client.memory.importPath(...)` and `client.memory.import_path(...)`
+- CLI: `tandem-engine memory import ...`
+
+The HTTP/SDK import path uses the same internal importer as the CLI. It does not shell out to `tandem-engine`.
+
+Supported formats:
+
+- `directory`: markdown/text directory import
+- `openclaw`: OpenClaw memory export import
+
+Supported tiers:
+
+- `global`: cross-project memory
+- `project`: project-scoped memory, requires `project_id`
+- `session`: session-scoped memory, requires `session_id`
+
+HTTP request:
+
+```json
+{
+  "source": {
+    "kind": "path",
+    "path": "/srv/tandem/imports/company-docs"
+  },
+  "format": "directory",
+  "tier": "project",
+  "project_id": "company-brain-demo",
+  "session_id": null,
+  "sync_deletes": true
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "source": {
+    "kind": "path",
+    "path": "/srv/tandem/imports/company-docs"
+  },
+  "format": "directory",
+  "tier": "project",
+  "project_id": "company-brain-demo",
+  "session_id": null,
+  "sync_deletes": true,
+  "discovered_files": 42,
+  "files_processed": 42,
+  "indexed_files": 39,
+  "skipped_files": 3,
+  "deleted_files": 0,
+  "chunks_created": 312,
+  "errors": 0
+}
+```
+
+Validation rules:
+
+- `source.kind` currently supports `path` only
+- `source.path` must be non-empty, readable, and exist on the engine host
+- `tier: "project"` requires `project_id`
+- `tier: "session"` requires `session_id`
+- invalid requests return `400`
+- importer failures return `500`
 
 ### Channel archival writes
 
@@ -212,6 +289,7 @@ The most common mistakes are:
 ## Public APIs worth knowing
 
 - `client.memory.put`
+- `client.memory.importPath` / `client.memory.import_path`
 - `client.memory.search`
 - `client.memory.list`
 - `client.memory.promote`

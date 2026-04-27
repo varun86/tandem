@@ -266,6 +266,52 @@ await client.memory.delete(items[0].id!);
 const log = await client.memory.audit({ run_id: "run-abc" });
 ```
 
+#### Import docs into memory
+
+Use `importPath` when the files already exist on the same host as `tandem-engine`.
+
+```typescript
+const result = await client.memory.importPath({
+  path: "/srv/tandem/imports/company-docs",
+  format: "directory",
+  tier: "project",
+  projectId: "company-brain-demo",
+  syncDeletes: true,
+});
+
+console.log({
+  indexedFiles: result.indexed_files,
+  chunksCreated: result.chunks_created,
+  errors: result.errors,
+});
+```
+
+Defaults:
+
+- `format`: `"directory"`
+- `tier`: `"project"`
+- `syncDeletes`: `false`
+
+Use `format: "openclaw"` for OpenClaw memory exports. Use `tier: "global"` for cross-project knowledge, or `tier: "session"` with `sessionId` for session-scoped imports.
+
+The SDK sends the canonical HTTP payload to `POST /memory/import`:
+
+```json
+{
+  "source": {
+    "kind": "path",
+    "path": "/srv/tandem/imports/company-docs"
+  },
+  "format": "directory",
+  "tier": "project",
+  "project_id": "company-brain-demo",
+  "session_id": null,
+  "sync_deletes": true
+}
+```
+
+The path must exist and be readable by the engine process. Project imports require `projectId`; session imports require `sessionId`.
+
 #### Context Memory (L0/L1/L2 layers)
 
 ```typescript
