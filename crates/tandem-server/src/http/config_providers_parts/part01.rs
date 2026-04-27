@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use tandem_providers::openai_codex_supported_model_rows;
 use tandem_wire::{
     WireProviderCatalog, WireProviderEntry, WireProviderModel, WireProviderModelLimit,
 };
@@ -1503,17 +1504,8 @@ fn provider_default_url(provider_id: &str) -> Option<&'static str> {
 }
 
 fn codex_starter_models() -> HashMap<String, WireProviderModel> {
-    let rows = [
-        ("gpt-5.4", "GPT-5.4"),
-        ("gpt-5.2-codex", "GPT-5.2-Codex"),
-        ("gpt-5.1-codex-max", "GPT-5.1-Codex-Max"),
-        ("gpt-5.4-mini", "GPT-5.4-Mini"),
-        ("gpt-5.3-codex", "GPT-5.3-Codex"),
-        ("gpt-5.3-codex-spark", "GPT-5.3-Codex-Spark"),
-        ("gpt-5.1-codex-mini", "GPT-5.1-Codex-Mini"),
-        ("gpt-5.4-pro", "GPT-5.4-Pro"),
-    ];
-    rows.into_iter()
+    openai_codex_supported_model_rows()
+        .iter()
         .map(|(id, name)| {
             (
                 id.to_string(),
@@ -1760,6 +1752,43 @@ async fn fetch_openai_compatible_models(
     })
 }
 
+async fn fetch_openai_codex_models(
+    cfg: &Value,
+    runtime_auth: &HashMap<String, String>,
+    persisted_auth: &HashMap<String, String>,
+) -> Result<HashMap<String, WireProviderModel>, String> {
+    let Some(api_key) =
+        provider_config_api_key(cfg, OPENAI_CODEX_PROVIDER_ID, runtime_auth, persisted_auth)
+    else {
+        return Err(
+            "OpenAI Codex requires a connected account before live model discovery is available."
+                .to_string(),
+        );
+    };
+    let base_url = provider_base_url(cfg, OPENAI_CODEX_PROVIDER_ID)
+        .unwrap_or_else(|| OPENAI_CODEX_API_BASE_URL.to_string());
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(api_key)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch OpenAI Codex models: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "OpenAI Codex model catalog request failed with status {}",
+            resp.status()
+        ));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|err| format!("Failed to decode OpenAI Codex models: {err}"))?;
+    parse_openai_compatible_model_payload(&body)
+        .ok_or_else(|| "OpenAI Codex returned an empty or invalid model catalog.".to_string())
+}
+
 fn normalize_cohere_catalog_base(input: &str) -> String {
     let mut base = input.trim().trim_end_matches('/').to_string();
     for suffix in ["/v1", "/v2", "/models"] {
@@ -1897,9 +1926,19 @@ async fn fetch_remote_provider_models(
     persisted_auth: &HashMap<String, String>,
 ) -> ProviderCatalogFetchResult {
     match provider_id {
-        "openai-codex" => ProviderCatalogFetchResult::Static {
-            models: codex_starter_models(),
-        },
+        "openai-codex" => {
+            match fetch_openai_codex_models(cfg, runtime_auth, persisted_auth).await {
+                Ok(models) => ProviderCatalogFetchResult::Remote { models },
+                Err(message) => {
+                    tracing::debug!(
+                        "openai-codex catalog discovery fell back to static: {message}"
+                    );
+                    ProviderCatalogFetchResult::Static {
+                        models: codex_starter_models(),
+                    }
+                }
+            }
+        }
         "openrouter" => match fetch_openrouter_models(cfg, runtime_auth, persisted_auth).await {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {

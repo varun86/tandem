@@ -594,6 +594,7 @@ mod tests {
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>();
+        assert!(ids.contains(&"gpt-5.5"));
         assert!(ids.contains(&"gpt-5.4"));
         assert!(ids.contains(&"gpt-5.2-codex"));
         assert!(ids.contains(&"gpt-5.1-codex-max"));

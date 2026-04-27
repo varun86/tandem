@@ -31,6 +31,12 @@ Files is also promoted into the primary navigation before Memory, because it is 
 
 The Memory page now defaults to a governed Knowledge view instead of showing every runtime record as one flat feed. Conversation-derived records such as `user_message`, `assistant_final`, and channel message memories are still available under Runtime/All filters, but they no longer make the default knowledge surface look like a channel transcript.
 
+### OpenAI Codex model discovery can refresh from the connected account backend
+
+The `openai-codex` provider was using a baked model list in two different places: the runtime provider catalog in `tandem-providers` and the settings/provider HTTP catalog in `tandem-server`. That meant new Codex models could be missing from Settings even when the connected Codex account could use them.
+
+The two static lists are now collapsed into one shared starter catalog, and that starter catalog includes `gpt-5.5`. More importantly, when a Codex auth token is available, the provider catalog now tries live discovery against the Codex account backend before falling back to the static list. Connected installs can therefore pick up backend-published Codex models without waiting for Tandem to ship another baked-list update, while disconnected installs still show the known starter models.
+
 ### npm upgrades now replace stale engine binaries
 
 The `@frumu/tandem` npm postinstall script no longer skips native binary installation just because `bin/native/tandem-engine` already exists. That old existence check caused package/binary mismatches during global npm upgrades: for example, upgrading the npm package to `0.4.39` could leave a previous `0.4.19` `tandem-engine` binary in place, so every start continued to report an available update.

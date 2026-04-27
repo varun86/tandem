@@ -405,8 +405,9 @@ struct OpenAIResponsesProvider {
     client: Client,
 }
 
-fn codex_supported_models(context_window: usize) -> Vec<ModelInfo> {
-    let rows = [
+pub fn openai_codex_supported_model_rows() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("gpt-5.5", "GPT-5.5"),
         ("gpt-5.4", "GPT-5.4"),
         ("gpt-5.2-codex", "GPT-5.2-Codex"),
         ("gpt-5.1-codex-max", "GPT-5.1-Codex-Max"),
@@ -415,8 +416,12 @@ fn codex_supported_models(context_window: usize) -> Vec<ModelInfo> {
         ("gpt-5.3-codex-spark", "GPT-5.3-Codex-Spark"),
         ("gpt-5.1-codex-mini", "GPT-5.1-Codex-Mini"),
         ("gpt-5.4-pro", "GPT-5.4-Pro"),
-    ];
-    rows.into_iter()
+    ]
+}
+
+fn codex_supported_models(context_window: usize) -> Vec<ModelInfo> {
+    openai_codex_supported_model_rows()
+        .iter()
         .map(|(id, display_name)| ModelInfo {
             id: id.to_string(),
             provider_id: "openai-codex".to_string(),
