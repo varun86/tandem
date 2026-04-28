@@ -1,4 +1,4 @@
-import { formatJson } from "../../pages/ui";
+import { DeferredJson } from "./LazyJson";
 import { normalizeManagedFilesExplorerPath } from "../files/explorerHandoff";
 
 type WorkflowArtifactEntry = {
@@ -69,9 +69,11 @@ export function WorkflowArtifactsPanel({
                   ))}
                 </div>
               ) : null}
-              <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
-                {formatJson(entry.artifact)}
-              </pre>
+              <DeferredJson
+                value={entry.artifact}
+                open={selectedArtifactKey === entry.key}
+                className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]"
+              />
             </details>
           ))}
         </div>

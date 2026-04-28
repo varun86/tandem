@@ -11,7 +11,8 @@ import {
   StatusPulse,
   Toolbar,
 } from "../ui/index.tsx";
-import { EmptyState, formatJson } from "./ui";
+import { EmptyState } from "./ui";
+import { LazyJson } from "../features/automations/LazyJson";
 import { formatCompactNumber, formatUsd } from "../lib/format";
 import type { AppPageProps } from "./pageTypes";
 
@@ -596,12 +597,13 @@ export function DashboardPage(props: AppPageProps) {
                   : 0}
               </div>
             </div>
-            <pre className="tcp-code">
-              {formatJson({
+            <LazyJson
+              value={{
                 run: workflowContextDetail.data?.run || null,
                 blackboard: workflowContextBlackboard.data?.blackboard || null,
-              })}
-            </pre>
+              }}
+              label="Show run + blackboard"
+            />
           </div>
         ) : null}
       </DetailDrawer>

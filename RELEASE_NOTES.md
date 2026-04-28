@@ -4,7 +4,15 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.45 (Released 2026-04-28)
 
-This release makes Bug Monitor usable as an operator-facing issue reporter and upgrades workflow failure triage so Tandem can turn terminal automation failures into actionable, GitHub-ready reports instead of generic crash notes.
+This release makes Bug Monitor usable as an operator-facing issue reporter, upgrades workflow failure triage, and significantly improves control-panel rendering performance on data-heavy pages.
+
+### Control-panel rendering performance
+
+Pages that display large JSON payloads — Run Debugger, Scope Inspector, Orchestrator task artifacts, Feed event details, Dashboard workflow context drawer, Coding Workflows blackboard panel, and Packs manifest/step config — were serializing entire objects on every React render cycle, causing visible lag during live runs and on pages with many items.
+
+Serialization is now deferred: payloads are hidden behind `<details>` toggles rendered by a new `LazyJson` component that only calls `JSON.stringify` when the user opens the toggle. Per-row entries inside existing `<details>` elements (receipt timeline, run history events, telemetry events, artifact JSON) use a companion `DeferredJson` component that skips serialization until the parent section is open.
+
+The blackboard query — the single heaviest fetch at 1+ MB every 5 seconds — no longer polls on a fixed interval. It is now invalidated on-demand from SSE events when the blackboard actually changes. Other context queries drop from a 5-second to a 30-second safety-net interval. SSE state updates are batched via `requestAnimationFrame` so high-frequency live-log events coalesce into one React state update per animation frame instead of one per event.
 
 ### Bug Monitor is now a real control-panel surface
 

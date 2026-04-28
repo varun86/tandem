@@ -10,13 +10,7 @@ function safeString(value: unknown) {
   return String(value || "").trim();
 }
 
-function formatJson(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "{}";
-  }
-}
+import { LazyJson } from "../features/automations/LazyJson";
 
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
@@ -270,13 +264,15 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
                   )}
                 </Badge>
               </div>
-              <pre className="max-h-64 overflow-auto rounded-xl bg-black/30 p-3 text-xs text-white/80">
-                {formatJson(
+              <LazyJson
+                value={
                   previewResult?.plan_package_validation ||
-                    previewResult?.import_validation ||
-                    previewResult
-                )}
-              </pre>
+                  previewResult?.import_validation ||
+                  previewResult
+                }
+                label="Show validation details"
+                preClassName="max-h-64 overflow-auto rounded-xl bg-black/30 p-3 text-xs text-white/80"
+              />
             </div>
           ) : null}
         </div>
@@ -364,9 +360,11 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
                   </div>
                   <div>
                     <div className="tcp-subtle text-xs">Import validation</div>
-                    <pre className="max-h-40 overflow-auto rounded-xl bg-black/20 p-3 text-xs text-white/75">
-                      {formatJson(selectedSession.import_validation || {})}
-                    </pre>
+                    <LazyJson
+                      value={selectedSession.import_validation || {}}
+                      label="Show import validation"
+                      preClassName="max-h-40 overflow-auto rounded-xl bg-black/20 p-3 text-xs text-white/75"
+                    />
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">

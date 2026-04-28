@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { formatJson } from "../../pages/ui";
+import { LazyJson } from "./LazyJson";
 
 type WorkflowLiveSessionLogPanelProps = {
   selectedSessionId: string;
@@ -126,20 +126,20 @@ export function WorkflowLiveSessionLogPanel({
               )}
               {entry.kind === "message" &&
               entry.parts.some((part: any) => String(part?.type || "") === "tool") ? (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-slate-400">Tool payloads</summary>
-                  <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                    {formatJson(entry.parts)}
-                  </pre>
-                </details>
+                <LazyJson
+                  value={entry.parts}
+                  label="Tool payloads"
+                  className="mt-2"
+                  preClassName="tcp-code mt-2 max-h-40 overflow-auto text-[11px]"
+                />
               ) : null}
               {entry.kind === "event" ? (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-slate-400">Raw event</summary>
-                  <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                    {formatJson(entry.raw)}
-                  </pre>
-                </details>
+                <LazyJson
+                  value={entry.raw}
+                  label="Raw event"
+                  className="mt-2"
+                  preClassName="tcp-code mt-2 max-h-40 overflow-auto text-[11px]"
+                />
               ) : null}
             </div>
           ))

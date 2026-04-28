@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion } from "motion/react";
 import { TaskBoard } from "../orchestration/TaskBoard";
 import { WorkflowTaskActionsPanel } from "./WorkflowTaskActionsPanel";
@@ -10,9 +11,53 @@ import { WorkflowRequiredActionsPanel } from "./WorkflowRequiredActionsPanel";
 import { WorkflowRunTelemetryPanel } from "./WorkflowRunTelemetryPanel";
 import { WorkflowRunSummaryPanel } from "./WorkflowRunSummaryPanel";
 import { WorkflowTaskSignalsPanel } from "./WorkflowTaskSignalsPanel";
-import { formatJson } from "../../pages/ui";
+import { LazyJson, DeferredJson } from "./LazyJson";
 import { formatCompactNumber, formatUsd } from "../../lib/format";
 import { normalizeManagedFilesExplorerPath, openFilesExplorer } from "../files/explorerHandoff";
+
+function RunHistoryEventDetails({
+  event,
+  index,
+  formatTimestampLabel,
+}: {
+  event: any;
+  index: number;
+  formatTimestampLabel: (value: number) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      key={`${String(event?.id || event?.event || event?.type || "history")}-${index}`}
+      className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-slate-200">
+            {String(event?.type || event?.event || event?.status || "history")}
+          </span>
+          <span className="tcp-subtle text-[11px]">
+            {formatTimestampLabel(event?.ts_ms || event?.tsMs || event?.at || event?.timestamp_ms)}
+          </span>
+        </div>
+        <div className="tcp-subtle mt-1 text-xs">
+          {String(
+            event?.detail ||
+              event?.reason ||
+              event?.family ||
+              event?.status ||
+              "No summary available."
+          )}
+        </div>
+      </summary>
+      <DeferredJson
+        value={event}
+        open={open}
+        className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]"
+      />
+    </details>
+  );
+}
 
 export function RunDebuggerDialog({ state, actions, helpers }: any) {
   const {
@@ -547,19 +592,27 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                             </div>
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 sm:col-span-2">
                               <div className="tcp-subtle">validation basis</div>
-                              <div className="mt-1 whitespace-pre-wrap break-words font-medium text-slate-100">
-                                {selectedBoardTaskValidationBasis
-                                  ? formatJson(selectedBoardTaskValidationBasis)
-                                  : "n/a"}
-                              </div>
+                              {selectedBoardTaskValidationBasis ? (
+                                <LazyJson
+                                  value={selectedBoardTaskValidationBasis}
+                                  className="mt-1"
+                                  preClassName="tcp-code mt-1 max-h-40 overflow-auto text-[11px]"
+                                />
+                              ) : (
+                                <div className="mt-1 font-medium text-slate-100">n/a</div>
+                              )}
                             </div>
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 sm:col-span-2">
                               <div className="tcp-subtle">receipt ledger</div>
-                              <div className="mt-1 whitespace-pre-wrap break-words font-medium text-slate-100">
-                                {selectedBoardTaskReceiptLedger
-                                  ? formatJson(selectedBoardTaskReceiptLedger)
-                                  : "n/a"}
-                              </div>
+                              {selectedBoardTaskReceiptLedger ? (
+                                <LazyJson
+                                  value={selectedBoardTaskReceiptLedger}
+                                  className="mt-1"
+                                  preClassName="tcp-code mt-1 max-h-40 overflow-auto text-[11px]"
+                                />
+                              ) : (
+                                <div className="mt-1 font-medium text-slate-100">n/a</div>
+                              )}
                             </div>
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
                               <div className="tcp-subtle">artifact candidates</div>
@@ -653,14 +706,12 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                                     <div className="mt-1 text-slate-300">
                                       {String(receipt?.detail || "").trim() || "receipt"}
                                     </div>
-                                    <details className="mt-2">
-                                      <summary className="cursor-pointer text-xs text-slate-400">
-                                        raw record
-                                      </summary>
-                                      <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                                        {formatJson(receipt?.raw || receipt)}
-                                      </pre>
-                                    </details>
+                                    <LazyJson
+                                      value={receipt?.raw || receipt}
+                                      label="raw record"
+                                      className="mt-2"
+                                      preClassName="tcp-code mt-2 max-h-40 overflow-auto text-[11px]"
+                                    />
                                   </div>
                                 )
                               )}
@@ -1124,35 +1175,12 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                   {runHistoryEvents.length ? (
                     <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-[14rem]">
                       {runHistoryEvents.map((event: any, index: number) => (
-                        <details
+                        <RunHistoryEventDetails
                           key={`${String(event?.id || event?.event || event?.type || "history")}-${index}`}
-                          className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
-                        >
-                          <summary className="cursor-pointer list-none">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-medium text-slate-200">
-                                {String(event?.type || event?.event || event?.status || "history")}
-                              </span>
-                              <span className="tcp-subtle text-[11px]">
-                                {formatTimestampLabel(
-                                  event?.ts_ms || event?.tsMs || event?.at || event?.timestamp_ms
-                                )}
-                              </span>
-                            </div>
-                            <div className="tcp-subtle mt-1 text-xs">
-                              {String(
-                                event?.detail ||
-                                  event?.reason ||
-                                  event?.family ||
-                                  event?.status ||
-                                  "No summary available."
-                              )}
-                            </div>
-                          </summary>
-                          <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
-                            {formatJson(event)}
-                          </pre>
-                        </details>
+                          event={event}
+                          index={index}
+                          formatTimestampLabel={formatTimestampLabel}
+                        />
                       ))}
                     </div>
                   ) : (
@@ -1171,13 +1199,15 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                       Copy all debug context
                     </button>
                   </div>
-                  <pre className="tcp-code overflow-auto sm:max-h-[18rem]">
-                    {formatJson({
+                  <LazyJson
+                    value={{
                       run: selectedRun,
                       contextRun: workflowContextRun,
                       blackboard: workflowBlackboard,
-                    })}
-                  </pre>
+                    }}
+                    label="Show raw run payload"
+                    preClassName="tcp-code overflow-auto sm:max-h-[18rem]"
+                  />
                 </div>
               </div>
             </div>

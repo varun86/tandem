@@ -16,13 +16,7 @@ function safeString(value: unknown) {
   return String(value || "").trim();
 }
 
-function formatJson(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "{}";
-  }
-}
+import { LazyJson } from "../features/automations/LazyJson";
 
 function statusTone(enabled: boolean) {
   return enabled ? "ok" : "ghost";
@@ -451,12 +445,12 @@ export function PacksPage({ api, toast }: AppPageProps) {
                       <EmptyState text="This pack does not declare workflow entrypoints." />
                     )}
                   </div>
-                  <details className="tcp-list-item">
-                    <summary className="cursor-pointer font-medium">Manifest</summary>
-                    <pre className="tcp-subtle mt-3 overflow-x-auto text-xs">
-                      {formatJson(selectedPackPayload?.manifest || {})}
-                    </pre>
-                  </details>
+                  <LazyJson
+                    value={selectedPackPayload?.manifest || {}}
+                    label="Manifest"
+                    className="tcp-list-item"
+                    preClassName="tcp-subtle mt-3 overflow-x-auto text-xs"
+                  />
                 </div>
               ) : (
                 <EmptyState text="Select an installed pack to inspect workflow extensions." />
@@ -504,9 +498,11 @@ export function PacksPage({ api, toast }: AppPageProps) {
                         </div>
                         <div className="font-medium">{safeString(step?.action || "unknown")}</div>
                         {step?.with ? (
-                          <pre className="tcp-subtle mt-2 overflow-x-auto text-xs">
-                            {formatJson(step.with)}
-                          </pre>
+                          <LazyJson
+                            value={step.with}
+                            label="Show step config"
+                            preClassName="tcp-subtle mt-2 overflow-x-auto text-xs"
+                          />
                         ) : null}
                       </div>
                     ))
@@ -691,9 +687,11 @@ export function PacksPage({ api, toast }: AppPageProps) {
                   >
                     <div className="font-medium">{safeString(action?.action || action)}</div>
                     {action?.with ? (
-                      <pre className="tcp-subtle mt-2 overflow-x-auto text-xs">
-                        {formatJson(action.with)}
-                      </pre>
+                      <LazyJson
+                        value={action.with}
+                        label="Show action config"
+                        preClassName="tcp-subtle mt-2 overflow-x-auto text-xs"
+                      />
                     ) : null}
                   </div>
                 ))

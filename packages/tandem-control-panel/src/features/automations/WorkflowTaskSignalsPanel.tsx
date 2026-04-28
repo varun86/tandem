@@ -1,4 +1,5 @@
-import { formatJson } from "../../pages/ui";
+import { useState } from "react";
+import { LazyJson, DeferredJson } from "./LazyJson";
 import { normalizeManagedFilesExplorerPath } from "../files/explorerHandoff";
 
 type WorkflowTaskSignalsPanelProps = {
@@ -14,6 +15,33 @@ type WorkflowTaskSignalsPanelProps = {
   selectedBoardTaskReceiptTimeline: any[];
   onOpenPath?: (path: string) => void;
 };
+
+function ReceiptEntry({ entry, index }: { entry: any; index: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="rounded-md border border-slate-700/60 bg-slate-950/20 px-2 py-1.5"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-slate-200">
+            {String(entry?.eventType || entry?.event_type || entry?.receiptKind || "receipt")}
+          </span>
+          <span className="tcp-subtle text-[10px]">seq {String(entry?.seq || index + 1)}</span>
+        </div>
+        <div className="tcp-subtle mt-0.5 text-[11px]">
+          {String(entry?.detail || entry?.summary || "").trim() || "No summary available."}
+        </div>
+      </summary>
+      <DeferredJson
+        value={entry?.raw || entry}
+        open={open}
+        className="tcp-code mt-2 max-h-32 overflow-auto text-[10px]"
+      />
+    </details>
+  );
+}
 
 export function WorkflowTaskSignalsPanel({
   selectedBoardTask,
@@ -227,44 +255,23 @@ export function WorkflowTaskSignalsPanel({
             </div>
           </div>
           {selectedBoardTaskValidationBasis ? (
-            <details className="mt-2 rounded-md border border-slate-700/60 bg-black/10 p-2">
-              <summary className="cursor-pointer text-[11px] text-slate-400">
-                Validation basis
-              </summary>
-              <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                {formatJson(selectedBoardTaskValidationBasis)}
-              </pre>
-            </details>
+            <LazyJson
+              value={selectedBoardTaskValidationBasis}
+              label="Validation basis"
+              className="mt-2 rounded-md border border-slate-700/60 bg-black/10 p-2"
+              preClassName="tcp-code mt-2 max-h-40 overflow-auto text-[11px]"
+            />
           ) : null}
           <div className="mt-3">
             <div className="tcp-subtle mb-1">receipt timeline</div>
             {selectedBoardTaskReceiptTimeline.length ? (
               <div className="grid max-h-56 gap-1 overflow-auto pr-1">
                 {selectedBoardTaskReceiptTimeline.slice(-12).map((entry: any, index: number) => (
-                  <details
+                  <ReceiptEntry
                     key={`${String(entry?.seq || index)}:${String(entry?.eventType || entry?.event_type || "receipt")}`}
-                    className="rounded-md border border-slate-700/60 bg-slate-950/20 px-2 py-1.5"
-                  >
-                    <summary className="cursor-pointer list-none">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-medium text-slate-200">
-                          {String(
-                            entry?.eventType || entry?.event_type || entry?.receiptKind || "receipt"
-                          )}
-                        </span>
-                        <span className="tcp-subtle text-[10px]">
-                          seq {String(entry?.seq || index + 1)}
-                        </span>
-                      </div>
-                      <div className="tcp-subtle mt-0.5 text-[11px]">
-                        {String(entry?.detail || entry?.summary || "").trim() ||
-                          "No summary available."}
-                      </div>
-                    </summary>
-                    <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[10px]">
-                      {formatJson(entry?.raw || entry)}
-                    </pre>
-                  </details>
+                    entry={entry}
+                    index={index}
+                  />
                 ))}
               </div>
             ) : (

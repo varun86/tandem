@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderIcons } from "../../app/icons.js";
 import { api } from "../../lib/api";
 import {
@@ -44,6 +44,7 @@ import {
 } from "../orchestration/workflowStability";
 import { useEngineStream } from "../stream/useEngineStream";
 import { MyAutomationsContent } from "./MyAutomationsContent";
+import { useBufferedAppender } from "./useBufferedAppender";
 import { useSelectedRunLifecycle } from "./useSelectedRunLifecycle";
 import { buildPlannerProviderOptions } from "../planner/plannerShared";
 
@@ -351,6 +352,14 @@ export function MyAutomationsContainer({
         ? 5000
         : false,
   });
+  // Polling intervals are intentionally slow safety nets — the live data path
+  // is the SSE event stream, which calls queueContextInvalidation() to refresh
+  // these queries on demand. The blackboard payload in particular can be 1+ MB,
+  // so we no longer poll it at all and rely entirely on event-driven refetch.
+  const contextRunPollMs =
+    selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+      ? 30000
+      : false;
   const workflowContextRunQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId],
     enabled: runInspectorActive && !!selectedContextRunId,
@@ -358,10 +367,7 @@ export function MyAutomationsContainer({
       api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}`).catch(() => ({
         run: null,
       })),
-    refetchInterval:
-      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
-        ? 5000
-        : false,
+    refetchInterval: contextRunPollMs,
   });
   const workflowContextBlackboardQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "blackboard"],
@@ -372,10 +378,7 @@ export function MyAutomationsContainer({
           blackboard: null,
         })
       ),
-    refetchInterval:
-      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
-        ? 5000
-        : false,
+    refetchInterval: false,
   });
   const workflowContextEventsQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "events"],
@@ -384,10 +387,7 @@ export function MyAutomationsContainer({
       api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/events`).catch(
         () => ({ events: [] })
       ),
-    refetchInterval:
-      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
-        ? 5000
-        : false,
+    refetchInterval: contextRunPollMs,
   });
   const workflowContextPatchesQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "patches"],
@@ -396,10 +396,7 @@ export function MyAutomationsContainer({
       api(
         `/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/blackboard/patches`
       ).catch(() => ({ patches: [] })),
-    refetchInterval:
-      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
-        ? 5000
-        : false,
+    refetchInterval: contextRunPollMs,
   });
   const packsQuery = useQuery({
     queryKey: ["automations", "packs"],
@@ -1867,6 +1864,92 @@ export function MyAutomationsContainer({
     );
   }, [selectedRunId, workflowProjection.currentTaskId, workflowProjection.tasks]);
 
+  const appendRunEvent = useBufferedAppender(setRunEvents, {
+    cap: 300,
+    getId: (row) => row.id,
+  });
+  const appendSessionEvent = useBufferedAppender(setSessionEvents, {
+    cap: 500,
+    getId: (row) => row.id,
+  });
+
+  // Coalesced SSE-driven invalidation for context queries — replaces aggressive
+  // 5s polling. We mark these queries dirty when blackboard/context events
+  // arrive and let React Query refetch on its next idle tick.
+  const contextInvalidationRafRef = useRef<number | null>(null);
+  const pendingContextInvalidations = useRef<{
+    run: boolean;
+    blackboard: boolean;
+    events: boolean;
+    patches: boolean;
+  }>({ run: false, blackboard: false, events: false, patches: false });
+  const flushContextInvalidationsRef = useRef<() => void>(() => {});
+  flushContextInvalidationsRef.current = () => {
+    contextInvalidationRafRef.current = null;
+    const flags = pendingContextInvalidations.current;
+    pendingContextInvalidations.current = {
+      run: false,
+      blackboard: false,
+      events: false,
+      patches: false,
+    };
+    if (!selectedContextRunId) return;
+    const tasks: Array<Promise<unknown>> = [];
+    if (flags.run) {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: ["automations", "run", "context", selectedContextRunId],
+        })
+      );
+    }
+    if (flags.blackboard) {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: ["automations", "run", "context", selectedContextRunId, "blackboard"],
+        })
+      );
+    }
+    if (flags.events) {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: ["automations", "run", "context", selectedContextRunId, "events"],
+        })
+      );
+    }
+    if (flags.patches) {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: ["automations", "run", "context", selectedContextRunId, "patches"],
+        })
+      );
+    }
+    if (tasks.length) void Promise.all(tasks);
+  };
+  const queueContextInvalidation = useCallback(
+    (kinds: Partial<{ run: boolean; blackboard: boolean; events: boolean; patches: boolean }>) => {
+      const pending = pendingContextInvalidations.current;
+      if (kinds.run) pending.run = true;
+      if (kinds.blackboard) pending.blackboard = true;
+      if (kinds.events) pending.events = true;
+      if (kinds.patches) pending.patches = true;
+      if (contextInvalidationRafRef.current == null) {
+        contextInvalidationRafRef.current = requestAnimationFrame(() =>
+          flushContextInvalidationsRef.current()
+        );
+      }
+    },
+    []
+  );
+  useEffect(
+    () => () => {
+      if (contextInvalidationRafRef.current != null) {
+        cancelAnimationFrame(contextInvalidationRafRef.current);
+        contextInvalidationRafRef.current = null;
+      }
+    },
+    []
+  );
+
   useEngineStream(
     selectedRunId
       ? isWorkflowRun
@@ -1882,10 +1965,16 @@ export function MyAutomationsContainer({
         const type = workflowEventType(payload);
         const at = workflowEventAt(payload);
         const id = `automations:${runId}:${type}:${at}:${Math.random().toString(16).slice(2, 8)}`;
-        setRunEvents((prev) => [
-          ...prev.slice(-299),
-          { id, source: "automations", at, event: payload },
-        ]);
+        appendRunEvent({ id, source: "automations", at, event: payload });
+        if (type) {
+          const kind = String(type).toLowerCase();
+          if (kind.includes("artifact") || kind.includes("blackboard") || kind.includes("patch")) {
+            queueContextInvalidation({ blackboard: true, patches: true });
+          }
+          if (kind.includes("task") || kind.includes("node") || kind.endsWith(".updated")) {
+            queueContextInvalidation({ run: true });
+          }
+        }
       } catch {
         return;
       }
@@ -1905,10 +1994,30 @@ export function MyAutomationsContainer({
           timestampOrNull(
             payload?.created_at_ms || payload?.timestamp_ms || payload?.timestampMs
           ) || Date.now();
-        setRunEvents((prev) => {
-          if (prev.some((row) => row.id === id)) return prev;
-          return [...prev.slice(-399), { id, source: "context", at, event: payload }];
-        });
+        appendRunEvent({ id, source: "context", at, event: payload });
+        const kind = String(payload?.event_type || "").toLowerCase();
+        // Context-stream events drive blackboard/patch invalidation. Always
+        // refresh the events query (it's small) and conditionally refresh the
+        // heavier blackboard payload only when something blackboard-shaped fires.
+        const fields: Partial<{
+          run: boolean;
+          blackboard: boolean;
+          events: boolean;
+          patches: boolean;
+        }> = { events: true };
+        if (
+          kind.includes("blackboard") ||
+          kind.includes("patch") ||
+          kind.includes("artifact") ||
+          kind.includes("task")
+        ) {
+          fields.blackboard = true;
+          fields.patches = true;
+        }
+        if (kind.includes("run") || kind.includes("status") || kind.includes("phase")) {
+          fields.run = true;
+        }
+        queueContextInvalidation(fields);
       } catch {
         return;
       }
@@ -1934,10 +2043,7 @@ export function MyAutomationsContainer({
             payload?.properties?.part?.id || payload?.properties?.seq || payload?.timestamp_ms || at
           ),
         ].join(":");
-        setSessionEvents((prev) => {
-          if (prev.some((row) => row.id === id)) return prev;
-          return [...prev.slice(-499), { id, at, event: payload }];
-        });
+        appendSessionEvent({ id, at, event: payload });
       } catch {
         return;
       }
@@ -1955,7 +2061,7 @@ export function MyAutomationsContainer({
         if (!type || type === "server.connected" || type === "engine.lifecycle.ready") return;
         const at = workflowEventAt(payload);
         const id = `global:${runId}:${type}:${at}:${Math.random().toString(16).slice(2, 8)}`;
-        setRunEvents((prev) => [...prev.slice(-299), { id, source: "global", at, event: payload }]);
+        appendRunEvent({ id, source: "global", at, event: payload });
       } catch {
         return;
       }

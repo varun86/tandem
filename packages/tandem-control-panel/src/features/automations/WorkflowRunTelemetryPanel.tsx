@@ -1,4 +1,36 @@
-import { formatJson } from "../../pages/ui";
+import { useState } from "react";
+import { DeferredJson } from "./LazyJson";
+
+function TelemetryEventDetails({
+  item,
+  formatTimestampLabel,
+}: {
+  item: any;
+  formatTimestampLabel: (value: number) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="rounded-lg border border-slate-700/40 bg-slate-900/30 p-2"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-slate-200">{item.label}</span>
+          <span className="tcp-subtle text-[11px]">
+            {formatTimestampLabel(item.at)} · {item.source}
+          </span>
+        </div>
+        <div className="tcp-subtle mt-1 text-xs">{item.detail}</div>
+      </summary>
+      <DeferredJson
+        value={item.raw}
+        open={open}
+        className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]"
+      />
+    </details>
+  );
+}
 
 type WorkflowRunTelemetryPanelProps = {
   selectedLogSource: "all" | "automations" | "context" | "global";
@@ -72,23 +104,11 @@ export function WorkflowRunTelemetryPanel({
             .slice(-40)
             .reverse()
             .map((item) => (
-              <details
+              <TelemetryEventDetails
                 key={item.id}
-                className="rounded-lg border border-slate-700/40 bg-slate-900/30 p-2"
-              >
-                <summary className="cursor-pointer list-none">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-slate-200">{item.label}</span>
-                    <span className="tcp-subtle text-[11px]">
-                      {formatTimestampLabel(item.at)} · {item.source}
-                    </span>
-                  </div>
-                  <div className="tcp-subtle mt-1 text-xs">{item.detail}</div>
-                </summary>
-                <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                  {formatJson(item.raw)}
-                </pre>
-              </details>
+                item={item}
+                formatTimestampLabel={formatTimestampLabel}
+              />
             ))}
         </div>
       ) : (

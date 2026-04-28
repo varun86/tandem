@@ -15,6 +15,7 @@ import {
   useOrchestratorEvents,
 } from "../features/orchestrator/useOrchestratorEvents";
 import { EmptyState } from "./ui";
+import { LazyJson } from "../features/automations/LazyJson";
 import type { AppPageProps } from "./pageTypes";
 
 const DEFAULT_BUDGET: BudgetUsage = {
@@ -1680,9 +1681,11 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                             <div className="mt-1 text-rose-200">{artifact.detail}</div>
                           ) : null}
                           {artifact.output ? (
-                            <pre className="tcp-code mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words">
-                              {JSON.stringify(artifact.output, null, 2)}
-                            </pre>
+                            <LazyJson
+                              value={artifact.output}
+                              label="Show output"
+                              preClassName="tcp-code mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words"
+                            />
                           ) : null}
                         </div>
                       ))}

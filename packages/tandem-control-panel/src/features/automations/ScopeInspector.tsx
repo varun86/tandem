@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatJson } from "../../pages/ui";
+import { LazyJson } from "./LazyJson";
 import { api } from "../../lib/api";
 import { ConnectorSuggestionPanel } from "./ConnectorSuggestionPanel";
 import { PlanReplayComparePanel } from "./PlanReplayComparePanel";
@@ -1452,17 +1453,21 @@ export function ScopeInspector({
                     <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                       entitled connectors
                     </div>
-                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                      {formatJson(envelope?.entitled_connectors || [])}
-                    </pre>
+                    <LazyJson
+                      value={envelope?.entitled_connectors || []}
+                      className="mt-1"
+                      preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                    />
                   </div>
                   <div>
                     <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                       denied connectors
                     </div>
-                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                      {formatJson(envelope?.denied_connectors || [])}
-                    </pre>
+                    <LazyJson
+                      value={envelope?.denied_connectors || []}
+                      className="mt-1"
+                      preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                    />
                   </div>
                 </div>
               </div>
@@ -1987,17 +1992,21 @@ export function ScopeInspector({
                     <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                       visible context objects
                     </div>
-                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                      {formatJson(partition?.visible_context_objects || [])}
-                    </pre>
+                    <LazyJson
+                      value={partition?.visible_context_objects || []}
+                      className="mt-1"
+                      preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                    />
                   </div>
                   <div>
                     <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                       step context bindings
                     </div>
-                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                      {formatJson(partition?.step_context_bindings || [])}
-                    </pre>
+                    <LazyJson
+                      value={partition?.step_context_bindings || []}
+                      className="mt-1"
+                      preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                    />
                   </div>
                 </div>
               </div>
@@ -2052,9 +2061,11 @@ export function ScopeInspector({
                   <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                     step context bindings
                   </div>
-                  <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                    {formatJson(routine?.step_context_bindings || [])}
-                  </pre>
+                  <LazyJson
+                    value={routine?.step_context_bindings || []}
+                    className="mt-1"
+                    preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                  />
                 </div>
               </div>
             ))}
@@ -2377,9 +2388,11 @@ export function ScopeInspector({
                                     <div className="tcp-subtle text-[11px] uppercase tracking-wide">
                                       actor metadata
                                     </div>
-                                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
-                                      {formatJson(binding.actor_metadata)}
-                                    </pre>
+                                    <LazyJson
+                                      value={binding.actor_metadata}
+                                      className="mt-1"
+                                      preClassName="tcp-code mt-1 max-h-28 overflow-auto text-[11px]"
+                                    />
                                   </div>
                                 ) : null}
                               </div>
@@ -2864,12 +2877,12 @@ export function ScopeInspector({
               )}
             </div>
           </div>
-          <details className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3">
-            <summary className="cursor-pointer text-slate-200">Raw validation payload</summary>
-            <pre className="tcp-code mt-2 max-h-64 overflow-auto text-[11px]">
-              {formatJson(validationReport || planValidationState)}
-            </pre>
-          </details>
+          <LazyJson
+            value={validationReport || planValidationState}
+            label="Raw validation payload"
+            className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3"
+            preClassName="tcp-code mt-2 max-h-64 overflow-auto text-[11px]"
+          />
         </div>
       ) : null}
 

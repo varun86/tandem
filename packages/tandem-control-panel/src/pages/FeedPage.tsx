@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEngineStream } from "../features/stream/useEngineStream";
 import { api } from "../lib/api";
 import { AnimatedPage, DetailDrawer, FilterChip, PanelCard, Toolbar } from "../ui/index.tsx";
-import { EmptyState, formatJson } from "./ui";
+import { EmptyState } from "./ui";
+import { LazyJson } from "../features/automations/LazyJson";
 import type { AppPageProps } from "./pageTypes";
 
 function eventTypeOf(data: any) {
@@ -322,14 +323,15 @@ export function FeedPage({ client, toast, navigate }: AppPageProps) {
                 </div>
               </div>
             ) : null}
-            <pre className="tcp-code">{formatJson(selectedEvent.data)}</pre>
+            <LazyJson value={selectedEvent.data} label="Show raw event" />
             {selectedWorkflowContextRunId ? (
-              <pre className="tcp-code">
-                {formatJson({
+              <LazyJson
+                value={{
                   run: workflowContextDetail.data?.run || null,
                   blackboard: workflowContextBlackboard.data?.blackboard || null,
-                })}
-              </pre>
+                }}
+                label="Show run + blackboard"
+              />
             ) : null}
           </div>
         ) : null}

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.45] - Released 2026-04-28
 
+### Performance
+
+- **Lazy JSON rendering across the control panel**: Large JSON payloads throughout the control panel are now deferred behind `<details>` toggles and only serialized with `JSON.stringify` when actually opened. This eliminates the main source of render thrashing on data-heavy pages (Run Debugger, Scope Inspector, Orchestrator, Feed, Dashboard, Coding Workflows, Packs). Affected components: Run Debugger raw-run payload (entire run + context + blackboard), ScopeInspector credential-envelope and runtime-partition per-row arrays, WorkflowArtifactsPanel artifact JSON, WorkflowTaskSignalsPanel validation basis and receipt timeline, WorkflowLiveSessionLogPanel tool payloads and raw events, WorkflowRunTelemetryPanel event details, and page-level always-visible JSON in FeedPage, DashboardPage, CodingWorkflowsPage, OrchestratorPage, WorkflowsPage, and PacksPage.
+- **SSE event batching with RAF**: Live-logging SSE handlers in the automation run debugger now batch state updates using a `requestAnimationFrame` buffer instead of calling `setState` on every incoming event, reducing layout work during high-frequency live runs.
+- **Blackboard polling eliminated**: The 5-second `refetchInterval` on the workflow context blackboard query (the single heaviest poll — can be 1+ MB) has been replaced with event-driven invalidation triggered from the SSE stream. Other context queries (run, events, patches) drop from 5-second to 30-second safety-net intervals.
+
 ### Added
 
 - **Bug Monitor control-panel surface**: Added a real `#/bug-monitor` page for runtime failure triage. Operators can inspect readiness/status, refresh or recompute monitor state, pause/resume/debug the monitor, browse incidents/drafts/posts, replay incidents, create triage runs, approve/deny/recheck/publish drafts, and submit manual issue reports from one surface. The Bug Monitor route is now wired into hash routing and visible by default in ACA mode.

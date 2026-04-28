@@ -12,6 +12,7 @@ import {
   type PlannerProviderOption,
 } from "../features/planner/plannerShared";
 import type { AppPageProps } from "./pageTypes";
+import { LazyJson } from "../features/automations/LazyJson";
 
 type CodingTab = "overview" | "board" | "planning" | "manual" | "integrations";
 type TaskSourceType = "manual" | "kanban_board" | "github_project" | "local_backlog";
@@ -1464,9 +1465,11 @@ export function CodingWorkflowsPage({
 
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="mb-2 text-sm font-semibold">Blackboard</div>
-                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200">
-                          {JSON.stringify(blackboard || {}, null, 2)}
-                        </pre>
+                        <LazyJson
+                          value={blackboard || {}}
+                          label="Show blackboard"
+                          preClassName="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-200"
+                        />
                       </div>
                     </div>
                   )
