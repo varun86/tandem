@@ -1146,6 +1146,145 @@ fn validation_requires_declared_concrete_mcp_tools() {
 }
 
 #[test]
+fn validation_blocks_read_only_source_mutations_without_retry() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-read-only-source-mutation-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let source_rel_path = "packages/tandem-control-panel/src/app/store.js";
+    let source_path = workspace_root.join(source_rel_path);
+    std::fs::create_dir_all(source_path.parent().expect("source parent"))
+        .expect("create source parent");
+    std::fs::write(&source_path, "export const routes = [];\n").expect("write source file");
+
+    let mut snapshot = std::collections::BTreeMap::new();
+    snapshot.insert(
+        source_path.to_string_lossy().to_string(),
+        std::fs::read(&source_path).expect("snapshot source file"),
+    );
+
+    std::fs::write(&source_path, "export const routes = ['bug-monitor'];\n")
+        .expect("mutate source file");
+
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/read-control-panel-store.json"
+        }
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "completed",
+        "summary": "Read control panel store"
+    }))
+    .expect("serialize artifact");
+    let session = Session::new(Some("read only source mutation".to_string()), None);
+    let workspace_snapshot_before = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) =
+        super::logic::validate_automation_artifact_output_with_context(
+            &AutomationV2Spec {
+                automation_id: "validation".to_string(),
+                name: "validation".to_string(),
+                description: None,
+                status: crate::AutomationV2Status::Draft,
+                schedule: AutomationV2Schedule {
+                    schedule_type: crate::AutomationV2ScheduleType::Manual,
+                    cron_expression: None,
+                    interval_seconds: None,
+                    timezone: "UTC".to_string(),
+                    misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+                },
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+                agents: Vec::new(),
+                flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+                execution: crate::AutomationExecutionPolicy {
+                    max_parallel_agents: None,
+                    max_total_runtime_ms: None,
+                    max_total_tool_calls: None,
+                    max_total_tokens: None,
+                    max_total_cost_usd: None,
+                },
+                output_targets: Vec::new(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+                creator_id: "test".to_string(),
+                workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+                metadata: None,
+                next_fire_at_ms: None,
+                last_fired_at_ms: None,
+                scope_policy: None,
+                watch_conditions: Vec::new(),
+                handoff_config: None,
+            },
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            None,
+            "",
+            &json!({
+                "executed_tools": ["read"],
+                "requested_tools": ["read"],
+                "verified_output_materialized_by_current_attempt": true
+            }),
+            None,
+            Some((
+                ".tandem/artifacts/read-control-panel-store.json".to_string(),
+                artifact,
+            )),
+            &workspace_snapshot_before,
+            None,
+            Some(&snapshot),
+        );
+
+    assert!(accepted.is_none());
+    assert_eq!(validation["validation_outcome"], "blocked");
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("read_only_source_mutations")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("read-only source-of-truth mutation"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn validation_repair_state_uses_node_attempt_budget() {
+    let tool_telemetry = json!({
+        "node_attempt": 3,
+        "node_max_attempts": 3,
+        "tool_call_counts": {}
+    });
+
+    let (repair_attempt, repair_attempts_remaining, repair_exhausted) =
+        super::logic::infer_artifact_repair_state(
+            None,
+            false,
+            false,
+            Some("required output was not created in the current attempt"),
+            &tool_telemetry,
+            Some(5),
+        );
+
+    assert_eq!(repair_attempt, 2);
+    assert_eq!(repair_attempts_remaining, 0);
+    assert!(repair_exhausted);
+}
+
+#[test]
 fn assess_evidence_anchors_count_upstream_path_and_url_mentions() {
     let assessment = assess_artifact_candidate(
         &bare_node(),

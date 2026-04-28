@@ -1254,8 +1254,35 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let contract_requires_repair = !enforcement.retry_on_missing.is_empty()
         || has_required_tools
         || handoff_only_structured_json;
-    let validation_outcome = if contract_requires_repair && semantic_block_reason.is_some() {
-        if repair_exhausted {
+    let current_attempt_has_recorded_activity = validation_basis
+        .get("current_attempt_has_recorded_activity")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hard_blocking_unmet_requirements = unmet_requirements.iter().any(|value| {
+        matches!(
+            value.as_str(),
+            "read_only_source_mutations" | "artifact_status_not_terminal"
+        )
+    }) || (!current_attempt_has_recorded_activity
+        && unmet_requirements.iter().any(|value| {
+            matches!(
+                value.as_str(),
+                "current_attempt_output_missing"
+                    | "mcp_required_tool_missing"
+                    | "mcp_discovery_missing"
+                    | "no_concrete_reads"
+                    | "concrete_read_required"
+                    | "required_source_paths_not_read"
+                    | "missing_successful_web_research"
+            )
+        }));
+    if hard_blocking_unmet_requirements {
+        accepted_output = None;
+    }
+    let validation_outcome = if hard_blocking_unmet_requirements {
+        "blocked"
+    } else if contract_requires_repair && semantic_block_reason.is_some() {
+        if repair_exhausted || hard_blocking_unmet_requirements {
             "blocked"
         } else {
             "needs_repair"
@@ -1445,32 +1472,55 @@ pub(crate) fn infer_artifact_repair_state(
 ) -> (u32, u32, bool) {
     let default_budget =
         repair_budget.unwrap_or_else(|| tandem_core::prewrite_repair_retry_max_attempts() as u32);
+    let node_attempt = tool_telemetry_u32(tool_telemetry, "node_attempt");
+    let node_max_attempts = tool_telemetry_u32(tool_telemetry, "node_max_attempts");
+    let effective_budget = node_max_attempts
+        .map(|max_attempts| max_attempts.saturating_sub(1))
+        .map(|budget| budget.min(default_budget))
+        .unwrap_or(default_budget);
     let inferred_attempt = tool_telemetry
         .get("tool_call_counts")
         .and_then(|value| value.get("write"))
         .and_then(Value::as_u64)
         .and_then(|count| count.checked_sub(1))
-        .map(|count| count.min(default_budget as u64) as u32)
+        .map(|count| count.min(effective_budget as u64) as u32)
         .unwrap_or(0);
-    let repair_attempt = parsed_status_u32(parsed_status, "repairAttempt").unwrap_or_else(|| {
-        if repair_attempted {
-            inferred_attempt.max(1)
-        } else {
-            0
-        }
-    });
+    let node_repair_attempt = node_attempt
+        .map(|attempt| attempt.saturating_sub(1))
+        .unwrap_or(0);
+    let repair_attempt = parsed_status_u32(parsed_status, "repairAttempt")
+        .unwrap_or_else(|| {
+            if repair_attempted {
+                inferred_attempt.max(1)
+            } else {
+                inferred_attempt
+            }
+        })
+        .max(node_repair_attempt)
+        .min(effective_budget);
     let repair_attempts_remaining = parsed_status_u32(parsed_status, "repairAttemptsRemaining")
-        .unwrap_or_else(|| default_budget.saturating_sub(repair_attempt.min(default_budget)));
+        .unwrap_or_else(|| effective_budget.saturating_sub(repair_attempt.min(effective_budget)));
     let repair_exhausted = parsed_status
         .and_then(|value| value.get("repairExhausted"))
         .and_then(Value::as_bool)
         .unwrap_or_else(|| {
-            repair_attempted
-                && !repair_succeeded
-                && semantic_block_reason.is_some()
-                && repair_attempt >= default_budget
+            let node_attempt_exhausted = node_attempt
+                .zip(node_max_attempts)
+                .is_some_and(|(attempt, max_attempts)| attempt >= max_attempts);
+            node_attempt_exhausted
+                || (repair_attempted
+                    && !repair_succeeded
+                    && semantic_block_reason.is_some()
+                    && repair_attempt >= effective_budget)
         });
     (repair_attempt, repair_attempts_remaining, repair_exhausted)
+}
+
+fn tool_telemetry_u32(tool_telemetry: &Value, key: &str) -> Option<u32> {
+    tool_telemetry
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
 }
 
 pub(crate) fn summarize_automation_tool_activity(

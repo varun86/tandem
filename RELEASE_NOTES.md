@@ -99,6 +99,14 @@ Provider and tool failures during prompt execution now mark the session failed a
 
 Bug Monitor also dedupes Automation V2 failure fanout more aggressively. Automation V2 context blackboard mirror failures now carry workflow/run metadata, and Bug Monitor candidate detection ignores those mirrored `context.task.failed`, `context.task.blocked`, and `context.run.failed` events so the primary `automation_v2.run.failed` incident remains the canonical report instead of generating one draft per downstream node.
 
+Automation V2 repair loops now respect the node attempt budget instead of maintaining a separate validator-only repair counter. Artifact validation records the current node attempt and max attempts, computes repair exhaustion from that same budget, and blocks hard contract failures such as non-terminal artifacts, missing current-attempt outputs, missing concrete MCP calls, and read-only source mutations instead of allowing another repair cycle that reports `repair_attempt: 0`.
+
+Stale-reaped runs now stay paused for operator inspection by default. The previous auto-resume path could relaunch a node immediately after the runtime detected that its provider/tool session had stopped producing evidence, which turned a clear stalled-node condition into another long-running loop. Operators can opt the old behavior back in with `TANDEM_ENABLE_STALE_AUTO_RESUME`, but the default is now fail-visible rather than self-spinning.
+
+The Automation V2 executor also protects completed nodes from late stale outcomes. If a node is already completed or has a passing validated artifact, later success/failure results from duplicate or stale sessions are ignored instead of overwriting the settled state. Pending nodes that exhaust their attempt budget now report the actual exhausted node in the run failure, rather than collapsing into a generic flow-deadlock message.
+
+Read-only source-scan nodes now receive a narrower tool surface. Broad source-inspection tasks drop source-mutating tools such as `apply_patch`, `edit`, and shell execution unless the node is an explicit code-edit workflow. This complements the write-policy and source-snapshot guards: source archaeology nodes should read and write declared artifacts, not reach for repo mutation tools.
+
 ### Engine build entrypoint restored
 
 The `tandem-engine` binary entrypoint has been restored so `cargo build -p tandem-ai --profile fast-release` can compile the engine package again.

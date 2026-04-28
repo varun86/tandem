@@ -510,6 +510,39 @@ fn automation_session_write_policy_for_node(
     }
 }
 
+fn automation_source_mutating_tool_is_blocked_for_read_only_node(tool: &str) -> bool {
+    matches!(
+        tool,
+        "apply_patch" | "edit" | "bash" | "shell" | "exec" | "exec_command"
+    )
+}
+
+fn automation_mark_tool_resolution_output_blocked(output: &mut Value, reason: &str) {
+    if let Some(object) = output.as_object_mut() {
+        object.insert("status".to_string(), json!("blocked"));
+        object.insert("blocked_reason".to_string(), json!(reason));
+        object.insert("failure_kind".to_string(), json!("tool_resolution_failed"));
+        if let Some(summary) = object
+            .get_mut("validator_summary")
+            .and_then(Value::as_object_mut)
+        {
+            summary.insert("outcome".to_string(), json!("blocked"));
+            summary.insert("reason".to_string(), json!(reason));
+        }
+        if let Some(validation) = object
+            .get_mut("artifact_validation")
+            .and_then(Value::as_object_mut)
+        {
+            validation.insert("semantic_block_reason".to_string(), json!(reason));
+            validation.insert("repair_exhausted".to_string(), json!(true));
+            validation.insert(
+                "blocking_classification".to_string(),
+                json!("tool_unavailable"),
+            );
+        }
+    }
+}
+
 pub async fn clear_automation_subtree_outputs(
     state: &AppState,
     automation: &AutomationV2Spec,
@@ -839,12 +872,20 @@ pub(crate) async fn execute_automation_v2_node(
         .and_then(Value::as_str)
         .unwrap_or("none")
         .to_string();
+    let execution_mode = automation_node_execution_mode(node, &workspace_root);
     let mut requested_tools = requested_tools;
     requested_tools.extend(automation_requested_server_scoped_mcp_tools(
         node,
         &selected_mcp_wildcard_server_names,
     ));
-    requested_tools.extend(automation_node_required_concrete_mcp_tools(node));
+    let required_concrete_mcp_tools = automation_node_required_concrete_mcp_tools(node);
+    requested_tools.extend(required_concrete_mcp_tools.clone());
+    if automation_node_uses_broad_read_only_source_guard(node)
+        && !matches!(execution_mode, "git_patch" | "filesystem_patch")
+    {
+        requested_tools
+            .retain(|tool| !automation_source_mutating_tool_is_blocked_for_read_only_node(tool));
+    }
     requested_tools.sort();
     requested_tools.dedup();
     let has_selected_mcp_servers_policy =
@@ -853,7 +894,15 @@ pub(crate) async fn execute_automation_v2_node(
         automation_add_mcp_list_when_scoped(requested_tools, has_selected_mcp_servers_policy);
     let effective_offered_tools =
         automation_expand_effective_offered_tools(&requested_tools, &available_tool_names);
-    let execution_mode = automation_node_execution_mode(node, &workspace_root);
+    let missing_concrete_mcp_tools = required_concrete_mcp_tools
+        .iter()
+        .filter(|tool| {
+            !effective_offered_tools
+                .iter()
+                .any(|offered| offered == *tool)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let mut capability_resolution = automation_resolve_capabilities_with_schemas(
         node,
         execution_mode,
@@ -892,6 +941,43 @@ pub(crate) async fn execute_automation_v2_node(
                 mcp_tool_diagnostics.clone(),
             );
         }
+        automation_mark_tool_resolution_output_blocked(&mut output, &detail);
+        return Ok(output);
+    }
+    if !missing_concrete_mcp_tools.is_empty() {
+        let detail = format!(
+            "required concrete MCP tool(s) were unavailable after MCP/tool sync: {}",
+            missing_concrete_mcp_tools.join(", ")
+        );
+        let mut output =
+            crate::automation_v2::executor::build_node_execution_error_output_with_category(
+                node,
+                &detail,
+                false,
+                "tool_resolution_failed",
+            );
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "tool_telemetry".to_string(),
+                automation_initialized_attempt_tool_telemetry(
+                    &requested_tools,
+                    &capability_resolution,
+                ),
+            );
+            object.insert(
+                "capability_resolution".to_string(),
+                capability_resolution.clone(),
+            );
+            object.insert(
+                "mcp_tool_diagnostics".to_string(),
+                mcp_tool_diagnostics.clone(),
+            );
+            object.insert(
+                "missing_concrete_mcp_tools".to_string(),
+                json!(missing_concrete_mcp_tools),
+            );
+        }
+        automation_mark_tool_resolution_output_blocked(&mut output, &detail);
         return Ok(output);
     }
     let missing_capabilities =
@@ -1332,6 +1418,12 @@ pub(crate) async fn execute_automation_v2_node(
         verified_output_for_evidence.as_ref(),
     );
     if let Some(object) = tool_telemetry.as_object_mut() {
+        object.insert("node_attempt".to_string(), json!(attempt));
+        object.insert("node_max_attempts".to_string(), json!(max_attempts));
+        object.insert(
+            "node_attempts_remaining".to_string(),
+            json!(max_attempts.saturating_sub(attempt)),
+        );
         object.insert("preflight".to_string(), preflight.clone());
         object.insert(
             "capability_resolution".to_string(),

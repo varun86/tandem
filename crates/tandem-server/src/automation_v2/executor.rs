@@ -74,19 +74,15 @@ fn output_only_failed_for_missing_materialized_artifact(value: &Value) -> bool {
         || rejected_reason.contains("required output `")
 }
 
-fn output_allows_additional_repair_attempt(value: &Value) -> bool {
-    node_output_status(value) == "needs_repair"
-        && !crate::app::state::automation_output_repair_exhausted(value)
-}
-
-fn run_output_allows_additional_repair_attempt(
+fn run_node_is_settled_completed(
     run: &crate::automation_v2::types::AutomationV2RunRecord,
     node_id: &str,
 ) -> bool {
     run.checkpoint
-        .node_outputs
-        .get(node_id)
-        .is_some_and(output_allows_additional_repair_attempt)
+        .completed_nodes
+        .iter()
+        .any(|id| id == node_id)
+        || crate::app::state::automation_node_has_passing_artifact(node_id, &run.checkpoint)
 }
 
 fn publish_automation_v2_failure_event(
@@ -552,17 +548,14 @@ fn derive_terminal_run_state(
             .copied()
             .unwrap_or(0);
         let max_attempts = crate::app::state::automation_node_max_attempts(node);
-        if pending_nodes.contains(&node.node_id)
-            && attempts >= max_attempts
-            && !run_output_allows_additional_repair_attempt(run, &node.node_id)
-        {
+        if pending_nodes.contains(&node.node_id) && attempts >= max_attempts {
             // Don't flag a node as failed if its latest attempt is still
             // mid-execution. The attempt counter bumps on node_started; until
             // the outcome lands, pending + attempts>=max is an in-flight run,
             // not an exhaustion. A true exhaustion leaves a terminal-status
             // outcome in node_outputs (handled below).
             let has_outcome = run.checkpoint.node_outputs.contains_key(&node.node_id);
-            if !has_outcome {
+            if !has_outcome && !deadlock {
                 continue;
             }
             failed_nodes.push(node.node_id.clone());
@@ -799,9 +792,7 @@ pub async fn run_automation_v2_run(
                     .copied()
                     .unwrap_or(0);
                 let max_attempts = crate::app::state::automation_node_max_attempts(node);
-                if attempts >= max_attempts
-                    && !run_output_allows_additional_repair_attempt(&latest, node_id)
-                {
+                if attempts >= max_attempts {
                     return None;
                 }
                 // Dependency check: all deps must be completed.
@@ -1144,6 +1135,9 @@ pub async fn run_automation_v2_run(
                         .get_automation_v2_run(&run_id)
                         .await
                         .map(|row| {
+                            if run_node_is_settled_completed(&row, &node_id) {
+                                return false;
+                            }
                             matches!(
                                 row.status,
                                 AutomationRunStatus::Running
@@ -1221,6 +1215,9 @@ pub async fn run_automation_v2_run(
                             == Some(false);
                     let _ = state
                         .update_automation_v2_run(&run_id, |row| {
+                            if run_node_is_settled_completed(row, &node_id) {
+                                return;
+                            }
                             if is_approval_rejected {
                                 let ancestors =
                                     crate::app::state::collect_automation_ancestors(&automation, &node_id);
@@ -1471,6 +1468,9 @@ pub async fn run_automation_v2_run(
                         .get_automation_v2_run(&run_id)
                         .await
                         .map(|row| {
+                            if run_node_is_settled_completed(&row, &node_id) {
+                                return true;
+                            }
                             matches!(
                                 row.status,
                                 AutomationRunStatus::Paused
@@ -1966,18 +1966,7 @@ mod tests {
     }
 
     #[test]
-    fn repairable_output_stays_retryable_past_normal_attempt_cap() {
-        let output = json!({
-            "status": "needs_repair",
-            "artifact_validation": {
-                "repair_exhausted": false
-            }
-        });
-        assert!(output_allows_additional_repair_attempt(&output));
-    }
-
-    #[test]
-    fn derive_terminal_run_state_does_not_fail_pending_repairable_nodes_at_attempt_cap() {
+    fn derive_terminal_run_state_fails_pending_repairable_nodes_at_attempt_cap() {
         let automation = test_automation();
         let mut run = test_run_with_output(json!({
             "status": "needs_repair",
@@ -1992,7 +1981,11 @@ mod tests {
 
         assert_eq!(
             derive_terminal_run_state(&automation, &run, false),
-            DerivedTerminalRunState::Completed
+            DerivedTerminalRunState::Failed {
+                failed_nodes: vec!["research-brief".to_string()],
+                blocked_nodes: Vec::new(),
+                detail: "automation run failed from node outcomes: research-brief".to_string(),
+            }
         );
     }
 
