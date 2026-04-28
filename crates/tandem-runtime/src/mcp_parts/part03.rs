@@ -1,7 +1,75 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use uuid::Uuid;
+
+    async fn spawn_fake_http_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake mcp server");
+        let addr = listener.local_addr().expect("fake mcp addr");
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = vec![0_u8; 8192];
+                    let Ok(n) = socket.read(&mut buf).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let body = if request.contains("\"initialize\"") {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "initialize-1",
+                            "result": {
+                                "protocolVersion": MCP_PROTOCOL_VERSION,
+                                "capabilities": {},
+                                "serverInfo": {"name": "fake", "version": "test"}
+                            }
+                        })
+                    } else if request.contains("\"tools/list\"") {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "tools-list-1",
+                            "result": {
+                                "tools": [{
+                                    "name": "get_me",
+                                    "description": "Get authenticated user",
+                                    "inputSchema": {"type": "object", "properties": {}}
+                                }]
+                            }
+                        })
+                    } else if request.contains("\"tools/call\"") {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "call-1",
+                            "result": {
+                                "content": [{"type": "text", "text": "authenticated"}]
+                            }
+                        })
+                    } else {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "unknown",
+                            "error": {"code": -32601, "message": "unknown method"}
+                        })
+                    };
+                    let payload = body.to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nmcp-session-id: test-session\r\nconnection: close\r\n\r\n{}",
+                        payload.len(),
+                        payload
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (format!("http://{addr}/mcp"), handle)
+    }
 
     #[tokio::test]
     async fn add_connect_disconnect_non_stdio_server() {
@@ -14,6 +82,43 @@ mod tests {
         let listed = registry.list().await;
         assert!(listed.get("example").map(|s| s.connected).unwrap_or(false));
         assert!(registry.disconnect("example").await);
+    }
+
+    #[tokio::test]
+    async fn call_tool_reconnects_enabled_remote_server_before_execution() {
+        let (endpoint, server) = spawn_fake_http_mcp_server().await;
+        let file = std::env::temp_dir().join(format!("mcp-test-{}.json", Uuid::new_v4()));
+        let registry = McpRegistry::new_with_state_file(file);
+        registry
+            .add("githubcopilot".to_string(), endpoint.to_string())
+            .await;
+
+        assert!(registry.connect("githubcopilot").await);
+        assert!(registry.disconnect("githubcopilot").await);
+        assert!(
+            !registry
+                .list()
+                .await
+                .get("githubcopilot")
+                .expect("server")
+                .connected
+        );
+
+        let result = registry
+            .call_tool("githubcopilot", "get_me", json!({}))
+            .await
+            .expect("call should reconnect and execute");
+
+        assert!(result.output.contains("authenticated"));
+        assert!(
+            registry
+                .list()
+                .await
+                .get("githubcopilot")
+                .expect("server")
+                .connected
+        );
+        server.abort();
     }
 
     #[test]

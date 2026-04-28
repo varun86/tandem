@@ -769,8 +769,27 @@ impl McpRegistry {
             return Err(format!("MCP server '{server_name}' is disabled"));
         }
         if !server.connected {
-            return Err(format!("MCP server '{server_name}' is not connected"));
+            if !self.connect(server_name).await {
+                let detail = self
+                    .list()
+                    .await
+                    .get(server_name)
+                    .and_then(|server| server.last_error.clone())
+                    .filter(|error| !error.trim().is_empty())
+                    .unwrap_or_else(|| "reconnect attempt failed".to_string());
+                return Err(format!(
+                    "MCP server '{server_name}' is not connected: {detail}"
+                ));
+            }
         }
+
+        let server = {
+            let servers = self.servers.read().await;
+            let Some(server) = servers.get(server_name) else {
+                return Err(format!("MCP server '{server_name}' not found"));
+            };
+            server.clone()
+        };
 
         let endpoint = parse_remote_endpoint(&server.transport).ok_or_else(|| {
             "MCP tools/call currently supports HTTP/S transports only".to_string()
