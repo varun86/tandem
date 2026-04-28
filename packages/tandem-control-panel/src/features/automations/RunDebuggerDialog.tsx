@@ -268,7 +268,14 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                     : "Select a blocked node to continue")
                 }
               >
-                <i data-lucide="skip-forward"></i>
+                {workflowTaskContinueMutation.isPending ? (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  />
+                ) : (
+                  <i data-lucide="skip-forward"></i>
+                )}
                 {workflowTaskContinueMutation.isPending ? "Continuing..." : "Continue"}
               </button>
             ) : null}
@@ -301,7 +308,14 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                     : "Retry the whole run")
                 }
               >
-                <i data-lucide="rotate-ccw"></i>
+                {workflowTaskRetryMutation.isPending || workflowRecoverMutation.isPending ? (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  />
+                ) : (
+                  <i data-lucide="rotate-ccw"></i>
+                )}
                 {runDebuggerRetryNodeId
                   ? workflowTaskRetryMutation.isPending
                     ? "Retrying task..."

@@ -3,6 +3,15 @@ type MutationLike = {
   isPending?: boolean;
 };
 
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+    />
+  );
+}
+
 type WorkflowTaskActionsPanelProps = {
   selectedBoardTask: any;
   selectedBoardTaskIsWorkflowNode: boolean;
@@ -161,7 +170,13 @@ export function WorkflowTaskActionsPanel({
               }
               disabled={backlogTaskClaimMutation.isPending || backlogTaskRequeueMutation.isPending}
             >
-              {backlogTaskClaimMutation.isPending ? "Claiming..." : "Claim Task"}
+              {backlogTaskClaimMutation.isPending ? (
+                <>
+                  <Spinner /> Claiming...
+                </>
+              ) : (
+                "Claim Task"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               Assign this projected coding task and start its lease.
@@ -182,7 +197,13 @@ export function WorkflowTaskActionsPanel({
               }
               disabled={backlogTaskClaimMutation.isPending || backlogTaskRequeueMutation.isPending}
             >
-              {backlogTaskRequeueMutation.isPending ? "Requeueing..." : "Requeue Backlog Task"}
+              {backlogTaskRequeueMutation.isPending ? (
+                <>
+                  <Spinner /> Requeueing...
+                </>
+              ) : (
+                "Requeue Backlog Task"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               Use when the task is blocked, failed, or its lease went stale.
@@ -211,7 +232,13 @@ export function WorkflowTaskActionsPanel({
                 backlogTaskRequeueMutation.isPending
               }
             >
-              {workflowTaskContinueMutation.isPending ? "Continuing..." : "Continue Task"}
+              {workflowTaskContinueMutation.isPending ? (
+                <>
+                  <Spinner /> Continuing...
+                </>
+              ) : (
+                "Continue Task"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               {canTaskContinue
@@ -242,7 +269,13 @@ export function WorkflowTaskActionsPanel({
                 backlogTaskRequeueMutation.isPending
               }
             >
-              {workflowTaskRetryMutation.isPending ? "Retrying task..." : "Retry Task"}
+              {workflowTaskRetryMutation.isPending ? (
+                <>
+                  <Spinner /> Retrying task...
+                </>
+              ) : (
+                "Retry Task"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               {canTaskRetry
@@ -271,7 +304,13 @@ export function WorkflowTaskActionsPanel({
                 backlogTaskRequeueMutation.isPending
               }
             >
-              {workflowTaskRequeueMutation.isPending ? "Requeueing..." : "Requeue Task"}
+              {workflowTaskRequeueMutation.isPending ? (
+                <>
+                  <Spinner /> Requeueing...
+                </>
+              ) : (
+                "Requeue Task"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               Use when this task should go back onto the queue with its descendants reset.
@@ -298,7 +337,13 @@ export function WorkflowTaskActionsPanel({
                 !continueBlockedNodeId
               }
             >
-              {workflowRepairMutation.isPending ? "Repairing..." : "Repair Blocked Step"}
+              {workflowRepairMutation.isPending ? (
+                <>
+                  <Spinner /> Repairing...
+                </>
+              ) : (
+                "Repair Blocked Step"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               Heavier reset/repair flow for blocked nodes when minimal continue is not enough.
@@ -318,7 +363,13 @@ export function WorkflowTaskActionsPanel({
               }
               disabled={workflowRecoverMutation.isPending}
             >
-              {workflowRecoverMutation.isPending ? "Retrying..." : "Retry Workflow"}
+              {workflowRecoverMutation.isPending ? (
+                <>
+                  <Spinner /> Retrying...
+                </>
+              ) : (
+                "Retry Workflow"
+              )}
             </button>
             <div className="tcp-subtle text-[11px]">
               Recover the whole run, not just this task subtree.

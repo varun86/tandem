@@ -431,6 +431,58 @@ export function MyAutomationsContainer({
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
+  const parseEngineError = (err: unknown): { code: string; message: string } => {
+    const raw = err instanceof Error ? err.message : String(err ?? "");
+    const jsonStart = raw.indexOf("{");
+    if (jsonStart >= 0) {
+      try {
+        const body = JSON.parse(raw.slice(jsonStart));
+        return {
+          code: String(body?.code || "").trim(),
+          message: String(body?.error || body?.message || "").trim(),
+        };
+      } catch {
+        // fall through
+      }
+    }
+    return { code: "", message: raw };
+  };
+
+  const friendlyEngineError = (err: unknown, fallback: string): string => {
+    const { code, message } = parseEngineError(err);
+    if (
+      code === "AUTOMATION_V2_RUN_TASK_NOT_MUTABLE" ||
+      code === "AUTOMATION_V2_RUN_NOT_RECOVERABLE"
+    ) {
+      return "Run is still active. Pause or cancel it first, then retry.";
+    }
+    return message || fallback;
+  };
+
+  const isRunNotMutableError = (err: unknown): boolean => {
+    const { code } = parseEngineError(err);
+    return (
+      code === "AUTOMATION_V2_RUN_TASK_NOT_MUTABLE" || code === "AUTOMATION_V2_RUN_NOT_RECOVERABLE"
+    );
+  };
+
+  const withAutoPauseRetry = async <T,>(runId: string, action: () => Promise<T>): Promise<T> => {
+    try {
+      return await action();
+    } catch (err) {
+      if (!isRunNotMutableError(err) || !client?.automationsV2?.pauseRun) {
+        throw err;
+      }
+      try {
+        await client.automationsV2.pauseRun(runId, "auto-pause for retry");
+      } catch {
+        // ignore — engine may already be in a state pause cannot apply to
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return await action();
+    }
+  };
+
   const runActionMutation = useMutation({
     mutationFn: async ({
       action,
@@ -477,10 +529,12 @@ export function MyAutomationsContainer({
       if (!client?.automationsV2?.repairRun) {
         throw new Error("Workflow repair is not available in this client.");
       }
-      return client.automationsV2.repairRun(runId, {
-        node_id: nodeId,
-        reason: reason ?? "",
-      });
+      return withAutoPauseRetry(runId, () =>
+        client.automationsV2.repairRun(runId, {
+          node_id: nodeId,
+          reason: reason ?? "",
+        })
+      );
     },
     onSuccess: async (payload: any) => {
       const runId = String(
@@ -493,14 +547,14 @@ export function MyAutomationsContainer({
         onOpenRunningView();
       }
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast("err", friendlyEngineError(error, "Workflow repair failed.")),
   });
   const workflowRecoverMutation = useMutation({
     mutationFn: async ({ runId, reason }: { runId: string; reason?: string }) => {
       if (!client?.automationsV2?.recoverRun) {
         throw new Error("Workflow retry is not available in this client.");
       }
-      return client.automationsV2.recoverRun(runId, reason);
+      return withAutoPauseRetry(runId, () => client.automationsV2.recoverRun(runId, reason));
     },
     onSuccess: async (payload: any) => {
       const runId = String(
@@ -513,7 +567,7 @@ export function MyAutomationsContainer({
         onOpenRunningView();
       }
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast("err", friendlyEngineError(error, "Workflow retry failed.")),
   });
   const workflowTaskRetryMutation = useMutation({
     mutationFn: async ({
@@ -528,7 +582,7 @@ export function MyAutomationsContainer({
       if (!client?.automationsV2?.retryTask) {
         throw new Error("Task retry is not available in this client.");
       }
-      return client.automationsV2.retryTask(runId, nodeId, reason);
+      return withAutoPauseRetry(runId, () => client.automationsV2.retryTask(runId, nodeId, reason));
     },
     onSuccess: async (payload: any) => {
       const runId = String(
@@ -541,7 +595,7 @@ export function MyAutomationsContainer({
         onOpenRunningView();
       }
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast("err", friendlyEngineError(error, "Task retry failed.")),
   });
   const workflowTaskContinueMutation = useMutation({
     mutationFn: async ({
@@ -556,7 +610,9 @@ export function MyAutomationsContainer({
       if (!client?.automationsV2?.continueTask) {
         throw new Error("Task continue is not available in this client.");
       }
-      return client.automationsV2.continueTask(runId, nodeId, reason);
+      return withAutoPauseRetry(runId, () =>
+        client.automationsV2.continueTask(runId, nodeId, reason)
+      );
     },
     onSuccess: async (payload: any) => {
       const runId = String(
@@ -569,7 +625,7 @@ export function MyAutomationsContainer({
         onOpenRunningView();
       }
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast("err", friendlyEngineError(error, "Task continue failed.")),
   });
   const workflowTaskRequeueMutation = useMutation({
     mutationFn: async ({
@@ -584,7 +640,9 @@ export function MyAutomationsContainer({
       if (!client?.automationsV2?.requeueTask) {
         throw new Error("Task requeue is not available in this client.");
       }
-      return client.automationsV2.requeueTask(runId, nodeId, reason);
+      return withAutoPauseRetry(runId, () =>
+        client.automationsV2.requeueTask(runId, nodeId, reason)
+      );
     },
     onSuccess: async (payload: any) => {
       const runId = String(
@@ -597,7 +655,7 @@ export function MyAutomationsContainer({
         onOpenRunningView();
       }
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast("err", friendlyEngineError(error, "Task requeue failed.")),
   });
   const backlogTaskClaimMutation = useMutation({
     mutationFn: async ({
