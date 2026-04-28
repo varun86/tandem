@@ -73,7 +73,9 @@ Bug Monitor and Automation V2 now also self-heal common post-restart MCP state. 
 
 Automation artifact nodes now run with an engine-enforced write policy. Non-code workflow nodes can only write declared output targets and approved must-write files, while explicit code workflows keep repo-edit access. This prevents artifact-producing agents from accidentally overwriting source files when they meant to write `.tandem/runs/.../artifacts/...`.
 
-File-read/source-scan research nodes now add a second orchestration-layer guard. Tandem snapshots tracked source-like files before the node runs, restores them immediately if the session mutates any of them, and fails the node before output reconciliation. Repair-exhausted status JSON is also treated as blocked runtime state instead of recoverable artifact content, so a failed repair loop cannot be promoted into a fake `.json` output.
+File-read/source-scan research nodes now add a second orchestration-layer guard. Tandem snapshots tracked source-like files before the node runs, restores them immediately if the session mutates any of them, and fails the node before output reconciliation. This specifically addresses the live failure mode where a read-only source-inspection node overwrote repository files with `PREWRITE_REQUIREMENTS_EXHAUSTED` repair JSON. Repair-exhausted status JSON is also treated as blocked runtime state instead of recoverable artifact content, so a failed repair loop cannot be promoted into a fake `.json` output.
+
+Together, the write policy and source-scan snapshot guard mean artifact-producing nodes are blocked before writing outside their declared targets when possible, and source files are restored if a write slips through another path. The workflow should now fail loudly with an actionable node error instead of silently corrupting the repo or accepting a blocked repair payload as a valid artifact.
 
 Provider and tool failures during prompt execution now mark the session failed and clear cancellation state when they return early. This avoids stuck "in progress" sessions after provider stream connect, idle, chunk, or tool execution errors.
 
