@@ -466,6 +466,261 @@ pub(crate) async fn try_execute_connector_preflight_node(
     ))
 }
 
+pub(crate) async fn try_execute_workspace_scope_preflight_node(
+    state: &AppState,
+    run_id: &str,
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    session_id: &str,
+    workspace_root: &str,
+    required_output_path: Option<&str>,
+    requested_tools: &[String],
+) -> anyhow::Result<Option<Value>> {
+    if !automation_node_is_workspace_scope_preflight(node) {
+        return Ok(None);
+    }
+    let Some(output_path) = required_output_path else {
+        return Ok(None);
+    };
+
+    let resolved_output =
+        resolve_automation_output_path_for_run(workspace_root, run_id, output_path)?;
+    if let Some(parent) = resolved_output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let path_candidates = automation_workspace_scope_path_candidates(node);
+    let workspace = PathBuf::from(workspace_root);
+    let mut present_paths = Vec::new();
+    let mut missing_paths = Vec::new();
+    let mut source_material = serde_json::Map::new();
+    let mut invocation_parts = Vec::new();
+
+    for rel in &path_candidates {
+        let resolved = workspace.join(rel);
+        if resolved.is_file() {
+            present_paths.push(rel.clone());
+            let content = std::fs::read_to_string(&resolved).unwrap_or_default();
+            let excerpt = truncate_text(&content, 2000);
+            source_material.insert(
+                rel.clone(),
+                json!({
+                    "path": rel,
+                    "bytes": content.len(),
+                    "excerpt": excerpt,
+                }),
+            );
+            invocation_parts.push(MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({ "path": rel }),
+                result: Some(json!({
+                    "path": rel,
+                    "exists": true,
+                    "bytes": content.len(),
+                    "excerpt": truncate_text(&content, 600),
+                })),
+                error: None,
+            });
+        } else {
+            missing_paths.push(rel.clone());
+            invocation_parts.push(MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({ "path": rel }),
+                result: None,
+                error: Some("file not found".to_string()),
+            });
+        }
+    }
+
+    let glob_roots = automation_workspace_scope_glob_roots(node, &present_paths);
+    for root in &glob_roots {
+        let resolved = workspace.join(root.trim_end_matches("/**"));
+        let exists = resolved.exists();
+        invocation_parts.push(MessagePart::ToolInvocation {
+            tool: "glob".to_string(),
+            args: json!({ "pattern": root }),
+            result: Some(json!({
+                "pattern": root,
+                "exists": exists,
+            })),
+            error: None,
+        });
+    }
+
+    let status = "completed";
+    let title = format!(
+        "# Repository Scope Assessment\n\nRun ID: `{run_id}`\nNode ID: `{}`\n",
+        node.node_id
+    );
+    let mut artifact_text = String::new();
+    artifact_text.push_str(&title);
+    artifact_text.push_str(&format!("\n## Status\n\n`{status}`\n"));
+    artifact_text.push_str("\n## Present Paths\n\n");
+    if present_paths.is_empty() {
+        artifact_text.push_str("- none\n");
+    } else {
+        for path in &present_paths {
+            artifact_text.push_str(&format!("- `{path}`\n"));
+        }
+    }
+    artifact_text.push_str("\n## Missing Paths\n\n");
+    if missing_paths.is_empty() {
+        artifact_text.push_str("- none\n");
+    } else {
+        for path in &missing_paths {
+            artifact_text.push_str(&format!("- `{path}`\n"));
+        }
+    }
+    artifact_text.push_str("\n## Glob Roots\n\n");
+    if glob_roots.is_empty() {
+        artifact_text.push_str("- none inferred\n");
+    } else {
+        for root in &glob_roots {
+            artifact_text.push_str(&format!("- `{root}`\n"));
+        }
+    }
+    artifact_text.push_str("\n## Source Material\n\n");
+    artifact_text.push_str("```json\n");
+    artifact_text.push_str(&serde_json::to_string_pretty(&json!(source_material))?);
+    artifact_text.push_str("\n```\n");
+    std::fs::write(&resolved_output, &artifact_text)?;
+
+    let display_path = resolved_output
+        .strip_prefix(workspace_root)
+        .ok()
+        .and_then(|value| value.to_str().map(str::to_string))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| output_path.to_string());
+
+    let mut session = state
+        .storage
+        .get_session(session_id)
+        .await
+        .unwrap_or_else(|| {
+            Session::new(
+                Some(format!(
+                    "Automation {} / {}",
+                    automation.automation_id, node.node_id
+                )),
+                Some(workspace_root.to_string()),
+            )
+        });
+    session.project_id = Some(automation_workspace_project_id(workspace_root));
+    session.workspace_root = Some(workspace_root.to_string());
+    invocation_parts.push(MessagePart::Text {
+        text: format!(
+            "Workspace scope preflight {status} for `{}` and wrote `{}`.\n\n{{\"status\":\"{status}\"}}",
+            node.node_id, display_path
+        ),
+    });
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        invocation_parts,
+    ));
+    state.storage.save_session(session.clone()).await?;
+
+    let artifact_validation = json!({
+        "accepted_candidate_source": "deterministic_workspace_scope_preflight",
+        "validation_outcome": "accepted",
+        "unmet_requirements": [],
+        "present_paths": present_paths,
+        "missing_paths": missing_paths,
+        "glob_roots": glob_roots,
+    });
+    Ok(Some(
+        node_output::wrap_automation_node_output_with_automation(
+            automation,
+            node,
+            &session,
+            requested_tools,
+            session_id,
+            Some(run_id),
+            &format!("{{\"status\":\"{status}\"}}"),
+            Some((display_path, artifact_text)),
+            Some(artifact_validation),
+        ),
+    ))
+}
+
+fn automation_node_is_workspace_scope_preflight(node: &AutomationFlowNode) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .is_some_and(|builder| {
+            ["task_class", "task_kind"]
+                .iter()
+                .filter_map(|key| builder.get(*key).and_then(Value::as_str))
+                .any(|value| value.trim().eq_ignore_ascii_case("scope"))
+        })
+}
+
+fn automation_workspace_scope_path_candidates(node: &AutomationFlowNode) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+    for token in node.objective.split_whitespace() {
+        let candidate = automation_clean_scope_path_token(token);
+        if candidate.is_empty()
+            || candidate.contains('*')
+            || candidate.starts_with("http://")
+            || candidate.starts_with("https://")
+            || !candidate.contains('/')
+        {
+            continue;
+        }
+        if seen.insert(candidate.clone()) {
+            paths.push(candidate);
+        }
+    }
+    paths
+}
+
+fn automation_workspace_scope_glob_roots(
+    node: &AutomationFlowNode,
+    present_paths: &[String],
+) -> Vec<String> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    for token in node.objective.split_whitespace() {
+        let candidate = automation_clean_scope_path_token(token);
+        if candidate.contains('*') && seen.insert(candidate.clone()) {
+            roots.push(candidate);
+        }
+    }
+    for path in present_paths {
+        let mut parts = path.split('/').collect::<Vec<_>>();
+        if parts.len() > 1 {
+            parts.pop();
+            let root = format!("{}/**", parts.join("/"));
+            if seen.insert(root.clone()) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
+}
+
+fn automation_clean_scope_path_token(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| {
+            ch == '`'
+                || ch == '\''
+                || ch == '"'
+                || ch == ','
+                || ch == '.'
+                || ch == ';'
+                || ch == ':'
+                || ch == '('
+                || ch == ')'
+                || ch == '['
+                || ch == ']'
+                || ch == '{'
+                || ch == '}'
+        })
+        .trim()
+        .to_string()
+}
+
 fn build_connector_preflight_blocked_output(
     node: &AutomationFlowNode,
     requested_tools: &[String],
@@ -1311,6 +1566,21 @@ pub(crate) async fn execute_automation_v2_node(
         &effective_offered_tools,
         &capability_resolution,
         &mcp_tool_diagnostics,
+    )
+    .await?
+    {
+        state.clear_automation_v2_session(run_id, &session_id).await;
+        return Ok(output);
+    }
+    if let Some(output) = try_execute_workspace_scope_preflight_node(
+        state,
+        run_id,
+        automation,
+        node,
+        &session_id,
+        &workspace_root,
+        required_output_path.as_deref(),
+        &requested_tools,
     )
     .await?
     {
