@@ -1141,6 +1141,73 @@ fn automation_output_targets_fill_in_final_node_workspace_writes() {
 }
 
 #[test]
+fn run_cleanup_paths_exclude_live_automation_output_targets() {
+    let mut node = bare_node();
+    node.node_id = "read_contracts".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/read-contracts.json"
+        }
+    }));
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-cleanup-targets".to_string(),
+        name: "Cleanup Targets".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: vec![node] },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "engine/src/main.rs".to_string(),
+            "packages/tandem-client-ts/src/client.ts".to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let paths = automation_declared_output_paths_for_run(&automation, "run-cleanup");
+
+    assert_eq!(
+        paths,
+        vec![".tandem/runs/run-cleanup/artifacts/read-contracts.json".to_string()]
+    );
+    assert!(!paths.iter().any(|path| path == "engine/src/main.rs"));
+    assert!(!paths
+        .iter()
+        .any(|path| path == "packages/tandem-client-ts/src/client.ts"));
+}
+
+#[test]
 fn automation_output_targets_replace_runtime_placeholders_before_dedup() {
     let automation = AutomationV2Spec {
         automation_id: "automation-runtime-dedup".to_string(),
@@ -1222,4 +1289,3 @@ fn automation_output_targets_replace_runtime_placeholders_before_dedup() {
         .iter()
         .any(|path| path.contains("{current_date}") || path.contains("{current_time}")));
 }
-

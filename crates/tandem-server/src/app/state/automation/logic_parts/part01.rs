@@ -606,6 +606,48 @@ pub(crate) fn automation_requested_server_scoped_mcp_tools(
     requested
 }
 
+pub(crate) fn automation_node_required_concrete_mcp_tools(
+    node: &AutomationFlowNode,
+) -> Vec<String> {
+    let requires_exact_connector_probe = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .is_some_and(|builder| {
+            ["task_class", "task_kind", "retry_class"]
+                .iter()
+                .filter_map(|key| builder.get(*key).and_then(Value::as_str))
+                .any(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "connector_preflight" | "connector"
+                    )
+                })
+        });
+    if !requires_exact_connector_probe {
+        return Vec::new();
+    }
+    let mut tools = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("allowed_tools"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|tool| tool.starts_with("mcp.") && !tool.ends_with(".*"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
 async fn sync_automation_allowed_mcp_servers(
     state: &AppState,
     node: &AutomationFlowNode,

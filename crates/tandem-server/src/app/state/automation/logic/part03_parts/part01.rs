@@ -1,4 +1,3 @@
-
 fn list_suspicious_automation_marker_files(workspace_root: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(workspace_root) else {
         return Vec::new();
@@ -235,6 +234,9 @@ pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
     if trimmed.is_empty() {
         return true;
     }
+    if automation_artifact_json_status_is_nonterminal(trimmed).is_some() {
+        return true;
+    }
     // TODO(coding-hardening): Replace this phrase-based placeholder detection with
     // structural artifact validation. The long-term design should score artifact
     // substance from session mutation history + contract-kind-specific structure
@@ -274,6 +276,12 @@ pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
         "preserving file creation requirement",
         "preserving current workspace output state",
         "created/updated to satisfy workflow artifact requirement",
+        "initial artifact created",
+        "initial artifact materialized before local",
+        "initial artifact materialized",
+        "required workspace output path exists",
+        "this file will be updated",
+        "will be updated in-place",
         "see existing workspace research already completed in this run",
         "already written in prior step",
         "no content changes needed",
@@ -964,4 +972,3 @@ pub(crate) fn session_file_mutation_summary(session: &Session, workspace_root: &
         "mutation_tool_by_file": mutation_tool_by_file,
     })
 }
-

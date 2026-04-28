@@ -1022,6 +1022,130 @@ fn validation_rejects_nonterminal_json_status_artifact() {
 }
 
 #[test]
+fn validation_rejects_placeholder_markdown_artifact() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-placeholder-markdown-artifact-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "report_markdown".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/assess-repository-scope.md"
+        }
+    }));
+    let artifact = "# Repository Scope Assessment\n\nInitial artifact created for this final retry. The required workspace output path exists. This file will be updated in-place after inspection.\n";
+    let session = Session::new(Some("placeholder markdown artifact".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &json!({
+            "executed_tools": ["write"],
+            "requested_tools": ["write"],
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/assess-repository-scope.md".to_string(),
+            artifact.to_string(),
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none());
+    assert_eq!(validation["validation_outcome"], "blocked");
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("placeholder_artifact")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("placeholder"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn validation_requires_declared_concrete_mcp_tools() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-required-mcp-tool-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.objective =
+        "Use mcp.githubcopilot.get_me and mcp.githubcopilot.search_repositories.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "allowed_tools": [
+            "mcp.githubcopilot.get_me",
+            "mcp.githubcopilot.search_repositories"
+        ],
+        "builder": {
+            "task_class": "connector_preflight",
+            "output_path": ".tandem/artifacts/establish-github-context.json"
+        }
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "completed",
+        "confirmed_authenticated_user": false,
+        "confirmed_target_repository": false
+    }))
+    .expect("serialize artifact");
+    let session = Session::new(Some("mcp required tool validation".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, _rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &json!({
+            "executed_tools": ["mcp_list", "write"],
+            "requested_tools": [
+                "mcp.githubcopilot.get_me",
+                "mcp.githubcopilot.search_repositories",
+                "write"
+            ],
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/establish-github-context.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none());
+    assert_eq!(validation["validation_outcome"], "blocked");
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("mcp_required_tool_missing")));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn assess_evidence_anchors_count_upstream_path_and_url_mentions() {
     let assessment = assess_artifact_candidate(
         &bare_node(),

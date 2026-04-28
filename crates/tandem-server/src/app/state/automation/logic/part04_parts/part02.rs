@@ -2,8 +2,11 @@ fn automation_declared_output_paths_for_run(
     automation: &AutomationV2Spec,
     run_id: &str,
 ) -> Vec<String> {
-    automation_declared_output_paths(automation)
-        .into_iter()
+    automation
+        .flow
+        .nodes
+        .iter()
+        .filter_map(automation_node_required_output_path)
         .filter_map(|path| automation_run_scoped_output_path(run_id, &path))
         .collect::<Vec<_>>()
 }

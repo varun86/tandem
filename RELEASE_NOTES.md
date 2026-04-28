@@ -87,6 +87,10 @@ File-read/source-scan research nodes now add a second orchestration-layer guard.
 
 Together, the write policy and source-scan snapshot guard mean artifact-producing nodes are blocked before writing outside their declared targets when possible, and source files are restored if a write slips through another path. The workflow should now fail loudly with an actionable node error instead of silently corrupting the repo or accepting a blocked repair payload as a valid artifact.
 
+Run-start cleanup has also been narrowed. Tandem now clears only run-scoped node artifacts during Automation V2 startup, not automation-level publication targets. This closes the failure mode where a workflow that listed tracked source files as final output targets deleted those files before its source-inspection nodes could read them.
+
+Artifact validation now rejects placeholder markdown such as "initial artifact created", "required workspace output path exists", and "will be updated in-place" as incomplete output. Connector preflight validation also requires declared concrete MCP tools to actually run; for example, a GitHub preflight that names `mcp.githubcopilot.get_me` and `mcp.githubcopilot.search_repositories` cannot pass by writing a JSON artifact that says those calls were not attempted.
+
 Provider and tool failures during prompt execution now mark the session failed and clear cancellation state when they return early. This avoids stuck "in progress" sessions after provider stream connect, idle, chunk, or tool execution errors.
 
 Bug Monitor also dedupes Automation V2 failure fanout more aggressively. Automation V2 context blackboard mirror failures now carry workflow/run metadata, and Bug Monitor candidate detection ignores those mirrored `context.task.failed`, `context.task.blocked`, and `context.run.failed` events so the primary `automation_v2.run.failed` incident remains the canonical report instead of generating one draft per downstream node.

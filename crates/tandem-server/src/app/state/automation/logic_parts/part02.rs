@@ -988,6 +988,10 @@ pub(crate) fn semantic_block_reason_for_requirements(
     let has_unmet = |needle: &str| unmet_requirements.iter().any(|value| value == needle);
     if has_unmet("artifact_status_not_terminal") {
         Some("artifact reported a non-terminal status".to_string())
+    } else if has_unmet("placeholder_artifact") {
+        Some("artifact is placeholder-like or incomplete".to_string())
+    } else if has_unmet("mcp_required_tool_missing") {
+        Some("required MCP tool calls were not completed".to_string())
     } else if has_unmet("current_attempt_output_missing") {
         Some("required output was not created in the current attempt".to_string())
     } else if has_unmet("structured_handoff_missing") {

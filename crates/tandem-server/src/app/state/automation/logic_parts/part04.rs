@@ -339,6 +339,21 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         {
             unmet_requirements.push("mcp_connector_action_missing".to_string());
         }
+        let required_concrete_mcp_tools = automation_node_required_concrete_mcp_tools(node);
+        let missing_required_concrete_mcp_tool =
+            required_concrete_mcp_tools.iter().any(|required| {
+                !tool_telemetry
+                    .get("executed_tools")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| {
+                        tools.iter().filter_map(Value::as_str).any(|tool_name| {
+                            tandem_core::tool_name_matches_policy(required, tool_name)
+                        })
+                    })
+            });
+        if missing_required_concrete_mcp_tool {
+            unmet_requirements.push("mcp_required_tool_missing".to_string());
+        }
         let prewrite_requirements =
             automation_node_prewrite_requirements(node, &requested_tools_for_contract);
         let session_text_recovery_requires_prewrite =
@@ -849,6 +864,12 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             if missing_editorial_substance {
                 unmet_requirements.push("editorial_substance_missing".to_string());
             }
+            if selected
+                .as_ref()
+                .is_some_and(|assessment| assessment.placeholder_like)
+            {
+                unmet_requirements.push("placeholder_artifact".to_string());
+            }
             if missing_markdown_structure {
                 unmet_requirements.push("markdown_structure_missing".to_string());
             }
@@ -1154,6 +1175,14 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     warning_requirements.sort();
     warning_requirements.dedup();
     semantic_block_reason = semantic_block_reason_for_requirements(&unmet_requirements);
+    if unmet_requirements.iter().any(|requirement| {
+        matches!(
+            requirement.as_str(),
+            "placeholder_artifact" | "mcp_required_tool_missing"
+        )
+    }) {
+        accepted_output = None;
+    }
     if should_downgrade_auto_cleaned_marker_rejection(
         rejected_reason.as_deref(),
         auto_cleaned,
