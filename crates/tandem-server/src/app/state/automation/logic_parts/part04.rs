@@ -90,6 +90,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             && automation_verified_output_differs_from_preexisting(preexisting_output, value)
     });
     let mut accepted_output = verified_output;
+    let verified_output_nonterminal_status = accepted_output
+        .as_ref()
+        .and_then(|(_, text)| automation_artifact_json_status_is_nonterminal(text));
     let mut recovered_from_session_write = false;
     let quality_mode_resolution = enforcement::automation_node_quality_mode_resolution(node);
     let mut validation_basis = json!({
@@ -1008,6 +1011,27 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             && !current_attempt_has_recorded_activity
         {
             accepted_output = None;
+        }
+    }
+    let nonterminal_artifact_status = accepted_output
+        .as_ref()
+        .and_then(|(_, text)| automation_artifact_json_status_is_nonterminal(text))
+        .or_else(|| {
+            if accepted_output.is_none() {
+                verified_output_nonterminal_status.clone()
+            } else {
+                None
+            }
+        });
+    if let Some(status) = nonterminal_artifact_status {
+        accepted_output = None;
+        unmet_requirements.push("artifact_status_not_terminal".to_string());
+        if rejected_reason.is_none() {
+            rejected_reason = Some(format!("artifact reported non-terminal status `{status}`"));
+        }
+        if semantic_block_reason.is_none() {
+            semantic_block_reason =
+                Some(format!("artifact reported non-terminal status `{status}`"));
         }
     }
     if accepted_output.is_some() && accepted_candidate_source.is_none() {

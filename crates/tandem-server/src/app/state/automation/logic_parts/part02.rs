@@ -986,7 +986,9 @@ pub(crate) fn semantic_block_reason_for_requirements(
     unmet_requirements: &[String],
 ) -> Option<String> {
     let has_unmet = |needle: &str| unmet_requirements.iter().any(|value| value == needle);
-    if has_unmet("current_attempt_output_missing") {
+    if has_unmet("artifact_status_not_terminal") {
+        Some("artifact reported a non-terminal status".to_string())
+    } else if has_unmet("current_attempt_output_missing") {
         Some("required output was not created in the current attempt".to_string())
     } else if has_unmet("structured_handoff_missing") {
         Some("structured handoff was not returned in the final response".to_string())

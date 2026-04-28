@@ -712,6 +712,9 @@ pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
     if trimmed.is_empty() {
         return true;
     }
+    if automation_artifact_json_status_is_nonterminal(trimmed).is_some() {
+        return true;
+    }
     // TODO(coding-hardening): Replace this phrase-based placeholder detection with
     // structural artifact validation. The long-term design should score artifact
     // substance from session mutation history + contract-kind-specific structure
@@ -751,6 +754,7 @@ pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
         "preserving file creation requirement",
         "preserving current workspace output state",
         "created/updated to satisfy workflow artifact requirement",
+        "initial artifact materialized before local",
         "see existing workspace research already completed in this run",
         "already written in prior step",
         "no content changes needed",
@@ -774,6 +778,40 @@ pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
         "pending approval",
     ];
     status_markers.iter().any(|marker| lowered.contains(marker)) && trimmed.len() < 280
+}
+
+pub(crate) fn automation_artifact_json_status(text: &str) -> Option<String> {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .filter(|value| !value.is_empty())
+}
+
+pub(crate) fn automation_artifact_json_status_is_nonterminal(text: &str) -> Option<String> {
+    let status = automation_artifact_json_status(text)?;
+    let normalized = status.to_ascii_lowercase().replace('-', "_");
+    let terminal = matches!(
+        normalized.as_str(),
+        "completed"
+            | "complete"
+            | "completed_with_limitations"
+            | "succeeded"
+            | "success"
+            | "passed"
+            | "ok"
+            | "done"
+    );
+    if terminal {
+        None
+    } else {
+        Some(status)
+    }
 }
 
 pub(crate) fn html_tag_count(text: &str, tag: &str) -> usize {

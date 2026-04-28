@@ -935,6 +935,93 @@ fn assess_source_field_preserved() {
 }
 
 #[test]
+fn assess_nonterminal_json_status_as_placeholder() {
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "in_progress",
+        "node_id": "read_contracts",
+        "note": "Initial artifact materialized before local contract inspection.",
+        "contracts": []
+    }))
+    .expect("serialize artifact");
+
+    let assessment = assess_artifact_candidate(
+        &bare_node(),
+        "/workspace",
+        "verified_output",
+        &artifact,
+        &[],
+        &[],
+        &[],
+        &[],
+    );
+
+    assert!(assessment.placeholder_like);
+}
+
+#[test]
+fn validation_rejects_nonterminal_json_status_artifact() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-nonterminal-artifact-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/read-contracts.json"
+        }
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "in_progress",
+        "node_id": "read_contracts",
+        "contracts": [],
+        "limitations": []
+    }))
+    .expect("serialize artifact");
+    let session = Session::new(Some("nonterminal artifact".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &json!({
+            "executed_tools": ["write"],
+            "requested_tools": ["write"],
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/read-contracts.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none());
+    assert_eq!(validation["validation_outcome"], "blocked");
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("artifact_status_not_terminal")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("non-terminal status"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn assess_evidence_anchors_count_upstream_path_and_url_mentions() {
     let assessment = assess_artifact_candidate(
         &bare_node(),
