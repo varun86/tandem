@@ -516,7 +516,8 @@ fn publish_verified_output_falls_back_to_automation_output_targets() {
         watch_conditions: Vec::new(),
         handoff_config: None,
     };
-    let node = bare_node();
+    let mut node = bare_node();
+    node.objective = "write final report".to_string();
 
     let result = super::publish_automation_verified_outputs(
         workspace_root.to_str().expect("workspace root"),
@@ -539,6 +540,81 @@ fn publish_verified_output_falls_back_to_automation_output_targets() {
     assert_eq!(result["targets"][0]["mode"], "snapshot_replace");
     assert_eq!(result["targets"][0]["path"], "notes/final-report.md");
     assert_eq!(result["targets"][0]["copied"], true);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn publish_verified_output_rejects_intermediate_node_for_automation_output_targets() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-publish-intermediate-reject-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_artifact = workspace_root.join(".tandem/runs/run-source/artifacts/scope.md");
+    std::fs::create_dir_all(run_artifact.parent().expect("run artifact parent"))
+        .expect("create run artifact parent");
+    std::fs::write(&run_artifact, "# Repository Scope Assessment\n").expect("write run artifact");
+
+    let mut source_node = bare_node();
+    source_node.node_id = "assess_repository_scope".to_string();
+    source_node.objective = "inspect source files".to_string();
+    let mut final_node = bare_node();
+    final_node.node_id = "write_feature_report".to_string();
+    final_node.objective = "write final report".to_string();
+    final_node.depends_on = vec![source_node.node_id.clone()];
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-source-targets".to_string(),
+        name: "Source targets".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: Default::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![source_node.clone(), final_node],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["packages/tandem-client-ts/src/client.ts".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let result = super::publish_automation_verified_outputs(
+        workspace_root.to_str().expect("workspace root"),
+        &automation,
+        "run-source",
+        &source_node,
+        &(
+            ".tandem/runs/run-source/artifacts/scope.md".to_string(),
+            "# Repository Scope Assessment\n".to_string(),
+        ),
+    );
+
+    assert!(result.is_err());
+    assert!(!workspace_root
+        .join("packages/tandem-client-ts/src/client.ts")
+        .exists());
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }

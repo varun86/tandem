@@ -1940,6 +1940,12 @@ pub(crate) fn publish_automation_verified_outputs(
     node: &AutomationFlowNode,
     verified_output: &(String, String),
 ) -> anyhow::Result<Value> {
+    if !automation_node_can_access_declared_output_targets(automation, node) {
+        anyhow::bail!(
+            "node `{}` is not allowed to publish to automation-level output targets",
+            node.node_id
+        );
+    }
     let publications = automation_output_target_publish_specs(&automation.output_targets)
         .into_iter()
         .map(|spec| {

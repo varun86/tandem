@@ -414,7 +414,7 @@ fn normalize_path_lexical(path: &Path) -> PathBuf {
     normalized
 }
 
-fn extract_session_write_target_paths(tool: &str, args: &Value) -> Vec<String> {
+pub(crate) fn extract_session_write_target_paths(tool: &str, args: &Value) -> Vec<String> {
     let tool = normalize_tool_name(tool);
     let mut paths = match tool.as_str() {
         "write" | "edit" | "delete" | "delete_file" => string_fields(
@@ -442,7 +442,7 @@ fn extract_session_write_target_paths(tool: &str, args: &Value) -> Vec<String> {
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
         ),
-        _ => extract_tool_candidate_paths(&tool, args),
+        _ => Vec::new(),
     };
     paths.sort();
     paths.dedup();

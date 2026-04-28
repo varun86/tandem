@@ -1443,7 +1443,9 @@ pub(crate) async fn execute_automation_v2_node(
                         )
                     })?,
                 )
-            } else if !automation.output_targets.is_empty() {
+            } else if !automation.output_targets.is_empty()
+                && automation_node_can_access_declared_output_targets(automation, node)
+            {
                 Some(
                     publish_automation_verified_outputs(
                         &workspace_root,

@@ -260,6 +260,39 @@ fn workspace_write_tool_detection_is_limited_to_mutations() {
 }
 
 #[test]
+fn session_write_targets_ignore_workspace_read_tools() {
+    assert!(
+        crate::engine_loop::tool_execution::extract_session_write_target_paths(
+            "read",
+            &json!({"path":"engine/src/main.rs"})
+        )
+        .is_empty()
+    );
+    assert!(
+        crate::engine_loop::tool_execution::extract_session_write_target_paths(
+            "glob",
+            &json!({"pattern":"packages/tandem-control-panel/src/**/*.tsx"})
+        )
+        .is_empty()
+    );
+    assert!(
+        crate::engine_loop::tool_execution::extract_session_write_target_paths(
+            "grep",
+            &json!({"path":"crates"})
+        )
+        .is_empty()
+    );
+
+    assert_eq!(
+        crate::engine_loop::tool_execution::extract_session_write_target_paths(
+            "write",
+            &json!({"path":"artifacts/report.md"})
+        ),
+        vec!["artifacts/report.md".to_string()]
+    );
+}
+
+#[test]
 fn proactive_write_gate_applies_only_before_prewrite_is_satisfied() {
     let decision = evaluate_prewrite_gate(
         true,
