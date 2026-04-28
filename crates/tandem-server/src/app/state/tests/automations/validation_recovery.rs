@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn recoverable_json_ignores_prewrite_exhausted_blocked_state() {
+    let session_text = r#"TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED
+
+{"status":"blocked","reason":"repair budget exhausted before final artifact validation","failureCode":"PREWRITE_REQUIREMENTS_EXHAUSTED","blockedReasonCode":"repair_budget_exhausted","repairAttempt":2,"repairAttemptsRemaining":0,"repairExhausted":true,"unmetRequirements":["concrete_read_required","successful_web_research_required"]}"#;
+
+    assert!(extract_recoverable_json_artifact(session_text).is_none());
+}
+
+#[test]
+fn source_scan_guard_includes_tracked_source_files() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-source-guard-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(workspace_root.join("packages/app/src")).expect("workspace");
+    std::fs::create_dir_all(workspace_root.join("target")).expect("target");
+    std::fs::write(
+        workspace_root.join("packages/app/src/client.ts"),
+        "export const ok = true;\n",
+    )
+    .expect("seed source");
+    std::fs::write(
+        workspace_root.join("target/generated.rs"),
+        "pub const BAD: bool = true;\n",
+    )
+    .expect("seed ignored build output");
+    let git_init = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace_root)
+        .arg("init")
+        .output()
+        .expect("git init");
+    assert!(git_init.status.success());
+    let git_add = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace_root)
+        .arg("add")
+        .arg("packages/app/src/client.ts")
+        .arg("target/generated.rs")
+        .output()
+        .expect("git add");
+    assert!(git_add.status.success());
+
+    let node = AutomationNodeBuilder::new("read_sources")
+        .objective("Read packages/app/src/client.ts and summarize it.")
+        .metadata(json!({
+            "builder": {
+                "task_class": "source_scan",
+                "retry_class": "file_read",
+                "task_family": "research"
+            }
+        }))
+        .build();
+    let automation = AutomationSpecBuilder::new("source-guard").build();
+    let paths = automation_read_only_source_guard_paths_for_node(
+        &automation,
+        &node,
+        workspace_root.to_str().expect("workspace root"),
+        None,
+    );
+
+    assert!(paths.contains(&"packages/app/src/client.ts".to_string()));
+    assert!(!paths.contains(&"target/generated.rs".to_string()));
+}
+
+#[test]
 fn code_workflow_rejects_unsafe_raw_source_rewrites() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-automation-unsafe-write-{}",

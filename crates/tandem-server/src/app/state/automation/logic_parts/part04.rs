@@ -59,37 +59,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let mut unmet_requirements = Vec::<String>::new();
     let mut read_only_source_mutations = Vec::<Value>::new();
     if let Some(snapshot) = read_only_source_snapshot {
-        let workspace_root_path = PathBuf::from(workspace_root);
-        for (path, before) in snapshot {
-            let resolved = workspace_root_path.join(path);
-            let mutation = if !resolved.is_file() {
-                Some(json!({
-                    "path": path,
-                    "issue": "deleted",
-                }))
-            } else {
-                match std::fs::read(&resolved) {
-                    Ok(after) if after == *before => None,
-                    Ok(_after) => Some(json!({
-                        "path": path,
-                        "issue": "modified",
-                    })),
-                    Err(_) => Some(json!({
-                        "path": path,
-                        "issue": "read_failed_after_run",
-                    })),
-                }
-            };
-
-            if let Some(entry) = mutation {
-                read_only_source_mutations.push(entry);
-                if let Some(parent) = resolved.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&resolved, before);
-            }
-        }
+        read_only_source_mutations = read_only_source_snapshot_mutations(workspace_root, snapshot);
         if !read_only_source_mutations.is_empty() {
+            let _ = revert_read_only_source_snapshot_files(workspace_root, snapshot);
             let mutation_paths = read_only_source_mutations
                 .iter()
                 .filter_map(|value| value.get("path").and_then(Value::as_str))

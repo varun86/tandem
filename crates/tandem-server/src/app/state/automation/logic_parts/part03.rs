@@ -485,6 +485,162 @@ pub(crate) fn automation_read_only_file_snapshot_for_node(
     snapshot
 }
 
+pub(crate) fn automation_node_uses_broad_read_only_source_guard(node: &AutomationFlowNode) -> bool {
+    let Some(builder) = node
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("builder"))
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+    let task_class = builder
+        .get("task_class")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let retry_class = builder
+        .get("retry_class")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let task_family = builder
+        .get("task_family")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    task_class.eq_ignore_ascii_case("source_scan")
+        || retry_class.eq_ignore_ascii_case("file_read")
+        || (task_family.eq_ignore_ascii_case("research")
+            && node
+                .objective
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("read "))
+}
+
+fn automation_source_guard_path_is_source_like(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    if normalized.starts_with(".tandem/")
+        || normalized.starts_with("target/")
+        || normalized.starts_with("node_modules/")
+        || normalized.starts_with("dist/")
+        || normalized.starts_with("build/")
+    {
+        return false;
+    }
+    let path = std::path::Path::new(&normalized);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if matches!(
+        file_name,
+        "Cargo.toml" | "Cargo.lock" | "package.json" | "package-lock.json" | "pnpm-lock.yaml"
+    ) {
+        return true;
+    }
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some(
+            "rs" | "ts"
+                | "tsx"
+                | "js"
+                | "jsx"
+                | "py"
+                | "toml"
+                | "json"
+                | "yaml"
+                | "yml"
+                | "md"
+                | "css"
+                | "scss"
+                | "html"
+                | "sql"
+                | "sh"
+        )
+    )
+}
+
+pub(crate) fn automation_workspace_tracked_source_guard_paths(workspace_root: &str) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root)
+        .arg("ls-files")
+        .arg("-z")
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let mut paths = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter_map(|bytes| std::str::from_utf8(bytes).ok())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .filter(|path| automation_source_guard_path_is_source_like(path))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+pub(crate) fn automation_read_only_source_guard_paths_for_node(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let mut paths = enforcement::automation_node_required_source_read_paths_for_automation(
+        automation,
+        node,
+        workspace_root,
+        runtime_values,
+    );
+    if automation_node_uses_broad_read_only_source_guard(node) {
+        paths.extend(automation_workspace_tracked_source_guard_paths(
+            workspace_root,
+        ));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+pub(crate) fn read_only_source_snapshot_mutations(
+    workspace_root: &str,
+    snapshot: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Vec<Value> {
+    let workspace_root_path = PathBuf::from(workspace_root);
+    let mut mutations = Vec::new();
+    for (path, before) in snapshot {
+        let resolved = workspace_root_path.join(path);
+        let mutation = if !resolved.is_file() {
+            Some(json!({
+                "path": path,
+                "issue": "deleted",
+            }))
+        } else {
+            match std::fs::read(&resolved) {
+                Ok(after) if after == *before => None,
+                Ok(_) => Some(json!({
+                    "path": path,
+                    "issue": "modified",
+                })),
+                Err(_) => Some(json!({
+                    "path": path,
+                    "issue": "read_failed_after_run",
+                })),
+            }
+        };
+        if let Some(mutation) = mutation {
+            mutations.push(mutation);
+        }
+    }
+    mutations
+}
+
 pub(crate) fn revert_read_only_source_snapshot_files(
     workspace_root: &str,
     snapshot: &std::collections::BTreeMap<String, Vec<u8>>,

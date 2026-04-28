@@ -226,6 +226,8 @@ fn automation_json_looks_like_status_payload(value: &Value) -> bool {
                 | "summary"
                 | "failureCode"
                 | "failure_code"
+                | "blockedReasonCode"
+                | "blocked_reason_code"
                 | "repairAttempt"
                 | "repairAttemptsRemaining"
                 | "repairExhausted"

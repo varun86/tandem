@@ -1009,15 +1009,14 @@ pub(crate) async fn execute_automation_v2_node(
                 })
         })
         .and_then(|resolved| std::fs::read_to_string(resolved).ok());
-    let read_only_source_snapshot = automation_read_only_file_snapshot_for_node(
+    let read_only_source_guard_paths = automation_read_only_source_guard_paths_for_node(
+        automation,
+        node,
         &workspace_root,
-        &enforcement::automation_node_required_source_read_paths_for_automation(
-            automation,
-            node,
-            &workspace_root,
-            Some(&runtime_values),
-        ),
+        Some(&runtime_values),
     );
+    let read_only_source_snapshot =
+        automation_read_only_file_snapshot_for_node(&workspace_root, &read_only_source_guard_paths);
     let mut read_only_source_snapshot_rollback =
         ReadOnlySourceSnapshotRollback::armed(&workspace_root, &read_only_source_snapshot);
     let workspace_snapshot_before = automation_workspace_root_file_snapshot(&workspace_root);
@@ -1246,6 +1245,23 @@ pub(crate) async fn execute_automation_v2_node(
         .await
         .ok_or_else(|| anyhow::anyhow!("automation session `{}` missing after run", session_id))?;
     let session_text = extract_session_text_output(&session);
+    let read_only_source_mutations =
+        read_only_source_snapshot_mutations(&workspace_root, &read_only_source_snapshot);
+    if !read_only_source_mutations.is_empty() {
+        let restored =
+            revert_read_only_source_snapshot_files(&workspace_root, &read_only_source_snapshot);
+        let mutation_paths = read_only_source_mutations
+            .iter()
+            .filter_map(|value| value.get("path").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        anyhow::bail!(
+            "automation node `{}` attempted to modify read-only source files; restored {} file(s): {}",
+            node.node_id,
+            restored.len(),
+            mutation_paths.join(", ")
+        );
+    }
     let verified_output = if let Some(output_path) = required_output_path.as_deref() {
         let resolution = reconcile_automation_resolve_verified_output_path(
             &session,

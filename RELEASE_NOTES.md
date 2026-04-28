@@ -73,6 +73,8 @@ Bug Monitor and Automation V2 now also self-heal common post-restart MCP state. 
 
 Automation artifact nodes now run with an engine-enforced write policy. Non-code workflow nodes can only write declared output targets and approved must-write files, while explicit code workflows keep repo-edit access. This prevents artifact-producing agents from accidentally overwriting source files when they meant to write `.tandem/runs/.../artifacts/...`.
 
+File-read/source-scan research nodes now add a second orchestration-layer guard. Tandem snapshots tracked source-like files before the node runs, restores them immediately if the session mutates any of them, and fails the node before output reconciliation. Repair-exhausted status JSON is also treated as blocked runtime state instead of recoverable artifact content, so a failed repair loop cannot be promoted into a fake `.json` output.
+
 Provider and tool failures during prompt execution now mark the session failed and clear cancellation state when they return early. This avoids stuck "in progress" sessions after provider stream connect, idle, chunk, or tool execution errors.
 
 Bug Monitor also dedupes Automation V2 failure fanout more aggressively. Automation V2 context blackboard mirror failures now carry workflow/run metadata, and Bug Monitor candidate detection ignores those mirrored `context.task.failed`, `context.task.blocked`, and `context.run.failed` events so the primary `automation_v2.run.failed` incident remains the canonical report instead of generating one draft per downstream node.
