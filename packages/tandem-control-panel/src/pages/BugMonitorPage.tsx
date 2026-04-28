@@ -653,6 +653,7 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
   const [incidentPage, setIncidentPage] = useState(1);
   const [incidentPageSize, setIncidentPageSize] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [selectedIncidentIds, setSelectedIncidentIds] = useState<string[]>([]);
+  const [incidentsCollapsed, setIncidentsCollapsed] = useState(true);
   const [deleteIncidentsConfirm, setDeleteIncidentsConfirm] = useState<{
     ids: string[];
     all: boolean;
@@ -661,6 +662,7 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
   const [draftPage, setDraftPage] = useState(1);
   const [draftPageSize, setDraftPageSize] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [selectedDraftIds, setSelectedDraftIds] = useState<string[]>([]);
+  const [draftsCollapsed, setDraftsCollapsed] = useState(true);
   const [deleteDraftsConfirm, setDeleteDraftsConfirm] = useState<{
     ids: string[];
     all: boolean;
@@ -669,6 +671,7 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
   const [postPage, setPostPage] = useState(1);
   const [postPageSize, setPostPageSize] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
+  const [postsCollapsed, setPostsCollapsed] = useState(true);
   const [deletePostsConfirm, setDeletePostsConfirm] = useState<{
     ids: string[];
     all: boolean;
@@ -962,6 +965,9 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
     incidentPageSize,
     draftPageSize,
     postPageSize,
+    incidentsCollapsed,
+    draftsCollapsed,
+    postsCollapsed,
     reportOpen,
     !!detail,
   ]);
@@ -1111,6 +1117,16 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
           subtitle={`${incidents.length} recent incident${incidents.length === 1 ? "" : "s"}`}
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone={incidents.length ? "info" : "ghost"}>{incidents.length}</Badge>
+              <button
+                type="button"
+                className="tcp-icon-btn"
+                title={incidentsCollapsed ? "Expand incidents" : "Collapse incidents"}
+                aria-label={incidentsCollapsed ? "Expand incidents" : "Collapse incidents"}
+                onClick={() => setIncidentsCollapsed((value) => !value)}
+              >
+                <i data-lucide={incidentsCollapsed ? "chevron-down" : "chevron-up"}></i>
+              </button>
               <Badge tone="ghost">{incidentPageLabel}</Badge>
               <Badge tone={selectedIncidentIds.length ? "info" : "ghost"}>
                 {selectedIncidentIds.length} selected
@@ -1153,12 +1169,12 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
                 onClick={() => setDeleteIncidentsConfirm({ ids: [], all: true })}
                 disabled={!incidents.length || deleteIncidentsMutation.isPending}
               >
-                <i data-lucide="trash"></i>
+                <i data-lucide="list-x"></i>
               </button>
               <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
                 <span>Per page</span>
                 <select
-                  className="tcp-input h-8 px-2 text-xs"
+                  className="tcp-input h-8 min-w-[4rem] px-2 text-xs leading-none"
                   value={incidentPageSize}
                   onChange={(event) => {
                     setIncidentPageSize(Number(event.target.value) || DEFAULT_LIST_PAGE_SIZE);
@@ -1195,8 +1211,10 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
             </div>
           }
         >
-          {incidentsQuery.isError ? <QueryError error={incidentsQuery.error} /> : null}
-          {incidentsQuery.isLoading ? (
+          {incidentsCollapsed ? null : incidentsQuery.isError ? (
+            <QueryError error={incidentsQuery.error} />
+          ) : null}
+          {incidentsCollapsed ? null : incidentsQuery.isLoading ? (
             <EmptyState title="Loading incidents" text="Checking the reporter incident queue." />
           ) : incidents.length ? (
             <div className="grid gap-3">
@@ -1321,6 +1339,16 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
           subtitle={`${drafts.length} recent draft${drafts.length === 1 ? "" : "s"}`}
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone={drafts.length ? "info" : "ghost"}>{drafts.length}</Badge>
+              <button
+                type="button"
+                className="tcp-icon-btn"
+                title={draftsCollapsed ? "Expand drafts" : "Collapse drafts"}
+                aria-label={draftsCollapsed ? "Expand drafts" : "Collapse drafts"}
+                onClick={() => setDraftsCollapsed((value) => !value)}
+              >
+                <i data-lucide={draftsCollapsed ? "chevron-down" : "chevron-up"}></i>
+              </button>
               <Badge tone="ghost">{draftPageLabel}</Badge>
               <Badge tone={selectedDraftIds.length ? "info" : "ghost"}>
                 {selectedDraftIds.length} selected
@@ -1363,12 +1391,12 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
                 onClick={() => setDeleteDraftsConfirm({ ids: [], all: true })}
                 disabled={!drafts.length || deleteDraftsMutation.isPending}
               >
-                <i data-lucide="trash"></i>
+                <i data-lucide="list-x"></i>
               </button>
               <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
                 <span>Per page</span>
                 <select
-                  className="tcp-input h-8 px-2 text-xs"
+                  className="tcp-input h-8 min-w-[4rem] px-2 text-xs leading-none"
                   value={draftPageSize}
                   onChange={(event) => {
                     setDraftPageSize(Number(event.target.value) || DEFAULT_LIST_PAGE_SIZE);
@@ -1405,8 +1433,10 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
             </div>
           }
         >
-          {draftsQuery.isError ? <QueryError error={draftsQuery.error} /> : null}
-          {draftsQuery.isLoading ? (
+          {draftsCollapsed ? null : draftsQuery.isError ? (
+            <QueryError error={draftsQuery.error} />
+          ) : null}
+          {draftsCollapsed ? null : draftsQuery.isLoading ? (
             <EmptyState title="Loading drafts" text="Checking generated issue drafts." />
           ) : drafts.length ? (
             <div className="grid gap-3">
@@ -1587,6 +1617,16 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
           subtitle={`${posts.length} recent post${posts.length === 1 ? "" : "s"}`}
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone={posts.length ? "info" : "ghost"}>{posts.length}</Badge>
+              <button
+                type="button"
+                className="tcp-icon-btn"
+                title={postsCollapsed ? "Expand posts" : "Collapse posts"}
+                aria-label={postsCollapsed ? "Expand posts" : "Collapse posts"}
+                onClick={() => setPostsCollapsed((value) => !value)}
+              >
+                <i data-lucide={postsCollapsed ? "chevron-down" : "chevron-up"}></i>
+              </button>
               <Badge tone="ghost">{postPageLabel}</Badge>
               <Badge tone={selectedPostIds.length ? "info" : "ghost"}>
                 {selectedPostIds.length} selected
@@ -1629,12 +1669,12 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
                 onClick={() => setDeletePostsConfirm({ ids: [], all: true })}
                 disabled={!posts.length || deletePostsMutation.isPending}
               >
-                <i data-lucide="trash"></i>
+                <i data-lucide="list-x"></i>
               </button>
               <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
                 <span>Per page</span>
                 <select
-                  className="tcp-input h-8 px-2 text-xs"
+                  className="tcp-input h-8 min-w-[4rem] px-2 text-xs leading-none"
                   value={postPageSize}
                   onChange={(event) => {
                     setPostPageSize(Number(event.target.value) || DEFAULT_LIST_PAGE_SIZE);
@@ -1671,8 +1711,10 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
             </div>
           }
         >
-          {postsQuery.isError ? <QueryError error={postsQuery.error} /> : null}
-          {postsQuery.isLoading ? (
+          {postsCollapsed ? null : postsQuery.isError ? (
+            <QueryError error={postsQuery.error} />
+          ) : null}
+          {postsCollapsed ? null : postsQuery.isLoading ? (
             <EmptyState title="Loading posts" text="Checking GitHub publishing attempts." />
           ) : posts.length ? (
             <div className="grid gap-3">

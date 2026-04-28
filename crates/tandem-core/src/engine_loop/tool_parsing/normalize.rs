@@ -1267,7 +1267,7 @@ pub(crate) fn infer_required_output_target_path_from_text(text: &str) -> Option<
     None
 }
 
-fn infer_write_file_path_from_text(text: &str) -> Option<String> {
+pub(crate) fn infer_write_file_path_from_text(text: &str) -> Option<String> {
     let inferred = infer_file_path_from_text(text)?;
     let workspace_root = infer_workspace_root_from_text(text);
     if workspace_root

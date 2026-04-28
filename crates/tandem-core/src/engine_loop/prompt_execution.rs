@@ -134,20 +134,28 @@ impl EngineLoop {
                     active_agent.name
                 )
             } else {
-                self.execute_tool_with_permission(
-                    &session_id,
-                    &user_message_id,
-                    tool.clone(),
-                    args,
-                    None,
-                    active_agent.skills.as_deref(),
-                    &text,
-                    requested_write_required,
-                    None,
-                    cancel.clone(),
-                )
-                .await?
-                .unwrap_or_default()
+                match self
+                    .execute_tool_with_permission(
+                        &session_id,
+                        &user_message_id,
+                        tool.clone(),
+                        args,
+                        None,
+                        active_agent.skills.as_deref(),
+                        &text,
+                        requested_write_required,
+                        None,
+                        cancel.clone(),
+                    )
+                    .await
+                {
+                    Ok(output) => output.unwrap_or_default(),
+                    Err(err) => {
+                        self.mark_session_run_failed(&session_id, &err.to_string())
+                            .await;
+                        return Err(err);
+                    }
+                }
             }
         } else {
             let mut completion = String::new();
@@ -587,6 +595,8 @@ impl EngineLoop {
                                 "error": detail,
                             }),
                         ));
+                        self.mark_session_run_failed(&session_id, &err.to_string())
+                            .await;
                         return Err(err);
                     }
                 };
@@ -619,6 +629,8 @@ impl EngineLoop {
                                     "error": truncate_text(&err.to_string(), 500),
                                 }),
                             ));
+                            self.mark_session_run_failed(&session_id, &err.to_string())
+                                .await;
                             return Err(err);
                         }
                     };
@@ -657,9 +669,10 @@ impl EngineLoop {
                                     "error": detail,
                                 }),
                             ));
-                            return Err(anyhow::anyhow!(
-                                "provider stream chunk error: {error_text}"
-                            ));
+                            let err = anyhow::anyhow!("provider stream chunk error: {error_text}");
+                            self.mark_session_run_failed(&session_id, &err.to_string())
+                                .await;
+                            return Err(err);
                         }
                     };
                     match chunk {
@@ -1058,7 +1071,7 @@ impl EngineLoop {
                         *entry += 1;
                         accepted_tool_calls_in_cycle =
                             accepted_tool_calls_in_cycle.saturating_add(1);
-                        if let Some(output) = self
+                        let tool_output_result = self
                             .execute_tool_with_permission(
                                 &session_id,
                                 &user_message_id,
@@ -1071,7 +1084,17 @@ impl EngineLoop {
                                 Some(&completion),
                                 cancel.clone(),
                             )
-                            .await?
+                            .await;
+                        let Some(output) = (match tool_output_result {
+                            Ok(output) => output,
+                            Err(err) => {
+                                self.mark_session_run_failed(&session_id, &err.to_string())
+                                    .await;
+                                return Err(err);
+                            }
+                        }) else {
+                            continue;
+                        };
                         {
                             let productive = is_productive_tool_output(&tool_key, &output);
                             if output.contains("WEBSEARCH_QUERY_MISSING") {

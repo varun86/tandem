@@ -178,6 +178,65 @@ impl EngineLoop {
         ))
     }
 
+    pub(super) async fn session_write_policy_violation(
+        &self,
+        session_id: &str,
+        tool: &str,
+        args: &Value,
+    ) -> Option<String> {
+        let policy = self.get_session_write_policy(session_id).await?;
+        if matches!(policy.mode, SessionWritePolicyMode::RepoEdit) {
+            return None;
+        }
+
+        let targets = extract_session_write_target_paths(tool, args);
+        if targets.is_empty() {
+            if tool_requires_concrete_write_target(tool, args) {
+                return Some(format!(
+                    "Write policy blocked `{tool}` because this session only allows declared output targets."
+                ));
+            }
+            return None;
+        }
+
+        let session = self.storage.get_session(session_id).await?;
+        let workspace = session
+            .workspace_root
+            .or_else(|| crate::normalize_workspace_path(&session.directory))?;
+        let workspace_path = normalize_path_lexical(Path::new(&workspace));
+        let effective_cwd = string_field(args, "__effective_cwd")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let directory = session.directory.trim();
+                if directory.is_empty() || directory == "." {
+                    None
+                } else {
+                    Some(PathBuf::from(directory))
+                }
+            })
+            .unwrap_or_else(|| workspace_path.clone());
+        let allowed_paths = policy
+            .allowed_paths
+            .iter()
+            .map(|path| resolve_policy_path(path, &workspace_path, &workspace_path))
+            .collect::<HashSet<_>>();
+        if allowed_paths.is_empty() {
+            return Some(format!(
+                "Write policy blocked `{tool}` because no declared output targets are available for this session."
+            ));
+        }
+
+        let outside = targets.iter().find(|target| {
+            let resolved = resolve_policy_path(target, &effective_cwd, &workspace_path);
+            !allowed_paths.contains(&resolved)
+        });
+        outside.map(|target| {
+            format!(
+                "Write policy blocked `{tool}` target `{target}`. This automation session may only write declared output targets."
+            )
+        })
+    }
+
     pub(super) async fn resolve_tool_execution_context(
         &self,
         session_id: &str,
@@ -198,6 +257,27 @@ impl EngineLoop {
             .clone()
             .or_else(|| crate::workspace_project_id(&workspace_root));
         Some((workspace_root, effective_cwd, project_id))
+    }
+
+    pub(super) async fn mark_session_run_failed(&self, session_id: &str, error: &str) {
+        let detail = truncate_text(error, 1_000);
+        self.event_bus.publish(EngineEvent::new(
+            "session.updated",
+            json!({
+                "sessionID": session_id,
+                "status": "failed",
+                "error": detail,
+            }),
+        ));
+        self.event_bus.publish(EngineEvent::new(
+            "session.status",
+            json!({
+                "sessionID": session_id,
+                "status": "failed",
+                "error": detail,
+            }),
+        ));
+        self.cancellations.remove(session_id).await;
     }
 
     pub(super) async fn workspace_override_active(&self, session_id: &str) -> bool {
@@ -297,5 +377,196 @@ impl EngineLoop {
         } else {
             Some(completion)
         }
+    }
+}
+
+fn resolve_policy_path(path: &str, effective_cwd: &Path, workspace_root: &Path) -> PathBuf {
+    let raw = Path::new(path);
+    let resolved = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        let base = if effective_cwd.is_absolute() {
+            effective_cwd.to_path_buf()
+        } else {
+            workspace_root.join(effective_cwd)
+        };
+        base.join(raw)
+    };
+    normalize_path_lexical(&resolved)
+}
+
+fn normalize_path_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            std::path::Component::Normal(value) => normalized.push(value),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                normalized.push(component.as_os_str())
+            }
+        }
+    }
+    normalized
+}
+
+fn extract_session_write_target_paths(tool: &str, args: &Value) -> Vec<String> {
+    let tool = normalize_tool_name(tool);
+    let mut paths = match tool.as_str() {
+        "write" | "edit" | "delete" | "delete_file" => string_fields(
+            args,
+            &[
+                "path",
+                "file_path",
+                "filePath",
+                "filepath",
+                "target_path",
+                "output_path",
+                "file",
+            ],
+        ),
+        "apply_patch" => args
+            .get("patchText")
+            .or_else(|| args.get("patch"))
+            .and_then(Value::as_str)
+            .map(extract_apply_patch_write_paths)
+            .unwrap_or_default(),
+        "bash" | "shell" => extract_bash_write_targets(
+            &args
+                .get("command")
+                .or_else(|| args.get("cmd"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+        _ => extract_tool_candidate_paths(&tool, args),
+    };
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn string_field(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn string_fields(args: &Value, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| string_field(args, key))
+        .collect::<Vec<_>>()
+}
+
+fn extract_apply_patch_write_paths(patch: &str) -> Vec<String> {
+    let mut paths = HashSet::new();
+    for line in patch.lines() {
+        let trimmed = line.trim();
+        let marker = trimmed
+            .strip_prefix("*** Add File: ")
+            .or_else(|| trimmed.strip_prefix("*** Update File: "))
+            .or_else(|| trimmed.strip_prefix("*** Delete File: "));
+        if let Some(path) = marker.map(str::trim).filter(|value| !value.is_empty()) {
+            paths.insert(path.to_string());
+        }
+    }
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+fn extract_bash_write_targets(command: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for part in command.split(">>").flat_map(|value| value.split('>')) {
+        let candidate = part.trim().split_whitespace().next().unwrap_or("").trim();
+        if candidate.starts_with('/')
+            || candidate.starts_with("./")
+            || candidate.starts_with("../")
+            || candidate.starts_with("~/")
+            || candidate.starts_with(".tandem/")
+        {
+            targets.push(candidate.to_string());
+        }
+    }
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+fn tool_requires_concrete_write_target(tool: &str, args: &Value) -> bool {
+    let tool = normalize_tool_name(tool);
+    match tool.as_str() {
+        "write" | "edit" | "delete" | "delete_file" | "apply_patch" => true,
+        "bash" | "shell" => args
+            .get("command")
+            .or_else(|| args.get("cmd"))
+            .and_then(Value::as_str)
+            .is_some_and(shell_command_appears_mutating),
+        _ => false,
+    }
+}
+
+fn shell_command_appears_mutating(command: &str) -> bool {
+    let lowered = command.to_ascii_lowercase();
+    lowered.contains(" >")
+        || lowered.contains(">>")
+        || lowered.contains(" tee ")
+        || lowered.starts_with("tee ")
+        || lowered.contains(" sed -i")
+        || lowered.starts_with("sed -i")
+        || lowered.contains(" perl -pi")
+        || lowered.starts_with("perl -pi")
+        || lowered.contains(" rm ")
+        || lowered.starts_with("rm ")
+        || lowered.contains(" mv ")
+        || lowered.starts_with("mv ")
+        || lowered.contains(" cp ")
+        || lowered.starts_with("cp ")
+}
+
+#[cfg(test)]
+mod session_write_policy_tests {
+    use super::*;
+
+    #[test]
+    fn write_policy_extracts_apply_patch_targets() {
+        let args = json!({
+            "patchText": "*** Begin Patch\n*** Update File: packages/app/src/main.ts\n@@\n old\n*** End Patch\n"
+        });
+        assert_eq!(
+            extract_session_write_target_paths("apply_patch", &args),
+            vec!["packages/app/src/main.ts".to_string()]
+        );
+    }
+
+    #[test]
+    fn write_policy_normalizes_equivalent_paths() {
+        let workspace = Path::new("/workspace/project");
+        let resolved = resolve_policy_path(
+            "./.tandem/runs/run-1/../run-1/artifacts/out.md",
+            workspace,
+            workspace,
+        );
+        assert_eq!(
+            resolved,
+            PathBuf::from("/workspace/project/.tandem/runs/run-1/artifacts/out.md")
+        );
+    }
+
+    #[test]
+    fn write_policy_blocks_opaque_mutating_shell_commands() {
+        assert!(tool_requires_concrete_write_target(
+            "bash",
+            &json!({"command": "cat <<'EOF' > packages/app/src/main.ts\nbroken\nEOF"})
+        ));
+        assert!(!tool_requires_concrete_write_target(
+            "bash",
+            &json!({"command": "rg \"needle\" packages/app/src"})
+        ));
     }
 }

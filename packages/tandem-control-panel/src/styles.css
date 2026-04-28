@@ -605,11 +605,30 @@
   }
 
   .tcp-input {
-    @apply w-full rounded-none px-3 py-2.5 text-sm placeholder:text-slate-400 focus:ring-2;
+    @apply w-full rounded-none px-3 py-1.5 text-sm leading-tight placeholder:text-slate-400 focus:ring-2;
+    min-height: 2.25rem;
     border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
     background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%);
     color: var(--color-text);
     --tw-ring-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  }
+
+  select.tcp-input,
+  select.tcp-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 12px 12px;
+    padding-right: 2rem;
+  }
+
+  .tcp-input.h-7,
+  .tcp-input.h-8,
+  .tcp-select.h-7,
+  .tcp-select.h-8 {
+    min-height: 0;
   }
 
   .tcp-select {

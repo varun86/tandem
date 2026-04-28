@@ -1,4 +1,3 @@
-
 pub(super) fn apply_context_event_transition(
     run: &mut ContextRunState,
     input: &ContextRunEventAppendInput,
@@ -1713,6 +1712,11 @@ pub(crate) async fn sync_automation_v2_run_blackboard(
                             "task_rev": next_task.task_rev,
                             "source": "automation_v2",
                             "automation_id": automation.automation_id,
+                            "automationID": automation.automation_id,
+                            "workflow_id": automation.automation_id,
+                            "workflowID": automation.automation_id,
+                            "run_id": run.run_id,
+                            "runID": run.run_id,
                         }),
                     )
                     .await?;
@@ -1763,6 +1767,11 @@ pub(crate) async fn sync_automation_v2_run_blackboard(
                         "task_rev": task.task_rev,
                         "source": "automation_v2",
                         "automation_id": automation.automation_id,
+                        "automationID": automation.automation_id,
+                        "workflow_id": automation.automation_id,
+                        "workflowID": automation.automation_id,
+                        "run_id": run.run_id,
+                        "runID": run.run_id,
                     }),
                 )
                 .await?;

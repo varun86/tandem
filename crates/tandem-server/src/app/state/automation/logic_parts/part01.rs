@@ -767,6 +767,98 @@ async fn sync_automation_allowed_mcp_servers(
     })
 }
 
+pub(crate) fn automation_policy_mcp_preflight_blocker(diagnostics: &Value) -> Option<String> {
+    if diagnostics
+        .get("selected_source")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        != "policy"
+    {
+        return None;
+    }
+    let blocked = diagnostics
+        .get("servers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let name = row.get("name").and_then(Value::as_str).unwrap_or("unknown");
+            let connected = row
+                .get("connected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let registered_count = row
+                .get("registered_tool_count_after_sync")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if connected && registered_count > 0 {
+                None
+            } else {
+                let reason = row
+                    .get("sync_error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no_registered_tools");
+                Some(format!("{name} ({reason})"))
+            }
+        })
+        .collect::<Vec<_>>();
+    if blocked.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "required MCP server preflight failed before agent execution: {}",
+            blocked.join(", ")
+        ))
+    }
+}
+
+#[cfg(test)]
+mod automation_mcp_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn policy_mcp_preflight_blocks_disconnected_policy_server() {
+        let diagnostics = json!({
+            "selected_source": "policy",
+            "servers": [{
+                "name": "githubcopilot",
+                "connected": false,
+                "sync_error": "connect_failed",
+                "registered_tool_count_after_sync": 0
+            }]
+        });
+        let detail = automation_policy_mcp_preflight_blocker(&diagnostics).unwrap();
+        assert!(detail.contains("githubcopilot"));
+        assert!(detail.contains("connect_failed"));
+    }
+
+    #[test]
+    fn policy_mcp_preflight_allows_connected_server_with_tools() {
+        let diagnostics = json!({
+            "selected_source": "policy",
+            "servers": [{
+                "name": "githubcopilot",
+                "connected": true,
+                "registered_tool_count_after_sync": 4
+            }]
+        });
+        assert!(automation_policy_mcp_preflight_blocker(&diagnostics).is_none());
+    }
+
+    #[test]
+    fn policy_mcp_preflight_ignores_non_policy_selection() {
+        let diagnostics = json!({
+            "selected_source": "none",
+            "servers": [{
+                "name": "githubcopilot",
+                "connected": false,
+                "registered_tool_count_after_sync": 0
+            }]
+        });
+        assert!(automation_policy_mcp_preflight_blocker(&diagnostics).is_none());
+    }
+}
+
 pub(crate) fn automation_node_delivery_method_value(node: &AutomationFlowNode) -> String {
     node_runtime_impl::automation_node_delivery_method(node).unwrap_or_else(|| "none".to_string())
 }

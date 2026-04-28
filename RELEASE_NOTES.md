@@ -65,6 +65,16 @@ Bug Monitor issue drafts now include sections for what happened, expected behavi
 
 Duplicate failure-pattern context is also preserved through triage replay, recheck, publish-failure responses, and generated issue drafts, so recurring failures point back to prior evidence rather than losing the duplicate match after the first triage run.
 
+### Automation failure reporting is safer and less noisy
+
+Automation V2 connector setup now fails fast when a policy-selected MCP server cannot actually be used. Before launching the agent, Tandem connects required MCP servers, syncs their tools, and verifies that each policy-selected server registered at least one tool. If a required connector such as GitHub is disconnected or syncs zero tools, the node returns `tool_resolution_failed` with MCP diagnostics instead of running a long session that cannot satisfy its tool requirements.
+
+Automation artifact nodes now run with an engine-enforced write policy. Non-code workflow nodes can only write declared output targets and approved must-write files, while explicit code workflows keep repo-edit access. This prevents artifact-producing agents from accidentally overwriting source files when they meant to write `.tandem/runs/.../artifacts/...`.
+
+Provider and tool failures during prompt execution now mark the session failed and clear cancellation state when they return early. This avoids stuck "in progress" sessions after provider stream connect, idle, chunk, or tool execution errors.
+
+Bug Monitor also dedupes Automation V2 failure fanout more aggressively. Automation V2 context blackboard mirror failures now carry workflow/run metadata, and Bug Monitor candidate detection ignores those mirrored `context.task.failed`, `context.task.blocked`, and `context.run.failed` events so the primary `automation_v2.run.failed` incident remains the canonical report instead of generating one draft per downstream node.
+
 ### Engine build entrypoint restored
 
 The `tandem-engine` binary entrypoint has been restored so `cargo build -p tandem-ai --profile fast-release` can compile the engine package again.

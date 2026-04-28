@@ -455,6 +455,58 @@ pub(crate) async fn clear_automation_declared_outputs(
     Ok(())
 }
 
+fn automation_session_write_policy_for_node(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    run_id: &str,
+    execution_mode: &str,
+    required_output_path: Option<&str>,
+    runtime_values: &AutomationPromptRuntimeValues,
+) -> tandem_core::SessionWritePolicy {
+    if matches!(execution_mode, "git_patch" | "filesystem_patch") {
+        return tandem_core::SessionWritePolicy {
+            mode: tandem_core::SessionWritePolicyMode::RepoEdit,
+            allowed_paths: Vec::new(),
+            reason: "automation node is an explicit code workflow".to_string(),
+        };
+    }
+
+    let mut allowed_paths = Vec::new();
+    if let Some(output_path) = required_output_path {
+        if let Ok(candidates) =
+            automation_output_path_candidates(workspace_root, run_id, node, output_path)
+        {
+            allowed_paths.extend(candidates.into_iter().map(|path| {
+                path.strip_prefix(workspace_root)
+                    .ok()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| path.to_string_lossy().to_string())
+            }));
+        } else {
+            allowed_paths.push(output_path.to_string());
+        }
+    }
+    allowed_paths.extend(automation_node_must_write_files_for_automation(
+        automation,
+        node,
+        Some(runtime_values),
+    ));
+    allowed_paths.sort();
+    allowed_paths.dedup();
+
+    tandem_core::SessionWritePolicy {
+        mode: if allowed_paths.is_empty() {
+            tandem_core::SessionWritePolicyMode::ArtifactOnly
+        } else {
+            tandem_core::SessionWritePolicyMode::ExplicitTargets
+        },
+        allowed_paths,
+        reason: "automation artifact node is restricted to declared outputs".to_string(),
+    }
+}
+
 pub async fn clear_automation_subtree_outputs(
     state: &AppState,
     automation: &AutomationV2Spec,
@@ -811,6 +863,33 @@ pub(crate) async fn execute_automation_v2_node(
             &mcp_tool_diagnostics,
         );
     }
+    if let Some(detail) = automation_policy_mcp_preflight_blocker(&mcp_tool_diagnostics) {
+        let mut output =
+            crate::automation_v2::executor::build_node_execution_error_output_with_category(
+                node,
+                &detail,
+                false,
+                "tool_resolution_failed",
+            );
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "tool_telemetry".to_string(),
+                automation_initialized_attempt_tool_telemetry(
+                    &requested_tools,
+                    &capability_resolution,
+                ),
+            );
+            object.insert(
+                "capability_resolution".to_string(),
+                capability_resolution.clone(),
+            );
+            object.insert(
+                "mcp_tool_diagnostics".to_string(),
+                mcp_tool_diagnostics.clone(),
+            );
+        }
+        return Ok(output);
+    }
     let missing_capabilities =
         automation_capability_resolution_missing_capabilities(&capability_resolution);
     let offered_tool_schemas = available_tool_schemas
@@ -891,6 +970,16 @@ pub(crate) async fn execute_automation_v2_node(
         }
         return Ok(output);
     }
+    let runtime_values = automation_prompt_runtime_values(run.started_at_ms);
+    let write_policy = automation_session_write_policy_for_node(
+        automation,
+        node,
+        &workspace_root,
+        run_id,
+        execution_mode,
+        required_output_path.as_deref(),
+        &runtime_values,
+    );
     state
         .set_automation_v2_session_mcp_servers(&session_id, selected_mcp_server_names.clone())
         .await;
@@ -900,11 +989,14 @@ pub(crate) async fn execute_automation_v2_node(
         .await;
     state
         .engine_loop
+        .set_session_write_policy(&session_id, write_policy)
+        .await;
+    state
+        .engine_loop
         .set_session_auto_approve_permissions(&session_id, true)
         .await;
 
     let model = resolve_automation_agent_model(state, agent, template.as_ref()).await;
-    let runtime_values = automation_prompt_runtime_values(run.started_at_ms);
     let preexisting_output = required_output_path
         .as_deref()
         .and_then(|output_path| {
@@ -1132,6 +1224,10 @@ pub(crate) async fn execute_automation_v2_node(
     state
         .engine_loop
         .clear_session_allowed_tools(&session_id)
+        .await;
+    state
+        .engine_loop
+        .clear_session_write_policy(&session_id)
         .await;
     state
         .engine_loop

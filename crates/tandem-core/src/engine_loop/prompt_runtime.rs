@@ -445,7 +445,10 @@ pub(super) async fn emit_tool_side_events(
     }
 }
 
-fn apply_todo_updates_from_args(current: Vec<Value>, args: &Value) -> Option<Vec<Value>> {
+pub(super) fn apply_todo_updates_from_args(
+    current: Vec<Value>,
+    args: &Value,
+) -> Option<Vec<Value>> {
     let obj = args.as_object()?;
     let mut todos = current;
     let mut changed = false;
@@ -547,7 +550,7 @@ fn normalize_todo_status(raw: &str) -> String {
     }
 }
 
-fn compact_chat_history(
+pub(super) fn compact_chat_history(
     messages: Vec<ChatMessage>,
     profile: ChatHistoryProfile,
 ) -> Vec<ChatMessage> {

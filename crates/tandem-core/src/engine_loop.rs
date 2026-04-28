@@ -56,6 +56,20 @@ pub use types::{
     ToolPolicyHook,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionWritePolicyMode {
+    ArtifactOnly,
+    ExplicitTargets,
+    RepoEdit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionWritePolicy {
+    pub mode: SessionWritePolicyMode,
+    pub allowed_paths: Vec<String>,
+    pub reason: String,
+}
+
 use crate::tool_router::{
     classify_intent, default_mode_name, is_short_simple_prompt, select_tool_subset,
     should_escalate_auto_tools, tool_router_enabled, ToolIntent, ToolRoutingDecision,
@@ -85,6 +99,7 @@ pub struct EngineLoop {
     host_runtime_context: HostRuntimeContext,
     workspace_overrides: std::sync::Arc<RwLock<HashMap<String, u64>>>,
     session_allowed_tools: std::sync::Arc<RwLock<HashMap<String, Vec<String>>>>,
+    session_write_policies: std::sync::Arc<RwLock<HashMap<String, SessionWritePolicy>>>,
     session_kb_grounding_policies:
         std::sync::Arc<RwLock<HashMap<String, KnowledgebaseGroundingPolicy>>>,
     session_auto_approve_permissions: std::sync::Arc<RwLock<HashMap<String, bool>>>,
@@ -118,6 +133,7 @@ impl EngineLoop {
             host_runtime_context,
             workspace_overrides: std::sync::Arc::new(RwLock::new(HashMap::new())),
             session_allowed_tools: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            session_write_policies: std::sync::Arc::new(RwLock::new(HashMap::new())),
             session_kb_grounding_policies: std::sync::Arc::new(RwLock::new(HashMap::new())),
             session_auto_approve_permissions: std::sync::Arc::new(RwLock::new(HashMap::new())),
             spawn_agent_hook: std::sync::Arc::new(RwLock::new(None)),
@@ -161,6 +177,37 @@ impl EngineLoop {
             .get(session_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub async fn set_session_write_policy(&self, session_id: &str, policy: SessionWritePolicy) {
+        let mut seen = HashSet::new();
+        let allowed_paths = policy
+            .allowed_paths
+            .into_iter()
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+            .filter(|path| seen.insert(path.clone()))
+            .collect::<Vec<_>>();
+        self.session_write_policies.write().await.insert(
+            session_id.to_string(),
+            SessionWritePolicy {
+                mode: policy.mode,
+                allowed_paths,
+                reason: policy.reason,
+            },
+        );
+    }
+
+    pub async fn clear_session_write_policy(&self, session_id: &str) {
+        self.session_write_policies.write().await.remove(session_id);
+    }
+
+    pub async fn get_session_write_policy(&self, session_id: &str) -> Option<SessionWritePolicy> {
+        self.session_write_policies
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
     }
 
     pub async fn set_session_kb_grounding_policy(
@@ -525,6 +572,43 @@ impl EngineLoop {
             }
         }
         let mut tool_call_id: Option<String> = initial_tool_call_id;
+        if let Some(violation) = self
+            .session_write_policy_violation(session_id, &tool, &args)
+            .await
+        {
+            let mut blocked_part = WireMessagePart::tool_result(
+                session_id,
+                message_id,
+                tool.clone(),
+                Some(args.clone()),
+                json!(null),
+            );
+            blocked_part.state = Some("failed".to_string());
+            blocked_part.error = Some(violation.clone());
+            self.event_bus.publish(EngineEvent::new(
+                "message.part.updated",
+                json!({"part": blocked_part}),
+            ));
+            self.event_bus.publish(EngineEvent::new(
+                "tool.call.rejected_write_policy",
+                json!({
+                    "sessionID": session_id,
+                    "messageID": message_id,
+                    "tool": tool,
+                    "error": violation.clone(),
+                }),
+            ));
+            publish_tool_effect(
+                tool_call_id.as_deref(),
+                ToolEffectLedgerPhase::Outcome,
+                ToolEffectLedgerStatus::Blocked,
+                &args,
+                None,
+                None,
+                Some(&violation),
+            );
+            return Ok(Some(violation));
+        }
         if let Some(violation) = self
             .workspace_sandbox_violation(session_id, &tool, &args)
             .await
@@ -990,7 +1074,22 @@ impl EngineLoop {
                     continue;
                 }
 
-                // 2. Workspace sandbox check.
+                // 2. Session write policy check.
+                if let Some(violation) = self
+                    .session_write_policy_violation(session_id, &sub_tool, &sub_args)
+                    .await
+                {
+                    if let Some(obj) = call.as_object_mut() {
+                        obj.insert(
+                            "_blocked".to_string(),
+                            Value::String(format!("batch sub-call skipped: {violation}")),
+                        );
+                    }
+                    governed_calls.push(call);
+                    continue;
+                }
+
+                // 3. Workspace sandbox check.
                 if let Some(violation) = self
                     .workspace_sandbox_violation(session_id, &sub_tool, &sub_args)
                     .await
@@ -1005,7 +1104,7 @@ impl EngineLoop {
                     continue;
                 }
 
-                // 3. Inject parent execution context into sub-call args.
+                // 4. Inject parent execution context into sub-call args.
                 if let Some(sub_obj) = sub_args.as_object_mut() {
                     if let Some(ref v) = ctx_workspace_root {
                         sub_obj

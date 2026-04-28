@@ -509,6 +509,9 @@ fn is_bug_monitor_candidate_event(event: &EngineEvent) -> bool {
     if event.event_type.starts_with("bug_monitor.") {
         return false;
     }
+    if is_automation_v2_context_mirror_failure(event) {
+        return false;
+    }
     matches!(
         event.event_type.as_str(),
         "context.task.failed"
@@ -522,6 +525,32 @@ fn is_bug_monitor_candidate_event(event: &EngineEvent) -> bool {
             | "automation_v2.run.failed"
             | "coder.run.failed"
     )
+}
+
+fn event_string_property<'a>(event: &'a EngineEvent, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| event.properties.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn is_automation_v2_context_mirror_failure(event: &EngineEvent) -> bool {
+    if !matches!(
+        event.event_type.as_str(),
+        "context.task.failed" | "context.task.blocked" | "context.run.failed"
+    ) {
+        return false;
+    }
+
+    if event_string_property(event, &["source"]).is_some_and(|source| source == "automation_v2") {
+        return true;
+    }
+    if event_string_property(event, &["automation_id", "automationID"]).is_some() {
+        return true;
+    }
+    event_string_property(event, &["run_id", "runID"]).is_some_and(|run_id| {
+        run_id.starts_with("automation-v2-") || run_id.starts_with("automation_v2-")
+    })
 }
 
 pub async fn run_bug_monitor(state: AppState) {
@@ -1164,5 +1193,52 @@ mod bug_monitor_candidate_tests {
                 "{event_type} should not be monitored"
             );
         }
+    }
+
+    #[test]
+    fn bug_monitor_candidate_detection_ignores_automation_v2_context_mirror_failures() {
+        for event in [
+            EngineEvent::new(
+                "context.task.failed",
+                serde_json::json!({
+                    "source": "automation_v2",
+                    "automation_id": "automation-v2-123",
+                    "run_id": "automation-v2-run-123",
+                    "task_id": "node-downstream",
+                }),
+            ),
+            EngineEvent::new(
+                "context.task.blocked",
+                serde_json::json!({
+                    "automationID": "automation-v2-123",
+                    "runID": "automation-v2-run-123",
+                    "taskID": "node-downstream",
+                }),
+            ),
+            EngineEvent::new(
+                "context.run.failed",
+                serde_json::json!({
+                    "runID": "automation-v2-automation-v2-run-123",
+                }),
+            ),
+        ] {
+            assert!(
+                !is_bug_monitor_candidate_event(&event),
+                "{} from automation v2 context mirror should be grouped under automation_v2.run.failed",
+                event.event_type
+            );
+        }
+    }
+
+    #[test]
+    fn bug_monitor_candidate_detection_keeps_standalone_context_failures() {
+        assert!(is_bug_monitor_candidate_event(&EngineEvent::new(
+            "context.task.failed",
+            serde_json::json!({
+                "source": "context_run",
+                "run_id": "context-run-123",
+                "task_id": "inspect_failure",
+            }),
+        )));
     }
 }
