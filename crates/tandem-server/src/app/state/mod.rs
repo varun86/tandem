@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use chrono::{TimeZone, Utc};
+use chrono::{Datelike, TimeZone, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
 use futures::future::BoxFuture;
@@ -403,6 +403,22 @@ async fn cleanup_stale_legacy_automations_v2_file(active_path: &PathBuf) -> anyh
     Ok(())
 }
 
+async fn cleanup_stale_legacy_automation_v2_runs_file(active_path: &PathBuf) -> anyhow::Result<()> {
+    let Some(legacy_path) = legacy_automation_v2_runs_path() else {
+        return Ok(());
+    };
+    if legacy_path == *active_path || !legacy_path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(&legacy_path).await?;
+    tracing::info!(
+        active_path = active_path.display().to_string(),
+        removed_path = legacy_path.display().to_string(),
+        "removed stale legacy automation v2 runs file after canonical persistence"
+    );
+    Ok(())
+}
+
 fn legacy_automation_v2_runs_path() -> Option<PathBuf> {
     config::paths::resolve_legacy_root_file_path("automation_v2_runs.json")
         .filter(|path| path != &config::paths::resolve_automation_v2_runs_path())
@@ -453,11 +469,143 @@ async fn write_string_atomic(path: &Path, payload: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn read_state_file_with_legacy(
+    canonical_path: &Path,
+    legacy_file_name: &str,
+) -> anyhow::Result<Option<String>> {
+    if canonical_path.exists() {
+        return Ok(Some(fs::read_to_string(canonical_path).await?));
+    }
+    let Some(legacy_path) = config::paths::resolve_legacy_root_file_path(legacy_file_name) else {
+        return Ok(None);
+    };
+    if !legacy_path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(fs::read_to_string(legacy_path).await?))
+}
+
 fn parse_automation_v2_runs_file(
     raw: &str,
 ) -> std::collections::HashMap<String, AutomationV2RunRecord> {
     serde_json::from_str::<std::collections::HashMap<String, AutomationV2RunRecord>>(raw)
         .unwrap_or_default()
+}
+
+fn automation_run_is_terminal(status: &AutomationRunStatus) -> bool {
+    matches!(
+        status,
+        AutomationRunStatus::Completed
+            | AutomationRunStatus::Failed
+            | AutomationRunStatus::Blocked
+            | AutomationRunStatus::Cancelled
+    )
+}
+
+fn compact_automation_v2_runs_for_hot_storage(
+    runs: &mut std::collections::HashMap<String, AutomationV2RunRecord>,
+    automations: &std::collections::HashMap<String, AutomationV2Spec>,
+    cutoff_ms: u64,
+) {
+    for run in runs.values_mut() {
+        if !automation_run_is_terminal(&run.status) {
+            continue;
+        }
+        if let Some(snapshot) = run.automation_snapshot.as_ref() {
+            if automations
+                .get(&run.automation_id)
+                .is_some_and(|canonical| canonical.updated_at_ms >= snapshot.updated_at_ms)
+            {
+                run.automation_snapshot = None;
+            }
+        }
+        if run.updated_at_ms <= cutoff_ms {
+            run.checkpoint.node_outputs.clear();
+            run.runtime_context = None;
+        }
+    }
+}
+
+fn automation_v2_hot_retention_days() -> u64 {
+    std::env::var("TANDEM_AUTOMATION_V2_RUNS_RETENTION_DAYS")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(7)
+}
+
+fn automation_v2_hot_cutoff_ms() -> u64 {
+    let retention_days = automation_v2_hot_retention_days();
+    if retention_days == 0 {
+        return 0;
+    }
+    now_ms().saturating_sub(retention_days.saturating_mul(24 * 60 * 60 * 1000))
+}
+
+fn automation_v2_run_history_root(active_path: &Path) -> PathBuf {
+    active_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("automation-runs")
+}
+
+fn automation_v2_run_history_month(run: &AutomationV2RunRecord) -> (i32, u32) {
+    let timestamp_ms = run.updated_at_ms.max(run.created_at_ms);
+    let timestamp = Utc
+        .timestamp_millis_opt(timestamp_ms as i64)
+        .single()
+        .unwrap_or_else(Utc::now);
+    (timestamp.year(), timestamp.month())
+}
+
+fn automation_v2_run_history_shard_path(
+    active_path: &Path,
+    run: &AutomationV2RunRecord,
+) -> PathBuf {
+    let (year, month) = automation_v2_run_history_month(run);
+    automation_v2_run_history_root(active_path)
+        .join(format!("{year:04}"))
+        .join(format!("{month:02}"))
+        .join(format!("{}.json", run.run_id))
+}
+
+async fn write_automation_v2_run_history_shard(
+    active_path: &Path,
+    run: &AutomationV2RunRecord,
+) -> anyhow::Result<PathBuf> {
+    let path = automation_v2_run_history_shard_path(active_path, run);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_string_pretty(run)?;
+    write_string_atomic(&path, &payload).await?;
+    Ok(path)
+}
+
+async fn load_automation_v2_run_history_shard(
+    active_path: &Path,
+    run_id: &str,
+) -> Option<AutomationV2RunRecord> {
+    let root = automation_v2_run_history_root(active_path);
+    let mut years = fs::read_dir(&root).await.ok()?;
+    while let Ok(Some(year)) = years.next_entry().await {
+        let year_path = year.path();
+        if !year_path.is_dir() {
+            continue;
+        }
+        let mut months = match fs::read_dir(&year_path).await {
+            Ok(months) => months,
+            Err(_) => continue,
+        };
+        while let Ok(Some(month)) = months.next_entry().await {
+            let path = month.path().join(format!("{run_id}.json"));
+            if !path.exists() {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).await.ok()?;
+            return serde_json::from_str::<AutomationV2RunRecord>(&raw).ok();
+        }
+    }
+    None
 }
 
 fn parse_optimization_campaigns_file(

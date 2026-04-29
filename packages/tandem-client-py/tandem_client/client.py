@@ -89,6 +89,8 @@ from .types import (
     SkillsListResponse,
     SkillRecord,
     SkillTemplatesResponse,
+    StorageFilesResponse,
+    StorageRepairResponse,
     SystemHealth,
     ToolExecuteResult,
     ToolSchema,
@@ -147,6 +149,7 @@ class TandemClient:
         self.identity = _Identity(self._http)
         self.channels = _Channels(self._http)
         self.browser = _Browser(self._http)
+        self.storage = _Storage(self._http)
         self.mcp = _Mcp(self._http)
         self.workflows = _Workflows(self._base_url, self._token, self._http)
         self.routines = _Routines(self._base_url, self._token, self._http)
@@ -279,6 +282,32 @@ class _Browser:
         res = await self._http.post("/browser/smoke-test", json=payload)
         res.raise_for_status()
         return BrowserSmokeTestResponse.model_validate(res.json())
+
+
+class _Storage:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def list_files(self, *, path: Optional[str] = None, limit: Optional[int] = None) -> StorageFilesResponse:
+        """List files under the engine storage root.
+
+        For local cleanup, sharding, and archive migration use the engine CLI:
+        ``tandem-engine storage cleanup``.
+        """
+        params: dict[str, Any] = {}
+        if path:
+            params["path"] = path
+        if limit is not None:
+            params["limit"] = limit
+        res = await self._http.get("/global/storage/files", params=params)
+        res.raise_for_status()
+        return StorageFilesResponse.model_validate(res.json())
+
+    async def repair(self, *, force: bool = False) -> StorageRepairResponse:
+        """Force the legacy session-storage repair scan."""
+        res = await self._http.post("/global/storage/repair", json={"force": force})
+        res.raise_for_status()
+        return StorageRepairResponse.model_validate(res.json())
 
 
 class _Workflows:

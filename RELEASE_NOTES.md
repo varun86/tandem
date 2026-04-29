@@ -2,6 +2,38 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.5.0 (Released 2026-04-29)
+
+This major release reorganizes Tandem's local storage so large runtime histories stop accumulating as huge root-level JSON files, and so startup no longer pays the cost of browser setup or stale legacy scans.
+
+### Storage cleanup and migration
+
+The engine now includes a storage maintenance CLI:
+
+- `tandem-engine storage doctor`
+- `tandem-engine storage cleanup --dry-run --json`
+- `tandem-engine storage cleanup --root-json --context-runs --quarantine --json`
+
+Root-level feature files now have canonical homes under `data/`, including MCP registry, channel sessions/preferences, routines and routine runs, Bug Monitor records, external actions, pack-builder state, shared resources, and workflow-planner sessions. The server reads canonical files first and falls back to legacy root files during migration, so cleanup can be staged safely.
+
+Automation V2 run history now uses a two-tier shape: a small hot index for active/recent summaries and immutable per-run history shards under `data/automation-runs/YYYY/MM/`. Terminal and stale runs drop large node outputs and runtime context from the hot file while detailed run inspection can hydrate from the shard.
+
+Context runs now follow the same principle. Active runs live under `data/context-runs/hot`; old terminal or stale non-terminal runs can be archived as per-run `.tar.gz` files under `data/context-runs/archive/YYYY/MM/`, with monthly JSONL archive indexes and a compact hot index.
+
+### Faster startup
+
+Browser tool registration no longer blocks the engine-ready path. Tandem does not launch Chrome as part of ordinary startup anymore; browser initialization is deferred until browser-backed task execution actually needs it.
+
+Startup paths also prefer canonical storage files and avoid treating stale legacy root JSON as the primary source of truth. This reduces the boot-time cost from old automation, workflow, and Bug Monitor state while preserving fallback reads for migration.
+
+### Operator workflow updates
+
+`docs/ENGINE_TESTING.md` now documents the safer local deploy sequence with `sudo systemctl stop tandem-engine` before building and installing. Its cleanup examples use the installed service binary explicitly for developer machines where another `tandem-engine` shim appears earlier on `PATH`; normal users can continue to run `tandem-engine storage ...`.
+
+The TypeScript and Python SDKs now expose `client.storage` helpers for storage file inspection and the legacy session-storage repair scan. Cleanup and archive migration remain CLI maintenance commands, and the new guide page explains that split so agents do not try to mutate local storage through workflow nodes.
+
+Bug Monitor GitHub readiness now reconnects and refreshes selected MCP servers before reporting GitHub unavailable after an engine restart, reducing false disconnected states during local repair and release testing.
+
 ## v0.4.45 (Released 2026-04-28)
 
 This release makes Bug Monitor usable as an operator-facing issue reporter, upgrades workflow failure triage, and significantly improves control-panel rendering performance on data-heavy pages.

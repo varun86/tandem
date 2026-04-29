@@ -15,6 +15,7 @@ flowchart TD
   ROOT --> TOOL[tool]
   ROOT --> TOKEN[token]
   ROOT --> BROWSER[browser]
+  ROOT --> STORAGE[storage]
   ROOT --> MEMORY[memory]
   ROOT --> PROV[providers]
   ROOT --> CHAT[chat placeholder]
@@ -26,6 +27,7 @@ flowchart TD
   TOOL --> DIRECT[Direct tool execution]
   TOKEN --> AUTH[API token utilities]
   BROWSER --> DIAG[Browser diagnostics]
+  STORAGE --> CLEAN[Storage doctor + cleanup]
   MEMORY --> IMPORT[Memory import utilities]
 ```
 
@@ -137,6 +139,53 @@ Browser automation does not require a visible desktop session. On Linux VPS host
 If the browser executable is not on `PATH`, set `TANDEM_BROWSER_EXECUTABLE` or `browser.executable_path`.
 
 For a full setup and test flow, see [Browser Setup and Testing](../browser-setup-and-testing/).
+
+## `storage`
+
+Inspect and clean local Tandem storage.
+
+```bash
+tandem-engine storage <doctor|cleanup> [OPTIONS]
+```
+
+### `storage doctor`
+
+Print a local storage report without mutating files.
+
+```bash
+tandem-engine storage doctor --json
+```
+
+- `--state-dir <DIR>`: Engine state directory to inspect.
+- `--json`: Print the report as JSON.
+
+### `storage cleanup`
+
+Move root-level feature JSON into canonical `data/<feature>/` paths and archive old context runs.
+
+```bash
+tandem-engine storage cleanup --dry-run --context-runs --json
+tandem-engine storage cleanup --dry-run --root-json --json
+```
+
+Common options:
+
+- `--root-json`: Migrate/quarantine legacy root JSON files into canonical `data/` directories.
+- `--context-runs`: Archive terminal or stale old context runs from hot storage.
+- `--retention-days <DAYS>`: Keep recent context runs hot for this many days.
+- `--dry-run`: Report planned actions without changing files.
+- `--quarantine`: Move migrated root JSON to a backup quarantine instead of deleting it.
+- `--json`: Print a machine-readable report.
+
+When running cleanup against a deployed local service:
+
+```bash
+sudo systemctl stop tandem-engine
+tandem-engine storage cleanup --context-runs --root-json --quarantine --json
+sudo systemctl restart tandem-engine
+```
+
+If a developer machine has more than one `tandem-engine` on `PATH`, run `which -a tandem-engine` first and call the intended binary explicitly.
 
 ## `memory`
 

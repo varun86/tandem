@@ -208,8 +208,6 @@ impl AppState {
         self.runtime
             .set(runtime)
             .map_err(|_| anyhow::anyhow!("runtime already initialized"))?;
-        #[cfg(feature = "browser")]
-        self.register_browser_tools().await?;
         self.tools
             .register_tool(
                 "pack_builder".to_string(),
@@ -284,6 +282,16 @@ impl AppState {
         startup.status = StartupStatus::Ready;
         startup.phase = "ready".to_string();
         startup.last_error = None;
+        drop(startup);
+        #[cfg(feature = "browser")]
+        {
+            let state = self.clone();
+            tokio::spawn(async move {
+                if let Err(err) = state.register_browser_tools().await {
+                    tracing::warn!("browser tool registration skipped: {}", err);
+                }
+            });
+        }
         Ok(())
     }
 
@@ -404,10 +412,12 @@ impl AppState {
     }
 
     pub async fn load_shared_resources(&self) -> anyhow::Result<()> {
-        if !self.shared_resources_path.exists() {
+        let Some(raw) =
+            read_state_file_with_legacy(&self.shared_resources_path, "shared_resources.json")
+                .await?
+        else {
             return Ok(());
-        }
-        let raw = fs::read_to_string(&self.shared_resources_path).await?;
+        };
         let parsed =
             serde_json::from_str::<std::collections::HashMap<String, SharedResourceRecord>>(&raw)
                 .unwrap_or_default();
@@ -559,10 +569,10 @@ impl AppState {
     }
 
     pub async fn load_routines(&self) -> anyhow::Result<()> {
-        if !self.routines_path.exists() {
+        let Some(raw) = read_state_file_with_legacy(&self.routines_path, "routines.json").await?
+        else {
             return Ok(());
-        }
-        let raw = fs::read_to_string(&self.routines_path).await?;
+        };
         match serde_json::from_str::<std::collections::HashMap<String, RoutineSpec>>(&raw) {
             Ok(parsed) => {
                 let mut guard = self.routines.write().await;
@@ -605,10 +615,11 @@ impl AppState {
     }
 
     pub async fn load_routine_runs(&self) -> anyhow::Result<()> {
-        if !self.routine_runs_path.exists() {
+        let Some(raw) =
+            read_state_file_with_legacy(&self.routine_runs_path, "routine_runs.json").await?
+        else {
             return Ok(());
-        }
-        let raw = fs::read_to_string(&self.routine_runs_path).await?;
+        };
         let parsed =
             serde_json::from_str::<std::collections::HashMap<String, RoutineRunRecord>>(&raw)
                 .unwrap_or_default();
@@ -1178,29 +1189,55 @@ impl AppState {
     pub async fn load_automation_v2_runs(&self) -> anyhow::Result<()> {
         let mut merged = std::collections::HashMap::<String, AutomationV2RunRecord>::new();
         let mut loaded_from_alternate = false;
+        let mut canonical_loaded = false;
         let mut path_counts = Vec::new();
-        for path in candidate_automation_v2_runs_paths(&self.automation_v2_runs_path) {
-            if !path.exists() {
-                path_counts.push((path, 0usize));
-                continue;
-            }
-            let raw = fs::read_to_string(&path).await?;
+        if self.automation_v2_runs_path.exists() {
+            let raw = fs::read_to_string(&self.automation_v2_runs_path).await?;
             if raw.trim().is_empty() || raw.trim() == "{}" {
-                path_counts.push((path, 0usize));
-                continue;
+                path_counts.push((self.automation_v2_runs_path.clone(), 0usize));
+            } else {
+                let parsed = parse_automation_v2_runs_file(&raw);
+                path_counts.push((self.automation_v2_runs_path.clone(), parsed.len()));
+                canonical_loaded = !parsed.is_empty();
+                merged = parsed;
             }
-            let parsed = parse_automation_v2_runs_file(&raw);
-            path_counts.push((path.clone(), parsed.len()));
-            if path != self.automation_v2_runs_path {
-                loaded_from_alternate = loaded_from_alternate || !parsed.is_empty();
-            }
-            for (run_id, run) in parsed {
-                match merged.get(&run_id) {
-                    Some(existing) if existing.updated_at_ms > run.updated_at_ms => {}
-                    _ => {
-                        merged.insert(run_id, run);
+        } else {
+            path_counts.push((self.automation_v2_runs_path.clone(), 0usize));
+        }
+        if !canonical_loaded {
+            for path in candidate_automation_v2_runs_paths(&self.automation_v2_runs_path) {
+                if path == self.automation_v2_runs_path {
+                    continue;
+                }
+                if !path.exists() {
+                    path_counts.push((path, 0usize));
+                    continue;
+                }
+                let raw = fs::read_to_string(&path).await?;
+                if raw.trim().is_empty() || raw.trim() == "{}" {
+                    path_counts.push((path, 0usize));
+                    continue;
+                }
+                let parsed = parse_automation_v2_runs_file(&raw);
+                path_counts.push((path.clone(), parsed.len()));
+                if !parsed.is_empty() {
+                    loaded_from_alternate = true;
+                }
+                for (run_id, run) in parsed {
+                    match merged.get(&run_id) {
+                        Some(existing) if existing.updated_at_ms > run.updated_at_ms => {}
+                        _ => {
+                            merged.insert(run_id, run);
+                        }
                     }
                 }
+            }
+        } else {
+            for path in candidate_automation_v2_runs_paths(&self.automation_v2_runs_path) {
+                if path == self.automation_v2_runs_path {
+                    continue;
+                }
+                path_counts.push((path.clone(), usize::from(path.exists())));
             }
         }
         let active_runs_path = self.automation_v2_runs_path.display().to_string();
@@ -1210,6 +1247,7 @@ impl AppState {
             .collect::<Vec<_>>();
         tracing::info!(
             active_path = active_runs_path,
+            canonical_loaded,
             path_counts = ?run_path_count_summary,
             merged_count = merged.len(),
             "loaded automation v2 runs"
@@ -1232,30 +1270,40 @@ impl AppState {
         }
         if loaded_from_alternate || recovered > 0 {
             let _ = self.persist_automation_v2_runs().await;
+        } else if canonical_loaded {
+            let _ =
+                cleanup_stale_legacy_automation_v2_runs_file(&self.automation_v2_runs_path).await;
         }
         Ok(())
     }
 
     pub async fn persist_automation_v2_runs(&self) -> anyhow::Result<()> {
-        let payload = {
-            let guard = self.automation_v2_runs.read().await;
-            serde_json::to_string_pretty(&*guard)?
+        let (runs_snapshot, automations_snapshot) = {
+            let runs = self.automation_v2_runs.read().await;
+            let automations = self.automations_v2.read().await;
+            (runs.clone(), automations.clone())
         };
+        for run in runs_snapshot.values() {
+            write_automation_v2_run_history_shard(&self.automation_v2_runs_path, run).await?;
+        }
+        let mut compacted = runs_snapshot;
+        compact_automation_v2_runs_for_hot_storage(
+            &mut compacted,
+            &automations_snapshot,
+            automation_v2_hot_cutoff_ms(),
+        );
+        let payload = serde_json::to_string_pretty(&compacted)?;
         if let Some(parent) = self.automation_v2_runs_path.parent() {
             fs::create_dir_all(parent).await?;
         }
         fs::write(&self.automation_v2_runs_path, &payload).await?;
+        let _ = cleanup_stale_legacy_automation_v2_runs_file(&self.automation_v2_runs_path).await;
         Ok(())
     }
 
-    // Archive terminal automation v2 runs (completed/failed/blocked/cancelled)
-    // whose last update is older than `retention_days` to a sidecar file.
-    // Without this, the main runs file grows unbounded (we have seen 130MB+)
-    // which is then rewritten on every status change during a run — a severe
-    // write amplification that slows persistence, lags in-memory vs. on-disk
-    // state, and degrades the whole scheduler under load. Archiving preserves
-    // the historical records for audit/UI fallback while keeping the hot file
-    // small enough that rewrites are cheap. Returns the number of runs moved.
+    // Move old terminal automation runs out of the hot in-memory/index set.
+    // Full run records are preserved as per-run history shards under
+    // data/automation-runs/YYYY/MM/.
     pub async fn archive_stale_automation_v2_runs(
         &self,
         retention_days: u64,
@@ -1292,35 +1340,9 @@ impl AppState {
             return Ok(0);
         }
         let archived_count = archived.len();
-
-        // Merge into existing archive (read, merge, write). Existing archive
-        // file may be missing or unreadable; treat either as "start fresh"
-        // rather than refusing to archive — we do not want a bad archive
-        // file to prevent the hot file from being pruned.
-        let mut merged: std::collections::HashMap<String, AutomationV2RunRecord> =
-            if self.automation_v2_runs_archive_path.exists() {
-                match fs::read_to_string(&self.automation_v2_runs_archive_path).await {
-                    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-                    Err(_) => std::collections::HashMap::new(),
-                }
-            } else {
-                std::collections::HashMap::new()
-            };
-        for (id, run) in archived {
-            merged.insert(id, run);
+        for run in archived.values() {
+            write_automation_v2_run_history_shard(&self.automation_v2_runs_path, run).await?;
         }
-        let archive_payload = serde_json::to_string_pretty(&merged)?;
-
-        if let Some(parent) = self.automation_v2_runs_archive_path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        // Atomic write: tmp file + rename. If the engine crashes mid-write we
-        // keep the previous archive intact rather than truncating it.
-        let tmp = self
-            .automation_v2_runs_archive_path
-            .with_extension("json.tmp");
-        fs::write(&tmp, archive_payload.as_bytes()).await?;
-        fs::rename(&tmp, &self.automation_v2_runs_archive_path).await?;
 
         // Persist the shrunk hot file so the next startup loads a small map.
         self.persist_automation_v2_runs().await?;
@@ -1328,8 +1350,8 @@ impl AppState {
         tracing::info!(
             archived = archived_count,
             retention_days,
-            archive_path = %self.automation_v2_runs_archive_path.display(),
-            "archived stale automation v2 runs"
+            history_root = %automation_v2_run_history_root(&self.automation_v2_runs_path).display(),
+            "moved stale automation v2 runs to history shards"
         );
         Ok(archived_count)
     }
@@ -1497,6 +1519,18 @@ impl AppState {
     pub async fn load_bug_monitor_config(&self) -> anyhow::Result<()> {
         let path = if self.bug_monitor_config_path.exists() {
             self.bug_monitor_config_path.clone()
+        } else if let Some(path) =
+            config::paths::resolve_legacy_root_file_path("bug_monitor_config.json")
+        {
+            if path.exists() {
+                path
+            } else if config::paths::legacy_failure_reporter_path("failure_reporter_config.json")
+                .exists()
+            {
+                config::paths::legacy_failure_reporter_path("failure_reporter_config.json")
+            } else {
+                return Ok(());
+            }
         } else if config::paths::legacy_failure_reporter_path("failure_reporter_config.json")
             .exists()
         {
@@ -1560,6 +1594,18 @@ impl AppState {
     pub async fn load_bug_monitor_drafts(&self) -> anyhow::Result<()> {
         let path = if self.bug_monitor_drafts_path.exists() {
             self.bug_monitor_drafts_path.clone()
+        } else if let Some(path) =
+            config::paths::resolve_legacy_root_file_path("bug_monitor_drafts.json")
+        {
+            if path.exists() {
+                path
+            } else if config::paths::legacy_failure_reporter_path("failure_reporter_drafts.json")
+                .exists()
+            {
+                config::paths::legacy_failure_reporter_path("failure_reporter_drafts.json")
+            } else {
+                return Ok(());
+            }
         } else if config::paths::legacy_failure_reporter_path("failure_reporter_drafts.json")
             .exists()
         {
@@ -1590,6 +1636,18 @@ impl AppState {
     pub async fn load_bug_monitor_incidents(&self) -> anyhow::Result<()> {
         let path = if self.bug_monitor_incidents_path.exists() {
             self.bug_monitor_incidents_path.clone()
+        } else if let Some(path) =
+            config::paths::resolve_legacy_root_file_path("bug_monitor_incidents.json")
+        {
+            if path.exists() {
+                path
+            } else if config::paths::legacy_failure_reporter_path("failure_reporter_incidents.json")
+                .exists()
+            {
+                config::paths::legacy_failure_reporter_path("failure_reporter_incidents.json")
+            } else {
+                return Ok(());
+            }
         } else if config::paths::legacy_failure_reporter_path("failure_reporter_incidents.json")
             .exists()
         {
@@ -1621,6 +1679,18 @@ impl AppState {
     pub async fn load_bug_monitor_posts(&self) -> anyhow::Result<()> {
         let path = if self.bug_monitor_posts_path.exists() {
             self.bug_monitor_posts_path.clone()
+        } else if let Some(path) =
+            config::paths::resolve_legacy_root_file_path("bug_monitor_posts.json")
+        {
+            if path.exists() {
+                path
+            } else if config::paths::legacy_failure_reporter_path("failure_reporter_posts.json")
+                .exists()
+            {
+                config::paths::legacy_failure_reporter_path("failure_reporter_posts.json")
+            } else {
+                return Ok(());
+            }
         } else if config::paths::legacy_failure_reporter_path("failure_reporter_posts.json")
             .exists()
         {
@@ -1649,10 +1719,12 @@ impl AppState {
     }
 
     pub async fn load_external_actions(&self) -> anyhow::Result<()> {
-        if !self.external_actions_path.exists() {
+        let Some(raw) =
+            read_state_file_with_legacy(&self.external_actions_path, "external_actions.json")
+                .await?
+        else {
             return Ok(());
-        }
-        let raw = fs::read_to_string(&self.external_actions_path).await?;
+        };
         let parsed =
             serde_json::from_str::<std::collections::HashMap<String, ExternalActionRecord>>(&raw)
                 .unwrap_or_default();

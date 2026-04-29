@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde_json::{json, Value};
+use tandem_runtime::mcp_ready::{EnsureReadyPolicy, McpReadyError};
 use tandem_runtime::McpRemoteTool;
 use tandem_types::EngineEvent;
 
@@ -542,10 +543,25 @@ async fn resolve_github_tool_set(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("Bug Monitor MCP server is not configured"))?
         .to_string();
-    let mut server_tools = state.mcp.server_tools(&server_name).await;
-    if server_tools.is_empty() && state.mcp.connect(&server_name).await {
-        server_tools = state.mcp.server_tools(&server_name).await;
-    }
+    state
+        .mcp
+        .ensure_ready(&server_name, EnsureReadyPolicy::with_retries(3, 750))
+        .await
+        .map_err(|error| match error {
+            McpReadyError::NotFound => {
+                anyhow::anyhow!("Bug Monitor MCP server `{server_name}` was not found")
+            }
+            McpReadyError::Disabled => {
+                anyhow::anyhow!("Bug Monitor MCP server `{server_name}` is disabled")
+            }
+            McpReadyError::PermanentlyFailed { last_error } => {
+                let detail = last_error.unwrap_or_else(|| "connect failed".to_string());
+                anyhow::anyhow!(
+                    "Bug Monitor MCP server `{server_name}` was not ready for GitHub publish: {detail}"
+                )
+            }
+        })?;
+    let server_tools = state.mcp.server_tools(&server_name).await;
     if server_tools.is_empty() {
         anyhow::bail!("no MCP tools were discovered for selected Bug Monitor server");
     }

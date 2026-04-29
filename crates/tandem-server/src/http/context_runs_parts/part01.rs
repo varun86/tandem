@@ -190,15 +190,43 @@ fn normalize_context_task_payload(
 }
 
 pub(super) fn context_runs_root(state: &AppState) -> PathBuf {
-    state
-        .shared_resources_path
+    context_runs_data_root(state).join("hot")
+}
+
+pub(super) fn legacy_context_runs_root(state: &AppState) -> PathBuf {
+    context_runs_data_root(state)
         .parent()
-        .map(|parent| parent.join("context_runs"))
+        .and_then(|data_dir| data_dir.parent())
+        .map(|root| root.join("context_runs"))
         .unwrap_or_else(|| PathBuf::from(".tandem").join("context_runs"))
+}
+
+pub(super) fn context_runs_data_root(state: &AppState) -> PathBuf {
+    if let Some(parent) = state.shared_resources_path.parent() {
+        if parent.file_name().and_then(|value| value.to_str()) == Some("system") {
+            if let Some(data_dir) = parent.parent() {
+                return data_dir.join("context-runs");
+            }
+        }
+        return parent.join("context-runs");
+    }
+    PathBuf::from(".tandem").join("data").join("context-runs")
 }
 
 pub(super) fn context_run_dir(state: &AppState, run_id: &str) -> PathBuf {
     context_runs_root(state).join(run_id)
+}
+
+pub(super) fn context_run_existing_dir(state: &AppState, run_id: &str) -> PathBuf {
+    let hot = context_run_dir(state, run_id);
+    if hot.exists() {
+        return hot;
+    }
+    let legacy = legacy_context_runs_root(state).join(run_id);
+    if legacy.exists() {
+        return legacy;
+    }
+    hot
 }
 
 pub(crate) async fn append_json_artifact_to_context_run(
@@ -236,23 +264,23 @@ pub(crate) async fn append_json_artifact_to_context_run(
 }
 
 pub(super) fn context_run_state_path(state: &AppState, run_id: &str) -> PathBuf {
-    context_run_dir(state, run_id).join("run_state.json")
+    context_run_existing_dir(state, run_id).join("run_state.json")
 }
 
 pub(super) fn context_run_events_path(state: &AppState, run_id: &str) -> PathBuf {
-    context_run_dir(state, run_id).join("events.jsonl")
+    context_run_existing_dir(state, run_id).join("events.jsonl")
 }
 
 pub(super) fn context_run_blackboard_path(state: &AppState, run_id: &str) -> PathBuf {
-    context_run_dir(state, run_id).join("blackboard.json")
+    context_run_existing_dir(state, run_id).join("blackboard.json")
 }
 
 pub(super) fn context_run_blackboard_patches_path(state: &AppState, run_id: &str) -> PathBuf {
-    context_run_dir(state, run_id).join("blackboard_patches.jsonl")
+    context_run_existing_dir(state, run_id).join("blackboard_patches.jsonl")
 }
 
 pub(super) fn context_run_checkpoints_dir(state: &AppState, run_id: &str) -> PathBuf {
-    context_run_dir(state, run_id).join("checkpoints")
+    context_run_existing_dir(state, run_id).join("checkpoints")
 }
 
 pub(super) async fn ensure_context_run_dir(
@@ -763,29 +791,34 @@ pub(super) async fn list_context_runs_for_workspace(
     workspace: &str,
     limit: usize,
 ) -> Result<Vec<ContextRunState>, StatusCode> {
-    let root = context_runs_root(state);
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
     let normalized_workspace =
         tandem_core::normalize_workspace_path(workspace).ok_or(StatusCode::BAD_REQUEST)?;
     let mut rows = Vec::<ContextRunState>::new();
-    let mut dir = tokio::fs::read_dir(root)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    while let Ok(Some(entry)) = dir.next_entry().await {
-        if !entry
-            .file_type()
-            .await
-            .map(|kind| kind.is_dir())
-            .unwrap_or(false)
-        {
+    let mut seen = std::collections::HashSet::<String>::new();
+    for root in [context_runs_root(state), legacy_context_runs_root(state)] {
+        if !root.exists() {
             continue;
         }
-        let run_id = entry.file_name().to_string_lossy().to_string();
-        if let Ok(run) = load_context_run_state(state, &run_id).await {
-            if run.workspace.canonical_path.trim() == normalized_workspace {
-                rows.push(run);
+        let mut dir = tokio::fs::read_dir(root)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            if !entry
+                .file_type()
+                .await
+                .map(|kind| kind.is_dir())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let run_id = entry.file_name().to_string_lossy().to_string();
+            if !seen.insert(run_id.clone()) {
+                continue;
+            }
+            if let Ok(run) = load_context_run_state(state, &run_id).await {
+                if run.workspace.canonical_path.trim() == normalized_workspace {
+                    rows.push(run);
+                }
             }
         }
     }
@@ -1450,10 +1483,6 @@ pub(super) async fn context_run_list(
     State(state): State<AppState>,
     Query(query): Query<ContextRunListQuery>,
 ) -> Result<Json<Value>, StatusCode> {
-    let root = context_runs_root(&state);
-    if !root.exists() {
-        return Ok(Json(json!({ "runs": [] })));
-    }
     let workspace_filter = query
         .workspace
         .as_deref()
@@ -1465,31 +1494,40 @@ pub(super) async fn context_run_list(
         .filter(|v| !v.is_empty());
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let mut rows = Vec::<ContextRunState>::new();
-    let mut dir = tokio::fs::read_dir(root)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    while let Ok(Some(entry)) = dir.next_entry().await {
-        if !entry
-            .file_type()
-            .await
-            .map(|kind| kind.is_dir())
-            .unwrap_or(false)
-        {
+    let mut seen = std::collections::HashSet::<String>::new();
+    for root in [context_runs_root(&state), legacy_context_runs_root(&state)] {
+        if !root.exists() {
             continue;
         }
-        let run_id = entry.file_name().to_string_lossy().to_string();
-        if let Ok(run) = load_context_run_state(&state, &run_id).await {
-            if let Some(workspace) = workspace_filter.as_deref() {
-                if run.workspace.canonical_path.trim() != workspace {
-                    continue;
-                }
+        let mut dir = tokio::fs::read_dir(root)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            if !entry
+                .file_type()
+                .await
+                .map(|kind| kind.is_dir())
+                .unwrap_or(false)
+            {
+                continue;
             }
-            if let Some(run_type) = run_type_filter.as_deref() {
-                if run.run_type.trim().to_ascii_lowercase() != run_type {
-                    continue;
-                }
+            let run_id = entry.file_name().to_string_lossy().to_string();
+            if !seen.insert(run_id.clone()) {
+                continue;
             }
-            rows.push(run);
+            if let Ok(run) = load_context_run_state(&state, &run_id).await {
+                if let Some(workspace) = workspace_filter.as_deref() {
+                    if run.workspace.canonical_path.trim() != workspace {
+                        continue;
+                    }
+                }
+                if let Some(run_type) = run_type_filter.as_deref() {
+                    if run.run_type.trim().to_ascii_lowercase() != run_type {
+                        continue;
+                    }
+                }
+                rows.push(run);
+            }
         }
     }
     rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));

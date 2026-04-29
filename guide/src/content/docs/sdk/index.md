@@ -7,7 +7,7 @@ import { LinkCard, CardGrid } from "@astrojs/starlight/components";
 
 The Tandem engine exposes a full HTTP + SSE API. The official SDKs wrap this API with typed, ergonomic interfaces for TypeScript (Node.js) and Python.
 
-Both SDKs cover the main engine namespaces, including sessions, streaming, memory, skills, channels, MCP, workflows, workflow plans, routines, automations, agent teams, and missions.
+Both SDKs cover the main engine namespaces, including sessions, streaming, memory, storage inspection, skills, channels, MCP, workflows, workflow plans, routines, automations, agent teams, and missions.
 
 ## Prerequisites
 
@@ -49,6 +49,11 @@ tandem-engine serve --api-token $(tandem-engine token generate)
     description="Get an engine token and authenticate SDK or HTTP calls safely."
   />
   <LinkCard
+    title="Storage Maintenance For Agents"
+    href="../storage-maintenance/"
+    description="Inspect storage from SDKs and run local cleanup with the engine CLI."
+  />
+  <LinkCard
     title="Choosing Providers And Models For Agents"
     href="../choosing-providers-and-models-for-agents/"
     description="Choose stable defaults and per-agent overrides without baking model choice into prompts."
@@ -84,6 +89,7 @@ All namespaces exist on both the TypeScript and Python clients.
 | `channels`                         | Telegram, Discord, Slack integration config                              |
 | `mcp`                              | Register, connect, refresh MCP servers and tools                         |
 | `browser`                          | Browser sidecar status, install, and smoke testing only                  |
+| `storage`                          | Engine storage file inspection and legacy repair helpers                 |
 | `memory`                           | Global memory: import, put, search, list, promote, demote, delete, audit |
 | `skills`                           | Agent skill packs: list, import, preview, install templates              |
 | `resources`                        | Key-value resource store (shared agent state)                            |
@@ -97,6 +103,6 @@ All namespaces exist on both the TypeScript and Python clients.
 | `agentTeams`                       | Spawn and manage multi-agent teams                                       |
 | `missions`                         | Multi-agent goals and work item tracking                                 |
 
-For the storage model behind the `memory` namespace, see [Memory Internals](../memory-internals/).
+For the storage model behind the `memory` namespace, see [Memory Internals](../memory-internals/). For local cleanup, context-run archives, and Automation V2 run-history shards, see [Storage Maintenance For Agents](../storage-maintenance/).
 
 For browser automation itself, use standard engine tools such as `browser_open`, `browser_click`, and `browser_screenshot` through `execute_tool(...)` or session-based runs with those tools in the allowlist. The `browser` namespace is for diagnostics and install flows.

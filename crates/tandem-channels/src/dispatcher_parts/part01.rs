@@ -270,22 +270,17 @@ fn session_title_prefix(msg: &ChannelMessage) -> String {
 }
 
 fn tool_preferences_path() -> PathBuf {
-    let base = std::env::var("TANDEM_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            if let Some(data_dir) = dirs::data_dir() {
-                return data_dir.join("tandem").join("data");
-            }
-            dirs::home_dir()
-                .map(|home| home.join(".tandem").join("data"))
-                .unwrap_or_else(|| PathBuf::from(".tandem"))
-        });
-    base.join("channel_tool_preferences.json")
+    channels_data_path().join("tool_preferences.json")
 }
 
 async fn load_tool_preferences() -> HashMap<String, ChannelToolPreferences> {
     let path = tool_preferences_path();
-    let Ok(bytes) = tokio::fs::read(&path).await else {
+    let read_path = if path.exists() {
+        path
+    } else {
+        legacy_channels_root_file("channel_tool_preferences.json")
+    };
+    let Ok(bytes) = tokio::fs::read(&read_path).await else {
         return HashMap::new();
     };
     serde_json::from_slice(&bytes).unwrap_or_default()
@@ -322,6 +317,10 @@ async fn save_channel_tool_preferences(
 }
 
 fn persistence_path() -> PathBuf {
+    channels_data_path().join("sessions.json")
+}
+
+fn channels_data_path() -> PathBuf {
     let base = std::env::var("TANDEM_STATE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -332,14 +331,43 @@ fn persistence_path() -> PathBuf {
                 .map(|home| home.join(".tandem").join("data"))
                 .unwrap_or_else(|| PathBuf::from(".tandem"))
         });
-    base.join("channel_sessions.json")
+    if base.file_name().and_then(|value| value.to_str()) == Some("data") {
+        base.join("channels")
+    } else {
+        base.join("data").join("channels")
+    }
+}
+
+fn legacy_channels_root_file(file_name: &str) -> PathBuf {
+    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            let base = PathBuf::from(trimmed);
+            if base.file_name().and_then(|value| value.to_str()) != Some("data") {
+                return base.join(file_name);
+            }
+            return base
+                .parent()
+                .map(|parent| parent.join(file_name))
+                .unwrap_or_else(|| base.join(file_name));
+        }
+    }
+    dirs::data_dir()
+        .map(|base| base.join("tandem").join(file_name))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".tandem").join(file_name)))
+        .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
 /// Load the session map from disk. Returns an empty map if the file doesn't
 /// exist or cannot be parsed.
 async fn load_session_map() -> HashMap<String, SessionRecord> {
     let path = persistence_path();
-    let Ok(bytes) = tokio::fs::read(&path).await else {
+    let read_path = if path.exists() {
+        path
+    } else {
+        legacy_channels_root_file("channel_sessions.json")
+    };
+    let Ok(bytes) = tokio::fs::read(&read_path).await else {
         return HashMap::new();
     };
 

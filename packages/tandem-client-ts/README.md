@@ -195,6 +195,7 @@ Use this flow when you want the same governed bundle the control-panel Planner p
 The TypeScript SDK already includes the newer engine surfaces that have landed across the repo:
 
 - `client.browser` for `status()`, `install()`, and `smokeTest()`
+- `client.storage` for storage file inspection and legacy repair scan helpers
 - `client.workflows` for workflow registry, runs, hooks, simulation, and live events
 - `client.resources` for key-value resources
 - `client.skills` for list/get/import plus validation, routing, evals, compile, and generate flows
@@ -203,10 +204,13 @@ The TypeScript SDK already includes the newer engine surfaces that have landed a
 
 ```typescript
 const browser = await client.browser.status();
+const storageFiles = await client.storage.listFiles({ path: "data/context-runs", limit: 100 });
 const workflows = await client.workflows.list();
 const resources = await client.resources.list({ prefix: "agent-config/" });
 const skillCatalog = await client.skills.catalog();
 ```
+
+Storage archive cleanup and root JSON migration are local maintenance operations. Run them with the engine CLI, for example `tandem-engine storage cleanup --dry-run --context-runs --json`.
 
 ### `client.coder`
 

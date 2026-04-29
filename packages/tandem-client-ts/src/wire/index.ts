@@ -83,6 +83,36 @@ export interface BrowserSmokeTestResponse {
   [key: string]: unknown;
 }
 
+// ─── Storage ─────────────────────────────────────────────────────────────────
+
+export interface StorageFileRecord {
+  path: string;
+  relative_to_base?: string;
+  size_bytes?: number;
+  modified_at_ms?: number | null;
+  [key: string]: unknown;
+}
+
+export interface StorageFilesResponse {
+  root?: string;
+  base?: string;
+  count?: number;
+  limit?: number;
+  files: StorageFileRecord[];
+  [key: string]: unknown;
+}
+
+export interface StorageRepairResponse {
+  status?: string;
+  marker_updated?: boolean;
+  sessions_merged?: number;
+  messages_recovered?: number;
+  parts_recovered?: number;
+  legacy_counts?: JsonObject;
+  imported_counts?: JsonObject;
+  [key: string]: unknown;
+}
+
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
 export interface CreateSessionOptions {

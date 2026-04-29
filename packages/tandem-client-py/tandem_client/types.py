@@ -80,6 +80,37 @@ class BrowserSmokeTestResponse(BaseModel):
     closed: Optional[bool] = None
 
 
+# ─── Storage ─────────────────────────────────────────────────────────────────
+
+
+class StorageFileRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: str
+    relative_to_base: Optional[str] = Field(None, validation_alias=AliasChoices("relativeToBase", "relative_to_base"))
+    size_bytes: Optional[int] = Field(None, validation_alias=AliasChoices("sizeBytes", "size_bytes"))
+    modified_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("modifiedAtMs", "modified_at_ms"))
+
+
+class StorageFilesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    root: Optional[str] = None
+    base: Optional[str] = None
+    count: Optional[int] = None
+    limit: Optional[int] = None
+    files: list[StorageFileRecord] = []
+
+
+class StorageRepairResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: Optional[str] = None
+    marker_updated: Optional[bool] = Field(None, validation_alias=AliasChoices("markerUpdated", "marker_updated"))
+    sessions_merged: Optional[int] = Field(None, validation_alias=AliasChoices("sessionsMerged", "sessions_merged"))
+    messages_recovered: Optional[int] = Field(None, validation_alias=AliasChoices("messagesRecovered", "messages_recovered"))
+    parts_recovered: Optional[int] = Field(None, validation_alias=AliasChoices("partsRecovered", "parts_recovered"))
+    legacy_counts: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("legacyCounts", "legacy_counts"))
+    imported_counts: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("importedCounts", "imported_counts"))
+
+
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 

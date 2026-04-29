@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - Released 2026-04-29
+
+### Added
+
+- **Storage cleanup CLI**: Added `tandem-engine storage doctor` and `tandem-engine storage cleanup` with dry-run JSON reports, root JSON migration, context-run cleanup, retention windows, and quarantine support.
+- **SDK storage helpers**: Added `client.storage` / `client.storage` helpers in the TypeScript and Python SDKs for engine storage file inspection and legacy repair scans.
+- **Context-run archive layout**: Old terminal context runs can now be archived as compressed per-run tarballs under `data/context-runs/archive/YYYY/MM/`, with monthly JSONL indexes and a small hot `data/context-runs/index.json`.
+- **Automation V2 run history shards**: Automation run history now writes immutable per-run JSON shards under `data/automation-runs/YYYY/MM/` while keeping the active hot index focused on recent summaries.
+
+### Changed
+
+- **Runtime storage layout moves under `data/`**: Root-level feature JSON now canonicalizes into organized directories such as `data/mcp/`, `data/channels/`, `data/routines/`, `data/bug-monitor/`, `data/actions/`, `data/pack-builder/`, `data/system/`, and `data/workflow-planner/`, with legacy root-file fallback during migration.
+- **Large run payloads stay out of hot indexes**: Terminal/stale automation runs drop bulky node outputs and runtime context from the active summary file while detailed records remain available from history shards.
+- **Context-run APIs read hot and legacy locations**: Context-run endpoints now prefer the canonical hot directory while still finding legacy root `context_runs` entries during cleanup and migration.
+- **Engine startup no longer waits on browser setup**: Browser tool registration moved out of the startup-ready path so Chrome is not launched during ordinary engine startup and browser work is initialized only when needed.
+- **Engine testing docs stop the service before rebuilds**: `ENGINE_TESTING.md` now stops the service before rebuilding and installing, and its local cleanup examples call the installed service binary explicitly for developer machines where another `tandem-engine` shim appears earlier on `PATH`.
+- **Agent-facing storage maintenance docs**: The guide now documents hot indexes, immutable run history, context-run archives, cleanup commands, and SDK inspection helpers so agents know to clean storage before chasing workflow bugs.
+
+### Fixed
+
+- **Legacy storage files no longer force slow startup scans**: Startup loads canonical files first and only falls back to old root JSON when needed, reducing the chance that stale multi-megabyte legacy files dominate boot.
+- **Bug Monitor GitHub readiness self-heals cold MCP state**: Readiness checks reconnect and refresh selected MCP servers before declaring GitHub unavailable after restarts.
+
 ## [0.4.45] - Released 2026-04-28
 
 ### Performance

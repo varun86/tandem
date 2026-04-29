@@ -25,7 +25,10 @@ pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoRes
     let startup = state.startup_snapshot().await;
     let build = crate::build_provenance();
     let environment = state.host_runtime_context();
-    let workspace_root = state.workspace_index.snapshot().await.root;
+    let workspace_root = match state.runtime.get() {
+        Some(runtime) => runtime.workspace_index.snapshot().await.root,
+        None => String::new(),
+    };
     let browser = state.browser_health_summary().await;
     Json(json!({
         "healthy": true,

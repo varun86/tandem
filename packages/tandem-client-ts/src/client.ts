@@ -65,6 +65,8 @@ import type {
   BrowserStatusResponse,
   BrowserInstallResponse,
   BrowserSmokeTestResponse,
+  StorageFilesResponse,
+  StorageRepairResponse,
   WorkflowRecord,
   WorkflowListResponse,
   WorkflowRunRecord,
@@ -283,6 +285,8 @@ export class TandemClient {
   readonly resources: Resources;
   /** Browser lifecycle and diagnostics */
   readonly browser: Browser;
+  /** Engine storage inspection and legacy repair helpers */
+  readonly storage: Storage;
   /** Workflow registry, runs, and hooks */
   readonly workflows: Workflows;
   /** Bug monitor incident and draft operations */
@@ -320,6 +324,7 @@ export class TandemClient {
     this.capabilities = new Capabilities(req);
     this.resources = new Resources(this.baseUrl, getToken, req);
     this.browser = new Browser(req);
+    this.storage = new Storage(req);
     this.workflows = new Workflows(this.baseUrl, getToken, req);
     this.bugMonitor = new BugMonitor(req);
     this.coder = new Coder(req);
@@ -516,6 +521,32 @@ class Browser {
     return this.req<BrowserSmokeTestResponse>("/browser/smoke-test", {
       method: "POST",
       body: JSON.stringify(options ?? {}),
+    });
+  }
+}
+
+class Storage {
+  constructor(private req: TandemClient["_request"]) {}
+
+  /**
+   * List files under the engine storage root.
+   *
+   * For local cleanup, sharding, and archive migration use the engine CLI:
+   * `tandem-engine storage cleanup`.
+   */
+  async listFiles(options?: { path?: string; limit?: number }): Promise<StorageFilesResponse> {
+    const params = new URLSearchParams();
+    if (options?.path) params.set("path", options.path);
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return this.req<StorageFilesResponse>(`/global/storage/files${qs}`);
+  }
+
+  /** Force the legacy session-storage repair scan. */
+  async repair(options?: { force?: boolean }): Promise<StorageRepairResponse> {
+    return this.req<StorageRepairResponse>("/global/storage/repair", {
+      method: "POST",
+      body: JSON.stringify({ force: options?.force ?? false }),
     });
   }
 }

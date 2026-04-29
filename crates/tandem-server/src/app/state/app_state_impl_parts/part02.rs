@@ -1045,10 +1045,14 @@ impl AppState {
     }
 
     pub async fn load_workflow_planner_sessions(&self) -> anyhow::Result<()> {
-        if !self.workflow_planner_sessions_path.exists() {
+        let Some(raw) = read_state_file_with_legacy(
+            &self.workflow_planner_sessions_path,
+            "workflow_planner_sessions.json",
+        )
+        .await?
+        else {
             return Ok(());
-        }
-        let raw = fs::read_to_string(&self.workflow_planner_sessions_path).await?;
+        };
         let parsed = serde_json::from_str::<
             std::collections::HashMap<
                 String,

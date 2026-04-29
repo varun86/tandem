@@ -264,6 +264,38 @@ def test_sync_wrapper_supports_browser_namespace() -> None:
 
 
 @respx.mock
+def test_sync_wrapper_supports_storage_namespace() -> None:
+    from tandem_client import SyncTandemClient
+
+    files_route = respx.get("http://localhost:39731/global/storage/files").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "root": "/tmp/tandem",
+                "base": "/tmp/tandem/data/context-runs",
+                "files": [],
+                "count": 0,
+                "limit": 25,
+            },
+        )
+    )
+    repair_route = respx.post("http://localhost:39731/global/storage/repair").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "marker_updated": False})
+    )
+    client = SyncTandemClient(base_url="http://localhost:39731", token="token")
+    try:
+        listed = client.storage.list_files(path="data/context-runs", limit=25)
+        repaired = client.storage.repair(force=True)
+        assert listed.count == 0
+        assert repaired.status == "ok"
+        assert files_route.called
+        assert repair_route.called
+        assert repair_route.calls[0].request.content == b'{"force":true}'
+    finally:
+        client.close()
+
+
+@respx.mock
 def test_sync_wrapper_supports_workflow_plans_namespace() -> None:
     from tandem_client import SyncTandemClient
 

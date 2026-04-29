@@ -1211,7 +1211,24 @@ impl AppState {
     }
 
     pub async fn get_automation_v2_run(&self, run_id: &str) -> Option<AutomationV2RunRecord> {
-        self.automation_v2_runs.read().await.get(run_id).cloned()
+        let hot = self.automation_v2_runs.read().await.get(run_id).cloned();
+        let history =
+            load_automation_v2_run_history_shard(&self.automation_v2_runs_path, run_id).await;
+        match (hot, history) {
+            (Some(hot), Some(history)) => {
+                let history_has_more_detail = history.checkpoint.node_outputs.len()
+                    > hot.checkpoint.node_outputs.len()
+                    || (hot.runtime_context.is_none() && history.runtime_context.is_some())
+                    || (hot.automation_snapshot.is_none() && history.automation_snapshot.is_some());
+                if history_has_more_detail {
+                    Some(history)
+                } else {
+                    Some(hot)
+                }
+            }
+            (Some(hot), None) => Some(hot),
+            (None, history) => history,
+        }
     }
 
     pub async fn list_automation_v2_runs(

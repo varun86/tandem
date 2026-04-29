@@ -773,8 +773,7 @@ impl McpRegistry {
                 return Err(format!("MCP server '{server_name}' is disabled"));
             }
             Err(McpReadyError::PermanentlyFailed { last_error }) => {
-                let detail =
-                    last_error.unwrap_or_else(|| "reconnect attempt failed".to_string());
+                let detail = last_error.unwrap_or_else(|| "reconnect attempt failed".to_string());
                 return Err(format!(
                     "MCP server '{server_name}' is not connected: {detail}"
                 ));
@@ -1173,22 +1172,38 @@ fn resolve_state_file() -> PathBuf {
     if let Ok(state_dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = state_dir.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("mcp_servers.json");
+            let base = PathBuf::from(trimmed);
+            return if base.file_name().and_then(|value| value.to_str()) == Some("data") {
+                base.join("mcp").join("mcp_servers.json")
+            } else {
+                base.join("data").join("mcp").join("mcp_servers.json")
+            };
         }
     }
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir
             .join("tandem")
             .join("data")
+            .join("mcp")
             .join("mcp_servers.json");
     }
     dirs::home_dir()
-        .map(|home| home.join(".tandem").join("data").join("mcp_servers.json"))
+        .map(|home| {
+            home.join(".tandem")
+                .join("data")
+                .join("mcp")
+                .join("mcp_servers.json")
+        })
         .unwrap_or_else(|| PathBuf::from("mcp_servers.json"))
 }
 
 fn load_state(path: &Path) -> (HashMap<String, McpServer>, bool) {
-    let Ok(raw) = std::fs::read_to_string(path) else {
+    let read_path = if path.exists() {
+        path.to_path_buf()
+    } else {
+        legacy_mcp_registry_path()
+    };
+    let Ok(raw) = std::fs::read_to_string(read_path) else {
         return (HashMap::new(), false);
     };
     let mut migrated = false;
@@ -1203,6 +1218,26 @@ fn load_state(path: &Path) -> (HashMap<String, McpServer>, bool) {
         server.secret_header_values = secret_header_values;
     }
     (parsed, migrated)
+}
+
+fn legacy_mcp_registry_path() -> PathBuf {
+    if let Ok(state_dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = state_dir.trim();
+        if !trimmed.is_empty() {
+            let base = PathBuf::from(trimmed);
+            if base.file_name().and_then(|value| value.to_str()) != Some("data") {
+                return base.join("mcp_servers.json");
+            }
+            return base
+                .parent()
+                .map(|parent| parent.join("mcp_servers.json"))
+                .unwrap_or_else(|| base.join("mcp_servers.json"));
+        }
+    }
+    dirs::data_dir()
+        .map(|base| base.join("tandem").join("mcp_servers.json"))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".tandem").join("mcp_servers.json")))
+        .unwrap_or_else(|| PathBuf::from("mcp_servers.json"))
 }
 
 fn migrate_server_headers(

@@ -286,6 +286,7 @@ Use this flow when you want the same governed bundle the control-panel Planner p
 The Python SDK already includes the newer engine surfaces that have landed across the repo:
 
 - `client.browser` for `status()`, `install()`, and `smoke_test()`
+- `client.storage` for storage file inspection and legacy repair scan helpers
 - `client.workflows` for workflow registry, runs, hooks, simulation, and live events
 - `client.resources` for key-value resources
 - `client.skills` for list/get/import plus preview, templates, validation, routing, evals, compile, and generate flows
@@ -294,10 +295,13 @@ The Python SDK already includes the newer engine surfaces that have landed acros
 
 ```python
 browser = await client.browser.status()
+storage_files = await client.storage.list_files(path="data/context-runs", limit=100)
 workflows = await client.workflows.list()
 resources = await client.resources.list(prefix="agent-config/")
 templates = await client.skills.templates()
 ```
+
+Storage archive cleanup and root JSON migration are local maintenance operations. Run them with the engine CLI, for example `tandem-engine storage cleanup --dry-run --context-runs --json`.
 
 ### `client.coder`
 

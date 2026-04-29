@@ -3,13 +3,7 @@ use std::path::{Path, PathBuf};
 use tandem_core::resolve_shared_paths;
 
 pub(crate) fn resolve_shared_resources_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = dir.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("shared_resources.json");
-        }
-    }
-    default_state_dir().join("shared_resources.json")
+    resolve_canonical_data_file_path("system/shared_resources.json")
 }
 
 pub(crate) fn resolve_memory_audit_path() -> PathBuf {
@@ -47,13 +41,7 @@ pub(crate) fn resolve_protected_audit_path() -> PathBuf {
 }
 
 pub(crate) fn resolve_routines_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = dir.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("routines.json");
-        }
-    }
-    default_state_dir().join("routines.json")
+    resolve_canonical_data_file_path("routines/routines.json")
 }
 
 pub(crate) fn resolve_routine_history_path() -> PathBuf {
@@ -63,17 +51,11 @@ pub(crate) fn resolve_routine_history_path() -> PathBuf {
             return PathBuf::from(trimmed).join("routine_history.json");
         }
     }
-    default_state_dir().join("routine_history.json")
+    resolve_canonical_data_file_path("routines/routine_history.json")
 }
 
 pub(crate) fn resolve_routine_runs_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("routine_runs.json");
-        }
-    }
-    default_state_dir().join("routine_runs.json")
+    resolve_canonical_data_file_path("routines/routine_runs.json")
 }
 
 pub(crate) fn resolve_automations_v2_path() -> PathBuf {
@@ -153,13 +135,7 @@ pub(crate) fn resolve_workflow_runs_path() -> PathBuf {
 }
 
 pub(crate) fn resolve_workflow_planner_sessions_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("workflow_planner_sessions.json");
-        }
-    }
-    default_state_dir().join("workflow_planner_sessions.json")
+    resolve_canonical_data_file_path("workflow-planner/sessions.json")
 }
 
 pub(crate) fn resolve_workflow_learning_candidates_path() -> PathBuf {
@@ -177,53 +153,23 @@ pub(crate) fn resolve_context_packs_path() -> PathBuf {
 }
 
 pub(crate) fn resolve_bug_monitor_config_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("bug_monitor_config.json");
-        }
-    }
-    default_state_dir().join("bug_monitor_config.json")
+    resolve_canonical_data_file_path("bug-monitor/config.json")
 }
 
 pub(crate) fn resolve_bug_monitor_drafts_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("bug_monitor_drafts.json");
-        }
-    }
-    default_state_dir().join("bug_monitor_drafts.json")
+    resolve_canonical_data_file_path("bug-monitor/drafts.json")
 }
 
 pub(crate) fn resolve_bug_monitor_incidents_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("bug_monitor_incidents.json");
-        }
-    }
-    default_state_dir().join("bug_monitor_incidents.json")
+    resolve_canonical_data_file_path("bug-monitor/incidents.json")
 }
 
 pub(crate) fn resolve_bug_monitor_posts_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("bug_monitor_posts.json");
-        }
-    }
-    default_state_dir().join("bug_monitor_posts.json")
+    resolve_canonical_data_file_path("bug-monitor/posts.json")
 }
 
 pub(crate) fn resolve_external_actions_path() -> PathBuf {
-    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("external_actions.json");
-        }
-    }
-    default_state_dir().join("external_actions.json")
+    resolve_canonical_data_file_path("actions/external_actions.json")
 }
 
 pub(crate) fn legacy_failure_reporter_path(file_name: &str) -> PathBuf {

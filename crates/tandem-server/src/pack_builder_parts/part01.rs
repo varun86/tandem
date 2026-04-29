@@ -1599,40 +1599,56 @@ fn resolve_pack_builder_workflows_path() -> PathBuf {
     if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("pack_builder_workflows.json");
+            let base = PathBuf::from(trimmed);
+            return if base.file_name().and_then(|value| value.to_str()) == Some("data") {
+                base.join("pack-builder").join("workflows.json")
+            } else {
+                base.join("data")
+                    .join("pack-builder")
+                    .join("workflows.json")
+            };
         }
     }
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir
             .join("tandem")
             .join("data")
-            .join("pack_builder_workflows.json");
+            .join("pack-builder")
+            .join("workflows.json");
     }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".tandem")
         .join("data")
-        .join("pack_builder_workflows.json")
+        .join("pack-builder")
+        .join("workflows.json")
 }
 
 fn resolve_pack_builder_plans_path() -> PathBuf {
     if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("pack_builder_plans.json");
+            let base = PathBuf::from(trimmed);
+            return if base.file_name().and_then(|value| value.to_str()) == Some("data") {
+                base.join("pack-builder").join("plans.json")
+            } else {
+                base.join("data").join("pack-builder").join("plans.json")
+            };
         }
     }
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir
             .join("tandem")
             .join("data")
-            .join("pack_builder_plans.json");
+            .join("pack-builder")
+            .join("plans.json");
     }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".tandem")
         .join("data")
-        .join("pack_builder_plans.json")
+        .join("pack-builder")
+        .join("plans.json")
 }
 
 /// Returns the directory for persistent pack zip staging.
@@ -1641,24 +1657,36 @@ fn resolve_pack_builder_zips_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("pack_builder_zips");
+            let base = PathBuf::from(trimmed);
+            return if base.file_name().and_then(|value| value.to_str()) == Some("data") {
+                base.join("pack-builder").join("zips")
+            } else {
+                base.join("data").join("pack-builder").join("zips")
+            };
         }
     }
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir
             .join("tandem")
             .join("data")
-            .join("pack_builder_zips");
+            .join("pack-builder")
+            .join("zips");
     }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".tandem")
         .join("data")
-        .join("pack_builder_zips")
+        .join("pack-builder")
+        .join("zips")
 }
 
 fn load_workflows(path: &PathBuf) -> HashMap<String, WorkflowRecord> {
-    let Ok(bytes) = fs::read(path) else {
+    let read_path = if path.exists() {
+        path.clone()
+    } else {
+        legacy_pack_builder_root_file("pack_builder_workflows.json")
+    };
+    let Ok(bytes) = fs::read(read_path) else {
         return HashMap::new();
     };
     serde_json::from_slice::<HashMap<String, WorkflowRecord>>(&bytes).unwrap_or_default()
@@ -1674,10 +1702,35 @@ fn save_workflows(path: &PathBuf, workflows: &HashMap<String, WorkflowRecord>) {
 }
 
 fn load_plans(path: &PathBuf) -> HashMap<String, PreparedPlan> {
-    let Ok(bytes) = fs::read(path) else {
+    let read_path = if path.exists() {
+        path.clone()
+    } else {
+        legacy_pack_builder_root_file("pack_builder_plans.json")
+    };
+    let Ok(bytes) = fs::read(read_path) else {
         return HashMap::new();
     };
     serde_json::from_slice::<HashMap<String, PreparedPlan>>(&bytes).unwrap_or_default()
+}
+
+fn legacy_pack_builder_root_file(file_name: &str) -> PathBuf {
+    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            let base = PathBuf::from(trimmed);
+            if base.file_name().and_then(|value| value.to_str()) != Some("data") {
+                return base.join(file_name);
+            }
+            return base
+                .parent()
+                .map(|parent| parent.join(file_name))
+                .unwrap_or_else(|| base.join(file_name));
+        }
+    }
+    dirs::data_dir()
+        .map(|base| base.join("tandem").join(file_name))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".tandem").join(file_name)))
+        .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
 fn save_plans(path: &PathBuf, plans: &HashMap<String, PreparedPlan>) {

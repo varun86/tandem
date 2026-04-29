@@ -56,9 +56,24 @@ cargo test -p tandem-server -p tandem-core -p tandem-ai
 
 # Testing with packages/tandem-control-panel
 
+Stop the running service before rebuilding so the old engine is not competing for CPU during the
+compile and the installed binary is replaced cleanly.
+
 ```bash
+sudo systemctl stop tandem-engine
 cargo build -p tandem-ai --profile fast-release
 sudo install -m 755 target/fast-release/tandem-engine /usr/local/bin/tandem-engine
+sudo systemctl restart tandem-engine
+```
+
+Run storage cleanup commands with the installed binary path so local shells do not accidentally
+hit the npm `tandem-engine` shim first.
+
+```bash
+/usr/local/bin/tandem-engine storage cleanup --dry-run --context-runs --json
+/usr/local/bin/tandem-engine storage cleanup --dry-run --root-json --json
+sudo systemctl stop tandem-engine
+/usr/local/bin/tandem-engine storage cleanup --context-runs --root-json --quarantine --json
 sudo systemctl restart tandem-engine
 ```
 

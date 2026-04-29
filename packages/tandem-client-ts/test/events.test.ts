@@ -623,6 +623,7 @@ describe("High-value parity coverage", () => {
     });
 
     expect(client.browser).toBeTruthy();
+    expect(client.storage).toBeTruthy();
     expect(client.workflows).toBeTruthy();
     expect(client.bugMonitor).toBeTruthy();
   });
@@ -646,6 +647,37 @@ describe("High-value parity coverage", () => {
       expect(urls[0]).toContain("/browser/status");
       expect(urls[1]).toContain("/browser/install");
       expect(urls[2]).toContain("/browser/smoke-test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("hits storage inspection and repair endpoints", async () => {
+    const client = new TandemClient({ baseUrl: "http://localhost:39731", token: "test-token" });
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = (async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: String(init?.method ?? "GET"),
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Response(
+        JSON.stringify({ files: [], count: 0, status: "ok", marker_updated: false }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    try {
+      await client.storage.listFiles({ path: "data/context-runs", limit: 25 });
+      await client.storage.repair({ force: true });
+      expect(calls[0]?.url).toContain("/global/storage/files?path=data%2Fcontext-runs&limit=25");
+      expect(calls[1]?.url).toContain("/global/storage/repair");
+      expect(calls[1]?.method).toBe("POST");
+      expect(calls[1]?.body).toContain('"force":true');
     } finally {
       globalThis.fetch = originalFetch;
     }
