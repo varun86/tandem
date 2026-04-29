@@ -1013,20 +1013,12 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
             .and_then(Value::as_str),
         Some("triage_queued")
     );
-    assert_eq!(
-        triage_payload
-            .get("triage_summary")
-            .and_then(|row| row.get("suggested_title"))
-            .and_then(Value::as_str),
-        Some("Bug Monitor issue")
-    );
-    assert_eq!(
-        triage_payload
-            .get("triage_summary_artifact")
-            .and_then(|row| row.get("artifact_type"))
-            .and_then(Value::as_str),
-        Some("bug_monitor_triage_summary")
-    );
+    assert!(triage_payload
+        .get("triage_summary")
+        .is_some_and(Value::is_null));
+    assert!(triage_payload
+        .get("triage_summary_artifact")
+        .is_some_and(Value::is_null));
     assert!(triage_payload
         .get("issue_draft")
         .is_some_and(Value::is_null));
@@ -1248,20 +1240,12 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
     assert!(replay_payload
         .get("issue_draft_artifact")
         .is_some_and(Value::is_null));
-    assert_eq!(
-        replay_payload
-            .get("triage_summary")
-            .and_then(|row| row.get("suggested_title"))
-            .and_then(Value::as_str),
-        Some("Bug Monitor issue")
-    );
-    assert_eq!(
-        replay_payload
-            .get("triage_summary_artifact")
-            .and_then(|row| row.get("artifact_type"))
-            .and_then(Value::as_str),
-        Some("bug_monitor_triage_summary")
-    );
+    assert!(replay_payload
+        .get("triage_summary")
+        .is_some_and(Value::is_null));
+    assert!(replay_payload
+        .get("triage_summary_artifact")
+        .is_some_and(Value::is_null));
     assert_eq!(
         replay_payload
             .get("duplicate_summary")
@@ -1276,6 +1260,105 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
             .map(|rows| rows.len()),
         Some(0)
     );
+}
+
+#[tokio::test]
+async fn bug_monitor_empty_triage_summary_synthesizes_file_refs_and_fix_points() {
+    let state = test_state().await;
+    state
+        .put_bug_monitor_config(crate::BugMonitorConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let app = app_router(state.clone());
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/bug-monitor/report")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "report": {
+                            "source": "automation_v2",
+                            "title": "Workflow run failed at read_contracts",
+                            "detail": "required output `.tandem/runs/run-1/artifacts/read-contracts.md` was not created for node `read_contracts`",
+                            "component": "automation_v2",
+                            "event": "automation_v2.run.failed",
+                            "excerpt": ["required output was not created"]
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let draft_id = create_payload
+        .get("draft")
+        .and_then(|row| row.get("draft_id"))
+        .and_then(Value::as_str)
+        .expect("draft id");
+
+    let triage_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
+                .body(Body::empty())
+                .expect("triage request"),
+        )
+        .await
+        .expect("triage response");
+    assert_eq!(triage_resp.status(), StatusCode::OK);
+
+    let summary_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/bug-monitor/drafts/{draft_id}/triage-summary"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .expect("summary request"),
+        )
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    let summary = summary_payload
+        .get("triage_summary")
+        .expect("triage summary");
+    assert!(summary
+        .get("file_references")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty()));
+    assert!(summary
+        .get("fix_points")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty()));
+    assert!(summary_payload
+        .get("issue_draft")
+        .is_some_and(Value::is_object));
 }
 
 #[tokio::test]

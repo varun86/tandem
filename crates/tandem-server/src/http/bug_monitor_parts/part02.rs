@@ -524,26 +524,26 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     for (artifact_id, artifact_type, path, payload) in [
         (
             "bug-monitor-inspection-brief",
-            "bug_monitor_inspection",
-            "artifacts/bug_monitor.inspection.json",
+            "bug_monitor_inspection_task_spec",
+            "artifacts/bug_monitor.inspection.task_spec.json",
             inspection_payload,
         ),
         (
             "bug-monitor-research-brief",
-            "bug_monitor_research",
-            "artifacts/bug_monitor.research.json",
+            "bug_monitor_research_task_spec",
+            "artifacts/bug_monitor.research.task_spec.json",
             research_payload,
         ),
         (
             "bug-monitor-validation-brief",
-            "bug_monitor_validation",
-            "artifacts/bug_monitor.validation.json",
+            "bug_monitor_validation_task_spec",
+            "artifacts/bug_monitor.validation.task_spec.json",
             validation_payload,
         ),
         (
             "bug-monitor-fix-proposal-brief",
-            "bug_monitor_fix_proposal",
-            "artifacts/bug_monitor.fix_proposal.json",
+            "bug_monitor_fix_proposal_task_spec",
+            "artifacts/bug_monitor.fix_proposal.task_spec.json",
             fix_payload,
         ),
     ] {
@@ -551,49 +551,6 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
             .await
             .map_err(|status| anyhow::anyhow!("Failed to write triage artifact: HTTP {status}"))?;
     }
-    let initial_what_happened = [draft.title.clone(), draft.detail.clone()]
-        .into_iter()
-        .flatten()
-        .map(|row| row.trim().to_string())
-        .filter(|row| !row.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let triage_summary_payload = json!({
-        "draft_id": draft.draft_id,
-        "repo": draft.repo,
-        "triage_run_id": run_id,
-        "suggested_title": "Bug Monitor issue",
-        "what_happened": if initial_what_happened.is_empty() { "Bug Monitor detected a failure that needs triage.".to_string() } else { initial_what_happened },
-        "why_it_likely_happened": "Research task pending.",
-        "root_cause_confidence": "low",
-        "failure_type": "unknown",
-        "affected_components": [],
-        "likely_files_to_edit": [],
-        "steps_to_reproduce": [],
-        "environment": [format!("Repo: {}", draft.repo), "Process: tandem-engine".to_string()],
-        "logs": draft.detail.clone().map(|detail| vec![detail]).unwrap_or_default(),
-        "related_existing_issues": [],
-        "related_failure_patterns": duplicate_matches,
-        "research_sources": [],
-        "recommended_fix": "Complete the Bug Monitor research, validation, and fix proposal tasks.",
-        "acceptance_criteria": [],
-        "verification_steps": [],
-        "coder_ready": false,
-        "risk_level": "medium",
-        "notes": "Initial triage summary generated before research completes.",
-        "created_at_ms": crate::now_ms(),
-    });
-    write_bug_monitor_artifact(
-        &state,
-        &run_id,
-        "bug-monitor-triage-summary-initial",
-        "bug_monitor_triage_summary",
-        "artifacts/bug_monitor.triage_summary.json",
-        &triage_summary_payload,
-    )
-    .await
-    .map_err(|status| anyhow::anyhow!("Failed to write initial triage summary: HTTP {status}"))?;
-
     let mut updated_draft = draft.clone();
     updated_draft.triage_run_id = Some(run_id.clone());
     updated_draft.status = "triage_queued".to_string();

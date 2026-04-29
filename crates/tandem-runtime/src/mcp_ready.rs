@@ -130,8 +130,7 @@ impl McpRegistry {
                 if next_delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(next_delay_ms)).await;
                 }
-                next_delay_ms =
-                    next_delay_ms.saturating_mul(policy.backoff_factor.max(1) as u64);
+                next_delay_ms = next_delay_ms.saturating_mul(policy.backoff_factor.max(1) as u64);
             }
             if self.connect(server_name).await {
                 if let Some(server) = self.list().await.get(server_name).cloned() {

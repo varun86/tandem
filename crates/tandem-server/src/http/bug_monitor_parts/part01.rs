@@ -1,5 +1,7 @@
+use ignore::WalkBuilder;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::path::{Path as FsPath, PathBuf};
 use tandem_memory::{
     GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition, MemoryPutRequest,
@@ -89,6 +91,10 @@ pub(super) struct BugMonitorTriageSummaryInput {
     pub related_failure_patterns: Vec<Value>,
     #[serde(default)]
     pub research_sources: Vec<Value>,
+    #[serde(default)]
+    pub file_references: Vec<Value>,
+    #[serde(default)]
+    pub fix_points: Vec<Value>,
     #[serde(default)]
     pub recommended_fix: Option<String>,
     #[serde(default)]
@@ -276,6 +282,316 @@ fn bug_monitor_summary_text(summary: Option<&Value>, key: &str) -> Option<String
         .and_then(normalize_issue_draft_line)
 }
 
+fn bug_monitor_triage_summary_input_has_substance(input: &BugMonitorTriageSummaryInput) -> bool {
+    input
+        .suggested_title
+        .as_deref()
+        .is_some_and(|row| !row.trim().is_empty())
+        || input
+            .what_happened
+            .as_deref()
+            .is_some_and(|row| !row.trim().is_empty())
+        || input
+            .why_it_likely_happened
+            .as_deref()
+            .is_some_and(|row| !row.trim().is_empty())
+        || input
+            .recommended_fix
+            .as_deref()
+            .is_some_and(|row| !row.trim().is_empty())
+        || !input.affected_components.is_empty()
+        || !input.likely_files_to_edit.is_empty()
+        || !input.steps_to_reproduce.is_empty()
+        || !input.logs.is_empty()
+        || !input.related_existing_issues.is_empty()
+        || !input.related_failure_patterns.is_empty()
+        || !input.research_sources.is_empty()
+        || !input.file_references.is_empty()
+        || !input.fix_points.is_empty()
+        || !input.acceptance_criteria.is_empty()
+        || !input.verification_steps.is_empty()
+}
+
+fn bug_monitor_value_string(payload: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| payload.get(*key).and_then(Value::as_str))
+        .and_then(normalize_issue_draft_line)
+}
+
+fn bug_monitor_value_strings(payload: &Value, keys: &[&str], limit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for key in keys {
+        match payload.get(*key) {
+            Some(Value::Array(rows)) => {
+                for row in rows {
+                    if out.len() >= limit {
+                        return out;
+                    }
+                    if let Some(value) = row
+                        .as_str()
+                        .and_then(normalize_issue_draft_line)
+                        .or_else(|| normalize_issue_draft_line(row.to_string()))
+                    {
+                        if !out.iter().any(|existing| existing == &value) {
+                            out.push(value);
+                        }
+                    }
+                }
+            }
+            Some(Value::String(row)) => {
+                if let Some(value) = normalize_issue_draft_line(row) {
+                    if !out.iter().any(|existing| existing == &value) {
+                        out.push(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn bug_monitor_push_unique(rows: &mut Vec<String>, value: impl AsRef<str>, limit: usize) {
+    if rows.len() >= limit {
+        return;
+    }
+    let Some(value) = normalize_issue_draft_line(value.as_ref()) else {
+        return;
+    };
+    if !rows.iter().any(|existing| existing == &value) {
+        rows.push(value);
+    }
+}
+
+fn bug_monitor_failure_type(reason: &str, event_type: &str) -> String {
+    let haystack = format!("{reason}\n{event_type}").to_ascii_lowercase();
+    if haystack.contains("timeout") || haystack.contains("timed out") {
+        "timeout"
+    } else if haystack.contains("required output")
+        || haystack.contains("artifact")
+        || haystack.contains("validation")
+        || haystack.contains("prewrite")
+    {
+        "validation_error"
+    } else if haystack.contains("mcp")
+        || haystack.contains("tool")
+        || haystack.contains("github")
+        || haystack.contains("provider stream")
+    {
+        "tool_error"
+    } else if haystack.contains("permission")
+        || haystack.contains("auth")
+        || haystack.contains("unauthorized")
+    {
+        "missing_capability"
+    } else {
+        "unknown"
+    }
+    .to_string()
+}
+
+fn bug_monitor_candidate_search_terms(
+    draft: &BugMonitorDraftRecord,
+    incident: Option<&crate::BugMonitorIncidentRecord>,
+    incident_payload: &Value,
+) -> Vec<String> {
+    let mut terms = Vec::new();
+    for candidate in [
+        draft.title.as_deref(),
+        draft.detail.as_deref(),
+        incident.map(|row| row.title.as_str()),
+        incident.and_then(|row| row.last_error.as_deref()),
+    ] {
+        if let Some(candidate) = candidate {
+            for part in candidate
+                .split(|ch: char| {
+                    !(ch.is_ascii_alphanumeric()
+                        || ch == '_'
+                        || ch == '-'
+                        || ch == '.'
+                        || ch == '/')
+                })
+                .map(str::trim)
+                .filter(|part| part.len() >= 5 && part.len() <= 120)
+            {
+                if !part.chars().all(|ch| ch.is_ascii_digit()) {
+                    bug_monitor_push_unique(&mut terms, part, 16);
+                }
+            }
+        }
+    }
+    for candidate in [
+        bug_monitor_value_string(
+            incident_payload,
+            &["reason", "error", "failureCode", "blockedReasonCode"],
+        ),
+        bug_monitor_value_string(
+            incident_payload,
+            &["task_id", "taskID", "stage_id", "node_id"],
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for part in candidate
+            .split(|ch: char| {
+                !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.' || ch == '/')
+            })
+            .map(str::trim)
+            .filter(|part| part.len() >= 5 && part.len() <= 120)
+        {
+            if !part.chars().all(|ch| ch.is_ascii_digit()) {
+                bug_monitor_push_unique(&mut terms, part, 16);
+            }
+        }
+    }
+    for key in [
+        "task_id",
+        "taskID",
+        "stage_id",
+        "stageID",
+        "node_id",
+        "nodeID",
+        "component",
+        "tool_name",
+        "toolName",
+        "error_kind",
+        "errorKind",
+    ] {
+        if let Some(value) = incident_payload.get(key).and_then(Value::as_str) {
+            bug_monitor_push_unique(&mut terms, value, 16);
+        }
+    }
+    terms
+}
+
+fn bug_monitor_path_is_researchable(path: &FsPath) -> bool {
+    let Some(name) = path.file_name().and_then(|row| row.to_str()) else {
+        return false;
+    };
+    if matches!(
+        name,
+        "Cargo.lock" | "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
+    ) {
+        return false;
+    }
+    matches!(
+        path.extension().and_then(|row| row.to_str()),
+        Some("rs" | "ts" | "tsx" | "js" | "jsx" | "md" | "json" | "toml")
+    )
+}
+
+fn bug_monitor_search_repo_file_references(workspace_root: &str, terms: &[String]) -> Vec<Value> {
+    let root = FsPath::new(workspace_root);
+    if !root.is_dir() || terms.is_empty() {
+        return Vec::new();
+    }
+    let lowered_terms = terms
+        .iter()
+        .map(|term| term.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut refs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in WalkBuilder::new(root)
+        .hidden(false)
+        .ignore(true)
+        .git_ignore(true)
+        .build()
+        .flatten()
+    {
+        if refs.len() >= 12 {
+            break;
+        }
+        let path = entry.path();
+        if !path.is_file() || !bug_monitor_path_is_researchable(path) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if raw.len() > 400_000 {
+            continue;
+        }
+        for (idx, line) in raw.lines().enumerate() {
+            let lower = line.to_ascii_lowercase();
+            let Some(term) = lowered_terms
+                .iter()
+                .find(|term| lower.contains(term.as_str()))
+            else {
+                continue;
+            };
+            let display_path = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+            let key = format!("{}:{}", display_path, idx + 1);
+            if !seen.insert(key) {
+                continue;
+            }
+            refs.push(json!({
+                "path": display_path,
+                "line": idx + 1,
+                "excerpt": crate::truncate_text(line.trim(), 240),
+                "matched_term": term,
+                "reason": "Local repository search matched failure evidence from the Bug Monitor draft.",
+                "confidence": "medium",
+            }));
+            break;
+        }
+    }
+    refs
+}
+
+fn bug_monitor_fallback_file_references(reason: &str) -> Vec<Value> {
+    let lower = reason.to_ascii_lowercase();
+    let mut refs = Vec::new();
+    let mut push = |path: &str, reason: &str| {
+        refs.push(json!({
+            "path": path,
+            "line": Value::Null,
+            "excerpt": Value::Null,
+            "reason": reason,
+            "confidence": "medium",
+        }));
+    };
+    if lower.contains("mcp") || lower.contains("github") || lower.contains("tool") {
+        push(
+            "crates/tandem-server/src/bug_monitor_github.rs",
+            "GitHub/MCP issue publishing and lookup flow lives here.",
+        );
+        push(
+            "crates/tandem-runtime/src/mcp_ready.rs",
+            "MCP readiness and reconnect behavior lives here.",
+        );
+    }
+    if lower.contains("required output")
+        || lower.contains("artifact")
+        || lower.contains("in_progress")
+        || lower.contains("prewrite")
+    {
+        push(
+            "crates/tandem-server/src/app/state/automation/logic_parts/part04.rs",
+            "Automation artifact validation rejects missing or non-terminal required outputs.",
+        );
+        push(
+            "crates/tandem-server/src/app/state/automation/prompting_impl.rs",
+            "Required artifact instructions are generated here.",
+        );
+        push(
+            "crates/tandem-core/src/engine_loop/prewrite_mode.rs",
+            "Tool-mode repair and required-write enforcement lives here.",
+        );
+    }
+    if lower.contains("read-only source") || lower.contains("modify read-only") {
+        push(
+            "crates/tandem-core/src/engine_loop/write_targets.rs",
+            "Write-target derivation decides whether a tool call writes source files.",
+        );
+    }
+    refs
+}
+
 fn bug_monitor_proposal_quality_gate(
     state: &AppState,
     triage_run_id: &str,
@@ -283,13 +599,16 @@ fn bug_monitor_proposal_quality_gate(
 ) -> (bool, Value) {
     let has_summary = triage_summary.is_some();
     let inspection_artifact =
-        latest_bug_monitor_artifact(state, triage_run_id, "bug_monitor_inspection").is_some();
+        bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_inspection");
     let research_artifact =
-        latest_bug_monitor_artifact(state, triage_run_id, "bug_monitor_research").is_some();
+        bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_research");
     let validation_artifact =
-        latest_bug_monitor_artifact(state, triage_run_id, "bug_monitor_validation").is_some();
-    let fix_artifact =
-        latest_bug_monitor_artifact(state, triage_run_id, "bug_monitor_fix_proposal").is_some();
+        bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_validation");
+    let fix_artifact = bug_monitor_completed_phase_artifact_exists(
+        state,
+        triage_run_id,
+        "bug_monitor_fix_proposal",
+    );
     let durable_artifacts =
         inspection_artifact && research_artifact && validation_artifact && fix_artifact;
 
@@ -417,6 +736,75 @@ fn bug_monitor_proposal_quality_gate(
             },
         }),
     )
+}
+
+fn bug_monitor_completed_phase_artifact_exists(
+    state: &AppState,
+    triage_run_id: &str,
+    artifact_type: &str,
+) -> bool {
+    let Some(artifact) = latest_bug_monitor_artifact(state, triage_run_id, artifact_type) else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read_to_string(&artifact.path) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_str::<Value>(&raw) else {
+        return false;
+    };
+    if bug_monitor_artifact_is_task_spec_placeholder(&payload) {
+        return false;
+    }
+    match artifact_type {
+        "bug_monitor_research" => {
+            !bug_monitor_value_array(payload.get("research_sources")).is_empty()
+                || !bug_monitor_value_array(payload.get("related_existing_issues")).is_empty()
+                || !bug_monitor_value_array(payload.get("related_failure_patterns")).is_empty()
+                || payload
+                    .get("findings")
+                    .and_then(Value::as_array)
+                    .is_some_and(|rows| !rows.is_empty())
+                || payload
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+        }
+        "bug_monitor_validation" => {
+            !bug_monitor_value_array(payload.get("evidence")).is_empty()
+                || !bug_monitor_value_array(payload.get("validation_errors")).is_empty()
+                || !bug_monitor_value_array(payload.get("steps_to_reproduce")).is_empty()
+                || payload
+                    .get("failure_scope")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+                || payload
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+        }
+        "bug_monitor_fix_proposal" => {
+            payload
+                .get("recommended_fix")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+                && (!bug_monitor_value_array(payload.get("acceptance_criteria")).is_empty()
+                    || !bug_monitor_value_array(payload.get("verification_steps")).is_empty()
+                    || !bug_monitor_value_array(payload.get("smoke_test_steps")).is_empty())
+        }
+        "bug_monitor_inspection" => {
+            payload.get("detail").is_some()
+                || payload.get("incident").is_some()
+                || payload.get("incident_payload").is_some()
+        }
+        _ => true,
+    }
+}
+
+fn bug_monitor_artifact_is_task_spec_placeholder(payload: &Value) -> bool {
+    payload.get("expected_artifact").is_some()
+        || payload.get("research_requirements").is_some()
+        || payload.get("validation_requirements").is_some()
+        || payload.get("proposal_requirements").is_some()
 }
 
 async fn persist_blocked_bug_monitor_report_observation(
@@ -1632,6 +2020,18 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let file_references = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("file_references"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let fix_points = triage_summary
+        .as_ref()
+        .and_then(|row| row.get("fix_points"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let related_existing_issues = triage_summary
         .as_ref()
         .and_then(|row| row.get("related_existing_issues"))
@@ -1778,6 +2178,14 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
             "Research sources".to_string(),
             json_list_section(&research_sources),
         ),
+        (
+            "File references".to_string(),
+            json_list_section(&file_references),
+        ),
+        (
+            "Potential fix points".to_string(),
+            json_list_section(&fix_points),
+        ),
     ];
     let handoff = json!({
         "handoff_type": "tandem_autonomous_coder_issue",
@@ -1843,6 +2251,8 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
         "related_existing_issues": related_existing_issues,
         "related_failure_patterns": related_failure_patterns,
         "research_sources": research_sources,
+        "file_references": file_references,
+        "fix_points": fix_points,
         "recommended_fix": recommended_fix,
         "acceptance_criteria": acceptance_criteria,
         "verification_steps": verification_steps,
@@ -1878,6 +2288,332 @@ pub(crate) async fn ensure_bug_monitor_issue_draft(
     Ok(payload)
 }
 
+async fn synthesize_bug_monitor_triage_summary(
+    state: &AppState,
+    draft: &BugMonitorDraftRecord,
+    triage_run_id: &str,
+) -> anyhow::Result<BugMonitorTriageSummaryInput> {
+    let config = state.bug_monitor_config().await;
+    let incident = latest_bug_monitor_incident_for_draft(state, &draft.draft_id).await;
+    let incident_payload = incident
+        .as_ref()
+        .and_then(|row| row.event_payload.clone())
+        .unwrap_or(Value::Null);
+    let title = draft
+        .title
+        .clone()
+        .or_else(|| incident.as_ref().map(|row| row.title.clone()))
+        .unwrap_or_else(|| "Bug Monitor failure".to_string());
+    let detail = draft
+        .detail
+        .clone()
+        .or_else(|| incident.as_ref().and_then(|row| row.detail.clone()))
+        .unwrap_or_default();
+    let reason = bug_monitor_value_string(
+        &incident_payload,
+        &[
+            "reason",
+            "error",
+            "detail",
+            "message",
+            "failureCode",
+            "blockedReasonCode",
+        ],
+    )
+    .or_else(|| {
+        incident
+            .as_ref()
+            .and_then(|row| row.last_error.clone())
+            .or_else(|| normalize_issue_draft_line(&detail))
+    })
+    .unwrap_or_else(|| title.clone());
+    let event_type = incident
+        .as_ref()
+        .map(|row| row.event_type.clone())
+        .or_else(|| bug_monitor_value_string(&incident_payload, &["event_type", "event", "type"]))
+        .unwrap_or_else(|| "bug_monitor.failure".to_string());
+    let failure_type = bug_monitor_failure_type(&reason, &event_type);
+    let workflow_id = bug_monitor_value_string(&incident_payload, &["workflow_id", "workflowID"]);
+    let run_id = incident
+        .as_ref()
+        .and_then(|row| row.run_id.clone())
+        .or_else(|| bug_monitor_value_string(&incident_payload, &["run_id", "runID"]));
+    let task_id = bug_monitor_value_string(
+        &incident_payload,
+        &[
+            "task_id", "taskID", "stage_id", "stageID", "node_id", "nodeID",
+        ],
+    );
+    let artifact_refs = bug_monitor_value_strings(
+        &incident_payload,
+        &["artifact_refs", "artifactRefs", "artifacts"],
+        20,
+    );
+    let files_touched =
+        bug_monitor_value_strings(&incident_payload, &["files_touched", "filesTouched"], 20);
+    let duplicate_matches = bug_monitor_failure_pattern_matches(
+        state,
+        &draft.repo,
+        &draft.fingerprint,
+        draft.title.as_deref(),
+        draft.detail.as_deref(),
+        &incident
+            .as_ref()
+            .map(|row| row.excerpt.clone())
+            .unwrap_or_default(),
+        5,
+    )
+    .await;
+    let default_workspace_root = state.workspace_index.snapshot().await.root;
+    let workspace_root = config
+        .workspace_root
+        .clone()
+        .or_else(|| incident.as_ref().map(|row| row.workspace_root.clone()))
+        .filter(|row| !row.trim().is_empty())
+        .unwrap_or(default_workspace_root);
+    let terms = bug_monitor_candidate_search_terms(draft, incident.as_ref(), &incident_payload);
+    let mut file_references = bug_monitor_search_repo_file_references(&workspace_root, &terms);
+    if file_references.is_empty() {
+        file_references = bug_monitor_fallback_file_references(&format!("{reason}\n{detail}"));
+    }
+    for file in files_touched.iter().take(10) {
+        if !file_references
+            .iter()
+            .any(|row| row.get("path").and_then(Value::as_str) == Some(file.as_str()))
+        {
+            file_references.push(json!({
+                "path": file,
+                "line": Value::Null,
+                "excerpt": Value::Null,
+                "reason": "The failure event reported this file as touched or relevant.",
+                "confidence": "medium",
+            }));
+        }
+    }
+    let likely_files_to_edit = file_references
+        .iter()
+        .filter_map(|row| row.get("path").and_then(Value::as_str))
+        .map(str::to_string)
+        .take(12)
+        .collect::<Vec<_>>();
+    let affected_components = [
+        bug_monitor_value_string(&incident_payload, &["component"]),
+        workflow_id.clone(),
+        task_id.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .take(8)
+    .collect::<Vec<_>>();
+    let confidence = if !likely_files_to_edit.is_empty() {
+        "medium"
+    } else {
+        "low"
+    };
+    let suggested_title = match (workflow_id.as_deref(), task_id.as_deref()) {
+        (Some(workflow), Some(task)) => {
+            format!(
+                "Workflow {workflow} failed at {task}: {}",
+                crate::truncate_text(&reason, 120)
+            )
+        }
+        (_, Some(task)) => format!("{task} failed: {}", crate::truncate_text(&reason, 120)),
+        _ => title.clone(),
+    };
+    let what_happened = [
+        Some(title.clone()),
+        Some(format!("Event: {event_type}")),
+        run_id.as_ref().map(|run| format!("Run: {run}")),
+        task_id.as_ref().map(|task| format!("Task/stage: {task}")),
+        Some(format!("Reason: {reason}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n");
+    let why = if likely_files_to_edit.is_empty() {
+        format!(
+            "The failure is classified as `{failure_type}` from the reported event and error text, but local file evidence was not strong enough to mark this coder-ready."
+        )
+    } else {
+        format!(
+            "The failure is classified as `{failure_type}`. Local repository research found likely implementation points connected to the reported event, error text, or artifact validation path."
+        )
+    };
+    let recommended_fix = match failure_type.as_str() {
+        "validation_error" => {
+            "Tighten the failing artifact/output validation path so terminal failures include the exact missing or invalid output, and ensure the node writes a completed artifact before it can finish.".to_string()
+        }
+        "timeout" => {
+            "Identify why the node exceeded its timeout, add a fast readiness/failure path for unavailable dependencies, and make retry output deterministic.".to_string()
+        }
+        "tool_error" => {
+            "Route the failing tool call through the shared readiness/resolution path, preserve the typed tool error, and add a regression fixture for the selected tool alias.".to_string()
+        }
+        _ => {
+            "Use the referenced files and artifacts to isolate the failing path, add a narrow regression test, and update the responsible validator or runtime branch.".to_string()
+        }
+    };
+    let acceptance_criteria = vec![
+        "The same failure event produces one Bug Monitor draft with a completed triage summary.".to_string(),
+        "The triage summary includes file references, a suspected cause, a bounded fix, and verification steps.".to_string(),
+        "Issue draft generation remains blocked when research or validation artifacts are missing.".to_string(),
+    ];
+    let verification_steps = vec![
+        "Run the Bug Monitor triage-summary endpoint for the affected draft and confirm completed inspection/research/validation/fix artifacts are written.".to_string(),
+        "Regenerate the issue draft and confirm the proposal quality gate passes only with non-placeholder artifacts.".to_string(),
+        "Retry the affected workflow or fixture event and confirm it does not publish a low-signal GitHub issue.".to_string(),
+    ];
+    let research_sources = file_references
+        .iter()
+        .take(12)
+        .map(|row| {
+            json!({
+                "source": "local_repo",
+                "path": row.get("path").cloned().unwrap_or(Value::Null),
+                "line": row.get("line").cloned().unwrap_or(Value::Null),
+                "reason": row.get("reason").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let fix_points = vec![json!({
+        "component": affected_components.first().cloned().unwrap_or_else(|| "Bug Monitor triage".to_string()),
+        "problem": reason,
+        "likely_files": likely_files_to_edit,
+        "proposed_change": recommended_fix,
+        "verification": verification_steps,
+        "confidence": confidence,
+    })];
+    let inspection = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "triage_run_id": triage_run_id,
+        "title": title.clone(),
+        "detail": detail.clone(),
+        "event_type": event_type.clone(),
+        "reason": reason.clone(),
+        "incident": incident.clone(),
+        "incident_payload": incident_payload.clone(),
+        "workflow_id": workflow_id.clone(),
+        "run_id": run_id.clone(),
+        "task_id": task_id.clone(),
+        "artifact_refs": artifact_refs.clone(),
+        "files_touched": files_touched.clone(),
+        "created_at_ms": crate::now_ms(),
+    });
+    let research = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "summary": why,
+        "search_terms": terms,
+        "research_sources": research_sources.clone(),
+        "file_references": file_references.clone(),
+        "related_failure_patterns": duplicate_matches.clone(),
+        "artifact_refs": artifact_refs.clone(),
+        "created_at_ms": crate::now_ms(),
+    });
+    let validation = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "summary": "Deterministic triage validated the failure scope from the terminal event, draft detail, artifact refs, and local source references.",
+        "failure_scope": failure_type,
+        "evidence": [what_happened],
+        "steps_to_reproduce": [
+            "Replay or re-run the workflow/run identified in the Bug Monitor incident.",
+            "Observe the same terminal failure reason and generated artifact refs."
+        ],
+        "created_at_ms": crate::now_ms(),
+    });
+    let fix = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "recommended_fix": recommended_fix.clone(),
+        "fix_points": fix_points.clone(),
+        "likely_files_to_edit": likely_files_to_edit.clone(),
+        "acceptance_criteria": acceptance_criteria.clone(),
+        "verification_steps": verification_steps.clone(),
+        "risk_level": "medium",
+        "coder_ready": confidence != "low",
+        "created_at_ms": crate::now_ms(),
+    });
+    for (artifact_id, artifact_type, path, payload) in [
+        (
+            format!("bug-monitor-inspection-{}", Uuid::new_v4().simple()),
+            "bug_monitor_inspection",
+            "artifacts/bug_monitor.inspection.json",
+            inspection,
+        ),
+        (
+            format!("bug-monitor-research-{}", Uuid::new_v4().simple()),
+            "bug_monitor_research",
+            "artifacts/bug_monitor.research.json",
+            research,
+        ),
+        (
+            format!("bug-monitor-validation-{}", Uuid::new_v4().simple()),
+            "bug_monitor_validation",
+            "artifacts/bug_monitor.validation.json",
+            validation,
+        ),
+        (
+            format!("bug-monitor-fix-proposal-{}", Uuid::new_v4().simple()),
+            "bug_monitor_fix_proposal",
+            "artifacts/bug_monitor.fix_proposal.json",
+            fix,
+        ),
+    ] {
+        write_bug_monitor_artifact(
+            state,
+            triage_run_id,
+            &artifact_id,
+            artifact_type,
+            path,
+            &payload,
+        )
+        .await
+        .map_err(|status| {
+            anyhow::anyhow!("Failed to write synthesized triage artifact: HTTP {status}")
+        })?;
+    }
+    Ok(BugMonitorTriageSummaryInput {
+        suggested_title: Some(suggested_title),
+        what_happened: Some(what_happened),
+        why_it_likely_happened: Some(why),
+        root_cause_confidence: Some(confidence.to_string()),
+        failure_type: Some(failure_type),
+        affected_components,
+        likely_files_to_edit,
+        expected_behavior: Some("The workflow or runtime step should complete or fail with a single actionable, deduped Bug Monitor report.".to_string()),
+        steps_to_reproduce: vec![
+            "Replay or re-run the workflow/run identified in the Bug Monitor incident.".to_string(),
+            "Observe the terminal failure reason and associated artifact refs.".to_string(),
+        ],
+        environment: vec![
+            format!("Repo: {}", draft.repo),
+            format!("Workspace: {workspace_root}"),
+            "Process: tandem-engine".to_string(),
+        ],
+        logs: vec![crate::truncate_text(
+            &format!("{}\n\n{}", draft.detail.clone().unwrap_or_default(), reason),
+            1_500,
+        )],
+        related_existing_issues: Vec::new(),
+        related_failure_patterns: duplicate_matches,
+        research_sources,
+        file_references,
+        fix_points,
+        recommended_fix: Some(recommended_fix),
+        acceptance_criteria,
+        verification_steps,
+        coder_ready: Some(confidence != "low"),
+        risk_level: Some("medium".to_string()),
+        required_tool_scopes: Vec::new(),
+        missing_tool_scopes: Vec::new(),
+        permissions_available: Some(true),
+        notes: Some("Generated by deterministic Bug Monitor triage synthesis from the incident, draft, artifact refs, memory matches, and local repository references.".to_string()),
+    })
+}
+
 pub(super) async fn create_bug_monitor_triage_summary(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1907,6 +2643,26 @@ pub(super) async fn create_bug_monitor_triage_summary(
             })),
         )
             .into_response();
+    };
+    let input = if bug_monitor_triage_summary_input_has_substance(&input) {
+        input
+    } else {
+        match synthesize_bug_monitor_triage_summary(&state, &draft, &triage_run_id).await {
+            Ok(synthesized) => synthesized,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "Failed to synthesize Bug Monitor triage summary",
+                        "code": "BUG_MONITOR_TRIAGE_SYNTHESIS_FAILED",
+                        "draft_id": id,
+                        "triage_run_id": triage_run_id,
+                        "detail": error.to_string(),
+                    })),
+                )
+                    .into_response();
+            }
+        }
     };
     let what_happened = input
         .what_happened
@@ -2038,6 +2794,8 @@ pub(super) async fn create_bug_monitor_triage_summary(
         "related_existing_issues": input.related_existing_issues,
         "related_failure_patterns": input.related_failure_patterns,
         "research_sources": input.research_sources,
+        "file_references": input.file_references,
+        "fix_points": input.fix_points,
         "recommended_fix": input.recommended_fix.as_deref().and_then(normalize_issue_draft_line),
         "acceptance_criteria": acceptance_criteria,
         "verification_steps": verification_steps,

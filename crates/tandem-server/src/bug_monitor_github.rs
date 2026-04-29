@@ -641,8 +641,13 @@ async fn resolve_github_tool_set(
             .map(|row| row.tool_name.clone())
     };
     let list_issues = tool_name("github.list_issues").or_else(|_| {
-        direct_tool_name_fallback(&["list_repository_issues", "mcp.github.list_issues"])
-            .ok_or_else(|| anyhow::anyhow!("missing resolved tool for github.list_issues"))
+        direct_tool_name_fallback(&[
+            "list_issues",
+            "list_repository_issues",
+            "mcp.github.list_issues",
+            "mcp.githubcopilot.list_issues",
+        ])
+        .ok_or_else(|| anyhow::anyhow!("missing resolved tool for github.list_issues"))
     })?;
     let get_issue = tool_name("github.get_issue").or_else(|_| {
         direct_tool_name_fallback(&["get_issue", "mcp.github.get_issue"])
@@ -654,8 +659,11 @@ async fn resolve_github_tool_set(
     })?;
     let comment_on_issue = tool_name("github.comment_on_issue").or_else(|_| {
         direct_tool_name_fallback(&[
-            "mcp.github.create_issue_comment",
+            "add_issue_comment",
             "create_issue_comment",
+            "mcp.github.add_issue_comment",
+            "mcp.github.create_issue_comment",
+            "mcp.githubcopilot.add_issue_comment",
             "github.comment_on_issue",
         ])
         .ok_or_else(|| anyhow::anyhow!("missing resolved tool for github.comment_on_issue"))
