@@ -363,6 +363,38 @@ fn bug_monitor_push_unique(rows: &mut Vec<String>, value: impl AsRef<str>, limit
     }
 }
 
+fn bug_monitor_search_term_is_useful(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.len() < 6 || normalized.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    !matches!(
+        normalized.as_str(),
+        "workflow"
+            | "failed"
+            | "failure"
+            | "automation"
+            | "automations"
+            | "blocked"
+            | "upstream"
+            | "outcome"
+            | "required"
+            | "output"
+            | "created"
+            | "create"
+            | "error"
+            | "errors"
+            | "issue"
+            | "issues"
+            | "provider"
+            | "activity"
+            | "without"
+            | "process"
+            | "tandem"
+            | "engine"
+    )
+}
+
 fn bug_monitor_failure_type(reason: &str, event_type: &str) -> String {
     let haystack = format!("{reason}\n{event_type}").to_ascii_lowercase();
     if haystack.contains("timeout") || haystack.contains("timed out") {
@@ -412,11 +444,9 @@ fn bug_monitor_candidate_search_terms(
                         || ch == '/')
                 })
                 .map(str::trim)
-                .filter(|part| part.len() >= 5 && part.len() <= 120)
+                .filter(|part| part.len() <= 120 && bug_monitor_search_term_is_useful(part))
             {
-                if !part.chars().all(|ch| ch.is_ascii_digit()) {
-                    bug_monitor_push_unique(&mut terms, part, 16);
-                }
+                bug_monitor_push_unique(&mut terms, part, 16);
             }
         }
     }
@@ -438,11 +468,9 @@ fn bug_monitor_candidate_search_terms(
                 !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.' || ch == '/')
             })
             .map(str::trim)
-            .filter(|part| part.len() >= 5 && part.len() <= 120)
+            .filter(|part| part.len() <= 120 && bug_monitor_search_term_is_useful(part))
         {
-            if !part.chars().all(|ch| ch.is_ascii_digit()) {
-                bug_monitor_push_unique(&mut terms, part, 16);
-            }
+            bug_monitor_push_unique(&mut terms, part, 16);
         }
     }
     for key in [
@@ -459,7 +487,9 @@ fn bug_monitor_candidate_search_terms(
         "errorKind",
     ] {
         if let Some(value) = incident_payload.get(key).and_then(Value::as_str) {
-            bug_monitor_push_unique(&mut terms, value, 16);
+            if bug_monitor_search_term_is_useful(value) {
+                bug_monitor_push_unique(&mut terms, value, 16);
+            }
         }
     }
     terms
@@ -475,9 +505,18 @@ fn bug_monitor_path_is_researchable(path: &FsPath) -> bool {
     ) {
         return false;
     }
+    let path_text = path.to_string_lossy();
+    if path_text.contains("/docs/")
+        || path_text.contains("/agent-templates/")
+        || path_text.contains("/target/")
+        || path_text.contains("/node_modules/")
+        || path_text.contains("/.tandem/")
+    {
+        return false;
+    }
     matches!(
         path.extension().and_then(|row| row.to_str()),
-        Some("rs" | "ts" | "tsx" | "js" | "jsx" | "md" | "json" | "toml")
+        Some("rs" | "ts" | "tsx" | "js" | "jsx")
     )
 }
 
@@ -569,6 +608,7 @@ fn bug_monitor_fallback_file_references(reason: &str) -> Vec<Value> {
         || lower.contains("artifact")
         || lower.contains("in_progress")
         || lower.contains("prewrite")
+        || lower.contains("upstream node outcome")
     {
         push(
             "crates/tandem-server/src/app/state/automation/logic_parts/part04.rs",
@@ -581,6 +621,19 @@ fn bug_monitor_fallback_file_references(reason: &str) -> Vec<Value> {
         push(
             "crates/tandem-core/src/engine_loop/prewrite_mode.rs",
             "Tool-mode repair and required-write enforcement lives here.",
+        );
+    }
+    if lower.contains("no provider activity")
+        || lower.contains("stale")
+        || lower.contains("paused after")
+    {
+        push(
+            "crates/tandem-server/src/automation_v2/executor.rs",
+            "Automation V2 stale/no-provider-activity handling is reported from the executor.",
+        );
+        push(
+            "crates/tandem-server/src/app/state/automation/workflow_learning.rs",
+            "Automation failure learning and recurring workflow blockers are summarized here.",
         );
     }
     if lower.contains("read-only source") || lower.contains("modify read-only") {
@@ -2905,7 +2958,10 @@ pub(super) async fn create_bug_monitor_triage_summary(
     };
 
     draft.github_status = Some("triage_summary_ready".to_string());
-    if draft.status.eq_ignore_ascii_case("triage_queued") {
+    if draft.status.eq_ignore_ascii_case("triage_queued")
+        || draft.status.eq_ignore_ascii_case("github_post_failed")
+        || draft.status.eq_ignore_ascii_case("proposal_blocked")
+    {
         draft.status = "draft_ready".to_string();
     }
     let draft = match state.put_bug_monitor_draft(draft).await {

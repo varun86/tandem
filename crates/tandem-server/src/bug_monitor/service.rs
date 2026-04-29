@@ -361,9 +361,7 @@ pub async fn process_event(
                 failed_draft.github_status = Some("github_post_failed".to_string());
                 failed_draft.last_post_error = Some(detail.clone());
                 let evidence_digest = failed_draft.evidence_digest.clone();
-                if let Err(persist_err) =
-                    state.put_bug_monitor_draft(failed_draft.clone()).await
-                {
+                if let Err(persist_err) = state.put_bug_monitor_draft(failed_draft.clone()).await {
                     tracing::warn!(
                         incident_id = %incident.incident_id,
                         draft_id = %failed_draft.draft_id,
