@@ -1637,9 +1637,12 @@ export function MyAutomationsContainer({
     (selectedBoardTaskBlockedOnServer ||
       selectedBoardTaskNeedsRepairOnServer ||
       selectedBoardTaskStateNormalized === "failed");
+  // Retry only makes sense when something is actually broken — a failed run,
+  // a blocked node, or a task that needs intervention. A cleanly paused run
+  // with healthy tasks should only offer Resume / Cancel, not Retry.
   const canRecoverWorkflowRun =
     workflowRunCanMutateTasks &&
-    (["failed", "paused"].includes(selectedRunStatusNormalized) ||
+    (selectedRunStatusNormalized === "failed" ||
       serverBlockedNodeIds.length > 0 ||
       selectedBoardTaskNeedsWorkflowAction);
   const canContinueBlockedWorkflow =
