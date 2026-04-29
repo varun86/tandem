@@ -303,7 +303,7 @@ impl AppState {
         Ok(updated)
     }
 
-    pub async fn bug_monitor_status(&self) -> BugMonitorStatus {
+    pub async fn bug_monitor_status_snapshot(&self) -> BugMonitorStatus {
         let required_capabilities = vec![
             "github.list_issues".to_string(),
             "github.get_issue".to_string(),
@@ -603,6 +603,23 @@ impl AppState {
         }
         status.runtime.monitoring_active = status.readiness.ingest_ready;
         status
+    }
+
+    pub async fn bug_monitor_status(&self) -> BugMonitorStatus {
+        if let Ok(recovered) =
+            crate::bug_monitor::service::recover_overdue_bug_monitor_triage_runs(self).await
+        {
+            for (draft_id, incident_id) in recovered {
+                let _ = crate::bug_monitor_github::publish_draft(
+                    self,
+                    &draft_id,
+                    incident_id.as_deref(),
+                    crate::bug_monitor_github::PublishMode::Recovery,
+                )
+                .await;
+            }
+        }
+        self.bug_monitor_status_snapshot().await
     }
 
     pub async fn load_workflow_runs(&self) -> anyhow::Result<()> {

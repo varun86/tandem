@@ -1,13 +1,123 @@
 use anyhow::Result;
 use serde_json::{Map, Value};
 
-use crate::app::state::{sha256_hex, truncate_text, AppState};
 use crate::bug_monitor::types::BugMonitorIncidentRecord;
 use crate::bug_monitor::types::{
     BugMonitorConfig, BugMonitorQualityGateReport, BugMonitorQualityGateResult,
     BugMonitorSubmission,
 };
 use crate::EngineEvent;
+use crate::{
+    app::state::{sha256_hex, truncate_text, AppState},
+    now_ms,
+};
+
+fn bug_monitor_triage_timeout_deadline_ms(created_at_ms: u64, timeout_ms: u64) -> u64 {
+    created_at_ms.saturating_add(timeout_ms)
+}
+
+async fn bug_monitor_incident_for_draft(
+    state: &AppState,
+    draft_id: &str,
+    triage_run_id: &str,
+) -> Option<String> {
+    let incidents = state.bug_monitor_incidents.read().await;
+    incidents
+        .values()
+        .find(|incident| {
+            incident.draft_id.as_deref() == Some(draft_id)
+                || incident.triage_run_id.as_deref() == Some(triage_run_id)
+        })
+        .map(|incident| incident.incident_id.clone())
+}
+
+pub async fn recover_overdue_bug_monitor_triage_runs(
+    state: &AppState,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    let config = state.bug_monitor_config().await;
+    let Some(timeout_ms) = config.triage_timeout_ms else {
+        return Ok(Vec::new());
+    };
+    if !config.enabled || config.paused {
+        return Ok(Vec::new());
+    }
+
+    let now = now_ms();
+    let drafts = {
+        let guard = state.bug_monitor_drafts.read().await;
+        guard.values().cloned().collect::<Vec<_>>()
+    };
+
+    let mut recovered = Vec::new();
+    for draft in drafts {
+        let Some(triage_run_id) = draft.triage_run_id.clone() else {
+            continue;
+        };
+        if draft.issue_number.is_some() || draft.github_issue_url.is_some() {
+            continue;
+        }
+        if draft
+            .github_status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("triage_timed_out"))
+        {
+            continue;
+        }
+
+        let run_created_at_ms =
+            crate::http::context_runs::context_run_effective_started_at_ms(state, &triage_run_id)
+                .await
+                .unwrap_or(draft.created_at_ms);
+        if now < bug_monitor_triage_timeout_deadline_ms(run_created_at_ms, timeout_ms) {
+            continue;
+        }
+
+        let Some(mut current_draft) = state.get_bug_monitor_draft(&draft.draft_id).await else {
+            continue;
+        };
+        if current_draft.issue_number.is_some() || current_draft.github_issue_url.is_some() {
+            continue;
+        }
+        if current_draft
+            .github_status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("triage_timed_out"))
+        {
+            continue;
+        }
+
+        current_draft.github_status = Some("triage_timed_out".to_string());
+        let last_post_error = format!(
+            "triage run {triage_run_id} did not reach a terminal status within {timeout_ms}ms"
+        );
+        current_draft.last_post_error = Some(last_post_error.clone());
+        state.put_bug_monitor_draft(current_draft.clone()).await?;
+
+        if let Some(incident_id) =
+            bug_monitor_incident_for_draft(state, &current_draft.draft_id, &triage_run_id).await
+        {
+            if let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await {
+                incident.status = "triage_timed_out".to_string();
+                incident.last_error = Some(last_post_error.clone());
+                incident.updated_at_ms = now;
+                state.put_bug_monitor_incident(incident.clone()).await?;
+                state.event_bus.publish(EngineEvent::new(
+                    "bug_monitor.incident.triage_timed_out",
+                    serde_json::json!({
+                        "incident_id": incident.incident_id,
+                        "draft_id": current_draft.draft_id,
+                        "triage_run_id": triage_run_id,
+                        "timeout_ms": timeout_ms,
+                    }),
+                ));
+            }
+        }
+
+        recovered.push((current_draft.draft_id.clone(), Some(triage_run_id)));
+    }
+
+    Ok(recovered)
+}
 
 pub async fn collect_bug_monitor_excerpt(state: &AppState, properties: &Value) -> Vec<String> {
     let mut excerpt = Vec::new();
@@ -845,12 +955,10 @@ pub async fn build_bug_monitor_submission_from_event(
 
 /// Spawns a deadline task that fires after `timeout_ms`. If the triage
 /// run has not reached a terminal status (`Failed` / `Completed` /
-/// `Cancelled`) by the deadline, the task marks the draft's
-/// `triage_timed_out_at_ms`, persists it, then re-runs `publish_draft`
-/// in `Auto` mode. With `triage_timed_out_at_ms` set, `publish_draft`
-/// no longer bails out as `triage_pending` and instead falls through to
-/// the basic (non-LLM) issue body. The triage_run_id is preserved on
-/// the draft so the UI can still link to the abandoned run.
+/// `Cancelled`) by the deadline, the task marks the draft as
+/// `triage_timed_out`, persists it, then re-runs `publish_draft` in
+/// `Auto` mode. The triage_run_id is preserved on the draft so the UI
+/// can still link to the abandoned run.
 fn spawn_triage_deadline_task(
     state: AppState,
     incident_id: String,
@@ -920,7 +1028,7 @@ fn spawn_triage_deadline_task(
             &state,
             &draft_id,
             Some(&incident_id),
-            crate::bug_monitor_github::PublishMode::Auto,
+            crate::bug_monitor_github::PublishMode::Recovery,
         )
         .await
         {

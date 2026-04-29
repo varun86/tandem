@@ -1,3 +1,21 @@
+fn age_bug_monitor_triage_run_state(
+    state: &crate::app::state::AppState,
+    triage_run_id: &str,
+    started_at_ms: u64,
+) {
+    let path = super::super::context_runs::context_run_state_path(state, triage_run_id);
+    let raw = std::fs::read_to_string(&path).expect("read triage run state");
+    let mut run_state: Value = serde_json::from_str(&raw).expect("parse triage run state");
+    run_state["created_at_ms"] = json!(started_at_ms);
+    run_state["started_at_ms"] = json!(started_at_ms);
+    run_state["updated_at_ms"] = json!(started_at_ms);
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&run_state).expect("serialize triage run"),
+    )
+    .expect("write triage run state");
+}
+
 #[tokio::test]
 async fn bug_monitor_publish_reuses_existing_post_on_duplicate_submit() {
     let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server().await;
@@ -197,6 +215,187 @@ async fn bug_monitor_publish_reuses_existing_post_on_duplicate_submit() {
     )
     .expect("posts json");
     assert_eq!(posts_payload.get("count").and_then(Value::as_u64), Some(1));
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn bug_monitor_recovers_overdue_triage_run_after_status_refresh() {
+    let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server().await;
+
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    state
+        .put_bug_monitor_config(crate::BugMonitorConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            mcp_server: Some("github".to_string()),
+            model_policy: Some(json!({
+                "default_model": { "provider_id": "openai", "model_id": "gpt-4.1-mini" }
+            })),
+            triage_timeout_ms: Some(1),
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let app = app_router(state.clone());
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "automation_v2",
+                    "title": "Paused workflow needs recovery",
+                    "detail": "workflow.run.failed\nreason: automation node timed out",
+                    "excerpt": ["automation node timed out"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let create_resp = app.clone().oneshot(create_req).await.expect("response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let draft_id = create_payload
+        .get("draft")
+        .and_then(|row| row.get("draft_id"))
+        .and_then(Value::as_str)
+        .expect("draft id")
+        .to_string();
+
+    let triage_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
+        .body(Body::empty())
+        .expect("triage request");
+    let triage_resp = app
+        .clone()
+        .oneshot(triage_req)
+        .await
+        .expect("triage response");
+    assert_eq!(triage_resp.status(), StatusCode::OK);
+    let triage_payload: Value = serde_json::from_slice(
+        &to_bytes(triage_resp.into_body(), usize::MAX)
+            .await
+            .expect("triage body"),
+    )
+    .expect("triage json");
+    let triage_run_id = triage_payload
+        .get("draft")
+        .and_then(|row| row.get("triage_run_id"))
+        .and_then(Value::as_str)
+        .expect("triage run id")
+        .to_string();
+
+    age_bug_monitor_triage_run_state(&state, &triage_run_id, 1);
+
+    let status_req = Request::builder()
+        .method("GET")
+        .uri("/bug-monitor/status")
+        .body(Body::empty())
+        .expect("status request");
+    let status_resp = app
+        .clone()
+        .oneshot(status_req)
+        .await
+        .expect("status response");
+    assert_eq!(status_resp.status(), StatusCode::OK);
+
+    let draft = state
+        .get_bug_monitor_draft(&draft_id)
+        .await
+        .expect("recovered draft");
+    assert_eq!(draft.github_status.as_deref(), Some("github_issue_created"));
+    assert!(draft.issue_number.is_some());
+
+    assert_eq!(
+        state.bug_monitor_posts.read().await.len(),
+        1,
+        "recovery should publish exactly one GitHub post"
+    );
+
+    let issues_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/bug-monitor/posts?limit=10")
+                .body(Body::empty())
+                .expect("posts request"),
+        )
+        .await
+        .expect("posts response");
+    assert_eq!(issues_resp.status(), StatusCode::OK);
+    let posts_payload: Value = serde_json::from_slice(
+        &to_bytes(issues_resp.into_body(), usize::MAX)
+            .await
+            .expect("posts body"),
+    )
+    .expect("posts json");
+    assert_eq!(posts_payload.get("count").and_then(Value::as_u64), Some(1));
+
+    let second_status_req = Request::builder()
+        .method("GET")
+        .uri("/bug-monitor/status")
+        .body(Body::empty())
+        .expect("second status request");
+    let second_status_resp = app
+        .clone()
+        .oneshot(second_status_req)
+        .await
+        .expect("second status response");
+    assert_eq!(second_status_resp.status(), StatusCode::OK);
+
+    let second_posts_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/bug-monitor/posts?limit=10")
+                .body(Body::empty())
+                .expect("second posts request"),
+        )
+        .await
+        .expect("second posts response");
+    assert_eq!(second_posts_resp.status(), StatusCode::OK);
+    let second_posts_payload: Value = serde_json::from_slice(
+        &to_bytes(second_posts_resp.into_body(), usize::MAX)
+            .await
+            .expect("second posts body"),
+    )
+    .expect("second posts json");
+    assert_eq!(
+        second_posts_payload.get("count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        state.bug_monitor_posts.read().await.len(),
+        1,
+        "repeated recovery must not create duplicate posts"
+    );
 
     server.abort();
 }

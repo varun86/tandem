@@ -16,6 +16,7 @@ const BUG_MONITOR_LABEL: &str = "bug-monitor";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishMode {
     Auto,
+    Recovery,
     ManualPublish,
     RecheckOnly,
 }
@@ -161,12 +162,12 @@ pub async fn publish_draft(
     incident_id: Option<&str>,
     mode: PublishMode,
 ) -> anyhow::Result<PublishOutcome> {
-    let status = state.bug_monitor_status().await;
+    let status = state.bug_monitor_status_snapshot().await;
     let config = status.config.clone();
     if !config.enabled {
         anyhow::bail!("Bug Monitor is disabled");
     }
-    if config.paused && mode == PublishMode::Auto {
+    if config.paused && matches!(mode, PublishMode::Auto | PublishMode::Recovery) {
         anyhow::bail!("Bug Monitor is paused");
     }
     if !status.readiness.runtime_ready && mode == PublishMode::Auto {
