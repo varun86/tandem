@@ -1365,6 +1365,10 @@ impl AppState {
                     .await;
             }
             self.forget_automation_v2_sessions(&session_ids).await;
+            let automation_name = run
+                .automation_snapshot
+                .as_ref()
+                .map(|automation| automation.name.clone());
             if self
                 .update_automation_v2_run(&run_id, |row| {
                     let stale_node_detail = format!(
@@ -1440,6 +1444,27 @@ impl AppState {
                 .await
                 .is_some()
             {
+                self.event_bus
+                    .publish(EngineEvent::new(
+                        "automation_v2.run.paused_stale_no_provider_activity",
+                        json!({
+                            "automation_id": run.automation_id,
+                            "automationID": run.automation_id,
+                            "workflow_id": run.automation_id,
+                            "workflowID": run.automation_id,
+                            "workflow_name": automation_name,
+                            "run_id": run_id,
+                            "runID": run_id,
+                            "source": "automation_v2",
+                            "component": "automation_v2",
+                            "status": "paused",
+                            "pause_reason": "stale_no_provider_activity",
+                            "reason": detail,
+                            "detail": detail,
+                            "stale_node_ids": stale_node_ids,
+                            "stale_after_ms": stale_after_ms,
+                        }),
+                    ));
                 reaped += 1;
             }
         }

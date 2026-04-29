@@ -787,6 +787,7 @@ pub async fn build_bug_monitor_submission_from_event(
             first_string_deep(&event.properties, &["source"]).unwrap_or_else(|| {
                 match event.event_type.as_str() {
                     "automation_v2.run.failed" | "automation.run.failed" => "automation_v2",
+                    "automation_v2.run.paused_stale_no_provider_activity" => "automation_v2",
                     "workflow.run.failed" | "workflow.validation.failed" => "autonomous_workflow",
                     "routine.run.failed" => "routine",
                     "context.task.failed" | "context.task.blocked" | "context.run.failed" => {

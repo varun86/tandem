@@ -523,6 +523,7 @@ fn is_bug_monitor_candidate_event(event: &EngineEvent) -> bool {
             | "session.error"
             | "automation.run.failed"
             | "automation_v2.run.failed"
+            | "automation_v2.run.paused_stale_no_provider_activity"
             | "coder.run.failed"
     )
 }
@@ -554,10 +555,34 @@ fn is_automation_v2_context_mirror_failure(event: &EngineEvent) -> bool {
 }
 
 pub async fn run_bug_monitor(state: AppState) {
-    if !state.wait_until_ready_or_failed(120, 250).await {
-        tracing::warn!("bug monitor: skipped because runtime did not become ready");
-        return;
+    let mut wait_ms = 250u64;
+    loop {
+        let startup = state.startup_snapshot().await;
+        if matches!(startup.status, crate::app::startup::StartupStatus::Ready) {
+            break;
+        }
+        if matches!(startup.status, crate::app::startup::StartupStatus::Failed) {
+            tracing::warn!(
+                startup_status = ?startup.status,
+                startup_phase = %startup.phase,
+                attempt_id = %startup.attempt_id,
+                "bug monitor: exiting because startup failed before monitoring began"
+            );
+            return;
+        }
+
+        state
+            .update_bug_monitor_runtime_status(|runtime| {
+                runtime.monitoring_active = false;
+                runtime.last_runtime_error =
+                    Some("Waiting for runtime readiness before starting bug monitor".to_string());
+            })
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+        wait_ms = (wait_ms * 2).min(2_000);
     }
+
     state
         .update_bug_monitor_runtime_status(|runtime| {
             runtime.monitoring_active = false;
@@ -1163,6 +1188,7 @@ mod bug_monitor_candidate_tests {
             "session.error",
             "automation.run.failed",
             "automation_v2.run.failed",
+            "automation_v2.run.paused_stale_no_provider_activity",
             "coder.run.failed",
         ] {
             assert!(
