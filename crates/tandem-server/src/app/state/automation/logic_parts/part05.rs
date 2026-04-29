@@ -1082,6 +1082,7 @@ pub async fn clear_automation_subtree_outputs(
 pub(crate) async fn run_automation_node_prompt_with_timeout<F>(
     state: &AppState,
     session_id: &str,
+    run_id: &str,
     node: &AutomationFlowNode,
     future: F,
 ) -> anyhow::Result<()>
@@ -1096,15 +1097,56 @@ where
             crate::AutomationOutputValidatorKind::StructuredJson => 180_000,
             _ => 600_000,
         });
-    match tokio::time::timeout(Duration::from_millis(timeout_ms), future).await {
-        Ok(result) => result,
-        Err(_) => {
-            let _ = state.cancellations.cancel(session_id).await;
-            anyhow::bail!(
-                "automation node `{}` timed out after {} ms",
-                node.node_id,
-                timeout_ms
-            );
+    if let Err(active_run) = state
+        .run_registry
+        .acquire(
+            session_id,
+            run_id.to_string(),
+            None,
+            Some(node.agent_id.clone()),
+            None,
+        )
+        .await
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            active_run_id = %active_run.run_id,
+            "automation node prompt could not acquire run heartbeat due active session registry conflict"
+        );
+    }
+
+    let mut future = Box::pin(future);
+    let mut ticker = tokio::time::interval(Duration::from_secs(3));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut timeout = Box::pin(tokio::time::sleep(Duration::from_millis(timeout_ms)));
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                state
+                    .run_registry
+                    .touch(session_id, run_id)
+                    .await;
+            }
+            _ = &mut timeout => {
+                let _ = state.cancellations.cancel(session_id).await;
+                let _ = state
+                    .run_registry
+                    .finish_if_match(session_id, run_id)
+                    .await;
+                anyhow::bail!(
+                    "automation node `{}` timed out after {} ms",
+                    node.node_id,
+                    timeout_ms
+                );
+            }
+            result = &mut future => {
+                let _ = state
+                    .run_registry
+                    .finish_if_match(session_id, run_id)
+                    .await;
+                return result;
+            }
         }
     }
 }
@@ -1828,6 +1870,7 @@ pub(crate) async fn execute_automation_v2_node(
     let result = run_automation_node_prompt_with_timeout(
         state,
         &session_id,
+        run_id,
         node,
         state.engine_loop.run_prompt_async_with_context(
             session_id.clone(),

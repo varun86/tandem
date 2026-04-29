@@ -1324,6 +1324,9 @@ impl AppState {
                         .unwrap_or_default(),
                 );
             }
+            if let Some(active_run) = self.run_registry.get(session_id).await {
+                last_activity_at_ms = last_activity_at_ms.max(active_run.last_activity_at_ms);
+            }
         }
         last_activity_at_ms
     }

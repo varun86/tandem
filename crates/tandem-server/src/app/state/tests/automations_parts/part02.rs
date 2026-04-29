@@ -851,6 +851,97 @@ async fn stale_running_automation_runs_ignore_recent_session_activity() {
 }
 
 #[tokio::test]
+async fn stale_running_automation_runs_ignore_recent_run_registry_heartbeat() {
+    let automation = AutomationV2Spec {
+        automation_id: "auto-stale-run-registry-heartbeat-test".to_string(),
+        name: "Stale Run Registry Heartbeat Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp/stale-session-activity-registry-workspace".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let run_id = run.run_id.clone();
+    state
+        .claim_specific_automation_v2_run(&run_id)
+        .await
+        .expect("claim run");
+    let session_id = "session-stale-session-registry-activity-test";
+    let mut session = Session::new(Some("run registry heartbeat".to_string()), None);
+    session.id = session_id.to_string();
+    session.time.updated = chrono::Utc::now() - chrono::Duration::minutes(10);
+    state
+        .storage
+        .save_session(session)
+        .await
+        .expect("save session");
+    let _ = state
+        .run_registry
+        .acquire(session_id, run_id.clone(), None, None, None)
+        .await;
+    let cancellation = state.cancellations.create(session_id).await;
+    state
+        .add_automation_v2_session(&run_id, session_id)
+        .await
+        .expect("attach session");
+    {
+        let mut guard = state.automation_v2_runs.write().await;
+        let persisted = guard.get_mut(&run_id).expect("persisted run");
+        persisted.checkpoint.lifecycle_history.push(
+            crate::automation_v2::types::AutomationLifecycleRecord {
+                event: "run_started".to_string(),
+                recorded_at_ms: now_ms().saturating_sub(180_000),
+                reason: None,
+                stop_kind: None,
+                metadata: None,
+            },
+        );
+    }
+
+    let reaped = state.reap_stale_running_automation_runs(120_000).await;
+    assert_eq!(reaped, 0);
+
+    let persisted = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Running);
+    assert_eq!(persisted.active_session_ids, vec![session_id.to_string()]);
+    assert!(!cancellation.is_cancelled());
+    assert!(state.run_registry.get(session_id).await.is_some());
+}
+
+#[tokio::test]
 async fn recover_in_flight_runs_does_not_relock_workspace_for_paused_runs() {
     let workspace_root = "/tmp/paused-workspace-lock-recovery".to_string();
     let automation = AutomationV2Spec {
@@ -952,6 +1043,7 @@ async fn automation_node_prompt_timeout_cancels_the_session() {
     let error = crate::app::state::automation::run_automation_node_prompt_with_timeout(
         &state,
         session_id,
+        "run-timeout-test",
         &node,
         std::future::pending::<anyhow::Result<()>>(),
     )
