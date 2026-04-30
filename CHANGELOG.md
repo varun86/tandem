@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - Unreleased
+## [0.5.0] - Unreleased
 
 ### Added
 
@@ -26,8 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bug Monitor triage no longer sits forever in context-run planning**: Triage now has a real executor behind it, and timeout diagnostics understand both new Automation V2-backed triage runs and legacy context-run triage IDs.
 - **Bug Monitor triage agents can write required artifacts without editing source**: The triage tool policy now allows `write` for declared run artifacts while continuing to deny source-editing tools such as `edit` and `apply_patch`.
 - **Guardrail for mis-scoped artifacts**: Root-level `/artifacts/` is ignored as a safety net for any future mis-scoped automation output, while the runtime path fix sends Bug Monitor artifacts to `.tandem`.
-
-## [0.5.0] - Released 2026-04-29
 
 ### Added
 
