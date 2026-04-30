@@ -267,7 +267,7 @@ pub(super) fn context_run_state_path(state: &AppState, run_id: &str) -> PathBuf 
     context_run_existing_dir(state, run_id).join("run_state.json")
 }
 
-pub(super) fn context_run_events_path(state: &AppState, run_id: &str) -> PathBuf {
+pub(crate) fn context_run_events_path(state: &AppState, run_id: &str) -> PathBuf {
     context_run_existing_dir(state, run_id).join("events.jsonl")
 }
 

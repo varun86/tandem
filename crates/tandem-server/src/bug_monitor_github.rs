@@ -6,14 +6,16 @@ use tandem_runtime::mcp_ready::{EnsureReadyPolicy, McpReadyError};
 use tandem_runtime::McpRemoteTool;
 use tandem_types::EngineEvent;
 
-use crate::bug_monitor::error_provenance::{
-    locate_error_provenance, render_provenance_section,
-};
+use crate::bug_monitor::error_provenance::{locate_error_provenance, render_provenance_section};
+use crate::http::context_runs::context_run_events_path;
 use crate::{
     now_ms, sha256_hex, truncate_text, AppState, BugMonitorConfig, BugMonitorDraftRecord,
     BugMonitorIncidentRecord, BugMonitorPostRecord, ExternalActionRecord,
 };
+use std::fs;
 use std::path::Path;
+
+use tandem_core::ToolEffectLedgerRecord;
 
 const BUG_MONITOR_LABEL: &str = "bug-monitor";
 
@@ -325,7 +327,8 @@ pub async fn publish_draft(
                 &evidence_digest,
                 issue_draft.as_ref(),
             );
-            let body = append_error_provenance_section(body, &draft, incident.as_ref()).await;
+            let body =
+                append_error_provenance_section(state, body, &draft, incident.as_ref()).await;
             let result = call_add_issue_comment(state, &tools, &owner_repo, issue.number, &body)
                 .await
                 .context("post Bug Monitor comment to GitHub")?;
@@ -493,7 +496,7 @@ async fn create_issue_from_draft(
         .unwrap_or_else(|| {
             build_issue_body(&draft, incident, matched_closed_issue, evidence_digest)
         });
-    let body = append_error_provenance_section(body, &draft, incident).await;
+    let body = append_error_provenance_section(state, body, &draft, incident).await;
     let created = call_create_issue(state, tools, &owner_repo, title, &body)
         .await
         .context("create Bug Monitor issue on GitHub")?;
@@ -1377,28 +1380,144 @@ fn dedupe_comments(rows: Vec<GithubComment>) -> Vec<GithubComment> {
 /// Best-effort: any failure to locate provenance just leaves the body
 /// unchanged. The added section is bounded; see `error_provenance`.
 async fn append_error_provenance_section(
+    state: &AppState,
     body: String,
     draft: &BugMonitorDraftRecord,
     incident: Option<&BugMonitorIncidentRecord>,
 ) -> String {
+    let mut combined = body;
+    let section = fallback_tool_evidence_section(state, incident, draft.triage_run_id.as_deref());
+    if !section.trim().is_empty() {
+        if !combined.ends_with('\n') {
+            combined.push('\n');
+        }
+        combined.push('\n');
+        combined.push_str(&section);
+    }
     let Some(error_message) = pick_error_message_for_provenance(draft, incident) else {
-        return body;
+        return combined;
     };
     let workspace_root = pick_workspace_root_for_provenance(incident);
     let Some(workspace_root) = workspace_root else {
-        return body;
+        return combined;
     };
     let hits = locate_error_provenance(&workspace_root, &error_message).await;
     let Some(section) = render_provenance_section(&hits) else {
-        return body;
+        return combined;
     };
-    let mut combined = body;
     if !combined.ends_with('\n') {
         combined.push('\n');
     }
     combined.push('\n');
     combined.push_str(&section);
     combined
+}
+
+fn fallback_tool_evidence_section(
+    state: &AppState,
+    incident: Option<&BugMonitorIncidentRecord>,
+    draft_run_id: Option<&str>,
+) -> String {
+    let run_id = incident
+        .and_then(|row| row.run_id.as_deref())
+        .or(draft_run_id)
+        .filter(|value| !value.trim().is_empty());
+    let Some(run_id) = run_id else {
+        return String::new();
+    };
+
+    let events = fs::read_to_string(context_run_events_path(state, run_id))
+        .ok()
+        .map(|content| {
+            content
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let rows = events
+        .into_iter()
+        .filter_map(|row| {
+            let event_type = row.get("type").and_then(Value::as_str)?;
+            if event_type != "tool_effect_recorded" {
+                return None;
+            }
+            row.get("payload")?
+                .get("record")
+                .and_then(|row| serde_json::from_value::<ToolEffectLedgerRecord>(row.clone()).ok())
+        })
+        .filter_map(format_tool_effect_record)
+        .take(12)
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["### Tool evidence".to_string()];
+    lines.extend(rows);
+    lines.join("\n")
+}
+
+fn format_tool_effect_record(record: ToolEffectLedgerRecord) -> Option<String> {
+    let status = serde_json::to_string(&record.status)
+        .map(|value| value.trim_matches('"').to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let phase = serde_json::to_string(&record.phase)
+        .map(|value| value.trim_matches('"').to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    let mut details = Vec::new();
+    if let Some(path) = record.args_summary.get("path").and_then(Value::as_str) {
+        details.push(format!("path={path}"));
+    }
+    if let Some(url) = record.args_summary.get("url").and_then(Value::as_str) {
+        details.push(format!("url={url}"));
+    }
+    if let Some(command_hash) = record
+        .args_summary
+        .get("command_hash")
+        .and_then(Value::as_str)
+    {
+        details.push(format!("command_hash={command_hash}"));
+    }
+    if let Some(query_hash) = record
+        .args_summary
+        .get("query_hash")
+        .and_then(Value::as_str)
+    {
+        details.push(format!("query_hash={query_hash}"));
+    }
+
+    let mut result = Vec::new();
+    if let Some(error) = record.error.as_ref() {
+        let error = truncate_text(error, 200);
+        if !error.is_empty() {
+            result.push(format!("error={error}"));
+        }
+    }
+    if let Some(value) = record
+        .result_summary
+        .as_ref()
+        .and_then(|value| serde_json::to_string(value).ok())
+    {
+        let value = truncate_text(&value, 220);
+        if !value.is_empty() {
+            result.push(format!("result={value}"));
+        }
+    }
+
+    details.extend(result);
+    let details = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join(", "))
+    };
+    Some(truncate_text(
+        &format!("- {} {} / {}{}", record.tool, phase, status, details),
+        640,
+    ))
 }
 
 fn pick_error_message_for_provenance(
