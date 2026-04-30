@@ -21,6 +21,12 @@ fn bug_monitor_triage_output_contract(
     }
 }
 
+fn bug_monitor_triage_repo_evidence_guidance(artifact_type: &str) -> String {
+    format!(
+        "Required output: valid completed JSON for `{artifact_type}`. Before writing, perform a local repo evidence pass using `codesearch`, `grep`, `glob`, and `read` as appropriate. Prefer fast local search for symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload. Include `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, say which searches were run and why they were inconclusive. Do not finish with only generic diagnosis."
+    )
+}
+
 fn bug_monitor_triage_node(
     node_id: &str,
     agent_id: &str,
@@ -40,7 +46,7 @@ fn bug_monitor_triage_node(
         input_refs: Vec::new(),
         output_contract: Some(bug_monitor_triage_output_contract(
             artifact_type,
-            "Write a completed JSON artifact with concrete evidence, file references where available, uncertainty, and bounded next steps.",
+            &bug_monitor_triage_repo_evidence_guidance(artifact_type),
         )),
         retry_policy: Some(json!({
             "max_attempts": 2,
@@ -127,7 +133,7 @@ pub(crate) fn bug_monitor_triage_spec(
                 bug_monitor_triage_node(
                     "inspect_failure_report",
                     "bug_monitor_triage_agent",
-                    "Inspect failure report and affected area",
+                    "Inspect the failure report, extract concrete search terms, then use fast local repo search/read tools to identify the affected files, functions, modules, and evidence lines before writing the inspection artifact",
                     Vec::new(),
                     240_000,
                     ".tandem/artifacts/bug_monitor.inspection.json",
@@ -137,7 +143,7 @@ pub(crate) fn bug_monitor_triage_spec(
                 bug_monitor_triage_node(
                     "research_likely_root_cause",
                     "bug_monitor_triage_agent",
-                    "Research likely root cause and related failures",
+                    "Research likely root cause and related prior failures by combining the inspection artifact with local repo search, failure memory, issue search when available, and artifact/log review; include concrete file references and searched terms",
                     vec!["inspect_failure_report".to_string()],
                     600_000,
                     ".tandem/artifacts/bug_monitor.research.json",
@@ -147,7 +153,7 @@ pub(crate) fn bug_monitor_triage_spec(
                 bug_monitor_triage_node(
                     "validate_failure_scope",
                     "bug_monitor_triage_agent",
-                    "Validate or reproduce failure scope",
+                    "Validate the failure scope using the researched files, symbols, artifacts, and logs; classify config versus capability versus provider/tool versus code defect, and cite the repo evidence used",
                     vec!["research_likely_root_cause".to_string()],
                     240_000,
                     ".tandem/artifacts/bug_monitor.validation.json",
@@ -157,7 +163,7 @@ pub(crate) fn bug_monitor_triage_spec(
                 bug_monitor_triage_node(
                     "propose_fix_and_verification",
                     "bug_monitor_triage_agent",
-                    "Propose fix and verification plan",
+                    "Propose a bounded fix and verification plan grounded in specific file references, likely edit points, acceptance criteria, and smoke-test commands; mark coder_ready only when evidence is concrete",
                     vec!["validate_failure_scope".to_string()],
                     360_000,
                     ".tandem/artifacts/bug_monitor.fix_proposal.json",
@@ -359,11 +365,24 @@ mod bug_monitor_triage_spec_tests {
             vec!["validate_failure_scope".to_string()]
         );
         assert_eq!(spec.flow.nodes[1].timeout_ms, Some(600_000));
+        assert!(spec.flow.nodes[0]
+            .objective
+            .contains("fast local repo search/read tools"));
+        assert!(spec.flow.nodes[3]
+            .objective
+            .contains("specific file references"));
         assert!(spec.flow.nodes.iter().all(|node| {
             node.output_contract
                 .as_ref()
                 .and_then(|contract| contract.validator)
                 == Some(crate::AutomationOutputValidatorKind::StructuredJson)
         }));
+        assert!(spec.flow.nodes.iter().all(|node| node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.summary_guidance.as_deref())
+            .is_some_and(|guidance| guidance.contains("search_queries_used")
+                && guidance.contains("file_references")
+                && guidance.contains("likely_files_to_edit"))));
     }
 }

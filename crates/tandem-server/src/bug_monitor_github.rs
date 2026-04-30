@@ -1454,10 +1454,7 @@ async fn append_error_provenance_section(
     };
     let hits = locate_error_provenance(&workspace_root, &error_message).await;
     let Some(section) = render_provenance_section(&hits) else {
-        let preview = error_message
-            .chars()
-            .take(160)
-            .collect::<String>();
+        let preview = error_message.chars().take(160).collect::<String>();
         tracing::info!(
             incident_id = %incident_id,
             draft_id = %draft_id,
