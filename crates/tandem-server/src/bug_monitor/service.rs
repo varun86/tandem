@@ -29,14 +29,12 @@ fn compose_triage_timeout_last_post_error(
     timeout_ms: u64,
     diagnostics: Option<&serde_json::Value>,
 ) -> String {
-    let head = format!(
-        "triage run {triage_run_id} did not reach a terminal status within {timeout_ms}ms"
-    );
+    let head =
+        format!("triage run {triage_run_id} did not reach a terminal status within {timeout_ms}ms");
     match diagnostics {
         Some(value) => {
-            let detail = crate::http::context_runs::format_bug_monitor_triage_timeout_diagnostics(
-                value,
-            );
+            let detail =
+                crate::http::context_runs::format_bug_monitor_triage_timeout_diagnostics(value);
             if detail.trim().is_empty() {
                 head
             } else {

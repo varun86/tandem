@@ -113,12 +113,19 @@ pub fn format_bug_monitor_triage_timeout_diagnostics(value: &serde_json::Value) 
     if let Some(status) = value.get("run_status").and_then(serde_json::Value::as_str) {
         push_kv(&mut lines, "run_status", status);
     }
-    if let Some(seq) = value.get("last_event_seq").and_then(serde_json::Value::as_u64) {
+    if let Some(seq) = value
+        .get("last_event_seq")
+        .and_then(serde_json::Value::as_u64)
+    {
         push_kv(&mut lines, "last_event_seq", &seq.to_string());
     }
     if let (Some(completed), Some(failed), Some(total)) = (
-        value.get("completed_steps").and_then(serde_json::Value::as_u64),
-        value.get("failed_steps").and_then(serde_json::Value::as_u64),
+        value
+            .get("completed_steps")
+            .and_then(serde_json::Value::as_u64),
+        value
+            .get("failed_steps")
+            .and_then(serde_json::Value::as_u64),
         value.get("step_count").and_then(serde_json::Value::as_u64),
     ) {
         push_kv(

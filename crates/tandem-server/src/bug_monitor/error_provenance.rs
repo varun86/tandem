@@ -138,7 +138,8 @@ fn substring_qualifies(s: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    if trimmed.len() < MIN_SUBSTRING_CHARS && trimmed.split_whitespace().count() < MIN_SUBSTRING_WORDS
+    if trimmed.len() < MIN_SUBSTRING_CHARS
+        && trimmed.split_whitespace().count() < MIN_SUBSTRING_WORDS
     {
         return false;
     }
@@ -223,23 +224,16 @@ async fn git_grep(workspace_root: &Path, needle: &str) -> std::io::Result<Vec<Pr
         .arg(needle)
         .arg("--")
         .args([
-            "*.rs",
-            "*.ts",
-            "*.tsx",
-            "*.js",
-            "*.jsx",
-            "*.py",
-            "*.go",
-            "*.java",
-            "*.kt",
-            "*.swift",
+            "*.rs", "*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.go", "*.java", "*.kt", "*.swift",
         ])
         .output()
         .await?;
     if !output.status.success() {
         return Ok(Vec::new());
     }
-    Ok(parse_git_grep_output(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_git_grep_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 fn parse_git_grep_output(stdout: &str) -> Vec<ProvenanceHit> {
@@ -301,9 +295,7 @@ pub fn render_provenance_section(hits: &[ProvenanceHit]) -> Option<String> {
         return None;
     }
     let mut out = String::from("### Error provenance\n\n");
-    out.push_str(
-        "Likely emission sites for the failure message in this workspace:\n\n",
-    );
+    out.push_str("Likely emission sites for the failure message in this workspace:\n\n");
     let mut total = 0usize;
     for hit in hits {
         let entry = format!(
@@ -383,8 +375,7 @@ mod tests {
 
     #[test]
     fn distinctive_substrings_passes_through_fully_static_message() {
-        let result =
-            distinctive_substrings("automation run blocked by upstream node outcome");
+        let result = distinctive_substrings("automation run blocked by upstream node outcome");
         assert_eq!(
             result.first().map(String::as_str),
             Some("automation run blocked by upstream node outcome")
@@ -405,11 +396,13 @@ mod tests {
 
     #[test]
     fn distinctive_substrings_strips_durations_and_paths() {
-        let result = distinctive_substrings(
-            "no provider activity for at least 300s on /tmp/run-1/state",
-        );
+        let result =
+            distinctive_substrings("no provider activity for at least 300s on /tmp/run-1/state");
         let joined = result.join(" | ");
-        assert!(joined.contains("no provider activity for at least"), "got: {joined}");
+        assert!(
+            joined.contains("no provider activity for at least"),
+            "got: {joined}"
+        );
         assert!(!joined.contains("300"), "should strip number: {joined}");
         assert!(!joined.contains("/tmp"), "should drop path: {joined}");
     }
@@ -583,11 +576,7 @@ crates/foo/bar.rs:42:fn x() {}
             .arg(root)
             .args(["commit", "-q", "-m", "init"])
             .output();
-        let hits = locate_error_provenance(
-            root,
-            "the oracle has spoken from the void",
-        )
-        .await;
+        let hits = locate_error_provenance(root, "the oracle has spoken from the void").await;
         assert!(
             hits.iter().any(|h| h.path == "source.rs" && h.line == 2),
             "expected hit at source.rs:2, got: {hits:?}"

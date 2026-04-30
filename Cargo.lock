@@ -7806,6 +7806,7 @@ dependencies = [
  "tandem-wire",
  "tandem-workflows",
  "tar",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tokio-util",
