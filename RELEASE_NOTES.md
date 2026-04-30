@@ -2,6 +2,11 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.5.1 (Unreleased)
+
+- **Bug Monitor GitHub fallback issue-body hardening**: fallback rendering now includes bounded evidence from existing incident/draft records when triage output is missing (timeouts, triage failures, or publish races). Logs and evidence refs are capped to keep GitHub posts readable; a short triage status marker (`triage_timed_out`, `triage_pending`, `github_post_failed`) is preserved for quicker human triage.
+- **Operational doc added**: added `docs/BUG_MONITOR_FALLBACK_GITHUB_POSTING.md` with the fallback body policy, source fields, truncation controls, and triage troubleshooting guidance.
+
 ## v0.5.0 (Released 2026-04-29)
 
 This major release reorganizes Tandem's local storage so large runtime histories stop accumulating as huge root-level JSON files, and so startup no longer pays the cost of browser setup or stale legacy scans.

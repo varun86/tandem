@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - Unreleased
+
+### Added
+
+- **Bug Monitor GitHub fallback body evidence policy**: Added bounded evidence rendering for fallback Bug Monitor issue bodies so failed triage and timed-out runs still produce actionable GitHub artifacts. Fallback bodies now include capped logs, evidence references, diagnostic metadata, triage signal quality details, and explicit triage status markers when the issue is posted without LLM-rendered content.
+
+### Changed
+
+- **Evidence caps over raw payload dumps**: `build_issue_body` now enforces bounded rendering budgets for logs, evidence refs, tool evidence rows, and quality-gate fields in fallback GitHub issue drafts, while preserving full evidence in incident/draft artifacts for detailed investigation.
+
+### Fixed
+
+- **Reduced empty/opaque fallback issue posts**: Bug Monitor posts now avoid near-empty bodies in retry/timeouts by including structured sections from existing `BugMonitorDraftRecord` and `BugMonitorIncidentRecord` fields (including logs, evidence refs, run/session/correlation metadata, and triage status), helping reviewers triage incidents without needing external reconstruction.
+
 ## [0.5.0] - Released 2026-04-29
 
 ### Added
