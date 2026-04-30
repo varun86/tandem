@@ -66,6 +66,9 @@ src-tauri/gen/
 .tandem/
 tandem-data/
 
+# Guardrail for mis-scoped automation artifacts; runtime outputs should live under .tandem/.
+/artifacts/
+
 # TypeScript
 *.tsbuildinfo
 
