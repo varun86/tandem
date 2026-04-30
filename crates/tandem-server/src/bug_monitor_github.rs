@@ -18,6 +18,22 @@ use std::path::Path;
 use tandem_core::ToolEffectLedgerRecord;
 
 const BUG_MONITOR_LABEL: &str = "bug-monitor";
+const ISSUE_BODY_MARKER_SAFE_SPACE: usize = 2;
+const ISSUE_BODY_BYTE_BUDGET: usize = 12_000;
+const ISSUE_BODY_LOG_CHAR_BUDGET: usize = 4_000;
+const ISSUE_BODY_LOG_LINES: usize = 30;
+const ISSUE_BODY_LOG_FALLBACK_LINES: usize = 12;
+const ISSUE_BODY_EVIDENCE_REF_LIMIT: usize = 15;
+const ISSUE_BODY_QUALITY_GATE_MISSING_LIMIT: usize = 20;
+const ISSUE_BODY_TRIAGE_TIMEOUT_DETAIL_LINES: usize = 20;
+const ISSUE_BODY_TOOL_EVIDENCE_LIMIT: usize = 12;
+const ISSUE_BODY_TOOL_ERROR_CHAR_BUDGET: usize = 200;
+const ISSUE_BODY_TOOL_RESULT_CHAR_BUDGET: usize = 220;
+const ISSUE_BODY_TOOL_RECORD_BUDGET: usize = 640;
+
+// Evidence policy:
+// Keep GitHub issue bodies bounded and human-readable by preserving the
+// strongest snippets inline and pushing deep context into artifacts/events.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishMode {
@@ -900,7 +916,11 @@ fn build_issue_body(
             triage_signal.push("quality_gate_status: blocked".to_string());
             if !gate.missing.is_empty() {
                 triage_signal.push("quality_gate_missing:".to_string());
-                for missing in gate.missing.iter().take(20) {
+                for missing in gate
+                    .missing
+                    .iter()
+                    .take(ISSUE_BODY_QUALITY_GATE_MISSING_LIMIT)
+                {
                     triage_signal.push(format!("- {missing}"));
                 }
             }
@@ -931,7 +951,10 @@ fn build_issue_body(
             {
                 lines.push(String::new());
                 lines.push("### Triage timeout details".to_string());
-                for line in diagnostics.lines().take(20) {
+                for line in diagnostics
+                    .lines()
+                    .take(ISSUE_BODY_TRIAGE_TIMEOUT_DETAIL_LINES)
+                {
                     lines.push(line.to_string());
                 }
             }
@@ -943,9 +966,9 @@ fn build_issue_body(
         evidence_marker(evidence_digest),
     ];
     let marker_text = markers.join("\n");
-    let body_budget = 12_000usize
+    let body_budget = ISSUE_BODY_BYTE_BUDGET
         .saturating_sub(marker_text.len())
-        .saturating_sub(2);
+        .saturating_sub(ISSUE_BODY_MARKER_SAFE_SPACE);
     let body = truncate_text(&lines.join("\n"), body_budget);
     format!("{body}\n{marker_text}")
 }
@@ -959,7 +982,7 @@ fn fallback_issue_logs(
             row.excerpt
                 .iter()
                 .filter_map(|line| normalize_issue_body_line(line))
-                .take(30)
+                .take(ISSUE_BODY_LOG_LINES)
                 .collect::<Vec<_>>()
         })
         .filter(|rows| !rows.is_empty())
@@ -970,13 +993,13 @@ fn fallback_issue_logs(
                 .unwrap_or_default()
                 .lines()
                 .filter_map(normalize_issue_body_line)
-                .take(12)
+                .take(ISSUE_BODY_LOG_FALLBACK_LINES)
                 .collect::<Vec<_>>()
         });
     if rows.is_empty() {
         None
     } else {
-        Some(truncate_text(&rows.join("\n"), 4_000))
+        Some(truncate_text(&rows.join("\n"), ISSUE_BODY_LOG_CHAR_BUDGET))
     }
 }
 
@@ -984,6 +1007,8 @@ fn fallback_issue_evidence_refs(
     draft: &BugMonitorDraftRecord,
     incident: Option<&crate::BugMonitorIncidentRecord>,
 ) -> Vec<String> {
+    // Evidence references are capped so issue bodies stay skimmable.
+    // Full evidence graphs stay in artifacts/run logs and can be fetched by ID.
     let mut refs = BTreeSet::new();
     for evidence_ref in draft.evidence_refs.iter() {
         if let Some(row) = normalize_issue_body_line(evidence_ref) {
@@ -997,7 +1022,9 @@ fn fallback_issue_evidence_refs(
             }
         }
     }
-    refs.into_iter().take(15).collect()
+    refs.into_iter()
+        .take(ISSUE_BODY_EVIDENCE_REF_LIMIT)
+        .collect()
 }
 
 fn normalize_issue_body_line(value: impl AsRef<str>) -> Option<String> {
@@ -1418,6 +1445,8 @@ fn fallback_tool_evidence_section(
     incident: Option<&BugMonitorIncidentRecord>,
     draft_run_id: Option<&str>,
 ) -> String {
+    // Show only the most useful recent tool calls.
+    // This preserves debuggability without flooding the issue with full event history.
     let run_id = incident
         .and_then(|row| row.run_id.as_deref())
         .or(draft_run_id)
@@ -1450,7 +1479,7 @@ fn fallback_tool_evidence_section(
                 .and_then(|row| serde_json::from_value::<ToolEffectLedgerRecord>(row.clone()).ok())
         })
         .filter_map(format_tool_effect_record)
-        .take(12)
+        .take(ISSUE_BODY_TOOL_EVIDENCE_LIMIT)
         .collect::<Vec<_>>();
     if rows.is_empty() {
         return String::new();
@@ -1492,7 +1521,7 @@ fn format_tool_effect_record(record: ToolEffectLedgerRecord) -> Option<String> {
 
     let mut result = Vec::new();
     if let Some(error) = record.error.as_ref() {
-        let error = truncate_text(error, 200);
+        let error = truncate_text(error, ISSUE_BODY_TOOL_ERROR_CHAR_BUDGET);
         if !error.is_empty() {
             result.push(format!("error={error}"));
         }
@@ -1502,7 +1531,7 @@ fn format_tool_effect_record(record: ToolEffectLedgerRecord) -> Option<String> {
         .as_ref()
         .and_then(|value| serde_json::to_string(value).ok())
     {
-        let value = truncate_text(&value, 220);
+        let value = truncate_text(&value, ISSUE_BODY_TOOL_RESULT_CHAR_BUDGET);
         if !value.is_empty() {
             result.push(format!("result={value}"));
         }
@@ -1516,7 +1545,7 @@ fn format_tool_effect_record(record: ToolEffectLedgerRecord) -> Option<String> {
     };
     Some(truncate_text(
         &format!("- {} {} / {}{}", record.tool, phase, status, details),
-        640,
+        ISSUE_BODY_TOOL_RECORD_BUDGET,
     ))
 }
 
