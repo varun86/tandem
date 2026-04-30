@@ -16,6 +16,51 @@ fn bug_monitor_triage_timeout_deadline_ms(created_at_ms: u64, timeout_ms: u64) -
     created_at_ms.saturating_add(timeout_ms)
 }
 
+const BUG_MONITOR_TRIAGE_AUTOMATION_PREFIX: &str = "automation-v2-bug-monitor-triage-";
+const BUG_MONITOR_TRIAGE_AGENT_ROLE: &str = "bug_monitor_triage_agent";
+
+/// Returns a human-readable reason if this event was emitted by the
+/// bug monitor's own triage workflow. Used to short-circuit
+/// `process_event` so a triage failure doesn't recursively trigger
+/// another triage.
+///
+/// The canonical signal is the `automation-v2-bug-monitor-triage-`
+/// `automation_id` prefix set by `bug_monitor_triage_spec`. The
+/// `agent_role == "bug_monitor_triage_agent"` check is a backstop
+/// for events that arrive without any automation/workflow id at all
+/// — without that gate, a user's custom automation that happens to
+/// use the same agent_id string would be silently excluded from
+/// bug monitoring (caught by Codex on PR #53).
+fn recursive_triage_skip_reason(event: &EngineEvent) -> Option<String> {
+    let automation_id = first_string_deep(
+        &event.properties,
+        &["automation_id", "automationID", "workflow_id", "workflowID"],
+    );
+    if let Some(id) = automation_id.as_deref() {
+        if id.starts_with(BUG_MONITOR_TRIAGE_AUTOMATION_PREFIX) {
+            return Some(format!(
+                "automation_id={id} originates from bug monitor triage"
+            ));
+        }
+        // automation_id is present but doesn't have the triage prefix
+        // — this is a normal user workflow failure even if the agent
+        // role string happens to match. Don't fall through to the
+        // agent_role backstop.
+        return None;
+    }
+    let agent_role = first_string_deep(&event.properties, &["agent_role", "agentRole"]);
+    if agent_role
+        .as_deref()
+        .is_some_and(|role| role.eq_ignore_ascii_case(BUG_MONITOR_TRIAGE_AGENT_ROLE))
+    {
+        return Some(format!(
+            "agent_role={} is the bug monitor triage agent",
+            agent_role.unwrap_or_default()
+        ));
+    }
+    None
+}
+
 /// Build a multi-line `last_post_error` describing why the triage run
 /// missed its deadline. The first line is the original short message
 /// (preserving backwards compat for any consumer that reads the first
@@ -326,6 +371,18 @@ pub async fn process_event(
     event: &EngineEvent,
     config: &BugMonitorConfig,
 ) -> anyhow::Result<BugMonitorIncidentRecord> {
+    if let Some(reason) = recursive_triage_skip_reason(event) {
+        // Don't queue a new triage workflow for a failure that came
+        // from the bug monitor's own triage workflow. Otherwise a
+        // single triage failure spawns a triage-of-triage, which can
+        // itself fail the same way and cascade. Observed in issues
+        // #43, #47, #51 chained through `automation-v2-bug-monitor-
+        // triage-...` automation_ids. We surface this as an error so
+        // the bug-monitor runtime status reflects the skip; the
+        // poller treats this as a soft skip rather than a hard
+        // failure.
+        anyhow::bail!("skipping recursive bug monitor triage event: {reason}");
+    }
     let submission = build_bug_monitor_submission_from_event(state, config, event).await?;
     let duplicate_matches = crate::http::bug_monitor::bug_monitor_failure_pattern_matches(
         state,
@@ -1100,4 +1157,74 @@ fn spawn_triage_deadline_task(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn event_with(properties: Value) -> EngineEvent {
+        EngineEvent::new("automation_v2.run.failed", properties)
+    }
+
+    #[test]
+    fn recursive_triage_skip_reason_detects_triage_automation_id_prefix() {
+        let event = event_with(json!({
+            "automation_id": "automation-v2-bug-monitor-triage-failure-draft-abc123",
+            "agent_role": "agent_writer",
+        }));
+        let reason = recursive_triage_skip_reason(&event)
+            .expect("triage automation_id prefix should trigger skip");
+        assert!(reason.contains("automation-v2-bug-monitor-triage-"));
+    }
+
+    #[test]
+    fn recursive_triage_skip_reason_detects_workflow_id_alias() {
+        // Some events use `workflow_id` instead of `automation_id`.
+        let event = event_with(json!({
+            "workflow_id": "automation-v2-bug-monitor-triage-failure-draft-xyz",
+        }));
+        assert!(recursive_triage_skip_reason(&event).is_some());
+    }
+
+    #[test]
+    fn recursive_triage_skip_reason_detects_triage_agent_role_when_id_missing() {
+        let event = event_with(json!({
+            "agent_role": "bug_monitor_triage_agent",
+        }));
+        let reason = recursive_triage_skip_reason(&event)
+            .expect("triage agent_role should trigger skip");
+        assert!(reason.contains("bug_monitor_triage_agent"));
+    }
+
+    #[test]
+    fn recursive_triage_skip_reason_passes_normal_workflow_failures() {
+        let event = event_with(json!({
+            "automation_id": "automation-v2-9ee33834-bf6d-4f86-acb3-3cd41d9cef19",
+            "agent_role": "agent_reddit_query_researcher",
+        }));
+        assert!(recursive_triage_skip_reason(&event).is_none());
+    }
+
+    /// Regression for the P2 Codex review on PR #53. If a user's
+    /// custom automation happens to use `bug_monitor_triage_agent`
+    /// as its agent_id string, the agent_role backstop must NOT
+    /// silently filter out its failures — the automation_id is
+    /// present and doesn't have the triage prefix, so this is a
+    /// real workflow failure and should be triaged normally.
+    #[test]
+    fn recursive_triage_skip_reason_does_not_fire_when_automation_id_is_real() {
+        let event = event_with(json!({
+            "automation_id": "automation-v2-9ee33834-bf6d-4f86-acb3-3cd41d9cef19",
+            "agent_role": "bug_monitor_triage_agent",
+        }));
+        assert!(recursive_triage_skip_reason(&event).is_none());
+    }
+
+    #[test]
+    fn recursive_triage_skip_reason_handles_empty_properties() {
+        let event = event_with(json!({}));
+        assert!(recursive_triage_skip_reason(&event).is_none());
+    }
 }
