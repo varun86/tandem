@@ -793,6 +793,18 @@ async fn sync_automation_allowed_mcp_servers(
             "registered_tool_count_after_sync": sync_count,
         }));
     }
+    let mut missing_selected_servers = server_rows
+        .iter()
+        .filter(|row| row.get("sync_error").and_then(Value::as_str) == Some("server_not_found"))
+        .filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect::<Vec<_>>();
+    missing_selected_servers.sort();
+    missing_selected_servers.dedup();
+    if selected_source == "policy" && !missing_selected_servers.is_empty() {
+        wildcard_selected_servers.extend(enabled_server_names.iter().cloned());
+        wildcard_selected_servers.sort();
+        wildcard_selected_servers.dedup();
+    }
 
     let remote_tools = state.mcp.list_tools().await;
     let registered_tool_names = state
@@ -872,6 +884,7 @@ async fn sync_automation_allowed_mcp_servers(
     json!({
         "selected_servers": selected_servers,
         "selected_source": selected_source,
+        "missing_selected_servers": missing_selected_servers,
         "wildcard_selected_servers": wildcard_selected_servers,
         "servers": server_rows,
         "remote_tools": all_remote_names,
@@ -912,6 +925,9 @@ pub(crate) fn automation_policy_mcp_preflight_blocker(diagnostics: &Value) -> Op
                     .get("sync_error")
                     .and_then(Value::as_str)
                     .unwrap_or("no_registered_tools");
+                if reason == "server_not_found" {
+                    return None;
+                }
                 Some(format!("{name} ({reason})"))
             }
         })
@@ -944,6 +960,20 @@ mod automation_mcp_preflight_tests {
         let detail = automation_policy_mcp_preflight_blocker(&diagnostics).unwrap();
         assert!(detail.contains("githubcopilot"));
         assert!(detail.contains("connect_failed"));
+    }
+
+    #[test]
+    fn policy_mcp_preflight_allows_stale_policy_server_name() {
+        let diagnostics = json!({
+            "selected_source": "policy",
+            "servers": [{
+                "name": "composio-1",
+                "connected": false,
+                "sync_error": "server_not_found",
+                "registered_tool_count_after_sync": 0
+            }]
+        });
+        assert!(automation_policy_mcp_preflight_blocker(&diagnostics).is_none());
     }
 
     #[test]

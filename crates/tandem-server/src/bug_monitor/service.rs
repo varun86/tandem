@@ -94,9 +94,12 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
         }
 
         let run_created_at_ms =
-            crate::http::context_runs::context_run_effective_started_at_ms(state, &triage_run_id)
-                .await
-                .unwrap_or(draft.created_at_ms);
+            crate::http::bug_monitor::bug_monitor_triage_effective_started_at_ms(
+                state,
+                &triage_run_id,
+            )
+            .await
+            .unwrap_or(draft.created_at_ms);
         if now < bug_monitor_triage_timeout_deadline_ms(run_created_at_ms, timeout_ms) {
             continue;
         }
@@ -116,7 +119,7 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
         }
 
         current_draft.github_status = Some("triage_timed_out".to_string());
-        let diagnostics_value = crate::http::context_runs::bug_monitor_triage_timeout_diagnostics(
+        let diagnostics_value = crate::http::bug_monitor::bug_monitor_triage_timeout_diagnostics(
             state,
             &triage_run_id,
             timeout_ms,
@@ -1033,7 +1036,7 @@ fn spawn_triage_deadline_task(
             return;
         }
         draft.github_status = Some("triage_timed_out".to_string());
-        let diagnostics_value = crate::http::context_runs::bug_monitor_triage_timeout_diagnostics(
+        let diagnostics_value = crate::http::bug_monitor::bug_monitor_triage_timeout_diagnostics(
             &state,
             &triage_run_id,
             timeout_ms,

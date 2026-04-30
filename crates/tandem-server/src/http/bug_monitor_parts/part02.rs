@@ -291,40 +291,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         }
     }
 
-    let run_id = format!("failure-triage-{}", Uuid::new_v4().simple());
-    let objective = format!(
-        "Triage bug monitor draft {} for {}: {}",
-        draft.draft_id,
-        draft.repo,
-        draft
-            .title
-            .clone()
-            .unwrap_or_else(|| "Untitled failure".to_string())
-    );
-    let workspace = config
-        .workspace_root
-        .as_ref()
-        .map(|root| ContextWorkspaceLease {
-            workspace_id: root.clone(),
-            canonical_path: root.clone(),
-            lease_epoch: crate::now_ms(),
-        });
-    let model_provider = config
-        .model_policy
-        .as_ref()
-        .and_then(|policy| policy.get("default_model"))
-        .and_then(|row| row.get("provider_id"))
-        .and_then(|row| row.as_str())
-        .map(|row| row.trim().to_string())
-        .filter(|row| !row.is_empty());
-    let model_id = config
-        .model_policy
-        .as_ref()
-        .and_then(|policy| policy.get("default_model"))
-        .and_then(|row| row.get("model_id"))
-        .and_then(|row| row.as_str())
-        .map(|row| row.trim().to_string())
-        .filter(|row| !row.is_empty());
+    let model_policy = config.model_policy.clone();
     let mcp_servers = config
         .mcp_server
         .as_ref()
@@ -381,37 +348,6 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         .cloned()
         .unwrap_or(Value::Array(Vec::new()));
 
-    let create_input = ContextRunCreateInput {
-        run_id: Some(run_id.clone()),
-        objective,
-        run_type: Some("bug_monitor_triage".to_string()),
-        workspace,
-        source_client: Some("bug_monitor".to_string()),
-        model_provider,
-        model_id,
-        mcp_servers,
-    };
-    let created_run = match super::context_runs::context_run_create_impl(
-        state.clone(),
-        tandem_types::TenantContext::local_implicit(),
-        create_input,
-    )
-    .await
-    {
-        Ok(Json(payload)) => match serde_json::from_value::<ContextRunState>(
-            payload.get("run").cloned().unwrap_or_default(),
-        ) {
-            Ok(run) => run,
-            Err(_) => anyhow::bail!("Failed to deserialize triage context run"),
-        },
-        Err(status) => anyhow::bail!("Failed to create triage context run: HTTP {status}"),
-    };
-
-    let inspect_task_id = format!("triage-inspect-{}", Uuid::new_v4().simple());
-    let research_task_id = format!("triage-research-{}", Uuid::new_v4().simple());
-    let validate_task_id = format!("triage-validate-{}", Uuid::new_v4().simple());
-    let fix_task_id = format!("triage-fix-proposal-{}", Uuid::new_v4().simple());
-
     // Pre-compute deterministic error-string → workspace-source hits
     // and pass them to the triage agents. This grounds the LLM in
     // real code locations and gives it a starting point for the
@@ -445,7 +381,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Research likely root cause and related failures",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
-        "depends_on": inspect_task_id,
+        "depends_on": "inspect_failure_report",
         "research_requirements": {
             "search_repo": true,
             "search_failure_memory": true,
@@ -465,7 +401,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Validate or reproduce failure scope",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
-        "depends_on": research_task_id,
+        "depends_on": "research_likely_root_cause",
         "validation_requirements": {
             "confirm_failure_scope": true,
             "classify_failure_type": true,
@@ -479,7 +415,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Propose fix and verification plan",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
-        "depends_on": validate_task_id,
+        "depends_on": "validate_failure_scope",
         "proposal_requirements": {
             "suspected_root_cause": true,
             "likely_files_to_edit": true,
@@ -492,79 +428,21 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         },
         "expected_artifact": "bug_monitor_fix_proposal",
     });
-    let tasks_input = ContextTaskCreateBatchInput {
-        tasks: vec![
-            ContextTaskCreateInput {
-                command_id: Some(format!("failure-triage:{run_id}:inspect")),
-                id: Some(inspect_task_id.clone()),
-                task_type: "inspection".to_string(),
-                payload: inspection_payload.clone(),
-                status: Some(ContextBlackboardTaskStatus::Runnable),
-                workflow_id: Some("bug_monitor_triage".to_string()),
-                workflow_node_id: Some("inspect_failure_report".to_string()),
-                parent_task_id: None,
-                depends_on_task_ids: Vec::new(),
-                decision_ids: Vec::new(),
-                artifact_ids: Vec::new(),
-                priority: Some(10),
-                max_attempts: Some(2),
-            },
-            ContextTaskCreateInput {
-                command_id: Some(format!("failure-triage:{run_id}:research")),
-                id: Some(research_task_id.clone()),
-                task_type: "research".to_string(),
-                payload: research_payload.clone(),
-                status: Some(ContextBlackboardTaskStatus::Pending),
-                workflow_id: Some("bug_monitor_triage".to_string()),
-                workflow_node_id: Some("research_likely_root_cause".to_string()),
-                parent_task_id: None,
-                depends_on_task_ids: vec![inspect_task_id.clone()],
-                decision_ids: Vec::new(),
-                artifact_ids: Vec::new(),
-                priority: Some(8),
-                max_attempts: Some(2),
-            },
-            ContextTaskCreateInput {
-                command_id: Some(format!("failure-triage:{run_id}:validate")),
-                id: Some(validate_task_id.clone()),
-                task_type: "validation".to_string(),
-                payload: validation_payload.clone(),
-                status: Some(ContextBlackboardTaskStatus::Pending),
-                workflow_id: Some("bug_monitor_triage".to_string()),
-                workflow_node_id: Some("validate_failure_scope".to_string()),
-                parent_task_id: None,
-                depends_on_task_ids: vec![research_task_id.clone()],
-                decision_ids: Vec::new(),
-                artifact_ids: Vec::new(),
-                priority: Some(5),
-                max_attempts: Some(2),
-            },
-            ContextTaskCreateInput {
-                command_id: Some(format!("failure-triage:{run_id}:fix-proposal")),
-                id: Some(fix_task_id.clone()),
-                task_type: "fix_proposal".to_string(),
-                payload: fix_payload.clone(),
-                status: Some(ContextBlackboardTaskStatus::Pending),
-                workflow_id: Some("bug_monitor_triage".to_string()),
-                workflow_node_id: Some("propose_fix_and_verification".to_string()),
-                parent_task_id: None,
-                depends_on_task_ids: vec![validate_task_id.clone()],
-                decision_ids: Vec::new(),
-                artifact_ids: Vec::new(),
-                priority: Some(3),
-                max_attempts: Some(2),
-            },
-        ],
-    };
-    let tasks_response = context_run_tasks_create(
-        State(state.clone()),
-        Path(run_id.clone()),
-        Json(tasks_input),
-    )
-    .await;
-    if tasks_response.is_err() {
-        anyhow::bail!("Failed to seed triage tasks");
-    }
+    let triage_spec = bug_monitor_triage_spec(
+        &draft,
+        config.workspace_root.clone(),
+        model_policy,
+        mcp_servers.unwrap_or_default(),
+        inspection_payload.clone(),
+        research_payload.clone(),
+        validation_payload.clone(),
+        fix_payload.clone(),
+    );
+    let stored_spec = state.put_automation_v2(triage_spec).await?;
+    let automation_run = state
+        .create_automation_v2_run(&stored_spec, "bug_monitor_triage")
+        .await?;
+    let run_id = bug_monitor_triage_context_run_id(&automation_run.run_id);
 
     if !duplicate_matches.is_empty() {
         write_bug_monitor_artifact(
@@ -626,33 +504,22 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     }
     state.persist_bug_monitor_drafts().await?;
 
-    let mut run = match load_context_run_state(&state, &run_id).await {
-        Ok(row) => row,
-        Err(_) => created_run,
-    };
-    run.status = ContextRunStatus::Planning;
-    run.why_next_step = Some(
-        "Inspect the failure, research likely causes, validate scope, then propose a fix."
-            .to_string(),
-    );
     ensure_context_run_dir(&state, &run_id)
         .await
         .map_err(|status| {
             anyhow::anyhow!("Failed to finalize triage run workspace: HTTP {status}")
         })?;
-    save_context_run_state(&state, &run)
-        .await
-        .map_err(|status| anyhow::anyhow!("Failed to finalize triage run state: HTTP {status}"))?;
     state.event_bus.publish(tandem_types::EngineEvent::new(
         "bug_monitor.triage_run.created",
         json!({
             "draft_id": updated_draft.draft_id,
-            "run_id": run.run_id,
+            "run_id": run_id,
+            "automation_run_id": automation_run.run_id,
             "repo": updated_draft.repo,
         }),
     ));
 
-    Ok((updated_draft, run.run_id, false))
+    Ok((updated_draft, run_id, false))
 }
 
 /// Run the deterministic error-string → workspace grep at triage
@@ -688,8 +555,8 @@ async fn compute_error_provenance_payload(
             "note": "workspace_root not accessible; LLM should grep the workspace itself for `error_message`."
         });
     }
-    let hits = crate::bug_monitor::error_provenance::locate_error_provenance(path, &error_message)
-        .await;
+    let hits =
+        crate::bug_monitor::error_provenance::locate_error_provenance(path, &error_message).await;
     let hints = hits
         .into_iter()
         .map(|hit| {

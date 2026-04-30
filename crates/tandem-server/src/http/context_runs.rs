@@ -8,6 +8,7 @@ use axum::{
 include!("context_runs_parts/part01.rs");
 include!("context_runs_parts/part02.rs");
 include!("context_runs_parts/part03.rs");
+include!("context_runs_parts/part04.rs");
 
 pub async fn context_run_effective_started_at_ms(
     state: &AppState,
