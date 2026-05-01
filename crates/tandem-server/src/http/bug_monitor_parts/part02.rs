@@ -285,7 +285,29 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     }
 
     if let Some(existing_run_id) = draft.triage_run_id.clone() {
-        if bug_monitor_triage_run_is_reusable(&state, &existing_run_id).await {
+        if let Some(automation_run_id) =
+            bug_monitor_automation_run_id_from_triage_run_id(&existing_run_id)
+        {
+            if let Some(run) = state.get_automation_v2_run(&automation_run_id).await {
+                let stale_contract = if let Some(automation) = run.automation_snapshot.as_ref() {
+                    bug_monitor_triage_flow_has_stale_output_contracts(&automation.flow)
+                } else if let Some(automation) = state.get_automation_v2(&run.automation_id).await {
+                    bug_monitor_triage_flow_has_stale_output_contracts(&automation.flow)
+                } else {
+                    false
+                };
+                if stale_contract {
+                    tracing::warn!(
+                        draft_id = %draft.draft_id,
+                        triage_run_id = %existing_run_id,
+                        run_id = %automation_run_id,
+                        "Bug Monitor triage run has stale output contracts; recreating run",
+                    );
+                } else if bug_monitor_triage_run_is_reusable(&state, &existing_run_id).await {
+                    return Ok((draft, existing_run_id, true));
+                }
+            }
+        } else if bug_monitor_triage_run_is_reusable(&state, &existing_run_id).await {
             return Ok((draft, existing_run_id, true));
         }
     }
@@ -437,6 +459,8 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         validation_payload.clone(),
         fix_payload.clone(),
     );
+    let mut triage_spec = triage_spec;
+    normalize_bug_monitor_triage_output_contracts(&mut triage_spec);
     let stored_spec = state.put_automation_v2(triage_spec).await?;
     let automation_run = state
         .create_automation_v2_run(&stored_spec, "bug_monitor_triage")

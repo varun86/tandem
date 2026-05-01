@@ -68,6 +68,60 @@ fn bug_monitor_triage_output_contract(
     }
 }
 
+fn bug_monitor_triage_node_artifact_type(node: &crate::AutomationFlowNode) -> Option<&str> {
+    node.metadata
+        .as_ref()?
+        .get("bug_monitor")?
+        .get("artifact_type")?
+        .as_str()
+}
+
+fn bug_monitor_triage_expected_contract(
+    artifact_type: &str,
+    objective: &str,
+) -> crate::AutomationFlowOutputContract {
+    bug_monitor_triage_output_contract(
+        artifact_type,
+        &bug_monitor_triage_repo_evidence_guidance(artifact_type),
+        artifact_type != "bug_monitor_inspection",
+    )
+}
+
+fn bug_monitor_triage_node_contract_is_stale(node: &crate::AutomationFlowNode) -> bool {
+    let Some(artifact_type) = bug_monitor_triage_node_artifact_type(node) else {
+        return false;
+    };
+    let expected = bug_monitor_triage_expected_contract(artifact_type, &node.objective);
+    match node.output_contract.as_ref() {
+        Some(actual) => {
+            actual.kind != expected.kind
+                || actual.summary_guidance != expected.summary_guidance
+                || actual.validator != expected.validator
+                || actual.schema != expected.schema
+                || actual.enforcement != expected.enforcement
+        }
+        None => true,
+    }
+}
+
+pub(crate) fn bug_monitor_triage_flow_has_stale_output_contracts(
+    flow: &crate::AutomationFlowSpec,
+) -> bool {
+    flow.nodes
+        .iter()
+        .any(bug_monitor_triage_node_contract_is_stale)
+}
+
+pub(crate) fn normalize_bug_monitor_triage_output_contracts(spec: &mut crate::AutomationV2Spec) {
+    for node in &mut spec.flow.nodes {
+        let Some(artifact_type) = bug_monitor_triage_node_artifact_type(node) else {
+            continue;
+        };
+        let expected = bug_monitor_triage_expected_contract(artifact_type, &node.objective);
+        node.output_contract = Some(expected);
+    }
+}
+
 fn bug_monitor_triage_repo_evidence_guidance(artifact_type: &str) -> String {
     format!(
         "Required output: valid completed JSON for `{artifact_type}`. Before writing, perform a local repo evidence pass using `codesearch`, `grep`, `glob`, and `read` as appropriate. Prefer fast local search for symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload. Include `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, say which searches were run and why they were inconclusive. Do not finish with only generic diagnosis."
@@ -263,6 +317,17 @@ pub(crate) fn bug_monitor_triage_context_run_id(run_id: &str) -> String {
     super::context_runs::automation_v2_context_run_id(run_id)
 }
 
+fn bug_monitor_automation_run_is_terminal_for_triage(status: &crate::AutomationRunStatus) -> bool {
+    matches!(
+        status,
+        crate::AutomationRunStatus::Completed
+            | crate::AutomationRunStatus::Failed
+            | crate::AutomationRunStatus::Cancelled
+            | crate::AutomationRunStatus::Paused
+            | crate::AutomationRunStatus::Blocked,
+    )
+}
+
 pub(crate) async fn bug_monitor_triage_effective_started_at_ms(
     state: &AppState,
     triage_run_id: &str,
@@ -286,14 +351,7 @@ pub(crate) async fn bug_monitor_triage_run_is_terminal(state: &AppState, run_id:
         return state
             .get_automation_v2_run(&automation_run_id)
             .await
-            .map(|run| {
-                matches!(
-                    run.status,
-                    crate::AutomationRunStatus::Completed
-                        | crate::AutomationRunStatus::Failed
-                        | crate::AutomationRunStatus::Cancelled
-                )
-            })
+            .map(|run| bug_monitor_automation_run_is_terminal_for_triage(&run.status))
             .unwrap_or(false);
     }
     match load_context_run_state(state, run_id).await {
@@ -344,7 +402,7 @@ pub(crate) async fn finalize_completed_bug_monitor_triage(
     let Some(run) = state.get_automation_v2_run(&automation_run_id).await else {
         return Ok(false);
     };
-    if !matches!(run.status, crate::AutomationRunStatus::Completed) {
+    if !bug_monitor_automation_run_is_terminal_for_triage(&run.status) {
         return Ok(false);
     }
 
@@ -781,5 +839,56 @@ mod bug_monitor_triage_spec_tests {
         let stats = aggregate_per_node_records("research", &[]);
         assert_eq!(stats["max_attempt"], 0);
         assert_eq!(stats["tool_invocations"], 0);
+    }
+
+    #[test]
+    fn triage_flow_detects_and_normalizes_stale_inspection_contract() {
+        let draft = BugMonitorDraftRecord {
+            draft_id: "draft-2".to_string(),
+            repo: "owner/repo".to_string(),
+            title: Some("Failure".to_string()),
+            detail: Some("detail".to_string()),
+            fingerprint: "fp2".to_string(),
+            ..Default::default()
+        };
+        let mut spec = bug_monitor_triage_spec(
+            &draft,
+            Some("/tmp/workspace".to_string()),
+            None,
+            Vec::new(),
+            json!({}),
+            json!({}),
+            json!({}),
+            json!({}),
+        );
+        let inspect_node = spec.flow.nodes.first_mut().expect("inspect node exists");
+        inspect_node.output_contract = Some(bug_monitor_triage_output_contract(
+            "bug_monitor_inspection",
+            "legacy guidance",
+            true,
+        ));
+
+        assert!(bug_monitor_triage_flow_has_stale_output_contracts(
+            &spec.flow
+        ));
+
+        normalize_bug_monitor_triage_output_contracts(&mut spec);
+
+        assert!(!bug_monitor_triage_flow_has_stale_output_contracts(
+            &spec.flow
+        ));
+        if let Some(contract) = spec.flow.nodes[0].output_contract.as_ref() {
+            assert_eq!(
+                contract
+                    .enforcement
+                    .as_ref()
+                    .and_then(|row| row.validation_profile.as_deref()),
+                Some("artifact_only")
+            );
+            assert!(contract
+                .enforcement
+                .as_ref()
+                .is_some_and(|row| { !row.required_tools.iter().any(|tool| tool == "read") }));
+        }
     }
 }
