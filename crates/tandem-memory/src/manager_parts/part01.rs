@@ -67,8 +67,17 @@ impl MemoryManager {
 
     /// Initialize the memory manager
     pub async fn new(db_path: &Path) -> MemoryResult<Self> {
+        Self::new_with_embedding_service(db_path, EmbeddingService::new()).await
+    }
+
+    /// Initialize the memory manager with a caller-provided embedding
+    /// service. Tests use this to avoid depending on local model assets.
+    pub async fn new_with_embedding_service(
+        db_path: &Path,
+        embedding_service: EmbeddingService,
+    ) -> MemoryResult<Self> {
         let db = Arc::new(MemoryDatabase::new(db_path).await?);
-        let embedding_service = Arc::new(Mutex::new(EmbeddingService::new()));
+        let embedding_service = Arc::new(Mutex::new(embedding_service));
         let tokenizer = Tokenizer::new()?;
 
         Ok(Self {

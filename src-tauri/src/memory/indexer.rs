@@ -427,11 +427,21 @@ async fn index_workspace_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tandem_memory::embeddings::EmbeddingService;
     use tempfile::TempDir;
 
     async fn setup_test_manager(db_dir: &TempDir) -> Arc<MemoryManager> {
         let db_path = db_dir.path().join("test_memory.sqlite");
-        Arc::new(MemoryManager::new(&db_path).await.unwrap())
+        Arc::new(
+            MemoryManager::new_with_embedding_service(
+                &db_path,
+                EmbeddingService::deterministic_for_tests(
+                    tandem_memory::types::DEFAULT_EMBEDDING_DIMENSION,
+                ),
+            )
+            .await
+            .unwrap(),
+        )
     }
 
     #[tokio::test]

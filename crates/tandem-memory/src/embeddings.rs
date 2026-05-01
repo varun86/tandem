@@ -7,6 +7,7 @@ use crate::types::{
 #[cfg(feature = "local-embeddings")]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use once_cell::sync::OnceCell;
+use sha2::{Digest, Sha256};
 #[cfg(feature = "local-embeddings")]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ pub struct EmbeddingService {
     dimension: usize,
     model: Option<EmbeddingBackend>,
     disabled_reason: Option<String>,
+    deterministic: bool,
 }
 
 impl EmbeddingService {
@@ -59,6 +61,20 @@ impl EmbeddingService {
             dimension,
             model,
             disabled_reason,
+            deterministic: false,
+        }
+    }
+
+    /// Create a lightweight deterministic embedding service for tests
+    /// and offline callers that need vector-shaped data without loading
+    /// the local ONNX model.
+    pub fn deterministic_for_tests(dimension: usize) -> Self {
+        Self {
+            model_name: "deterministic-test-embedding".to_string(),
+            dimension,
+            model: None,
+            disabled_reason: None,
+            deterministic: true,
         }
     }
 
@@ -146,6 +162,22 @@ impl EmbeddingService {
         MemoryError::Embedding(format!("embeddings disabled: {reason}"))
     }
 
+    fn deterministic_embedding(&self, text: &str) -> Vec<f32> {
+        let mut values = Vec::with_capacity(self.dimension);
+        let mut seed = Sha256::digest(text.as_bytes()).to_vec();
+        while values.len() < self.dimension {
+            for byte in &seed {
+                let value = (*byte as f32 / 127.5) - 1.0;
+                values.push(value);
+                if values.len() == self.dimension {
+                    break;
+                }
+            }
+            seed = Sha256::digest(&seed).to_vec();
+        }
+        values
+    }
+
     #[cfg(feature = "local-embeddings")]
     fn ensure_dimension(&self, embedding: &[f32]) -> MemoryResult<()> {
         if embedding.len() != self.dimension {
@@ -160,6 +192,10 @@ impl EmbeddingService {
 
     /// Generate embeddings for a single text.
     pub async fn embed(&self, text: &str) -> MemoryResult<Vec<f32>> {
+        if self.deterministic {
+            return Ok(self.deterministic_embedding(text));
+        }
+
         #[cfg(not(feature = "local-embeddings"))]
         {
             let _ = text;
@@ -185,6 +221,13 @@ impl EmbeddingService {
 
     /// Generate embeddings for multiple texts.
     pub async fn embed_batch(&self, texts: &[String]) -> MemoryResult<Vec<Vec<f32>>> {
+        if self.deterministic {
+            return Ok(texts
+                .iter()
+                .map(|text| self.deterministic_embedding(text))
+                .collect());
+        }
+
         #[cfg(not(feature = "local-embeddings"))]
         {
             let _ = texts;
