@@ -302,6 +302,28 @@ pub(crate) async fn bug_monitor_triage_run_is_terminal(state: &AppState, run_id:
     }
 }
 
+pub(crate) async fn bug_monitor_triage_run_is_reusable(state: &AppState, run_id: &str) -> bool {
+    if let Some(automation_run_id) = bug_monitor_automation_run_id_from_triage_run_id(run_id) {
+        return state
+            .get_automation_v2_run(&automation_run_id)
+            .await
+            .map(|run| {
+                matches!(
+                    run.status,
+                    crate::AutomationRunStatus::Queued
+                        | crate::AutomationRunStatus::Running
+                        | crate::AutomationRunStatus::Pausing
+                        | crate::AutomationRunStatus::AwaitingApproval
+                )
+            })
+            .unwrap_or(false);
+    }
+    match load_context_run_state(state, run_id).await {
+        Ok(run) => !super::context_runs::context_run_is_terminal(&run.status),
+        Err(_) => false,
+    }
+}
+
 pub(crate) async fn finalize_completed_bug_monitor_triage(
     state: &AppState,
     draft_id: &str,

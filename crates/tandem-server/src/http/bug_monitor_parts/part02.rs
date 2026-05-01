@@ -285,9 +285,8 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     }
 
     if let Some(existing_run_id) = draft.triage_run_id.clone() {
-        match load_context_run_state(&state, &existing_run_id).await {
-            Ok(_) => return Ok((draft, existing_run_id, true)),
-            Err(_) => {}
+        if bug_monitor_triage_run_is_reusable(&state, &existing_run_id).await {
+            return Ok((draft, existing_run_id, true));
         }
     }
 
