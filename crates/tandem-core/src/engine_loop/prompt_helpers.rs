@@ -77,6 +77,9 @@ pub(super) fn provider_error_code(error_text: &str) -> &'static str {
     {
         return "AUTHENTICATION_ERROR";
     }
+    if is_transient_provider_stream_error(error_text) {
+        return "PROVIDER_SERVER_ERROR";
+    }
     if lower.contains("timeout") || lower.contains("timed out") {
         return "TIMEOUT";
     }
@@ -89,6 +92,28 @@ pub(super) fn provider_error_code(error_text: &str) -> &'static str {
         return "PROVIDER_SERVER_ERROR";
     }
     "PROVIDER_REQUEST_FAILED"
+}
+
+pub(super) fn is_transient_provider_stream_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    if lower.contains("invalid_function_parameters")
+        || lower.contains("array schema missing items")
+        || lower.contains("tool schema")
+        || lower.contains("context length")
+        || lower.contains("max tokens")
+        || lower.contains("token limit")
+        || lower.contains("unauthorized")
+        || lower.contains("authentication")
+        || lower.contains("401")
+        || lower.contains("403")
+    {
+        return false;
+    }
+    lower.contains("provider stream chunk error")
+        || lower.contains("stream chunk error")
+        || lower.contains("error decoding response body")
+        || lower.contains("unexpected eof")
+        || lower.contains("incomplete streamed response")
 }
 
 pub(super) fn normalize_tool_name(name: &str) -> String {

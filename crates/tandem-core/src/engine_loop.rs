@@ -35,8 +35,8 @@ use loop_guards::{
 };
 use loop_tuning::{
     max_tool_iterations, permission_wait_timeout_ms, prompt_context_hook_timeout_ms,
-    provider_stream_connect_timeout_ms, provider_stream_idle_timeout_ms,
-    strict_write_retry_max_attempts, tool_exec_timeout_ms,
+    provider_stream_connect_timeout_ms, provider_stream_decode_retry_attempts,
+    provider_stream_idle_timeout_ms, strict_write_retry_max_attempts, tool_exec_timeout_ms,
 };
 use prewrite_gate::{evaluate_prewrite_gate, PrewriteProgress};
 use prewrite_mode::*;

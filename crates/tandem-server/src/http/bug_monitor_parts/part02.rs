@@ -532,6 +532,15 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         .map_err(|status| {
             anyhow::anyhow!("Failed to finalize triage run workspace: HTTP {status}")
         })?;
+    if let Ok(mut context_run) = load_context_run_state(&state, &run_id).await {
+        context_run.run_type = "bug_monitor_triage".to_string();
+        context_run.source_client = Some("bug_monitor_triage".to_string());
+        save_context_run_state(&state, &context_run)
+            .await
+            .map_err(|status| {
+                anyhow::anyhow!("Failed to persist triage run context metadata: HTTP {status}")
+            })?;
+    }
     state.event_bus.publish(tandem_types::EngineEvent::new(
         "bug_monitor.triage_run.created",
         json!({

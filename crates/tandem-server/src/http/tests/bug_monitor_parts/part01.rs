@@ -213,6 +213,7 @@ async fn write_ready_bug_monitor_triage_summary(app: axum::Router, draft_id: &st
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_runtime_creates_incident_and_draft_from_failure_event() {
     let state = test_state().await;
     state
@@ -242,11 +243,7 @@ async fn bug_monitor_runtime_creates_incident_and_draft_from_failure_event() {
         loop {
             let incidents = state.list_bug_monitor_incidents(10).await;
             let drafts = state.list_bug_monitor_drafts(10).await;
-            if incidents
-                .iter()
-                .any(|row| row.draft_id.is_some() || row.last_error.is_some())
-                || !drafts.is_empty()
-            {
+            if incidents.iter().any(|row| row.draft_id.is_some()) || !drafts.is_empty() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -282,6 +279,7 @@ async fn bug_monitor_runtime_creates_incident_and_draft_from_failure_event() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn paused_bug_monitor_runtime_ignores_failure_events() {
     let state = test_state().await;
     state
@@ -311,6 +309,7 @@ async fn paused_bug_monitor_runtime_ignores_failure_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_runtime_detects_real_context_task_failures() {
     let state = test_state().await;
     state
@@ -381,6 +380,7 @@ async fn bug_monitor_runtime_detects_real_context_task_failures() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_submission_extracts_rich_workflow_failure_metadata_and_redacts_secrets() {
     let state = test_state().await;
     let config = crate::BugMonitorConfig {
@@ -443,6 +443,62 @@ async fn bug_monitor_submission_extracts_rich_workflow_failure_metadata_and_reda
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
+async fn bug_monitor_submission_preserves_prior_contract_failure_when_provider_stream_fails() {
+    let state = test_state().await;
+    let config = crate::BugMonitorConfig {
+        enabled: true,
+        repo: Some("acme/platform".to_string()),
+        workspace_root: Some("/tmp/acme".to_string()),
+        ..Default::default()
+    };
+    let event = EngineEvent::new(
+        "automation_v2.run.failed",
+        json!({
+            "workflow_id": "review-workflow",
+            "workflow_name": "Review workflow",
+            "run_id": "run-review-1",
+            "task_id": "research_sources",
+            "node_id": "research_sources",
+            "attempt": 3,
+            "max_attempts": 3,
+            "retry_exhausted": true,
+            "error_kind": "validation_error",
+            "reason": "provider stream chunk error: error decoding response body",
+            "error": "provider stream chunk error: error decoding response body",
+            "validation_errors": [
+                "required_workspace_files_missing",
+                "required workspace file `tandem-review.md` was not written in a prior attempt"
+            ],
+            "recent_node_attempt_evidence": [{
+                "event": "workflow_state_changed",
+                "attempt": 2,
+                "reason": "required workspace files were not written in the current attempt: tandem-review.md",
+                "unmet_requirements": ["required_workspace_files_missing"],
+                "missing_workspace_files": ["tandem-review.md"],
+                "required_next_tool_actions": [
+                    "Write the required workspace file(s) `tandem-review.md` in this attempt before writing the run artifact; do not rely on the run artifact to satisfy this workspace-write contract."
+                ]
+            }],
+        }),
+    );
+
+    let submission = crate::bug_monitor::service::build_bug_monitor_submission_from_event(
+        &state, &config, &event,
+    )
+    .await
+    .expect("submission");
+    let detail = submission.detail.expect("detail");
+
+    assert!(detail.contains("provider stream chunk error: error decoding response body"));
+    assert!(detail.contains("required_workspace_files_missing"));
+    assert!(detail.contains("tandem-review.md"));
+    assert!(detail.contains("recent_node_attempt_evidence:"));
+    assert!(detail.contains("do not rely on the run artifact"));
+}
+
+#[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_report_creates_and_dedupes_draft() {
     let state = test_state().await;
     state
@@ -557,6 +613,7 @@ async fn bug_monitor_report_creates_and_dedupes_draft() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_report_blocks_noisy_or_unevidenced_signals() {
     let state = test_state().await;
     state
@@ -624,6 +681,7 @@ async fn bug_monitor_report_blocks_noisy_or_unevidenced_signals() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
     let state = test_state().await;
     state
@@ -862,6 +920,7 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
     let state = test_state().await;
     state
@@ -1048,6 +1107,7 @@ async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_report_requires_repo() {
     let state = test_state().await;
     let app = app_router(state);
@@ -1077,6 +1137,7 @@ async fn bug_monitor_report_requires_repo() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_draft_can_be_approved_and_denied() {
     let state = test_state().await;
     state
@@ -1307,6 +1368,7 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_issue_draft_blocks_weak_proposal_without_completed_triage() {
     let state = test_state().await;
     state
@@ -1410,6 +1472,7 @@ async fn bug_monitor_issue_draft_blocks_weak_proposal_without_completed_triage()
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_issue_draft_renders_repo_template() {
     let state = test_state().await;
     state
@@ -1534,6 +1597,7 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_publish_and_recheck_fail_with_issue_draft_context() {
     let state = test_state().await;
     state
@@ -1703,6 +1767,7 @@ async fn bug_monitor_publish_and_recheck_fail_with_issue_draft_context() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_publish_and_recheck_succeed_with_triage_context() {
     let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server().await;
 
@@ -1924,6 +1989,7 @@ async fn bug_monitor_publish_and_recheck_succeed_with_triage_context() {
 }
 
 #[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_publish_comments_on_matched_open_issue_and_lists_post() {
     let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server_with_issues(vec![json!({
         "number": 42,

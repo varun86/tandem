@@ -1187,6 +1187,37 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     warning_requirements.sort();
     warning_requirements.dedup();
     semantic_block_reason = semantic_block_reason_for_requirements(&unmet_requirements);
+    let missing_required_workspace_files = validation_basis
+        .get("must_write_file_statuses")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|item| {
+                    item.get("materialized_by_current_attempt")
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                })
+                .filter_map(|item| item.get("path").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if unmet_requirements
+        .iter()
+        .any(|value| value == "required_workspace_files_missing")
+        && !missing_required_workspace_files.is_empty()
+    {
+        let missing_line = missing_required_workspace_files.join(", ");
+        let reason = format!(
+            "required workspace files were not written in the current attempt: {missing_line}"
+        );
+        semantic_block_reason = Some(reason.clone());
+        if rejected_reason.is_none() {
+            rejected_reason = Some(reason);
+        }
+    }
     if unmet_requirements.iter().any(|requirement| {
         matches!(
             requirement.as_str(),
@@ -1352,7 +1383,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     } else {
         None
     };
-    let required_next_tool_actions = if should_classify {
+    let mut required_next_tool_actions = if should_classify {
         research_required_next_tool_actions(
             &tool_telemetry
                 .get("requested_tools")
@@ -1379,6 +1410,18 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     } else {
         Vec::new()
     };
+    if !missing_required_workspace_files.is_empty() {
+        let missing_targets = missing_required_workspace_files
+            .iter()
+            .map(|path| format!("`{}`", path))
+            .collect::<Vec<_>>()
+            .join(", ");
+        required_next_tool_actions.push(format!(
+            "Write the required workspace file(s) {missing_targets} in this attempt before writing the run artifact; do not rely on the run artifact to satisfy this workspace-write contract."
+        ));
+        required_next_tool_actions.sort();
+        required_next_tool_actions.dedup();
+    }
 
     let metadata = json!({
         "accepted_artifact_path": accepted_output.as_ref().map(|(path, _)| path.clone()),

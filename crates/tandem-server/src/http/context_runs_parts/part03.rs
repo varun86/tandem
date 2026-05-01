@@ -1,4 +1,3 @@
-
 fn routine_run_status_to_step(status: &crate::RoutineRunStatus) -> ContextStepStatus {
     match status {
         crate::RoutineRunStatus::Queued => ContextStepStatus::Pending,
@@ -148,6 +147,25 @@ fn automation_node_task_payload(node: &crate::AutomationFlowNode, output: Option
         "output_path": automation_node_builder_string(node, "output_path"),
         "projects_backlog_tasks": automation_node_builder_bool(node, "project_backlog_tasks"),
     });
+    if let Some(embedded_payload) = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("bug_monitor"))
+        .and_then(Value::as_object)
+        .and_then(|_| node.metadata.as_ref())
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("knowledge"))
+        .and_then(Value::as_object)
+        .and_then(|knowledge| knowledge.get("payload"))
+        .and_then(Value::as_object)
+    {
+        if let Some(object) = payload.as_object_mut() {
+            for (key, value) in embedded_payload {
+                object.insert(key.clone(), value.clone());
+            }
+        }
+    }
     if let Some(object) = payload.as_object_mut() {
         if let Some(output) = output {
             if let Some(status) = output.get("status").and_then(Value::as_str) {

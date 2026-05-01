@@ -884,6 +884,18 @@ pub async fn build_bug_monitor_submission_from_event(
         ),
         12,
     );
+    let recent_attempt_evidence = strings_from_value(
+        first_value(
+            &event.properties,
+            &[
+                "recent_node_attempt_evidence",
+                "recentNodeAttemptEvidence",
+                "prior_attempt_evidence",
+                "priorAttemptEvidence",
+            ],
+        ),
+        12,
+    );
     let correlation_id = first_string_deep(
         &event.properties,
         &[
@@ -1024,6 +1036,12 @@ pub async fn build_bug_monitor_submission_from_event(
             String::new()
         } else {
             validation_errors.join("\n")
+        },
+        "recent_node_attempt_evidence:".to_string(),
+        if recent_attempt_evidence.is_empty() {
+            String::new()
+        } else {
+            recent_attempt_evidence.join("\n")
         },
         String::new(),
         "suggested_next_action:".to_string(),

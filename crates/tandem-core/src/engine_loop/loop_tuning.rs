@@ -31,6 +31,13 @@ pub(super) fn provider_stream_idle_timeout_ms() -> usize {
         .unwrap_or(90_000)
 }
 
+pub(super) fn provider_stream_decode_retry_attempts() -> usize {
+    std::env::var("TANDEM_PROVIDER_STREAM_DECODE_RETRY_ATTEMPTS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(2)
+}
+
 pub(super) fn prompt_context_hook_timeout_ms() -> usize {
     std::env::var("TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS")
         .ok()

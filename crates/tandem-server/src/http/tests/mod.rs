@@ -152,6 +152,11 @@ pub(super) async fn test_state() -> AppState {
     state.channel_automation_drafts_path = root.join("channel_automation_drafts.json");
     state.memory_audit_path = root.join("memory").join("audit.log.jsonl");
     state.protected_audit_path = root.join("audit").join("protected_events.log.jsonl");
+    state.bug_monitor_config_path = root.join("bug_monitor_config.json");
+    state.bug_monitor_drafts_path = root.join("bug_monitor_drafts.json");
+    state.bug_monitor_incidents_path = root.join("bug_monitor_incidents.json");
+    state.bug_monitor_posts_path = root.join("bug_monitor_posts.json");
+    state.external_actions_path = root.join("external_actions.json");
     state
         .mark_ready(crate::RuntimeState {
             storage,

@@ -1,4 +1,117 @@
 use super::*;
+use async_trait::async_trait;
+use futures::stream;
+use futures::Stream;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tandem_providers::{AppConfig, Provider};
+
+struct ScriptedProviderStream {
+    calls: Arc<AtomicUsize>,
+    mode: ScriptedProviderStreamMode,
+}
+
+#[derive(Clone, Copy)]
+enum ScriptedProviderStreamMode {
+    DecodeThenSuccess,
+    AuthFailure,
+}
+
+#[async_trait]
+impl Provider for ScriptedProviderStream {
+    fn info(&self) -> tandem_types::ProviderInfo {
+        tandem_types::ProviderInfo {
+            id: "scripted-provider-stream".to_string(),
+            name: "Scripted Provider Stream".to_string(),
+            models: vec![tandem_types::ModelInfo {
+                id: "scripted-model".to_string(),
+                provider_id: "scripted-provider-stream".to_string(),
+                display_name: "Scripted Model".to_string(),
+                context_window: 8192,
+            }],
+        }
+    }
+
+    async fn complete(
+        &self,
+        _prompt: &str,
+        _model_override: Option<&str>,
+    ) -> anyhow::Result<String> {
+        Ok("complete fallback".to_string())
+    }
+
+    async fn stream(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _model_override: Option<&str>,
+        _tool_mode: ToolMode,
+        _tools: Option<Vec<ToolSchema>>,
+        _cancel: CancellationToken,
+    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.mode {
+            ScriptedProviderStreamMode::DecodeThenSuccess if call == 0 => {
+                Ok(Box::pin(stream::iter(vec![
+                    Ok(StreamChunk::TextDelta("partial text".to_string())),
+                    Err(anyhow::anyhow!("error decoding response body")),
+                ])))
+            }
+            ScriptedProviderStreamMode::DecodeThenSuccess => Ok(Box::pin(stream::iter(vec![
+                Ok(StreamChunk::TextDelta("final answer".to_string())),
+                Ok(StreamChunk::Done {
+                    finish_reason: "stop".to_string(),
+                    usage: None,
+                }),
+            ]))),
+            ScriptedProviderStreamMode::AuthFailure => {
+                anyhow::bail!("authentication failed for scripted provider")
+            }
+        }
+    }
+}
+
+async fn engine_loop_with_scripted_provider(
+    base: &std::path::Path,
+    provider: Arc<ScriptedProviderStream>,
+) -> (EngineLoop, EventBus, Arc<Storage>) {
+    let storage = Arc::new(Storage::new(base).await.expect("storage"));
+    let bus = EventBus::new();
+    let providers = ProviderRegistry::new(AppConfig::default());
+    providers
+        .replace_for_test(vec![provider], Some("scripted-provider-stream".to_string()))
+        .await;
+    let plugins = PluginRegistry::new(base).await.expect("plugins");
+    let agents = AgentRegistry::new(base).await.expect("agents");
+    let permissions = PermissionManager::new(bus.clone());
+    let tools = ToolRegistry::new();
+    let cancellations = CancellationRegistry::new();
+    let host_runtime_context = HostRuntimeContext {
+        os: HostOs::Linux,
+        arch: std::env::consts::ARCH.to_string(),
+        shell_family: ShellFamily::Posix,
+        path_style: PathStyle::Posix,
+    };
+    let engine = EngineLoop::new(
+        storage.clone(),
+        bus.clone(),
+        providers,
+        plugins,
+        agents,
+        permissions,
+        tools,
+        cancellations,
+        host_runtime_context,
+    );
+    (engine, bus, storage)
+}
+
+fn scripted_model() -> ModelSpec {
+    ModelSpec {
+        provider_id: "scripted-provider-stream".to_string(),
+        model_id: "scripted-model".to_string(),
+    }
+}
 
 #[tokio::test]
 async fn todo_updated_event_is_normalized() {
@@ -40,6 +153,132 @@ async fn todo_updated_event_is_normalized() {
         Some("ship parity")
     );
     assert!(todos[0].get("status").and_then(|v| v.as_str()).is_some());
+}
+
+#[tokio::test]
+async fn provider_stream_decode_error_retries_current_iteration() {
+    let base = std::env::temp_dir().join(format!(
+        "engine-loop-provider-stream-retry-{}",
+        Uuid::new_v4()
+    ));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = Arc::new(ScriptedProviderStream {
+        calls: calls.clone(),
+        mode: ScriptedProviderStreamMode::DecodeThenSuccess,
+    });
+    let (engine, bus, storage) = engine_loop_with_scripted_provider(&base, provider).await;
+    let mut session = Session::new(
+        Some("provider stream retry".to_string()),
+        Some(".".to_string()),
+    );
+    session.model = Some(scripted_model());
+    let session_id = session.id.clone();
+    storage.save_session(session).await.expect("save session");
+    let mut rx = bus.subscribe();
+
+    engine
+        .run_prompt_async(
+            session_id.clone(),
+            SendMessageRequest {
+                parts: vec![MessagePartInput::Text {
+                    text: "answer once".to_string(),
+                }],
+                model: Some(scripted_model()),
+                agent: None,
+                tool_mode: Some(ToolMode::None),
+                tool_allowlist: None,
+                strict_kb_grounding: None,
+                context_mode: None,
+                write_required: None,
+                prewrite_requirements: None,
+            },
+        )
+        .await
+        .expect("prompt should recover");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let session = storage.get_session(&session_id).await.expect("session");
+    let assistant_text = session
+        .messages
+        .iter()
+        .rev()
+        .flat_map(|message| message.parts.iter())
+        .filter_map(|part| match part {
+            MessagePart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(assistant_text.contains("final answer"));
+    assert!(!assistant_text.contains("partial text"));
+
+    let mut saw_retry = false;
+    while let Ok(event) = rx.try_recv() {
+        if event.event_type == "provider.call.iteration.retry" {
+            saw_retry = true;
+            assert_eq!(
+                event.properties.get("retry").and_then(Value::as_u64),
+                Some(1)
+            );
+            assert!(event
+                .properties
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("error decoding response body")));
+        }
+    }
+    assert!(saw_retry);
+
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[tokio::test]
+async fn provider_stream_auth_error_does_not_retry() {
+    let base = std::env::temp_dir().join(format!(
+        "engine-loop-provider-stream-auth-{}",
+        Uuid::new_v4()
+    ));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = Arc::new(ScriptedProviderStream {
+        calls: calls.clone(),
+        mode: ScriptedProviderStreamMode::AuthFailure,
+    });
+    let (engine, bus, storage) = engine_loop_with_scripted_provider(&base, provider).await;
+    let mut session = Session::new(
+        Some("provider stream auth".to_string()),
+        Some(".".to_string()),
+    );
+    session.model = Some(scripted_model());
+    let session_id = session.id.clone();
+    storage.save_session(session).await.expect("save session");
+    let mut rx = bus.subscribe();
+
+    let result = engine
+        .run_prompt_async(
+            session_id,
+            SendMessageRequest {
+                parts: vec![MessagePartInput::Text {
+                    text: "answer once".to_string(),
+                }],
+                model: Some(scripted_model()),
+                agent: None,
+                tool_mode: Some(ToolMode::None),
+                tool_allowlist: None,
+                strict_kb_grounding: None,
+                context_mode: None,
+                write_required: None,
+                prewrite_requirements: None,
+            },
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    while let Ok(event) = rx.try_recv() {
+        assert_ne!(event.event_type, "provider.call.iteration.retry");
+    }
+
+    let _ = std::fs::remove_dir_all(base);
 }
 
 #[tokio::test]

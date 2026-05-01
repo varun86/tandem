@@ -1597,7 +1597,7 @@ fn node_with_bootstrap_intent_adds_workspace_inspection_prewrite_gate() {
 }
 
 #[test]
-fn structured_json_node_requires_declared_workspace_files_for_current_attempt() {
+fn required_workspace_files_missing_reports_exact_paths() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-must-write-missing-{}",
         uuid::Uuid::new_v4()
@@ -1663,7 +1663,17 @@ fn structured_json_node_requires_declared_workspace_files_for_current_attempt() 
 
     assert_eq!(
         rejected.as_deref(),
-        Some("required workspace files were not written for this run")
+        Some(
+            "required workspace files were not written in the current attempt: 02_reddit_pain_points.md"
+        )
+    );
+    assert_eq!(
+        metadata
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some(
+            "required workspace files were not written in the current attempt: 02_reddit_pain_points.md"
+        )
     );
     assert!(metadata
         .get("unmet_requirements")
@@ -1681,6 +1691,16 @@ fn structured_json_node_requires_declared_workspace_files_for_current_attempt() 
                     .get("materialized_by_current_attempt")
                     .and_then(Value::as_bool)
                     == Some(false)
+        })));
+    assert!(metadata
+        .get("required_next_tool_actions")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| {
+            value.as_str().is_some_and(|text| {
+                text.contains("`02_reddit_pain_points.md`")
+                    && text.contains("before writing the run artifact")
+                    && text.contains("do not rely on the run artifact")
+            })
         })));
 
     let _ = std::fs::remove_dir_all(workspace_root);

@@ -1464,6 +1464,111 @@ fn collect_inputs_prompt_requires_reading_before_writing() {
 }
 
 #[test]
+fn prompt_orders_required_workspace_writes_before_run_artifact() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-review".to_string(),
+        name: "Review".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research_sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Write a review and durable workspace report.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/research-sources.json",
+                "must_write_files": ["tandem-review.md"]
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "researcher".to_string(),
+        template_id: None,
+        display_name: "Researcher".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-review",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    let workspace_idx = prompt
+        .find("Required Workspace Writes:")
+        .expect("workspace writes section");
+    let artifact_idx = prompt
+        .find("Required Run Artifact:")
+        .expect("run artifact section");
+    assert!(workspace_idx < artifact_idx);
+    assert!(prompt.contains("Write the required workspace file(s) first: `tandem-review.md`"));
+    assert!(prompt.contains("Do not rely on, auto-copy, or mirror the run artifact"));
+}
+
+#[test]
 fn prompt_includes_email_delivery_metadata_for_notify_user() {
     let automation = AutomationV2Spec {
         automation_id: "automation-email-delivery".to_string(),

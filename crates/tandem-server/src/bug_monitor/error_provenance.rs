@@ -495,7 +495,10 @@ mod tests {
 
     #[test]
     fn render_provenance_section_caps_total_size() {
-        let big_snippet = "x".repeat(3_500);
+        let big_snippet = (0..20)
+            .map(|_| "x".repeat(220))
+            .collect::<Vec<_>>()
+            .join("\n");
         let hits = vec![
             ProvenanceHit {
                 path: "a.rs".to_string(),

@@ -752,9 +752,29 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         write_scope_rule
     ));
     if let Some(output_path) = required_output_path.as_ref() {
+        let workspace_write_order = if required_workspace_write_targets.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n- Write the required workspace file(s) first: {}.\n- Then write the required run artifact to `{}`.",
+                required_workspace_write_targets
+                    .iter()
+                    .map(|path| format!("`{}`", path))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                output_path
+            )
+        };
         sections.push(format!(
-            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n- Read or inspect the concrete sources required by the node.\n- Write the required run artifact to `{}` before ending this attempt.\n- On retries, rewrite the file in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the file is the deliverable.",
-            output_path
+            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n- Read or inspect the concrete sources required by the node.{}\n- On retries, rewrite the required files in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the required files are the deliverables.",
+            if workspace_write_order.is_empty() {
+                format!(
+                    "\n- Write the required run artifact to `{}` before ending this attempt.",
+                    output_path
+                )
+            } else {
+                workspace_write_order
+            }
         ));
         sections.push(
             "Artifact Delivery Fallback:\n- If discovery does not reveal a useful connector-backed source, finish the artifact from the local evidence you already have and record that limitation in the file instead of repeating discovery calls."
@@ -786,12 +806,18 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             task_id, task_kind, repo_root, write_scope, acceptance_criteria, task_dependencies, verification_state, task_owner, verification_command, if project_backlog_tasks { "yes" } else { "no" }
         ));
     }
+    if !required_workspace_write_targets.is_empty() {
+        sections.push(format!(
+            "Required Workspace Writes:\n- These workspace files are part of the node objective and are approved write targets for this run.\n{}\n- Write these workspace files before the required run artifact when both are present.\n- Do not rely on, auto-copy, or mirror the run artifact into these paths; call an approved workspace write tool for each required path in the current attempt.\n- Keep these writes inside the workspace root and use full file contents when creating a file.",
+            automation_prompt_render_path_bullets(&required_workspace_write_targets)
+        ));
+    }
     if let Some(ref output_path) = required_output_path {
         let approved_write_targets_rule = if required_workspace_write_targets.is_empty() {
             "- Only write declared workflow artifact files.".to_string()
         } else {
             format!(
-                "- In addition to the run artifact, create or update these required workspace files when needed: {}.\n- Do not create other auxiliary touch files, status files, marker files, or placeholder preservation notes.",
+                "- The required workspace files must be written separately before this run artifact: {}.\n- Do not create other auxiliary touch files, status files, marker files, or placeholder preservation notes.",
                 required_workspace_write_targets
                     .iter()
                     .map(|path| format!("`{}`", path))
@@ -817,12 +843,6 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             ),
         };
         sections.push(output_rules);
-    }
-    if !required_workspace_write_targets.is_empty() {
-        sections.push(format!(
-            "Required Workspace Writes:\n- These workspace files are part of the node objective and are approved write targets for this run.\n{}\n- Keep these writes inside the workspace root and use full file contents when creating a file.",
-            automation_prompt_render_path_bullets(&required_workspace_write_targets)
-        ));
     }
     // Declared output artifacts (e.g. metadata.artifacts, builder.output_files,
     // builder.must_write_files): agents sometimes misread these filenames as

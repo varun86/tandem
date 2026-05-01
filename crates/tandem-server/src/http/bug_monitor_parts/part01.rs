@@ -853,6 +853,134 @@ fn bug_monitor_completed_phase_artifact_exists(
     }
 }
 
+async fn ensure_bug_monitor_phase_artifacts_from_summary(
+    state: &AppState,
+    triage_run_id: &str,
+    payload: &Value,
+) -> Result<(), StatusCode> {
+    if !bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_inspection")
+    {
+        write_bug_monitor_artifact(
+            state,
+            triage_run_id,
+            &format!("bug-monitor-inspection-summary-{}", Uuid::new_v4().simple()),
+            "bug_monitor_inspection",
+            "artifacts/bug_monitor.inspection.json",
+            &json!({
+                "status": "completed",
+                "detail": payload.get("what_happened").cloned().unwrap_or(Value::Null),
+                "incident": {
+                    "draft_id": payload.get("draft_id").cloned().unwrap_or(Value::Null),
+                    "repo": payload.get("repo").cloned().unwrap_or(Value::Null),
+                },
+                "incident_payload": payload,
+                "created_at_ms": crate::now_ms(),
+            }),
+        )
+        .await?;
+    }
+    if !bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_research") {
+        write_bug_monitor_artifact(
+            state,
+            triage_run_id,
+            &format!("bug-monitor-research-summary-{}", Uuid::new_v4().simple()),
+            "bug_monitor_research",
+            "artifacts/bug_monitor.research.json",
+            &json!({
+                "status": "completed",
+                "summary": payload.get("why_it_likely_happened").cloned().unwrap_or(Value::Null),
+                "research_sources": payload.get("research_sources").cloned().unwrap_or_else(|| json!([])),
+                "related_existing_issues": payload.get("related_existing_issues").cloned().unwrap_or_else(|| json!([])),
+                "related_failure_patterns": payload.get("related_failure_patterns").cloned().unwrap_or_else(|| json!([])),
+                "file_references": payload.get("file_references").cloned().unwrap_or_else(|| json!([])),
+                "created_at_ms": crate::now_ms(),
+            }),
+        )
+        .await?;
+    }
+    if !bug_monitor_completed_phase_artifact_exists(state, triage_run_id, "bug_monitor_validation")
+    {
+        write_bug_monitor_artifact(
+            state,
+            triage_run_id,
+            &format!(
+                "bug-monitor-validation-summary-{}",
+                Uuid::new_v4().simple()
+            ),
+            "bug_monitor_validation",
+            "artifacts/bug_monitor.validation.json",
+            &json!({
+                "status": "completed",
+                "summary": payload.get("what_happened").cloned().unwrap_or(Value::Null),
+                "failure_scope": payload.get("failure_type").cloned().unwrap_or(Value::Null),
+                "steps_to_reproduce": payload.get("steps_to_reproduce").cloned().unwrap_or_else(|| json!([])),
+                "logs": payload.get("logs").cloned().unwrap_or_else(|| json!([])),
+                "evidence": payload.get("file_references").cloned().unwrap_or_else(|| json!([])),
+                "created_at_ms": crate::now_ms(),
+            }),
+        )
+        .await?;
+    }
+    if !bug_monitor_completed_phase_artifact_exists(
+        state,
+        triage_run_id,
+        "bug_monitor_fix_proposal",
+    ) {
+        write_bug_monitor_artifact(
+            state,
+            triage_run_id,
+            &format!(
+                "bug-monitor-fix-proposal-summary-{}",
+                Uuid::new_v4().simple()
+            ),
+            "bug_monitor_fix_proposal",
+            "artifacts/bug_monitor.fix_proposal.json",
+            &json!({
+                "status": "completed",
+                "recommended_fix": payload.get("recommended_fix").cloned().unwrap_or(Value::Null),
+                "acceptance_criteria": payload.get("acceptance_criteria").cloned().unwrap_or_else(|| json!([])),
+                "verification_steps": payload.get("verification_steps").cloned().unwrap_or_else(|| json!([])),
+                "risk_level": payload.get("risk_level").cloned().unwrap_or(Value::Null),
+                "created_at_ms": crate::now_ms(),
+            }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_bug_monitor_approval_triage_summary_artifact(
+    state: &AppState,
+    draft: &BugMonitorDraftRecord,
+) -> Result<(), StatusCode> {
+    let Some(triage_run_id) = draft.triage_run_id.as_deref() else {
+        return Ok(());
+    };
+    if latest_bug_monitor_artifact(state, triage_run_id, "bug_monitor_triage_summary").is_some() {
+        return Ok(());
+    }
+    write_bug_monitor_artifact(
+        state,
+        triage_run_id,
+        &format!(
+            "bug-monitor-approval-triage-summary-{}",
+            Uuid::new_v4().simple()
+        ),
+        "bug_monitor_triage_summary",
+        "artifacts/bug_monitor.triage_summary.json",
+        &json!({
+            "draft_id": draft.draft_id,
+            "repo": draft.repo,
+            "triage_run_id": triage_run_id,
+            "what_happened": draft.title,
+            "notes": draft.detail,
+            "created_at_ms": crate::now_ms(),
+            "source": "bug_monitor_approval",
+        }),
+    )
+    .await
+}
+
 fn bug_monitor_artifact_is_task_spec_placeholder(payload: &Value) -> bool {
     payload.get("expected_artifact").is_some()
         || payload.get("research_requirements").is_some()
@@ -2981,6 +3109,24 @@ pub(super) async fn create_bug_monitor_triage_summary(
     };
     let (triage_summary_artifact, _issue_draft_artifact, duplicate_matches_artifact) =
         bug_monitor_triage_artifacts(&state, Some(&triage_run_id));
+    if let Err(status) =
+        ensure_bug_monitor_phase_artifacts_from_summary(&state, &triage_run_id, &payload).await
+    {
+        return (
+            status,
+            Json(json!({
+                "error": "Bug Monitor triage summary was written, but phase artifact materialization failed",
+                "code": "BUG_MONITOR_TRIAGE_PHASE_ARTIFACT_WRITE_FAILED",
+                "draft": draft,
+                "triage_summary": payload,
+                "triage_summary_artifact": triage_summary_artifact,
+                "failure_pattern_memory": failure_pattern_memory,
+                "regression_signal_memory": regression_signal_memory,
+                "duplicate_matches_artifact": duplicate_matches_artifact,
+            })),
+        )
+            .into_response();
+    }
     match ensure_bug_monitor_issue_draft(state.clone(), &id, true).await {
         Ok(issue_draft) => {
             let (triage_summary_artifact, issue_draft_artifact, duplicate_matches_artifact) =
@@ -3592,6 +3738,8 @@ pub(super) async fn approve_bug_monitor_draft(
             } else {
                 None
             };
+            let _ =
+                ensure_bug_monitor_approval_triage_summary_artifact(&state, &approved_draft).await;
             let issue_draft =
                 ensure_bug_monitor_issue_draft(state.clone(), &approved_draft.draft_id, true)
                     .await
@@ -3753,6 +3901,19 @@ pub(super) async fn create_bug_monitor_triage_run(
                     .get_automation_v2_run(&automation_run_id)
                     .await
                     .and_then(|run| serde_json::to_value(run).ok())
+                    .map(|mut run| {
+                        if let Some(object) = run.as_object_mut() {
+                            object.insert(
+                                "automation_run_id".to_string(),
+                                Value::String(automation_run_id),
+                            );
+                            object.insert(
+                                "run_id".to_string(),
+                                Value::String(triage_run_id.to_string()),
+                            );
+                        }
+                        run
+                    })
             } else {
                 load_context_run_state(&state, triage_run_id)
                     .await

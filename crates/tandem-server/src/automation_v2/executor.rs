@@ -85,6 +85,113 @@ fn run_node_is_settled_completed(
         || crate::app::state::automation_node_has_passing_artifact(node_id, &run.checkpoint)
 }
 
+fn automation_failure_is_provider_stream_related(detail: &str) -> bool {
+    let lowered = detail.to_ascii_lowercase();
+    lowered.contains("provider stream chunk error")
+        || lowered.contains("stream chunk error")
+        || lowered.contains("error decoding response body")
+        || lowered.contains("unexpected eof")
+        || lowered.contains("incomplete streamed response")
+}
+
+fn lifecycle_missing_workspace_paths(metadata: &Value) -> Vec<String> {
+    metadata
+        .get("must_write_file_statuses")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|item| {
+                    item.get("materialized_by_current_attempt")
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                })
+                .filter_map(|item| item.get("path").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn recent_node_attempt_evidence(
+    run: &crate::automation_v2::types::AutomationV2RunRecord,
+    node_id: Option<&str>,
+) -> Vec<Value> {
+    let Some(node_id) = node_id else {
+        return Vec::new();
+    };
+    let mut evidence = Vec::new();
+    for record in run.checkpoint.lifecycle_history.iter().rev() {
+        let Some(metadata) = record.metadata.as_ref() else {
+            continue;
+        };
+        if metadata.get("node_id").and_then(Value::as_str) != Some(node_id) {
+            continue;
+        }
+        let unmet_requirements = metadata
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let missing_workspace_files = lifecycle_missing_workspace_paths(metadata);
+        let required_next_tool_actions = metadata
+            .get("required_next_tool_actions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let rejected_artifact_reason = metadata
+            .get("rejected_artifact_reason")
+            .and_then(Value::as_str);
+        let useful = !unmet_requirements.is_empty()
+            || !missing_workspace_files.is_empty()
+            || !required_next_tool_actions.is_empty()
+            || rejected_artifact_reason.is_some();
+        if !useful {
+            continue;
+        }
+        evidence.push(json!({
+            "event": record.event,
+            "recorded_at_ms": record.recorded_at_ms,
+            "reason": record.reason,
+            "attempt": metadata.get("attempt").cloned().unwrap_or(Value::Null),
+            "unmet_requirements": unmet_requirements,
+            "missing_workspace_files": missing_workspace_files,
+            "required_next_tool_actions": required_next_tool_actions,
+            "rejected_artifact_reason": rejected_artifact_reason,
+            "summary": metadata.get("summary").cloned().unwrap_or(Value::Null),
+        }));
+        if evidence.len() >= 5 {
+            break;
+        }
+    }
+    evidence.reverse();
+    evidence
+}
+
+fn validation_errors_with_prior_evidence(current: Value, evidence: &[Value]) -> Value {
+    let mut rows = current.as_array().cloned().unwrap_or_default();
+    for item in evidence {
+        if let Some(unmet) = item.get("unmet_requirements").and_then(Value::as_array) {
+            rows.extend(unmet.iter().cloned());
+        }
+        if let Some(paths) = item
+            .get("missing_workspace_files")
+            .and_then(Value::as_array)
+        {
+            for path in paths.iter().filter_map(Value::as_str) {
+                rows.push(json!(format!(
+                    "required workspace file `{}` was not written in a prior attempt",
+                    path
+                )));
+            }
+        }
+    }
+    rows.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+    rows.dedup();
+    Value::Array(rows)
+}
+
 fn publish_automation_v2_failure_event(
     state: &AppState,
     automation: &crate::AutomationV2Spec,
@@ -129,7 +236,7 @@ fn publish_automation_v2_failure_event(
     let status = output
         .and_then(|row| row.get("status"))
         .and_then(Value::as_str);
-    let validation_errors = output
+    let mut validation_errors = output
         .and_then(|row| row.pointer("/validator_summary/unmet_requirements"))
         .or_else(|| output.and_then(|row| row.pointer("/artifact_validation/unmet_requirements")))
         .cloned()
@@ -144,6 +251,22 @@ fn publish_automation_v2_failure_event(
                 .map(|path| json!([path]))
                 .unwrap_or_else(|| json!([]))
         });
+    let final_error_text = [
+        reason.as_str(),
+        failure.map(|row| row.reason.as_str()).unwrap_or_default(),
+        run.detail.as_deref().unwrap_or_default(),
+    ]
+    .join("\n");
+    let recent_attempt_evidence =
+        if automation_failure_is_provider_stream_related(&final_error_text) {
+            recent_node_attempt_evidence(run, node_id)
+        } else {
+            Vec::new()
+        };
+    if !recent_attempt_evidence.is_empty() {
+        validation_errors =
+            validation_errors_with_prior_evidence(validation_errors, &recent_attempt_evidence);
+    }
     let has_validation_errors = validation_errors
         .as_array()
         .map(|rows| !rows.is_empty())
@@ -159,9 +282,7 @@ fn publish_automation_v2_failure_event(
         "unknown"
     };
 
-    state.event_bus.publish(tandem_types::EngineEvent::new(
-        "automation_v2.run.failed",
-        json!({
+    let mut payload = json!({
             "automation_id": run.automation_id,
             "automationID": run.automation_id,
             "workflow_id": run.automation_id,
@@ -197,7 +318,19 @@ fn publish_automation_v2_failure_event(
             "validation_errors": validation_errors,
             "suggested_next_action": "Inspect the failing automation node output, fix the validation/config/tool failure, then rerun the automation.",
             "tenantContext": serde_json::to_value(&run.tenant_context).unwrap_or(Value::Null),
-        }),
+    });
+    if !recent_attempt_evidence.is_empty() {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "recent_node_attempt_evidence".to_string(),
+                Value::Array(recent_attempt_evidence),
+            );
+        }
+    }
+
+    state.event_bus.publish(tandem_types::EngineEvent::new(
+        "automation_v2.run.failed",
+        payload,
     ));
 }
 

@@ -193,6 +193,29 @@ pub fn record_automation_workflow_state_events(
             Value::Array(actions.clone()),
         );
     }
+    if let Some(unmet_requirements) = artifact_validation
+        .and_then(|value| value.get("unmet_requirements"))
+        .and_then(Value::as_array)
+        .filter(|value| !value.is_empty())
+    {
+        base_metadata.insert(
+            "unmet_requirements".to_string(),
+            Value::Array(unmet_requirements.clone()),
+        );
+    }
+    if let Some(validation_basis) =
+        artifact_validation.and_then(|value| value.get("validation_basis"))
+    {
+        for key in [
+            "must_write_files",
+            "must_write_file_statuses",
+            "required_output_path",
+        ] {
+            if let Some(value) = validation_basis.get(key) {
+                base_metadata.insert(key.to_string(), value.clone());
+            }
+        }
+    }
     record_automation_lifecycle_event_with_metadata(
         run,
         "workflow_state_changed",

@@ -553,103 +553,62 @@ impl EngineLoop {
                 let estimated_prompt_chars: usize = messages.iter().map(|m| m.content.len()).sum();
                 let provider_connect_timeout =
                     Duration::from_millis(provider_stream_connect_timeout_ms() as u64);
-                let stream_result = tokio::time::timeout(
-                    provider_connect_timeout,
-                    self.providers.stream_for_provider(
-                        Some(provider_id.as_str()),
-                        Some(model_id_value.as_str()),
-                        messages,
-                        requested_tool_mode.clone(),
-                        Some(tool_schemas),
-                        cancel.clone(),
-                    ),
-                )
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!(
-                        "provider stream connect timeout after {} ms",
-                        provider_connect_timeout.as_millis()
-                    )
-                })
-                .and_then(|result| result);
-                let stream = match stream_result {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        let error_text = err.to_string();
-                        let error_code = provider_error_code(&error_text);
-                        let detail = truncate_text(&error_text, 500);
-                        emit_event(
-                            Level::ERROR,
-                            ProcessKind::Engine,
-                            ObservabilityEvent {
-                                event: "provider.call.error",
-                                component: "engine.loop",
-                                correlation_id: correlation_ref,
-                                session_id: Some(&session_id),
-                                run_id: None,
-                                message_id: Some(&user_message_id),
-                                provider_id: Some(provider_id.as_str()),
-                                model_id,
-                                status: Some("failed"),
-                                error_code: Some(error_code),
-                                detail: Some(&detail),
-                            },
-                        );
-                        self.event_bus.publish(EngineEvent::new(
-                            "provider.call.iteration.error",
-                            json!({
-                                "sessionID": session_id,
-                                "messageID": user_message_id,
-                                "iteration": iteration,
-                                "error": detail,
-                            }),
-                        ));
-                        self.mark_session_run_failed(&session_id, &err.to_string())
-                            .await;
-                        return Err(err);
-                    }
-                };
-                tokio::pin!(stream);
-                completion.clear();
-                let mut streamed_tool_calls: HashMap<String, StreamedToolCall> = HashMap::new();
-                let mut provider_usage: Option<TokenUsage> = None;
-                let mut accepted_tool_calls_in_cycle = 0usize;
                 let provider_idle_timeout =
                     Duration::from_millis(provider_stream_idle_timeout_ms() as u64);
-                loop {
-                    let next_chunk_result =
-                        tokio::time::timeout(provider_idle_timeout, stream.next())
-                            .await
-                            .map_err(|_| {
-                                anyhow::anyhow!(
-                                    "provider stream idle timeout after {} ms",
-                                    provider_idle_timeout.as_millis()
-                                )
-                            });
-                    let next_chunk = match next_chunk_result {
-                        Ok(next_chunk) => next_chunk,
-                        Err(err) => {
-                            self.event_bus.publish(EngineEvent::new(
-                                "provider.call.iteration.error",
-                                json!({
-                                    "sessionID": session_id,
-                                    "messageID": user_message_id,
-                                    "iteration": iteration,
-                                    "error": truncate_text(&err.to_string(), 500),
-                                }),
-                            ));
-                            self.mark_session_run_failed(&session_id, &err.to_string())
-                                .await;
-                            return Err(err);
-                        }
-                    };
-                    let Some(chunk) = next_chunk else {
-                        break;
-                    };
-                    let chunk = match chunk {
-                        Ok(chunk) => chunk,
+                let provider_stream_retry_budget = provider_stream_decode_retry_attempts();
+                let mut provider_stream_retry_count = 0usize;
+                let mut streamed_tool_calls: HashMap<String, StreamedToolCall> = HashMap::new();
+                let mut provider_usage: Option<TokenUsage>;
+                let mut accepted_tool_calls_in_cycle: usize;
+                'provider_stream_attempt: loop {
+                    completion.clear();
+                    streamed_tool_calls.clear();
+                    provider_usage = None;
+                    accepted_tool_calls_in_cycle = 0;
+                    let stream_result = tokio::time::timeout(
+                        provider_connect_timeout,
+                        self.providers.stream_for_provider(
+                            Some(provider_id.as_str()),
+                            Some(model_id_value.as_str()),
+                            messages.clone(),
+                            requested_tool_mode.clone(),
+                            Some(tool_schemas.clone()),
+                            cancel.clone(),
+                        ),
+                    )
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "provider stream connect timeout after {} ms",
+                            provider_connect_timeout.as_millis()
+                        )
+                    })
+                    .and_then(|result| result);
+                    let stream = match stream_result {
+                        Ok(stream) => stream,
                         Err(err) => {
                             let error_text = err.to_string();
+                            if is_transient_provider_stream_error(&error_text)
+                                && provider_stream_retry_count < provider_stream_retry_budget
+                            {
+                                provider_stream_retry_count =
+                                    provider_stream_retry_count.saturating_add(1);
+                                let detail = truncate_text(&error_text, 500);
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.retry",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "providerID": provider_id,
+                                        "modelID": model_id_value,
+                                        "iteration": iteration,
+                                        "error": detail,
+                                        "retry": provider_stream_retry_count,
+                                        "maxRetries": provider_stream_retry_budget,
+                                    }),
+                                ));
+                                continue 'provider_stream_attempt;
+                            }
                             let error_code = provider_error_code(&error_text);
                             let detail = truncate_text(&error_text, 500);
                             emit_event(
@@ -678,24 +637,76 @@ impl EngineLoop {
                                     "error": detail,
                                 }),
                             ));
-                            let err = anyhow::anyhow!("provider stream chunk error: {error_text}");
                             self.mark_session_run_failed(&session_id, &err.to_string())
                                 .await;
                             return Err(err);
                         }
                     };
-                    match chunk {
-                        StreamChunk::TextDelta(delta) => {
-                            let delta = strip_model_control_markers(&delta);
-                            if delta.trim().is_empty() {
-                                continue;
+                    tokio::pin!(stream);
+                    loop {
+                        let next_chunk_result =
+                            tokio::time::timeout(provider_idle_timeout, stream.next())
+                                .await
+                                .map_err(|_| {
+                                    anyhow::anyhow!(
+                                        "provider stream idle timeout after {} ms",
+                                        provider_idle_timeout.as_millis()
+                                    )
+                                });
+                        let next_chunk = match next_chunk_result {
+                            Ok(next_chunk) => next_chunk,
+                            Err(err) => {
+                                let error_text = err.to_string();
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.error",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "error": truncate_text(&error_text, 500),
+                                    }),
+                                ));
+                                self.mark_session_run_failed(&session_id, &error_text).await;
+                                return Err(err);
                             }
-                            if completion.is_empty() {
+                        };
+                        let Some(chunk) = next_chunk else {
+                            break 'provider_stream_attempt;
+                        };
+                        let chunk = match chunk {
+                            Ok(chunk) => chunk,
+                            Err(err) => {
+                                let error_text = err.to_string();
+                                let stream_error_text =
+                                    format!("provider stream chunk error: {error_text}");
+                                if is_transient_provider_stream_error(&stream_error_text)
+                                    && provider_stream_retry_count < provider_stream_retry_budget
+                                {
+                                    provider_stream_retry_count =
+                                        provider_stream_retry_count.saturating_add(1);
+                                    let detail = truncate_text(&stream_error_text, 500);
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "provider.call.iteration.retry",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "providerID": provider_id,
+                                            "modelID": model_id_value,
+                                            "iteration": iteration,
+                                            "error": detail,
+                                            "retry": provider_stream_retry_count,
+                                            "maxRetries": provider_stream_retry_budget,
+                                        }),
+                                    ));
+                                    continue 'provider_stream_attempt;
+                                }
+                                let error_code = provider_error_code(&stream_error_text);
+                                let detail = truncate_text(&stream_error_text, 500);
                                 emit_event(
-                                    Level::INFO,
+                                    Level::ERROR,
                                     ProcessKind::Engine,
                                     ObservabilityEvent {
-                                        event: "provider.call.first_byte",
+                                        event: "provider.call.error",
                                         component: "engine.loop",
                                         correlation_id: correlation_ref,
                                         session_id: Some(&session_id),
@@ -703,91 +714,134 @@ impl EngineLoop {
                                         message_id: Some(&user_message_id),
                                         provider_id: Some(provider_id.as_str()),
                                         model_id,
-                                        status: Some("streaming"),
-                                        error_code: None,
-                                        detail: Some("first text delta"),
+                                        status: Some("failed"),
+                                        error_code: Some(error_code),
+                                        detail: Some(&detail),
                                     },
                                 );
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.error",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "error": detail,
+                                    }),
+                                ));
+                                let err = anyhow::anyhow!("{stream_error_text}");
+                                self.mark_session_run_failed(&session_id, &err.to_string())
+                                    .await;
+                                return Err(err);
                             }
-                            completion.push_str(&delta);
-                            let delta = truncate_text(&delta, 4_000);
-                            let delta_part =
-                                WireMessagePart::text(&session_id, &user_message_id, delta.clone());
-                            self.event_bus.publish(EngineEvent::new(
-                                "message.part.updated",
-                                json!({"part": delta_part, "delta": delta}),
-                            ));
-                        }
-                        StreamChunk::ReasoningDelta(_reasoning) => {}
-                        StreamChunk::Done {
-                            finish_reason: _,
-                            usage,
-                        } => {
-                            if usage.is_some() {
-                                provider_usage = usage;
-                            }
-                            break;
-                        }
-                        StreamChunk::ToolCallStart { id, name } => {
-                            let entry = streamed_tool_calls.entry(id).or_default();
-                            if entry.name.is_empty() {
-                                entry.name = name;
-                            }
-                        }
-                        StreamChunk::ToolCallDelta { id, args_delta } => {
-                            let entry = streamed_tool_calls.entry(id.clone()).or_default();
-                            entry.args.push_str(&args_delta);
-                            let tool_name = if entry.name.trim().is_empty() {
-                                "tool".to_string()
-                            } else {
-                                normalize_tool_name(&entry.name)
-                            };
-                            let parsed_preview = if entry.name.trim().is_empty() {
-                                Value::String(truncate_text(&entry.args, 1_000))
-                            } else {
-                                parse_streamed_tool_args(&tool_name, &entry.args)
-                            };
-                            let mut tool_part = WireMessagePart::tool_invocation(
-                                &session_id,
-                                &user_message_id,
-                                tool_name.clone(),
-                                parsed_preview.clone(),
-                            );
-                            tool_part.id = Some(id.clone());
-                            if tool_name == "write" {
-                                tracing::info!(
-                                    session_id = %session_id,
-                                    message_id = %user_message_id,
-                                    tool_call_id = %id,
-                                    args_delta_len = args_delta.len(),
-                                    accumulated_args_len = entry.args.len(),
-                                    parsed_preview_empty = parsed_preview.is_null()
-                                        || parsed_preview.as_object().is_some_and(|value| value.is_empty())
-                                        || parsed_preview
-                                            .as_str()
-                                            .map(|value| value.trim().is_empty())
-                                            .unwrap_or(false),
-                                    "streamed write tool args delta received"
+                        };
+                        match chunk {
+                            StreamChunk::TextDelta(delta) => {
+                                let delta = strip_model_control_markers(&delta);
+                                if delta.trim().is_empty() {
+                                    continue;
+                                }
+                                if completion.is_empty() {
+                                    emit_event(
+                                        Level::INFO,
+                                        ProcessKind::Engine,
+                                        ObservabilityEvent {
+                                            event: "provider.call.first_byte",
+                                            component: "engine.loop",
+                                            correlation_id: correlation_ref,
+                                            session_id: Some(&session_id),
+                                            run_id: None,
+                                            message_id: Some(&user_message_id),
+                                            provider_id: Some(provider_id.as_str()),
+                                            model_id,
+                                            status: Some("streaming"),
+                                            error_code: None,
+                                            detail: Some("first text delta"),
+                                        },
+                                    );
+                                }
+                                completion.push_str(&delta);
+                                let delta = truncate_text(&delta, 4_000);
+                                let delta_part = WireMessagePart::text(
+                                    &session_id,
+                                    &user_message_id,
+                                    delta.clone(),
                                 );
+                                self.event_bus.publish(EngineEvent::new(
+                                    "message.part.updated",
+                                    json!({"part": delta_part, "delta": delta}),
+                                ));
                             }
-                            self.event_bus.publish(EngineEvent::new(
-                                "message.part.updated",
-                                json!({
-                                    "part": tool_part,
-                                    "toolCallDelta": {
-                                        "id": id,
-                                        "tool": tool_name,
-                                        "argsDelta": truncate_text(&args_delta, 1_000),
-                                        "rawArgsPreview": truncate_text(&entry.args, 2_000),
-                                        "parsedArgsPreview": parsed_preview
-                                    }
-                                }),
-                            ));
+                            StreamChunk::ReasoningDelta(_reasoning) => {}
+                            StreamChunk::Done {
+                                finish_reason: _,
+                                usage,
+                            } => {
+                                if usage.is_some() {
+                                    provider_usage = usage;
+                                }
+                                break 'provider_stream_attempt;
+                            }
+                            StreamChunk::ToolCallStart { id, name } => {
+                                let entry = streamed_tool_calls.entry(id).or_default();
+                                if entry.name.is_empty() {
+                                    entry.name = name;
+                                }
+                            }
+                            StreamChunk::ToolCallDelta { id, args_delta } => {
+                                let entry = streamed_tool_calls.entry(id.clone()).or_default();
+                                entry.args.push_str(&args_delta);
+                                let tool_name = if entry.name.trim().is_empty() {
+                                    "tool".to_string()
+                                } else {
+                                    normalize_tool_name(&entry.name)
+                                };
+                                let parsed_preview = if entry.name.trim().is_empty() {
+                                    Value::String(truncate_text(&entry.args, 1_000))
+                                } else {
+                                    parse_streamed_tool_args(&tool_name, &entry.args)
+                                };
+                                let mut tool_part = WireMessagePart::tool_invocation(
+                                    &session_id,
+                                    &user_message_id,
+                                    tool_name.clone(),
+                                    parsed_preview.clone(),
+                                );
+                                tool_part.id = Some(id.clone());
+                                if tool_name == "write" {
+                                    tracing::info!(
+                                        session_id = %session_id,
+                                        message_id = %user_message_id,
+                                        tool_call_id = %id,
+                                        args_delta_len = args_delta.len(),
+                                        accumulated_args_len = entry.args.len(),
+                                        parsed_preview_empty = parsed_preview.is_null()
+                                            || parsed_preview.as_object().is_some_and(|value| value.is_empty())
+                                            || parsed_preview
+                                                .as_str()
+                                                .map(|value| value.trim().is_empty())
+                                                .unwrap_or(false),
+                                        "streamed write tool args delta received"
+                                    );
+                                }
+                                self.event_bus.publish(EngineEvent::new(
+                                    "message.part.updated",
+                                    json!({
+                                        "part": tool_part,
+                                        "toolCallDelta": {
+                                            "id": id,
+                                            "tool": tool_name,
+                                            "argsDelta": truncate_text(&args_delta, 1_000),
+                                            "rawArgsPreview": truncate_text(&entry.args, 2_000),
+                                            "parsedArgsPreview": parsed_preview
+                                        }
+                                    }),
+                                ));
+                            }
+                            StreamChunk::ToolCallEnd { id: _ } => {}
                         }
-                        StreamChunk::ToolCallEnd { id: _ } => {}
-                    }
-                    if cancel.is_cancelled() {
-                        break;
+                        if cancel.is_cancelled() {
+                            break 'provider_stream_attempt;
+                        }
                     }
                 }
 
