@@ -90,6 +90,17 @@ fn compose_triage_timeout_last_post_error(
     }
 }
 
+fn draft_has_github_issue(draft: &crate::BugMonitorDraftRecord) -> bool {
+    draft.issue_number.is_some() || draft.github_issue_url.is_some()
+}
+
+fn draft_is_triage_timed_out(draft: &crate::BugMonitorDraftRecord) -> bool {
+    draft
+        .github_status
+        .as_deref()
+        .is_some_and(|status| status.eq_ignore_ascii_case("triage_timed_out"))
+}
+
 async fn bug_monitor_incident_for_draft(
     state: &AppState,
     draft_id: &str,
@@ -127,14 +138,13 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
         let Some(triage_run_id) = draft.triage_run_id.clone() else {
             continue;
         };
-        if draft.issue_number.is_some() || draft.github_issue_url.is_some() {
+        if draft_has_github_issue(&draft) {
             continue;
         }
-        if draft
-            .github_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("triage_timed_out"))
-        {
+        if draft_is_triage_timed_out(&draft) {
+            let incident_id =
+                bug_monitor_incident_for_draft(state, &draft.draft_id, &triage_run_id).await;
+            recovered.push((draft.draft_id.clone(), incident_id));
             continue;
         }
         match crate::http::bug_monitor::finalize_completed_bug_monitor_triage(
@@ -245,7 +255,7 @@ async fn recover_stale_bug_monitor_triage_event(
     }) else {
         return Ok(None);
     };
-    if draft.issue_number.is_some() || draft.github_issue_url.is_some() {
+    if draft_has_github_issue(&draft) {
         return Ok(None);
     }
 
@@ -266,10 +276,23 @@ async fn recover_stale_bug_monitor_triage_event(
         timeout_ms,
         diagnostics_value.as_ref(),
     );
-    let Some(current_draft) = state
+    let marked_now = match state
         .try_mark_triage_timed_out(&draft.draft_id, last_post_error.clone())
         .await?
-    else {
+    {
+        Some(current_draft) => Some(current_draft),
+        None => {
+            let Some(current_draft) = state.get_bug_monitor_draft(&draft.draft_id).await else {
+                return Ok(None);
+            };
+            if draft_has_github_issue(&current_draft) || !draft_is_triage_timed_out(&current_draft)
+            {
+                return Ok(None);
+            }
+            Some(current_draft)
+        }
+    };
+    let Some(current_draft) = marked_now else {
         return Ok(None);
     };
 
@@ -283,26 +306,33 @@ async fn recover_stale_bug_monitor_triage_event(
     };
     let now = now_ms();
     incident.status = "triage_timed_out".to_string();
-    incident.last_error = Some(last_post_error.clone());
+    incident.last_error = Some(
+        current_draft
+            .last_post_error
+            .clone()
+            .unwrap_or(last_post_error.clone()),
+    );
     incident.updated_at_ms = now;
     state.put_bug_monitor_incident(incident.clone()).await?;
 
-    let mut event_payload = serde_json::json!({
-        "incident_id": incident.incident_id,
-        "draft_id": current_draft.draft_id,
-        "triage_run_id": triage_run_id,
-        "timeout_ms": timeout_ms,
-        "reason": "bug monitor triage automation paused after no provider activity",
-    });
-    if let Some(diagnostics) = diagnostics_value.as_ref() {
-        if let Some(obj) = event_payload.as_object_mut() {
-            obj.insert("diagnostics".to_string(), diagnostics.clone());
+    if !draft_is_triage_timed_out(&draft) {
+        let mut event_payload = serde_json::json!({
+            "incident_id": incident.incident_id,
+            "draft_id": current_draft.draft_id,
+            "triage_run_id": triage_run_id,
+            "timeout_ms": timeout_ms,
+            "reason": "bug monitor triage automation paused after no provider activity",
+        });
+        if let Some(diagnostics) = diagnostics_value.as_ref() {
+            if let Some(obj) = event_payload.as_object_mut() {
+                obj.insert("diagnostics".to_string(), diagnostics.clone());
+            }
         }
+        state.event_bus.publish(EngineEvent::new(
+            "bug_monitor.incident.triage_timed_out",
+            event_payload,
+        ));
     }
-    state.event_bus.publish(EngineEvent::new(
-        "bug_monitor.incident.triage_timed_out",
-        event_payload,
-    ));
 
     match crate::bug_monitor_github::publish_draft(
         state,
@@ -1233,17 +1263,10 @@ fn spawn_triage_deadline_task(
         let Some(mut draft) = state.get_bug_monitor_draft(&draft_id).await else {
             return;
         };
-        let already_marked = draft
-            .github_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("triage_timed_out"));
-        if already_marked {
+        let already_marked = draft_is_triage_timed_out(&draft);
+        if draft_has_github_issue(&draft) {
             return;
         }
-        if draft.github_issue_url.is_some() {
-            return;
-        }
-        draft.github_status = Some("triage_timed_out".to_string());
         let diagnostics_value = crate::http::bug_monitor::bug_monitor_triage_timeout_diagnostics(
             &state,
             &triage_run_id,
@@ -1255,19 +1278,27 @@ fn spawn_triage_deadline_task(
             timeout_ms,
             diagnostics_value.as_ref(),
         );
-        draft.last_post_error = Some(last_post_error.clone());
-        if let Err(error) = state.put_bug_monitor_draft(draft.clone()).await {
-            tracing::warn!(
-                incident_id = %incident_id,
-                draft_id = %draft_id,
-                error = %error,
-                "failed to persist bug monitor draft after triage deadline",
-            );
-            return;
+        if !already_marked {
+            draft.github_status = Some("triage_timed_out".to_string());
+            draft.last_post_error = Some(last_post_error.clone());
+            if let Err(error) = state.put_bug_monitor_draft(draft.clone()).await {
+                tracing::warn!(
+                    incident_id = %incident_id,
+                    draft_id = %draft_id,
+                    error = %error,
+                    "failed to persist bug monitor draft after triage deadline",
+                );
+                return;
+            }
         }
         if let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await {
             incident.status = "triage_timed_out".to_string();
-            incident.last_error = Some(last_post_error.clone());
+            incident.last_error = Some(
+                draft
+                    .last_post_error
+                    .clone()
+                    .unwrap_or(last_post_error.clone()),
+            );
             incident.updated_at_ms = now;
             if let Err(error) = state.put_bug_monitor_incident(incident.clone()).await {
                 tracing::warn!(
@@ -1276,21 +1307,23 @@ fn spawn_triage_deadline_task(
                     "failed to persist bug monitor incident after triage deadline",
                 );
             }
-            let mut event_payload = serde_json::json!({
-                "incident_id": incident_id,
-                "draft_id": draft_id,
-                "triage_run_id": triage_run_id,
-                "timeout_ms": timeout_ms,
-            });
-            if let Some(diagnostics) = diagnostics_value.as_ref() {
-                if let Some(obj) = event_payload.as_object_mut() {
-                    obj.insert("diagnostics".to_string(), diagnostics.clone());
+            if !already_marked {
+                let mut event_payload = serde_json::json!({
+                    "incident_id": incident_id,
+                    "draft_id": draft_id,
+                    "triage_run_id": triage_run_id,
+                    "timeout_ms": timeout_ms,
+                });
+                if let Some(diagnostics) = diagnostics_value.as_ref() {
+                    if let Some(obj) = event_payload.as_object_mut() {
+                        obj.insert("diagnostics".to_string(), diagnostics.clone());
+                    }
                 }
+                state.event_bus.publish(EngineEvent::new(
+                    "bug_monitor.incident.triage_timed_out",
+                    event_payload,
+                ));
             }
-            state.event_bus.publish(EngineEvent::new(
-                "bug_monitor.incident.triage_timed_out",
-                event_payload,
-            ));
         }
         if let Err(error) = crate::bug_monitor_github::publish_draft(
             &state,

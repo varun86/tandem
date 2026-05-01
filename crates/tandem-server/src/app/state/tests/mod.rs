@@ -392,6 +392,7 @@ fn kb_grounding_block_directs_factual_questions_to_enabled_kb_mcp() {
 }
 
 mod automations;
+mod bug_monitor_recovery;
 mod handoff;
 mod routines;
 mod shared_resources;
