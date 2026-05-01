@@ -1073,8 +1073,9 @@ pub async fn build_bug_monitor_submission_from_event(
 }
 
 /// Spawns a deadline task that fires after `timeout_ms`. If the triage
-/// run has not reached a terminal status (`Failed` / `Completed` /
-/// `Cancelled`) by the deadline, the task marks the draft as
+/// run reached a terminal status, the task first tries to finalize and
+/// auto-publish the completed triage. Otherwise, or if finalization
+/// cannot handle the terminal run, it marks the draft as
 /// `triage_timed_out`, persists it, then re-runs `publish_draft` in
 /// `Auto` mode. The triage_run_id is preserved on the draft so the UI
 /// can still link to the abandoned run.
@@ -1092,7 +1093,21 @@ fn spawn_triage_deadline_task(
         if crate::http::bug_monitor::bug_monitor_triage_run_is_terminal(&state, &triage_run_id)
             .await
         {
-            return;
+            match crate::http::bug_monitor::finalize_completed_bug_monitor_triage(&state, &draft_id)
+                .await
+            {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        incident_id = %incident_id,
+                        draft_id = %draft_id,
+                        triage_run_id = %triage_run_id,
+                        error = %error,
+                        "failed to finalize terminal Bug Monitor triage run at deadline",
+                    );
+                }
+            }
         }
         let now = crate::util::time::now_ms();
         let Some(mut draft) = state.get_bug_monitor_draft(&draft_id).await else {
