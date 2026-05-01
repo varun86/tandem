@@ -325,8 +325,6 @@ fn bug_monitor_automation_run_is_terminal_for_triage(status: &crate::AutomationR
         crate::AutomationRunStatus::Completed
             | crate::AutomationRunStatus::Failed
             | crate::AutomationRunStatus::Cancelled
-            | crate::AutomationRunStatus::Paused
-            | crate::AutomationRunStatus::Blocked,
     )
 }
 
@@ -892,5 +890,23 @@ mod bug_monitor_triage_spec_tests {
                 .as_ref()
                 .is_some_and(|row| { !row.required_tools.iter().any(|tool| tool == "read") }));
         }
+    }
+
+    #[test]
+    fn triage_terminal_status_only_treats_completed_failed_and_cancelled_as_terminal() {
+        use crate::AutomationRunStatus::{
+            Blocked, Cancelled, Completed, Failed, Paused, Queued, Running,
+        };
+        assert!(bug_monitor_automation_run_is_terminal_for_triage(
+            &Completed
+        ));
+        assert!(bug_monitor_automation_run_is_terminal_for_triage(&Failed));
+        assert!(bug_monitor_automation_run_is_terminal_for_triage(
+            &Cancelled
+        ));
+        assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Queued));
+        assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Running));
+        assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Blocked));
+        assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Paused));
     }
 }

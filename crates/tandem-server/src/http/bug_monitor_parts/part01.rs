@@ -3746,7 +3746,19 @@ pub(super) async fn create_bug_monitor_triage_run(
     match ensure_bug_monitor_triage_run(state.clone(), &id, false).await {
         Ok((draft, run_id, deduped)) => {
             let triage_run_id = draft.triage_run_id.as_deref().unwrap_or(run_id.as_str());
-            let run = load_context_run_state(&state, triage_run_id).await.ok();
+            let run = if let Some(automation_run_id) =
+                bug_monitor_automation_run_id_from_triage_run_id(triage_run_id)
+            {
+                state
+                    .get_automation_v2_run(&automation_run_id)
+                    .await
+                    .and_then(|run| serde_json::to_value(run).ok())
+            } else {
+                load_context_run_state(&state, triage_run_id)
+                    .await
+                    .ok()
+                    .and_then(|run| serde_json::to_value(run).ok())
+            };
             let triage_summary =
                 load_bug_monitor_triage_summary_artifact(&state, triage_run_id).await;
             let issue_draft = ensure_bug_monitor_issue_draft(state.clone(), &id, true)
