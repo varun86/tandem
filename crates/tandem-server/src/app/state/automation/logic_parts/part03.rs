@@ -300,12 +300,84 @@ pub(crate) fn recover_required_output_from_session_text(
     let Some(payload) = payload else {
         return Ok(None);
     };
+    if !recoverable_json_matches_required_output(&payload, output_path) {
+        return Ok(None);
+    }
     if let Some(parent) = resolved.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let serialized = serde_json::to_string_pretty(&payload)?;
     std::fs::write(&resolved, serialized)?;
     Ok(Some(resolved))
+}
+
+pub(crate) fn recoverable_json_matches_required_output(payload: &Value, output_path: &str) -> bool {
+    let file_name = std::path::Path::new(output_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !file_name.starts_with("bug_monitor.") {
+        return true;
+    }
+    let Some(object) = payload.as_object() else {
+        return false;
+    };
+    if object.contains_key("registered_tools") || object.contains_key("servers") {
+        return false;
+    }
+    let status_completed = object
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("completed"));
+    let has_any_key = |keys: &[&str]| object.keys().any(|key| keys.contains(&key.as_str()));
+    match file_name.as_str() {
+        "bug_monitor.inspection.json" => {
+            status_completed
+                && has_any_key(&[
+                    "search_queries_used",
+                    "files_examined",
+                    "file_references",
+                    "likely_files_to_edit",
+                    "affected_components",
+                    "bounded_next_steps",
+                ])
+        }
+        "bug_monitor.research.json" => {
+            status_completed
+                && (has_any_key(&[
+                    "research_summary",
+                    "likely_root_cause",
+                    "related_failures",
+                    "research_sources",
+                    "file_references",
+                    "likely_files_to_edit",
+                ]) || payload
+                    .pointer("/research_summary/likely_root_cause")
+                    .is_some())
+        }
+        "bug_monitor.validation.json" => {
+            status_completed
+                && has_any_key(&[
+                    "validation_summary",
+                    "failure_type",
+                    "evidence",
+                    "scope",
+                    "confidence",
+                ])
+        }
+        "bug_monitor.fix_proposal.json" => {
+            status_completed
+                && has_any_key(&[
+                    "recommended_fix",
+                    "acceptance_criteria",
+                    "verification_steps",
+                    "coder_ready",
+                    "risk_level",
+                ])
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn is_suspicious_automation_marker_file(path: &std::path::Path) -> bool {

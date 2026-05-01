@@ -1611,6 +1611,39 @@ fn parse_status_json_accepts_standup_completion_metadata() {
     );
 }
 
+#[test]
+fn bug_monitor_recovery_rejects_mcp_inventory_json() {
+    let payload = json!({
+        "connected_server_names": ["githubcopilot"],
+        "registered_tools": ["mcp.githubcopilot.get_me"],
+        "servers": [{"name": "githubcopilot", "connected": true}]
+    });
+
+    assert!(!super::recoverable_json_matches_required_output(
+        &payload,
+        ".tandem/artifacts/bug_monitor.research.json"
+    ));
+}
+
+#[test]
+fn bug_monitor_recovery_accepts_matching_research_artifact_json() {
+    let payload = json!({
+        "status": "completed",
+        "research_summary": {
+            "likely_root_cause": "The required artifact was recovered from unrelated tool output."
+        },
+        "file_references": [{
+            "path": "crates/tandem-server/src/app/state/automation/extraction.rs",
+            "line": 289
+        }]
+    });
+
+    assert!(super::recoverable_json_matches_required_output(
+        &payload,
+        ".tandem/artifacts/bug_monitor.research.json"
+    ));
+}
+
 // -----------------------------------------------------------------------
 // Standup gap fill — T5: coordinator input formatting (item C)
 // -----------------------------------------------------------------------
