@@ -1,6 +1,21 @@
 use super::*;
 use serde_json::Value;
 
+fn bug_monitor_triage_inspection_node(node: &AutomationFlowNode) -> bool {
+    if node.node_id == "inspect_failure_report" {
+        return true;
+    }
+
+    node.metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("bug_monitor"))
+        .and_then(Value::as_object)
+        .and_then(|bug_monitor| bug_monitor.get("artifact_type"))
+        .and_then(Value::as_str)
+        .is_some_and(|artifact_type| artifact_type == "bug_monitor_inspection")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AutomationQualityMode {
     StrictResearchV1,
@@ -671,6 +686,7 @@ pub(crate) fn automation_node_output_enforcement(
         .as_ref()
         .map(|contract| contract.kind.trim().to_ascii_lowercase())
         .is_some_and(|kind| kind == "code_patch");
+    let is_bug_monitor_inspection = bug_monitor_triage_inspection_node(node);
     let contract_kind = node
         .output_contract
         .as_ref()
@@ -718,6 +734,9 @@ pub(crate) fn automation_node_output_enforcement(
             }
         });
     enforcement.validation_profile = Some(validation_profile.clone());
+    if is_bug_monitor_inspection {
+        enforcement.validation_profile = Some("artifact_only".to_string());
+    }
     let is_standup_update = validation_profile == "standup_update";
     let is_local_research = validation_profile == "local_research";
     let is_external_research = validation_profile == "external_research";
@@ -990,5 +1009,129 @@ pub(crate) fn automation_node_output_enforcement(
     enforcement.retry_on_missing =
         super::super::normalize_non_empty_list(enforcement.retry_on_missing);
     enforcement.terminal_on = super::super::normalize_non_empty_list(enforcement.terminal_on);
+
+    if is_bug_monitor_inspection {
+        if enforcement.validation_profile.as_deref() != Some("artifact_only") {
+            enforcement.validation_profile = Some("artifact_only".to_string());
+        }
+        enforcement.required_tools.retain(|tool| tool != "read");
+        if enforcement.required_tools.is_empty() {
+            enforcement
+                .required_tools
+                .extend(["codesearch".to_string(), "glob".to_string()]);
+        }
+        enforcement
+            .required_evidence
+            .retain(|item| item != "local_source_reads");
+        enforcement
+            .prewrite_gates
+            .retain(|gate| gate != "concrete_reads");
+        enforcement
+            .retry_on_missing
+            .retain(|item| item != "no_concrete_reads" && item != "local_source_reads");
+        enforcement
+            .terminal_on
+            .retain(|item| item != "no_concrete_reads" && item != "local_source_reads");
+        enforcement.session_text_recovery = Some("allow".to_string());
+    }
+
     enforcement
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bug_monitor_inspection_node() -> AutomationFlowNode {
+        AutomationFlowNode {
+            node_id: "inspect_failure_report".to_string(),
+            agent_id: "bug_monitor_triage_agent".to_string(),
+            objective: "Inspect failure report".to_string(),
+            knowledge: Default::default(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "structured_json".to_string(),
+                validator: Some(AutomationOutputValidatorKind::StructuredJson),
+                enforcement: Some(AutomationOutputEnforcement {
+                    validation_profile: Some("local_research".to_string()),
+                    required_tools: vec!["read".to_string(), "codesearch".to_string()],
+                    required_tool_calls: Vec::new(),
+                    required_evidence: vec!["local_source_reads".to_string()],
+                    required_sections: Vec::new(),
+                    prewrite_gates: vec!["concrete_reads".to_string()],
+                    retry_on_missing: vec![
+                        "no_concrete_reads".to_string(),
+                        "local_source_reads".to_string(),
+                    ],
+                    terminal_on: vec!["no_concrete_reads".to_string()],
+                    repair_budget: Some(1),
+                    session_text_recovery: Some("allow".to_string()),
+                }),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            max_tool_calls: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(serde_json::json!({
+                "bug_monitor": {
+                    "artifact_type": "bug_monitor_inspection",
+                },
+            })),
+        }
+    }
+
+    fn non_bug_monitor_node() -> AutomationFlowNode {
+        let mut node = bug_monitor_inspection_node();
+        node.node_id = "other_node".to_string();
+        node.metadata = None;
+        node
+    }
+
+    #[test]
+    fn bug_monitor_inspection_stops_concrete_read_gating() {
+        let node = bug_monitor_inspection_node();
+        let enforcement = automation_node_output_enforcement(&node);
+
+        assert_eq!(
+            enforcement.validation_profile,
+            Some("artifact_only".to_string())
+        );
+        assert!(!enforcement.required_tools.iter().any(|tool| tool == "read"));
+        assert!(!enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "local_source_reads"));
+        assert!(!enforcement
+            .prewrite_gates
+            .iter()
+            .any(|gate| gate == "concrete_reads"));
+        assert!(!enforcement
+            .retry_on_missing
+            .iter()
+            .any(|item| item == "no_concrete_reads"));
+        assert!(!enforcement
+            .retry_on_missing
+            .iter()
+            .any(|item| item == "local_source_reads"));
+        assert!(!enforcement
+            .terminal_on
+            .iter()
+            .any(|item| item == "no_concrete_reads"));
+        assert!(!enforcement
+            .terminal_on
+            .iter()
+            .any(|item| item == "local_source_reads"));
+    }
+
+    #[test]
+    fn non_bug_monitor_node_keeps_read_requirements() {
+        let node = non_bug_monitor_node();
+        let enforcement = automation_node_output_enforcement(&node);
+
+        assert!(enforcement.required_tools.iter().any(|tool| tool == "read"));
+    }
 }
