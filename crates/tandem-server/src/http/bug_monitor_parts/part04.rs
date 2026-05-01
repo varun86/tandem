@@ -11,25 +11,50 @@ fn bug_monitor_triage_manual_schedule() -> crate::AutomationV2Schedule {
 fn bug_monitor_triage_output_contract(
     artifact_type: &str,
     summary_guidance: &str,
+    require_local_source_reads: bool,
 ) -> crate::AutomationFlowOutputContract {
     crate::AutomationFlowOutputContract {
         kind: "structured_json".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
         enforcement: Some(crate::AutomationOutputEnforcement {
             validation_profile: Some("local_research".to_string()),
-            required_tools: vec!["read".to_string()],
+            required_tools: if require_local_source_reads {
+                vec![
+                    "read".to_string(),
+                    "codesearch".to_string(),
+                    "glob".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
             required_tool_calls: Vec::new(),
-            required_evidence: vec!["local_source_reads".to_string()],
+            required_evidence: if require_local_source_reads {
+                vec!["local_source_reads".to_string()]
+            } else {
+                Vec::new()
+            },
             required_sections: Vec::new(),
-            prewrite_gates: vec!["concrete_reads".to_string()],
-            retry_on_missing: vec![
-                "no_concrete_reads".to_string(),
-                "local_source_reads".to_string(),
-            ],
-            terminal_on: vec![
-                "no_concrete_reads".to_string(),
-                "local_source_reads".to_string(),
-            ],
+            prewrite_gates: if require_local_source_reads {
+                vec!["concrete_reads".to_string()]
+            } else {
+                Vec::new()
+            },
+            retry_on_missing: if require_local_source_reads {
+                vec![
+                    "no_concrete_reads".to_string(),
+                    "local_source_reads".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
+            terminal_on: if require_local_source_reads {
+                vec![
+                    "no_concrete_reads".to_string(),
+                    "local_source_reads".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
             repair_budget: Some(1),
             session_text_recovery: Some("allow".to_string()),
         }),
@@ -52,6 +77,7 @@ fn bug_monitor_triage_node(
     timeout_ms: u64,
     artifact_path: &str,
     artifact_type: &str,
+    require_local_source_reads: bool,
     payload: serde_json::Value,
 ) -> crate::AutomationFlowNode {
     crate::AutomationFlowNode {
@@ -64,6 +90,7 @@ fn bug_monitor_triage_node(
         output_contract: Some(bug_monitor_triage_output_contract(
             artifact_type,
             &bug_monitor_triage_repo_evidence_guidance(artifact_type),
+            require_local_source_reads,
         )),
         retry_policy: Some(json!({
             "max_attempts": 2,
@@ -155,6 +182,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     240_000,
                     ".tandem/artifacts/bug_monitor.inspection.json",
                     "bug_monitor_inspection",
+                    false,
                     inspection_payload,
                 ),
                 bug_monitor_triage_node(
@@ -165,6 +193,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     600_000,
                     ".tandem/artifacts/bug_monitor.research.json",
                     "bug_monitor_research",
+                    true,
                     research_payload,
                 ),
                 bug_monitor_triage_node(
@@ -175,6 +204,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     240_000,
                     ".tandem/artifacts/bug_monitor.validation.json",
                     "bug_monitor_validation",
+                    true,
                     validation_payload,
                 ),
                 bug_monitor_triage_node(
@@ -185,6 +215,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     360_000,
                     ".tandem/artifacts/bug_monitor.fix_proposal.json",
                     "bug_monitor_fix_proposal",
+                    true,
                     fix_payload,
                 ),
             ],
@@ -471,9 +502,7 @@ async fn bug_monitor_automation_triage_timeout_diagnostics(
 /// which is enough to distinguish "model is thinking" from "tool
 /// round-trips dominate." For each node we surface tool counts,
 /// attempt count, and the wall-clock span we observed activity in.
-async fn collect_triage_per_node_attempt_stats(
-    run: &crate::AutomationV2RunRecord,
-) -> Vec<Value> {
+async fn collect_triage_per_node_attempt_stats(run: &crate::AutomationV2RunRecord) -> Vec<Value> {
     use crate::app::state::automation::receipts;
     let receipts_root = receipts::automation_attempt_receipts_root();
     let mut node_ids: Vec<String> = Vec::new();
@@ -511,7 +540,8 @@ async fn collect_triage_per_node_attempt_stats(
         .map(String::as_str)
         .collect();
     for node_id in node_ids {
-        let path = receipts::automation_attempt_receipts_path(&receipts_root, &run.run_id, &node_id);
+        let path =
+            receipts::automation_attempt_receipts_path(&receipts_root, &run.run_id, &node_id);
         let records = receipts::read_automation_attempt_receipt_records(&path)
             .await
             .unwrap_or_default();
@@ -632,7 +662,17 @@ mod bug_monitor_triage_spec_tests {
                 .and_then(|contract| contract.validator)
                 == Some(crate::AutomationOutputValidatorKind::StructuredJson)
         }));
-        assert!(spec.flow.nodes.iter().all(|node| node
+        let inspect_contract = spec.flow.nodes[0]
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.enforcement.as_ref());
+        let inspect_enforcement = inspect_contract.unwrap();
+        assert!(!inspect_enforcement
+            .required_tools
+            .iter()
+            .any(|tool| tool == "read"));
+        assert!(inspect_enforcement.required_evidence.is_empty());
+        assert!(spec.flow.nodes.iter().skip(1).all(|node| node
             .output_contract
             .as_ref()
             .and_then(|contract| contract.enforcement.as_ref())
@@ -653,7 +693,12 @@ mod bug_monitor_triage_spec_tests {
                 && guidance.contains("likely_files_to_edit"))));
     }
 
-    fn record(seq: u64, ts_ms: u64, attempt: u32, event_type: &str) -> crate::app::state::automation::receipts::AutomationAttemptReceiptRecord {
+    fn record(
+        seq: u64,
+        ts_ms: u64,
+        attempt: u32,
+        event_type: &str,
+    ) -> crate::app::state::automation::receipts::AutomationAttemptReceiptRecord {
         crate::app::state::automation::receipts::AutomationAttemptReceiptRecord {
             version: 1,
             run_id: "run-x".to_string(),

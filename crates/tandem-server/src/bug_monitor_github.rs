@@ -1077,9 +1077,7 @@ fn build_comment_body(
         // Emit a focused recurrence summary instead.
         lines.push(String::new());
         lines.push(
-            crate::bug_monitor::comment_summary::build_comment_recurrence_summary(
-                draft, incident,
-            ),
+            crate::bug_monitor::comment_summary::build_comment_recurrence_summary(draft, incident),
         );
     }
     if let Some(logs) = issue_draft

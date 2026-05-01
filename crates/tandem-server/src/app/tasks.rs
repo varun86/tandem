@@ -682,19 +682,20 @@ pub async fn run_bug_monitor_recovery_sweep(state: AppState) {
         if !status.config.enabled || status.config.paused {
             continue;
         }
-        let recovered =
-            match crate::bug_monitor::service::recover_overdue_bug_monitor_triage_runs(&state)
-                .await
-            {
-                Ok(rows) => rows,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bug monitor recovery sweep: recover_overdue failed"
-                    );
-                    continue;
-                }
-            };
+        let recovered = match crate::bug_monitor::service::recover_overdue_bug_monitor_triage_runs(
+            &state,
+        )
+        .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bug monitor recovery sweep: recover_overdue failed"
+                );
+                continue;
+            }
+        };
         for (draft_id, incident_id) in recovered {
             if let Err(error) = crate::bug_monitor_github::publish_draft(
                 &state,
