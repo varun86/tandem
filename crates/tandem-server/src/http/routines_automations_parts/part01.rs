@@ -468,6 +468,16 @@ fn automation_v2_recoverable_failure_node_id(run: &crate::AutomationV2RunRecord)
         .as_ref()
         .map(|failure| failure.node_id.clone())
         .or_else(|| automation_v2_failed_node_ids(run).into_iter().next())
+        .or_else(|| {
+            const STARTUP_RUNTIME_CONTEXT_MISSING: &str =
+                "runtime context partition missing for automation run";
+            (run.status == crate::AutomationRunStatus::Failed
+                && run
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail == STARTUP_RUNTIME_CONTEXT_MISSING))
+            .then_some("runtime_context".to_string())
+        })
 }
 
 #[derive(Debug, Deserialize)]

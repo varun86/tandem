@@ -1925,6 +1925,53 @@ async fn automations_v2_run_recover_uses_failed_node_outputs_when_last_failure_m
 }
 
 #[tokio::test]
+async fn automations_v2_run_recover_uses_runtime_context_missing_failure_detail() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-runtime-context").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.detail = Some("runtime context partition missing for automation run".to_string());
+            row.checkpoint.completed_nodes = Vec::new();
+            row.checkpoint.pending_nodes = vec!["research".to_string()];
+            row.checkpoint.node_outputs.clear();
+            row.checkpoint.node_attempts.clear();
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/recover", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "recover runtime context failure" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let recovered = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after recover");
+    assert_eq!(recovered.status, crate::AutomationRunStatus::Queued);
+    assert_eq!(
+        recovered.detail.as_deref(),
+        Some("recover runtime context failure")
+    );
+}
+
+#[tokio::test]
 async fn automations_v2_run_recover_from_pause_preserves_branched_state() {
     let state = test_state().await;
     let app = app_router(state.clone());

@@ -1711,19 +1711,33 @@ impl AppState {
         &self,
         run_id: &str,
     ) -> Option<AutomationV2RunRecord> {
-        let (automation_snapshot, previous_status) = {
+        const STARTUP_RUNTIME_CONTEXT_MISSING: &str =
+            "runtime context partition missing for automation run";
+        const STARTUP_RUNTIME_CONTEXT_FAILURE_NODE: &str = "runtime_context";
+
+        let (automation_snapshot, previous_status, automation_id, stored_runtime_context) = {
             let mut guard = self.automation_v2_runs.write().await;
             let run = guard.get_mut(run_id)?;
             if run.status != AutomationRunStatus::Queued {
                 return None;
             }
-            (run.automation_snapshot.clone(), run.status.clone())
+            (
+                run.automation_snapshot.clone(),
+                run.status.clone(),
+                run.automation_id.clone(),
+                run.runtime_context.clone(),
+            )
         };
-        let runtime_context_required = automation_snapshot
+        let automation_for_context = if let Some(automation) = automation_snapshot {
+            Some(automation)
+        } else {
+            self.get_automation_v2(&automation_id).await
+        };
+        let runtime_context_required = automation_for_context
             .as_ref()
             .map(crate::automation_v2::types::AutomationV2Spec::requires_runtime_context)
             .unwrap_or(false);
-        let runtime_context = match automation_snapshot.as_ref() {
+        let computed_runtime_context = match automation_for_context.as_ref() {
             Some(automation) => self
                 .automation_v2_effective_runtime_context(
                     automation,
@@ -1736,6 +1750,7 @@ impl AppState {
                 .flatten(),
             None => None,
         };
+        let runtime_context = computed_runtime_context.or(stored_runtime_context);
         if runtime_context_required && runtime_context.is_none() {
             let mut guard = self.automation_v2_runs.write().await;
             let run = guard.get_mut(run_id)?;
@@ -1748,7 +1763,14 @@ impl AppState {
             run.updated_at_ms = now;
             run.finished_at_ms.get_or_insert(now);
             run.scheduler = None;
-            run.detail = Some("runtime context partition missing for automation run".to_string());
+            run.detail = Some(STARTUP_RUNTIME_CONTEXT_MISSING.to_string());
+            if run.checkpoint.last_failure.is_none() {
+                run.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
+                    node_id: STARTUP_RUNTIME_CONTEXT_FAILURE_NODE.to_string(),
+                    reason: STARTUP_RUNTIME_CONTEXT_MISSING.to_string(),
+                    failed_at_ms: now,
+                });
+            }
             let claimed = run.clone();
             drop(guard);
             self.sync_automation_scheduler_for_run_transition(previous_status, &claimed)
@@ -1763,6 +1785,9 @@ impl AppState {
             return None;
         }
         let now = now_ms();
+        if run.automation_snapshot.is_none() {
+            run.automation_snapshot = automation_for_context.clone();
+        }
         run.runtime_context = runtime_context;
         run.status = AutomationRunStatus::Running;
         run.updated_at_ms = now;
