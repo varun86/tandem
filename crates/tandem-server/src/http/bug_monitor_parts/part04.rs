@@ -9,20 +9,15 @@ fn bug_monitor_triage_manual_schedule() -> crate::AutomationV2Schedule {
 }
 
 fn bug_monitor_triage_output_contract(
-    artifact_type: &str,
+    _artifact_type: &str,
     summary_guidance: &str,
     require_local_source_reads: bool,
 ) -> crate::AutomationFlowOutputContract {
-    let validation_profile = if artifact_type == "bug_monitor_inspection" {
-        "artifact_only"
-    } else {
-        "local_research"
-    };
     crate::AutomationFlowOutputContract {
         kind: "structured_json".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
         enforcement: Some(crate::AutomationOutputEnforcement {
-            validation_profile: Some(validation_profile.to_string()),
+            validation_profile: Some("local_research".to_string()),
             required_tools: if require_local_source_reads {
                 vec!["read", "codesearch", "glob"]
                     .into_iter()
@@ -63,7 +58,7 @@ fn bug_monitor_triage_output_contract(
                 Vec::new()
             },
             repair_budget: Some(1),
-            session_text_recovery: Some("allow".to_string()),
+            session_text_recovery: Some("require_prewrite_satisfied".to_string()),
         }),
         schema: None,
         summary_guidance: Some(summary_guidance.to_string()),
@@ -80,12 +75,12 @@ fn bug_monitor_triage_node_artifact_type(node: &crate::AutomationFlowNode) -> Op
 
 fn bug_monitor_triage_expected_contract(
     artifact_type: &str,
-    objective: &str,
+    _objective: &str,
 ) -> crate::AutomationFlowOutputContract {
     bug_monitor_triage_output_contract(
         artifact_type,
         &bug_monitor_triage_repo_evidence_guidance(artifact_type),
-        artifact_type != "bug_monitor_inspection",
+        true,
     )
 }
 
@@ -138,7 +133,7 @@ fn bug_monitor_triage_node(
     timeout_ms: u64,
     artifact_path: &str,
     artifact_type: &str,
-    require_local_source_reads: bool,
+    _require_local_source_reads: bool,
     payload: serde_json::Value,
 ) -> crate::AutomationFlowNode {
     crate::AutomationFlowNode {
@@ -151,7 +146,7 @@ fn bug_monitor_triage_node(
         output_contract: Some(bug_monitor_triage_output_contract(
             artifact_type,
             &bug_monitor_triage_repo_evidence_guidance(artifact_type),
-            require_local_source_reads,
+            true,
         )),
         retry_policy: Some(json!({
             "max_attempts": 2,
@@ -752,12 +747,19 @@ mod bug_monitor_triage_spec_tests {
             .as_ref()
             .and_then(|contract| contract.enforcement.as_ref());
         let inspect_enforcement = inspect_contract.unwrap();
-        assert!(!inspect_enforcement
+        assert!(inspect_enforcement
             .required_tools
             .iter()
             .any(|tool| tool == "read"));
-        assert!(inspect_enforcement.required_evidence.is_empty());
-        assert!(spec.flow.nodes.iter().skip(1).all(|node| node
+        assert!(inspect_enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "local_source_reads"));
+        assert_eq!(
+            inspect_enforcement.session_text_recovery.as_deref(),
+            Some("require_prewrite_satisfied")
+        );
+        assert!(spec.flow.nodes.iter().all(|node| node
             .output_contract
             .as_ref()
             .and_then(|contract| contract.enforcement.as_ref())
@@ -883,12 +885,12 @@ mod bug_monitor_triage_spec_tests {
                     .enforcement
                     .as_ref()
                     .and_then(|row| row.validation_profile.as_deref()),
-                Some("artifact_only")
+                Some("local_research")
             );
-            assert!(contract
-                .enforcement
-                .as_ref()
-                .is_some_and(|row| { !row.required_tools.iter().any(|tool| tool == "read") }));
+            assert!(contract.enforcement.as_ref().is_some_and(|row| {
+                row.required_tools.iter().any(|tool| tool == "read")
+                    && row.session_text_recovery.as_deref() == Some("require_prewrite_satisfied")
+            }));
         }
     }
 
