@@ -24,13 +24,15 @@ fn bug_monitor_triage_output_contract(
         enforcement: Some(crate::AutomationOutputEnforcement {
             validation_profile: Some(validation_profile.to_string()),
             required_tools: if require_local_source_reads {
-                vec![
-                    "read".to_string(),
-                    "codesearch".to_string(),
-                    "glob".to_string(),
-                ]
+                vec!["read", "codesearch", "glob"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
             } else {
-                Vec::new()
+                vec!["codesearch", "glob"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
             },
             required_tool_calls: Vec::new(),
             required_evidence: if require_local_source_reads {
