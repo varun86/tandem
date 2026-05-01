@@ -13,11 +13,16 @@ fn bug_monitor_triage_output_contract(
     summary_guidance: &str,
     require_local_source_reads: bool,
 ) -> crate::AutomationFlowOutputContract {
+    let validation_profile = if artifact_type == "bug_monitor_inspection" {
+        "artifact_only"
+    } else {
+        "local_research"
+    };
     crate::AutomationFlowOutputContract {
         kind: "structured_json".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
         enforcement: Some(crate::AutomationOutputEnforcement {
-            validation_profile: Some("local_research".to_string()),
+            validation_profile: Some(validation_profile.to_string()),
             required_tools: if require_local_source_reads {
                 vec![
                     "read".to_string(),
@@ -177,7 +182,7 @@ pub(crate) fn bug_monitor_triage_spec(
                 bug_monitor_triage_node(
                     "inspect_failure_report",
                     "bug_monitor_triage_agent",
-                    "Inspect the failure report, extract concrete search terms, then use fast local repo search/read tools to identify the affected files, functions, modules, and evidence lines before writing the inspection artifact",
+                    "Analyze the failure report, extract concrete search terms, then use fast local repo discovery to identify affected files, functions, modules, and evidence lines before writing the inspection artifact",
                     Vec::new(),
                     240_000,
                     ".tandem/artifacts/bug_monitor.inspection.json",
@@ -652,7 +657,7 @@ mod bug_monitor_triage_spec_tests {
         assert_eq!(spec.flow.nodes[1].timeout_ms, Some(600_000));
         assert!(spec.flow.nodes[0]
             .objective
-            .contains("fast local repo search/read tools"));
+            .contains("local repo discovery"));
         assert!(spec.flow.nodes[3]
             .objective
             .contains("specific file references"));
