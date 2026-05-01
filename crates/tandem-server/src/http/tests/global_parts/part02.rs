@@ -1969,6 +1969,12 @@ async fn automations_v2_run_recover_uses_runtime_context_missing_failure_detail(
         recovered.detail.as_deref(),
         Some("recover runtime context failure")
     );
+    assert!(!recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "runtime_context"));
+    assert!(recovered.checkpoint.last_failure.is_none());
 }
 
 #[tokio::test]

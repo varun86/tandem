@@ -1796,6 +1796,9 @@ pub(super) async fn automations_v2_run_recover(
             ),
         ));
     };
+    let runtime_context_failure = current.status == AutomationRunStatus::Failed
+        && current.detail.as_deref()
+            == Some("runtime context partition missing for automation run");
     let reset_nodes = if current.status == AutomationRunStatus::Failed {
         let Some(failure_node_id) = automation_v2_recoverable_failure_node_id(&current) else {
             return Err((
@@ -1828,6 +1831,16 @@ pub(super) async fn automations_v2_run_recover(
     } else {
         std::collections::HashSet::new()
     };
+    let reset_nodes = reset_nodes
+        .into_iter()
+        .filter(|node_id| {
+            automation
+                .flow
+                .nodes
+                .iter()
+                .any(|node| node.node_id == *node_id)
+        })
+        .collect::<std::collections::HashSet<_>>();
     let reason = if current.status == AutomationRunStatus::Paused {
         reason_or_default(input.reason, "recovered from paused state by operator")
     } else {
@@ -1871,6 +1884,8 @@ pub(super) async fn automations_v2_run_recover(
                 pending.sort();
                 pending.dedup();
                 run.checkpoint.pending_nodes = pending;
+                run.checkpoint.last_failure = None;
+            } else if runtime_context_failure {
                 run.checkpoint.last_failure = None;
             }
             crate::record_automation_lifecycle_event(
