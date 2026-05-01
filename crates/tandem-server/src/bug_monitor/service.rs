@@ -194,9 +194,9 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
             continue;
         };
 
-        if let Some(incident_id) =
-            bug_monitor_incident_for_draft(state, &current_draft.draft_id, &triage_run_id).await
-        {
+        let incident_id =
+            bug_monitor_incident_for_draft(state, &current_draft.draft_id, &triage_run_id).await;
+        if let Some(incident_id) = incident_id.as_deref() {
             if let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await {
                 incident.status = "triage_timed_out".to_string();
                 incident.last_error = Some(last_post_error.clone());
@@ -220,10 +220,109 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
             }
         }
 
-        recovered.push((current_draft.draft_id.clone(), Some(triage_run_id)));
+        recovered.push((current_draft.draft_id.clone(), incident_id));
     }
 
     Ok(recovered)
+}
+
+async fn recover_stale_bug_monitor_triage_event(
+    state: &AppState,
+    event: &EngineEvent,
+) -> anyhow::Result<Option<BugMonitorIncidentRecord>> {
+    if event.event_type != "automation_v2.run.paused_stale_no_provider_activity" {
+        return Ok(None);
+    }
+    let Some(triage_run_id) = first_string_deep(&event.properties, &["run_id", "runID"]) else {
+        return Ok(None);
+    };
+    let Some(draft) = ({
+        let guard = state.bug_monitor_drafts.read().await;
+        guard
+            .values()
+            .find(|draft| draft.triage_run_id.as_deref() == Some(triage_run_id.as_str()))
+            .cloned()
+    }) else {
+        return Ok(None);
+    };
+    if draft.issue_number.is_some() || draft.github_issue_url.is_some() {
+        return Ok(None);
+    }
+
+    let timeout_ms = state
+        .bug_monitor_config()
+        .await
+        .triage_timeout_ms
+        .or_else(|| first_u64(&event.properties, &["stale_after_ms", "staleAfterMs"]))
+        .unwrap_or_default();
+    let diagnostics_value = crate::http::bug_monitor::bug_monitor_triage_timeout_diagnostics(
+        state,
+        &triage_run_id,
+        timeout_ms,
+    )
+    .await;
+    let last_post_error = compose_triage_timeout_last_post_error(
+        &triage_run_id,
+        timeout_ms,
+        diagnostics_value.as_ref(),
+    );
+    let Some(current_draft) = state
+        .try_mark_triage_timed_out(&draft.draft_id, last_post_error.clone())
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    let incident_id =
+        bug_monitor_incident_for_draft(state, &current_draft.draft_id, &triage_run_id).await;
+    let Some(incident_id) = incident_id else {
+        return Ok(None);
+    };
+    let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await else {
+        return Ok(None);
+    };
+    let now = now_ms();
+    incident.status = "triage_timed_out".to_string();
+    incident.last_error = Some(last_post_error.clone());
+    incident.updated_at_ms = now;
+    state.put_bug_monitor_incident(incident.clone()).await?;
+
+    let mut event_payload = serde_json::json!({
+        "incident_id": incident.incident_id,
+        "draft_id": current_draft.draft_id,
+        "triage_run_id": triage_run_id,
+        "timeout_ms": timeout_ms,
+        "reason": "bug monitor triage automation paused after no provider activity",
+    });
+    if let Some(diagnostics) = diagnostics_value.as_ref() {
+        if let Some(obj) = event_payload.as_object_mut() {
+            obj.insert("diagnostics".to_string(), diagnostics.clone());
+        }
+    }
+    state.event_bus.publish(EngineEvent::new(
+        "bug_monitor.incident.triage_timed_out",
+        event_payload,
+    ));
+
+    match crate::bug_monitor_github::publish_draft(
+        state,
+        &current_draft.draft_id,
+        Some(&incident.incident_id),
+        crate::bug_monitor_github::PublishMode::Recovery,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            incident.status = outcome.action;
+            incident.last_error = None;
+        }
+        Err(error) => {
+            incident.last_error = Some(truncate_text(&error.to_string(), 500));
+        }
+    }
+    incident.updated_at_ms = now_ms();
+    state.put_bug_monitor_incident(incident.clone()).await?;
+    Ok(Some(incident))
 }
 
 pub async fn collect_bug_monitor_excerpt(state: &AppState, properties: &Value) -> Vec<String> {
@@ -389,6 +488,9 @@ pub async fn process_event(
     config: &BugMonitorConfig,
 ) -> anyhow::Result<BugMonitorIncidentRecord> {
     if let Some(reason) = recursive_triage_skip_reason(event) {
+        if let Some(incident) = recover_stale_bug_monitor_triage_event(state, event).await? {
+            return Ok(incident);
+        }
         // Don't queue a new triage workflow for a failure that came
         // from the bug monitor's own triage workflow. Otherwise a
         // single triage failure spawns a triage-of-triage, which can
