@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Evidence caps over raw payload dumps**: `build_issue_body` now enforces bounded rendering budgets for logs, evidence refs, tool evidence rows, and quality-gate fields in fallback GitHub issue drafts, while preserving full evidence in incident/draft artifacts for detailed investigation.
 - **Bug Monitor triage now requires repo evidence**: Triage node objectives and output guidance now require a local repository evidence pass using fast `codesearch`, `grep`, `glob`, and `read` tools, and artifacts must carry searched terms, files examined, file references, likely edit points, affected components, tool evidence, uncertainty, and bounded next steps where available.
+- **Completed Bug Monitor triage now finalizes automatically**: Completed Automation V2-backed triage runs now synthesize the triage summary, regenerate the issue draft, and retry the normal GitHub publish path instead of leaving drafts stuck at `triage_pending`.
 - **Stale MCP server names are no longer fatal by default**: Automation V2 treats renamed or missing policy-selected MCP server names as stale configuration warnings, expands discovery to currently enabled servers, and lets the agent inspect actual available tools through `mcp_list`. Existing disconnected or disabled servers still fail fast as real connector readiness problems.
 - **Bug Monitor triage artifacts are run-scoped**: Triage output paths now use `.tandem/artifacts/...`, which the Automation V2 resolver scopes into `.tandem/runs/<run_id>/artifacts/...` instead of writing root-level `artifacts/` files.
 
@@ -25,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reduced empty/opaque fallback issue posts**: Bug Monitor posts now avoid near-empty bodies in retry/timeouts by including structured sections from existing `BugMonitorDraftRecord` and `BugMonitorIncidentRecord` fields (including logs, evidence refs, run/session/correlation metadata, and triage status), helping reviewers triage incidents without needing external reconstruction.
 - **Bug Monitor triage no longer sits forever in context-run planning**: Triage now has a real executor behind it, and timeout diagnostics understand both new Automation V2-backed triage runs and legacy context-run triage IDs.
 - **Bug Monitor triage agents can write required artifacts without editing source**: The triage tool policy now allows `write` for declared run artifacts while continuing to deny source-editing tools such as `edit` and `apply_patch`.
+- **Automation V2 tool denylist is enforced**: Node tool policies now remove denylisted tools after allowlist expansion, preventing read/research triage nodes from being offered source-editing tools that the workflow explicitly blocked.
+- **Automation V2 metadata artifacts are writable**: Node `metadata.artifacts` now feed the session write policy, matching the prompt contract that treats those paths as outputs to create instead of blocking writes with “no declared output targets.”
 - **Guardrail for mis-scoped artifacts**: Root-level `/artifacts/` is ignored as a safety net for any future mis-scoped automation output, while the runtime path fix sends Bug Monitor artifacts to `.tandem`.
 
 ### Added

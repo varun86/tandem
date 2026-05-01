@@ -1555,7 +1555,11 @@ pub(crate) fn automation_node_must_write_files_for_automation(
 ) -> Vec<String> {
     let read_only_names =
         enforcement::automation_read_only_source_of_truth_name_variants_for_automation(automation);
-    let mut files = automation_node_must_write_files(node)
+    let mut declared_files = automation_node_must_write_files(node);
+    declared_files.extend(
+        super::prompting_impl::automation_node_declared_artifacts_to_create(node, runtime_values),
+    );
+    let mut files = declared_files
         .into_iter()
         .map(|path| automation_runtime_placeholder_replace(&path, runtime_values))
         .filter(|path| {

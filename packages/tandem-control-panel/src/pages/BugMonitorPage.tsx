@@ -201,6 +201,48 @@ function linkHref(value: string): string | undefined {
   return /^https?:\/\//i.test(value) ? value : undefined;
 }
 
+function githubRepoIssueUrl(record: AnyRecord): string {
+  const explicit = firstString(record, ["github_issue_url", "issue_url"]);
+  if (explicit) return explicit;
+  const repo = firstString(record, ["repo"]);
+  const issueNumber = firstString(record, ["issue_number", "matched_issue_number"]);
+  if (/^[^/\s]+\/[^/\s]+$/.test(repo) && /^\d+$/.test(issueNumber)) {
+    return `https://github.com/${repo}/issues/${issueNumber}`;
+  }
+  return "";
+}
+
+function githubCommentUrl(record: AnyRecord): string {
+  return firstString(record, ["github_comment_url", "comment_url"]);
+}
+
+function githubIssueLabel(record: AnyRecord): string {
+  const issueNumber = firstString(record, ["issue_number", "matched_issue_number"]);
+  return issueNumber ? `Issue #${issueNumber}` : "GitHub issue";
+}
+
+function GitHubLinks({ record }: { record: AnyRecord }) {
+  const issueUrl = githubRepoIssueUrl(record);
+  const commentUrl = githubCommentUrl(record);
+  if (!issueUrl && !commentUrl) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {issueUrl ? (
+        <a className="tcp-btn h-8 px-3 text-xs" href={issueUrl} target="_blank" rel="noreferrer">
+          <i data-lucide="external-link"></i>
+          {githubIssueLabel(record)}
+        </a>
+      ) : null}
+      {commentUrl ? (
+        <a className="tcp-btn h-8 px-3 text-xs" href={commentUrl} target="_blank" rel="noreferrer">
+          <i data-lucide="message-square"></i>
+          GitHub comment
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function evidenceValues(record: AnyRecord): string[] {
   const evidence = [
     ...collectValues(record, [
@@ -301,8 +343,8 @@ function SignalLifecyclePanel({
 }) {
   const artifacts = lifecycleArtifactValues(record);
   const memory = memoryValues(record);
-  const issueUrl = firstString(record, ["github_issue_url", "issue_url"]);
-  const commentUrl = firstString(record, ["github_comment_url", "comment_url"]);
+  const issueUrl = githubRepoIssueUrl(record);
+  const commentUrl = githubCommentUrl(record);
   const publishedUrl = issueUrl || commentUrl;
   const coderReadyGate = asRecord(record.coder_ready_gate);
   const qualityGate = asRecord(record.quality_gate);
@@ -360,7 +402,9 @@ function SignalLifecyclePanel({
     {
       label: "Published",
       value: shortValue(
-        publishedUrl || firstString(record, ["issue_number", "comment_id", "github_post_id"])
+        firstString(record, ["issue_number"])
+          ? githubIssueLabel(record)
+          : publishedUrl || firstString(record, ["comment_id", "github_post_id"])
       ),
       tone: publishedUrl || record.issue_number ? "ok" : "ghost",
       href: publishedUrl ? linkHref(publishedUrl) : undefined,
@@ -408,6 +452,7 @@ function SignalLifecyclePanel({
           </div>
         ))}
       </div>
+      <GitHubLinks record={record} />
     </div>
   );
 }
@@ -1443,6 +1488,8 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
               {pagedDrafts.map((draft, index) => {
                 const draftId = draftIdOf(draft, draftPageStart + index);
                 const matchedIssue = firstString(draft, ["matched_issue_number", "issue_number"]);
+                const draftIssueUrl = githubRepoIssueUrl(draft);
+                const draftCommentUrl = githubCommentUrl(draft);
                 const confidence = firstString(draft, ["confidence", "match_confidence"]);
                 const checked = selectedDraftSet.has(draftId);
                 return (
@@ -1582,15 +1629,26 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
                         <i data-lucide="refresh-cw"></i>
                         Recheck match
                       </button>
-                      {draft.github_issue_url ? (
+                      {draftIssueUrl ? (
                         <a
                           className="tcp-btn h-8 px-3 text-xs"
-                          href={String(draft.github_issue_url)}
+                          href={draftIssueUrl}
                           target="_blank"
                           rel="noreferrer"
                         >
                           <i data-lucide="external-link"></i>
-                          GitHub
+                          {githubIssueLabel(draft)}
+                        </a>
+                      ) : null}
+                      {draftCommentUrl ? (
+                        <a
+                          className="tcp-btn h-8 px-3 text-xs"
+                          href={draftCommentUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <i data-lucide="message-square"></i>
+                          GitHub comment
                         </a>
                       ) : null}
                       <button
@@ -1720,12 +1778,8 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
             <div className="grid gap-3">
               {pagedPosts.map((post, index) => {
                 const postId = postIdOf(post, postPageStart + index);
-                const url = firstString(post, [
-                  "issue_url",
-                  "github_issue_url",
-                  "comment_url",
-                  "github_comment_url",
-                ]);
+                const issueUrl = githubRepoIssueUrl(post);
+                const commentUrl = githubCommentUrl(post);
                 const checked = selectedPostSet.has(postId);
                 return (
                   <div key={postId} className="tcp-list-item">
@@ -1774,15 +1828,26 @@ export function BugMonitorPage({ client, toast }: AppPageProps) {
                       </div>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {url ? (
+                      {issueUrl ? (
                         <a
                           className="tcp-btn h-8 px-3 text-xs"
-                          href={url}
+                          href={issueUrl}
                           target="_blank"
                           rel="noreferrer"
                         >
                           <i data-lucide="external-link"></i>
-                          Open GitHub
+                          {githubIssueLabel(post)}
+                        </a>
+                      ) : null}
+                      {commentUrl ? (
+                        <a
+                          className="tcp-btn h-8 px-3 text-xs"
+                          href={commentUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <i data-lucide="message-square"></i>
+                          GitHub comment
                         </a>
                       ) : null}
                       <button

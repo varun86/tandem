@@ -1141,6 +1141,35 @@ fn automation_output_targets_fill_in_final_node_workspace_writes() {
 }
 
 #[test]
+fn metadata_artifacts_are_allowed_workspace_write_targets() {
+    let mut node = bare_node();
+    node.node_id = "generate_report".to_string();
+    node.objective = "Write article-thesis.md, blog-draft.md, and blog-package.md.".to_string();
+    node.metadata = Some(json!({
+        "artifacts": [
+            "article-thesis.md",
+            "blog-draft.md",
+            "blog-package.md"
+        ]
+    }));
+    let automation = automation_with_output_targets(vec![node.clone()], Vec::new());
+
+    let must_write_files = automation_node_must_write_files_for_automation(
+        &automation,
+        &node,
+        Some(&runtime_values("2026-04-09", "1304", "2026-04-09 13:04")),
+    );
+
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "article-thesis.md"));
+    assert!(must_write_files.iter().any(|path| path == "blog-draft.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "blog-package.md"));
+}
+
+#[test]
 fn run_cleanup_paths_exclude_live_automation_output_targets() {
     let mut node = bare_node();
     node.node_id = "read_contracts".to_string();

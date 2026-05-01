@@ -137,6 +137,23 @@ pub async fn recover_overdue_bug_monitor_triage_runs(
         {
             continue;
         }
+        match crate::http::bug_monitor::finalize_completed_bug_monitor_triage(
+            state,
+            &draft.draft_id,
+        )
+        .await
+        {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    draft_id = %draft.draft_id,
+                    triage_run_id = %triage_run_id,
+                    error = %error,
+                    "failed to finalize completed Bug Monitor triage during recovery scan",
+                );
+            }
+        }
 
         let run_created_at_ms =
             crate::http::bug_monitor::bug_monitor_triage_effective_started_at_ms(
@@ -1193,8 +1210,8 @@ mod tests {
         let event = event_with(json!({
             "agent_role": "bug_monitor_triage_agent",
         }));
-        let reason = recursive_triage_skip_reason(&event)
-            .expect("triage agent_role should trigger skip");
+        let reason =
+            recursive_triage_skip_reason(&event).expect("triage agent_role should trigger skip");
         assert!(reason.contains("bug_monitor_triage_agent"));
     }
 

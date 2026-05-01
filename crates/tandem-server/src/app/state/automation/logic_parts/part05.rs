@@ -1422,6 +1422,19 @@ pub(crate) async fn execute_automation_v2_node(
         requested_tools
             .retain(|tool| !automation_source_mutating_tool_is_blocked_for_read_only_node(tool));
     }
+    let denied_tools =
+        config::channels::normalize_allowed_tools(agent.tool_policy.denylist.clone());
+    if !denied_tools.is_empty() {
+        requested_tools.retain(|tool| {
+            !denied_tools.iter().any(|denied| {
+                denied == "*"
+                    || denied == tool
+                    || denied
+                        .strip_suffix('*')
+                        .is_some_and(|prefix| tool.starts_with(prefix))
+            })
+        });
+    }
     requested_tools.sort();
     requested_tools.dedup();
     let has_selected_mcp_servers_policy =

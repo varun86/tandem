@@ -15,7 +15,24 @@ fn bug_monitor_triage_output_contract(
     crate::AutomationFlowOutputContract {
         kind: "structured_json".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
-        enforcement: None,
+        enforcement: Some(crate::AutomationOutputEnforcement {
+            validation_profile: Some("local_research".to_string()),
+            required_tools: vec!["read".to_string()],
+            required_tool_calls: Vec::new(),
+            required_evidence: vec!["local_source_reads".to_string()],
+            required_sections: Vec::new(),
+            prewrite_gates: vec!["concrete_reads".to_string()],
+            retry_on_missing: vec![
+                "no_concrete_reads".to_string(),
+                "local_source_reads".to_string(),
+            ],
+            terminal_on: vec![
+                "no_concrete_reads".to_string(),
+                "local_source_reads".to_string(),
+            ],
+            repair_budget: Some(1),
+            session_text_recovery: Some("allow".to_string()),
+        }),
         schema: None,
         summary_guidance: Some(summary_guidance.to_string()),
     }
@@ -249,6 +266,125 @@ pub(crate) async fn bug_monitor_triage_run_is_terminal(state: &AppState, run_id:
     }
 }
 
+pub(crate) async fn finalize_completed_bug_monitor_triage(
+    state: &AppState,
+    draft_id: &str,
+) -> anyhow::Result<bool> {
+    let Some(draft) = state.get_bug_monitor_draft(draft_id).await else {
+        return Ok(false);
+    };
+    if draft.github_issue_url.is_some() || draft.issue_number.is_some() {
+        return Ok(false);
+    }
+    let Some(triage_run_id) = draft.triage_run_id.clone() else {
+        return Ok(false);
+    };
+    let Some(automation_run_id) = bug_monitor_automation_run_id_from_triage_run_id(&triage_run_id)
+    else {
+        return Ok(false);
+    };
+    let Some(run) = state.get_automation_v2_run(&automation_run_id).await else {
+        return Ok(false);
+    };
+    if !matches!(run.status, crate::AutomationRunStatus::Completed) {
+        return Ok(false);
+    }
+
+    let incident_id = bug_monitor_incident_id_for_draft(state, draft_id, &triage_run_id).await;
+    if load_bug_monitor_triage_summary_artifact(state, &triage_run_id)
+        .await
+        .is_none()
+    {
+        let response = create_bug_monitor_triage_summary(
+            State(state.clone()),
+            Path(draft_id.to_string()),
+            Json(BugMonitorTriageSummaryInput::default()),
+        )
+        .await;
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Bug Monitor triage summary finalization failed with HTTP {}",
+                response.status()
+            );
+        }
+    } else if load_bug_monitor_issue_draft_artifact(state, &triage_run_id)
+        .await
+        .is_none()
+    {
+        ensure_bug_monitor_issue_draft(state.clone(), draft_id, true).await?;
+    }
+
+    match bug_monitor_github::publish_draft(
+        state,
+        draft_id,
+        incident_id.as_deref(),
+        bug_monitor_github::PublishMode::Auto,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            if let Some(incident_id) = incident_id {
+                if let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await {
+                    incident.status = outcome.action.clone();
+                    incident.last_error = None;
+                    incident.updated_at_ms = crate::now_ms();
+                    let _ = state.put_bug_monitor_incident(incident).await;
+                }
+            }
+            Ok(true)
+        }
+        Err(error) => {
+            let detail = crate::truncate_text(&error.to_string(), 500);
+            if let Some(mut draft) = state.get_bug_monitor_draft(draft_id).await {
+                draft.status = "github_post_failed".to_string();
+                draft.github_status = Some("github_post_failed".to_string());
+                draft.last_post_error = Some(detail.clone());
+                let _ = state.put_bug_monitor_draft(draft.clone()).await;
+                if let Err(record_err) = bug_monitor_github::record_post_failure(
+                    state,
+                    &draft,
+                    incident_id.as_deref(),
+                    "triage_finalization",
+                    draft.evidence_digest.as_deref(),
+                    &detail,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        draft_id = %draft_id,
+                        error = %record_err,
+                        "failed to record Bug Monitor triage finalization post failure",
+                    );
+                }
+            }
+            if let Some(incident_id) = incident_id {
+                if let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await {
+                    incident.status = "github_post_failed".to_string();
+                    incident.last_error = Some(detail);
+                    incident.updated_at_ms = crate::now_ms();
+                    let _ = state.put_bug_monitor_incident(incident).await;
+                }
+            }
+            Ok(true)
+        }
+    }
+}
+
+async fn bug_monitor_incident_id_for_draft(
+    state: &AppState,
+    draft_id: &str,
+    triage_run_id: &str,
+) -> Option<String> {
+    let incidents = state.bug_monitor_incidents.read().await;
+    incidents
+        .values()
+        .find(|incident| {
+            incident.draft_id.as_deref() == Some(draft_id)
+                || incident.triage_run_id.as_deref() == Some(triage_run_id)
+        })
+        .map(|incident| incident.incident_id.clone())
+}
+
 pub(crate) async fn bug_monitor_triage_timeout_diagnostics(
     state: &AppState,
     run_id: &str,
@@ -377,6 +513,18 @@ mod bug_monitor_triage_spec_tests {
                 .and_then(|contract| contract.validator)
                 == Some(crate::AutomationOutputValidatorKind::StructuredJson)
         }));
+        assert!(spec.flow.nodes.iter().all(|node| node
+            .output_contract
+            .as_ref()
+            .and_then(|contract| contract.enforcement.as_ref())
+            .is_some_and(|enforcement| enforcement
+                .required_tools
+                .iter()
+                .any(|tool| tool == "read")
+                && enforcement
+                    .required_evidence
+                    .iter()
+                    .any(|item| item == "local_source_reads"))));
         assert!(spec.flow.nodes.iter().all(|node| node
             .output_contract
             .as_ref()

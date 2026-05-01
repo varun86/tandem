@@ -62,5 +62,27 @@ async fn sync_bug_monitor_automation_node_artifact(
         &payload,
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if artifact_type == "bug_monitor_fix_proposal" {
+        if let Some(draft_id) = automation
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("draft_id"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            if let Err(error) =
+                crate::http::bug_monitor::finalize_completed_bug_monitor_triage(state, draft_id)
+                    .await
+            {
+                tracing::warn!(
+                    draft_id = %draft_id,
+                    run_id = %run.run_id,
+                    error = %error,
+                    "failed to finalize completed Bug Monitor triage after artifact sync",
+                );
+            }
+        }
+    }
+    Ok(())
 }
