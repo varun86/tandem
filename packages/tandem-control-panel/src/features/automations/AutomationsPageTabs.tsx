@@ -74,13 +74,20 @@ export function AutomationsPageTabs({
     { id: "running", label: "Run History", icon: "history" },
   ];
 
+  const selectTab = (nextTab: ActiveTab) => {
+    if (nextTab !== "running") {
+      setSelectedRunId("");
+    }
+    setTab(nextTab);
+  };
+
   return (
     <div className="flex flex-col h-full gap-4">
       <div className="flex gap-1 rounded-xl border border-slate-700/50 bg-slate-900/40 p-1">
         {tabs.map((entry) => (
           <button
             key={entry.id}
-            onClick={() => setTab(entry.id)}
+            onClick={() => selectTab(entry.id)}
             disabled={navigationLocked}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
               tab === entry.id

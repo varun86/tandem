@@ -34,7 +34,7 @@ function looksLikeHtmlDocument(text: string) {
 }
 
 function isTransientGatewayFailure(status: number, text: string, contentType: string) {
-  if ([502, 503, 504].includes(status)) return true;
+  if ([502, 503, 504, 524].includes(status)) return true;
   const lowered = text.toLowerCase();
   return (
     contentType.includes("text/html") ||
@@ -49,7 +49,7 @@ function isTransientGatewayFailure(status: number, text: string, contentType: st
 function describeTransientEngineFailure(status: number) {
   if (status === 503)
     return "Engine is restarting or temporarily unavailable. Reconnecting shortly.";
-  if (status === 504)
+  if (status === 504 || status === 524)
     return "Engine is taking too long to respond while restarting. Reconnecting shortly.";
   return "Engine is temporarily unavailable while restarting. Reconnecting shortly.";
 }

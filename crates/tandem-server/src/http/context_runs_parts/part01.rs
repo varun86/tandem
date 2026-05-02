@@ -5,7 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -794,7 +794,33 @@ pub(super) async fn list_context_runs_for_workspace(
     let normalized_workspace =
         tandem_core::normalize_workspace_path(workspace).ok_or(StatusCode::BAD_REQUEST)?;
     let mut rows = Vec::<ContextRunState>::new();
-    let mut seen = std::collections::HashSet::<String>::new();
+    let limit = limit.clamp(1, 1000);
+    for candidate in list_context_run_state_candidates(state).await? {
+        if let Ok(run) = load_context_run_state(state, &candidate.run_id).await {
+            if run.workspace.canonical_path.trim() == normalized_workspace {
+                rows.push(run);
+                if rows.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    rows.truncate(limit);
+    Ok(rows)
+}
+
+#[derive(Debug)]
+struct ContextRunStateCandidate {
+    run_id: String,
+    modified_at_ms: u128,
+}
+
+async fn list_context_run_state_candidates(
+    state: &AppState,
+) -> Result<Vec<ContextRunStateCandidate>, StatusCode> {
+    let mut candidates = Vec::<ContextRunStateCandidate>::new();
+    let mut seen = HashSet::<String>::new();
     for root in [context_runs_root(state), legacy_context_runs_root(state)] {
         if !root.exists() {
             continue;
@@ -815,16 +841,29 @@ pub(super) async fn list_context_runs_for_workspace(
             if !seen.insert(run_id.clone()) {
                 continue;
             }
-            if let Ok(run) = load_context_run_state(state, &run_id).await {
-                if run.workspace.canonical_path.trim() == normalized_workspace {
-                    rows.push(run);
-                }
-            }
+            let state_path = entry.path().join("run_state.json");
+            let modified_at_ms = match tokio::fs::metadata(state_path).await {
+                Ok(metadata) => metadata
+                    .modified()
+                    .ok()
+                    .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_millis())
+                    .unwrap_or(0),
+                Err(_) => 0,
+            };
+            candidates.push(ContextRunStateCandidate {
+                run_id,
+                modified_at_ms,
+            });
         }
     }
-    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
-    rows.truncate(limit.clamp(1, 1000));
-    Ok(rows)
+    candidates.sort_by(|left, right| {
+        right
+            .modified_at_ms
+            .cmp(&left.modified_at_ms)
+            .then_with(|| right.run_id.cmp(&left.run_id))
+    });
+    Ok(candidates)
 }
 
 pub(super) fn load_context_blackboard(state: &AppState, run_id: &str) -> ContextBlackboardState {
@@ -1494,39 +1533,21 @@ pub(super) async fn context_run_list(
         .filter(|v| !v.is_empty());
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let mut rows = Vec::<ContextRunState>::new();
-    let mut seen = std::collections::HashSet::<String>::new();
-    for root in [context_runs_root(&state), legacy_context_runs_root(&state)] {
-        if !root.exists() {
-            continue;
-        }
-        let mut dir = tokio::fs::read_dir(root)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        while let Ok(Some(entry)) = dir.next_entry().await {
-            if !entry
-                .file_type()
-                .await
-                .map(|kind| kind.is_dir())
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            let run_id = entry.file_name().to_string_lossy().to_string();
-            if !seen.insert(run_id.clone()) {
-                continue;
-            }
-            if let Ok(run) = load_context_run_state(&state, &run_id).await {
-                if let Some(workspace) = workspace_filter.as_deref() {
-                    if run.workspace.canonical_path.trim() != workspace {
-                        continue;
-                    }
+    for candidate in list_context_run_state_candidates(&state).await? {
+        if let Ok(run) = load_context_run_state(&state, &candidate.run_id).await {
+            if let Some(workspace) = workspace_filter.as_deref() {
+                if run.workspace.canonical_path.trim() != workspace {
+                    continue;
                 }
-                if let Some(run_type) = run_type_filter.as_deref() {
-                    if run.run_type.trim().to_ascii_lowercase() != run_type {
-                        continue;
-                    }
+            }
+            if let Some(run_type) = run_type_filter.as_deref() {
+                if run.run_type.trim().to_ascii_lowercase() != run_type {
+                    continue;
                 }
-                rows.push(run);
+            }
+            rows.push(run);
+            if rows.len() >= limit {
+                break;
             }
         }
     }

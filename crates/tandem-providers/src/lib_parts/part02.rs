@@ -700,44 +700,49 @@ impl Provider for OpenAIResponsesProvider {
                 while let Some(pos) = buffer.find("\n\n") {
                     let frame = buffer[..pos].to_string();
                     buffer = buffer[pos + 2..].to_string();
-                    for line in frame.lines() {
-                        if !line.starts_with("data: ") {
-                            continue;
-                        }
-                        let payload = line.trim_start_matches("data: ").trim();
-                        if payload == "[DONE]" {
-                            if !saw_completion {
-                                for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
-                                    if ended_tool_calls.insert(call_id.clone()) {
-                                        yield StreamChunk::ToolCallEnd { id: call_id };
-                                    }
+                    let Some((event_header, payload)) = parse_sse_event_frame(&frame) else {
+                        continue;
+                    };
+                    if payload.trim() == "[DONE]" {
+                        if !saw_completion {
+                            for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
+                                if ended_tool_calls.insert(call_id.clone()) {
+                                    yield StreamChunk::ToolCallEnd { id: call_id };
                                 }
-                                yield StreamChunk::Done {
-                                    finish_reason: if saw_tool_calls {
-                                        "toolUse".to_string()
-                                    } else {
-                                        "stop".to_string()
-                                    },
-                                    usage: None,
-                                };
-                                saw_completion = true;
                             }
-                            continue;
+                            yield StreamChunk::Done {
+                                finish_reason: if saw_tool_calls {
+                                    "toolUse".to_string()
+                                } else {
+                                    "stop".to_string()
+                                },
+                                usage: None,
+                            };
+                            saw_completion = true;
                         }
+                        continue;
+                    }
 
-                        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
-                            continue;
-                        };
-
-                        if let Some(detail) = extract_openai_error(&value) {
-                            Err(anyhow::anyhow!(detail))?;
+                    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload) else {
+                        continue;
+                    };
+                    if let Some(event_type) = event_header {
+                        if value.get("type").and_then(|v| v.as_str()).is_none() {
+                            if let Some(obj) = value.as_object_mut() {
+                                obj.insert("type".to_string(), serde_json::Value::String(event_type));
+                            }
                         }
+                    }
 
-                        let event_type = value
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default();
-                        match event_type {
+                    if let Some(detail) = extract_openai_error(&value) {
+                        Err(anyhow::anyhow!(detail))?;
+                    }
+
+                    let event_type = value
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    match event_type {
                             "response.output_item.added" => {
                                 if let Some(item) = value.get("item").and_then(|v| v.as_object()) {
                                     let item_type = item
@@ -1101,7 +1106,6 @@ impl Provider for OpenAIResponsesProvider {
                                 Err(anyhow::anyhow!(detail))?;
                             }
                             _ => {}
-                        }
                     }
                 }
             }

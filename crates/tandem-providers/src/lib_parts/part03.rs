@@ -254,6 +254,31 @@ fn normalize_plain_base(input: &str) -> String {
     input.trim_end_matches('/').to_string()
 }
 
+fn parse_sse_event_frame(frame: &str) -> Option<(Option<String>, String)> {
+    let mut event_type: Option<String> = None;
+    let mut data_lines: Vec<String> = Vec::new();
+
+    for raw_line in frame.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if let Some(value) = line.strip_prefix("event:") {
+            let value = value.trim();
+            if !value.is_empty() {
+                event_type = Some(value.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("data:") {
+            data_lines.push(value.trim_start().to_string());
+        }
+    }
+
+    if data_lines.is_empty() {
+        return None;
+    }
+
+    Some((event_type, data_lines.join("\n")))
+}
+
 fn truncate_for_error(input: &str, max_len: usize) -> String {
     if input.len() <= max_len {
         input.to_string()

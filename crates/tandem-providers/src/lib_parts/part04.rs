@@ -516,6 +516,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_codex_stream_accepts_sse_event_headers_without_json_type() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener address");
+        let (tx, rx) = oneshot::channel();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            let request = read_single_http_request(&mut socket).await;
+            let response_body = concat!(
+                "event: response.output_text.delta\n",
+                "data: {\"item_id\":\"msg_1\",\"delta\":\"Hello\"}\n\n",
+                "event: response.completed\n",
+                "data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":7,\"total_tokens\":12}}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.as_bytes().len(),
+                response_body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            socket.shutdown().await.expect("shutdown socket");
+            tx.send(request).expect("send request");
+        });
+
+        let provider = OpenAIResponsesProvider {
+            id: "openai-codex".to_string(),
+            name: "OpenAI Codex".to_string(),
+            base_url: format!("http://{}/codex", addr),
+            api_key: Some("codex-test-token".to_string()),
+            default_model: "gpt-5.4".to_string(),
+            models: codex_supported_models(272_000),
+            client: Client::new(),
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            attachments: Vec::new(),
+        }];
+        let cancel = CancellationToken::new();
+        let stream = provider
+            .stream(messages, None, ToolMode::Auto, None, cancel)
+            .await
+            .expect("stream");
+
+        let mut chunks = Vec::new();
+        futures::pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("stream chunk");
+            let is_done = matches!(chunk, StreamChunk::Done { .. });
+            chunks.push(chunk);
+            if is_done {
+                break;
+            }
+        }
+
+        let _ = rx.await.expect("request");
+        server.await.expect("server task");
+
+        let text_deltas = chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                StreamChunk::TextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(text_deltas, vec!["Hello"]);
+
+        let done = chunks
+            .iter()
+            .find_map(|chunk| match chunk {
+                StreamChunk::Done {
+                    finish_reason,
+                    usage,
+                } => Some((
+                    finish_reason.as_str(),
+                    usage.as_ref().map(|usage| usage.total_tokens),
+                )),
+                _ => None,
+            })
+            .expect("done chunk");
+        assert_eq!(done.0, "stop");
+        assert_eq!(done.1, Some(12));
+    }
+
+    #[tokio::test]
     async fn openai_codex_complete_recovers_when_responses_requires_streaming() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
