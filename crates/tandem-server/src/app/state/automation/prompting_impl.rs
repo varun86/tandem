@@ -718,6 +718,21 @@ pub(crate) fn render_automation_v2_prompt_with_options(
     {
         sections.push(concrete_source_coverage);
     }
+    if node.output_contract.is_some() {
+        let enforcement = super::enforcement::automation_node_output_enforcement(node);
+        let requires_local_source_reads = enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "local_source_reads")
+            || enforcement.validation_profile.as_deref() == Some("local_research");
+        let read_available = requested_tools.iter().any(|tool| tool == "read");
+        if requires_local_source_reads && read_available {
+            sections.push(
+                "Local Source Evidence Required:\n- Before the final response, call `codesearch`, `grep`, or `glob` with focused terms from the objective, payload, and upstream artifacts.\n- Then call `read` on at least one concrete workspace source file found by that search; discovery-only tools do not satisfy this node.\n- If search finds no obvious file, read the closest automation, Bug Monitor, workflow, provider, or artifact-handling source file and record why it was the closest match.\n- Populate `files_examined` and `file_references` only with concrete workspace paths you actually read or inspected.\n- Do not claim local repo inspection, source coverage, or file evidence if no workspace tool calls were made."
+                    .to_string(),
+            );
+        }
+    }
     let execution_mode = automation_node_execution_mode(node, workspace_root);
     let required_output_path = automation_node_required_output_path_with_runtime_for_run(
         node,

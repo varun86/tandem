@@ -192,14 +192,8 @@ pub async fn publish_draft(
     if config.paused && matches!(mode, PublishMode::Auto | PublishMode::Recovery) {
         anyhow::bail!("Bug Monitor is paused");
     }
-    if !status.readiness.runtime_ready && mode == PublishMode::Auto {
-        anyhow::bail!(
-            "{}",
-            status
-                .last_error
-                .clone()
-                .unwrap_or_else(|| "Bug Monitor is not ready for GitHub posting".to_string())
-        );
+    if !status.readiness.publish_ready && mode == PublishMode::Auto {
+        anyhow::bail!("{}", bug_monitor_publish_not_ready_reason(&status));
     }
     let mut draft = state
         .get_bug_monitor_draft(draft_id)
@@ -446,6 +440,20 @@ pub async fn publish_draft(
             .await
         }
     }
+}
+
+fn bug_monitor_publish_not_ready_reason(status: &crate::BugMonitorStatus) -> String {
+    if let Some(error) = status.last_error.as_ref() {
+        let model_only_not_ready = !status.readiness.selected_model_ready
+            && status.readiness.repo_valid
+            && status.readiness.mcp_connected
+            && status.readiness.github_read_ready
+            && status.readiness.github_write_ready;
+        if !model_only_not_ready {
+            return error.clone();
+        }
+    }
+    "Bug Monitor is not ready for GitHub posting".to_string()
 }
 
 async fn create_issue_from_draft(
@@ -838,7 +846,22 @@ fn failed_post_suppresses_create(
     post.repo == draft.repo
         && post.fingerprint == draft.fingerprint
         && post.status == "failed"
-        && matches!(post.operation.as_str(), "create_issue" | "auto_post")
+        && (post.operation == "create_issue"
+            || (post.operation == "auto_post" && !post_failure_is_preflight_only(post)))
+}
+
+fn post_failure_is_preflight_only(post: &BugMonitorPostRecord) -> bool {
+    let error = post
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    error.contains("not ready")
+        || error.contains("disabled")
+        || error.contains("paused")
+        || error.contains("provider/model")
+        || error.contains("selected mcp server")
+        || error.contains("target repo")
 }
 
 async fn latest_failed_create_post_for_draft(
@@ -1956,6 +1979,13 @@ mod tests {
             operation: "auto_post".to_string(),
             ..failed_create.clone()
         };
+        let failed_preflight_auto_post = BugMonitorPostRecord {
+            operation: "auto_post".to_string(),
+            error: Some(
+                "Selected provider/model is unavailable. Bug monitor is fail-closed.".to_string(),
+            ),
+            ..failed_create.clone()
+        };
         let failed_comment = BugMonitorPostRecord {
             operation: "comment".to_string(),
             ..failed_create.clone()
@@ -1971,12 +2001,41 @@ mod tests {
 
         assert!(failed_post_suppresses_create(&draft, &failed_create));
         assert!(failed_post_suppresses_create(&draft, &failed_auto_post));
+        assert!(!failed_post_suppresses_create(
+            &draft,
+            &failed_preflight_auto_post
+        ));
         assert!(!failed_post_suppresses_create(&draft, &failed_comment));
         assert!(!failed_post_suppresses_create(&draft, &posted_create));
         assert!(!failed_post_suppresses_create(
             &draft,
             &different_fingerprint
         ));
+    }
+
+    #[test]
+    fn publish_not_ready_reason_does_not_blame_model_when_github_is_ready() {
+        let status = crate::BugMonitorStatus {
+            last_error: Some(
+                "Selected provider/model is unavailable. Bug monitor is fail-closed.".to_string(),
+            ),
+            readiness: crate::BugMonitorReadiness {
+                repo_valid: true,
+                mcp_connected: true,
+                github_read_ready: true,
+                github_write_ready: true,
+                selected_model_ready: false,
+                publish_ready: true,
+                runtime_ready: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            bug_monitor_publish_not_ready_reason(&status),
+            "Bug Monitor is not ready for GitHub posting"
+        );
     }
 
     fn make_incident_with_excerpt_and_last_error(

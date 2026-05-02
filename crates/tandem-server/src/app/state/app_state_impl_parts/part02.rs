@@ -561,8 +561,7 @@ impl AppState {
                 && status.required_capabilities.github_list_issues
                 && status.required_capabilities.github_get_issue
                 && status.required_capabilities.github_create_issue
-                && status.required_capabilities.github_comment_on_issue
-                && selected_model_ready,
+                && status.required_capabilities.github_comment_on_issue,
             runtime_ready: config.enabled
                 && !config.paused
                 && repo_valid
