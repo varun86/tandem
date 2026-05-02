@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { RefObject } from "react";
 import { LazyJson } from "./LazyJson";
 
@@ -28,6 +29,8 @@ export function WorkflowLiveSessionLogPanel({
   onJumpToLatest,
   onPinnedStateChange,
 }: WorkflowLiveSessionLogPanelProps) {
+  const lastScrollTopRef = useRef(0);
+
   return (
     <div className="tcp-list-item min-h-0 xl:order-2">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -84,10 +87,24 @@ export function WorkflowLiveSessionLogPanel({
       <div
         ref={sessionLogRef}
         className="grid min-h-[12rem] gap-2 overflow-auto overscroll-contain pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
+        tabIndex={0}
+        aria-label="Live session log"
+        onWheel={(event) => {
+          if (event.deltaY < 0) {
+            onPinnedStateChange(false);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
+            onPinnedStateChange(false);
+          }
+        }}
         onScroll={(event) => {
           const el = event.currentTarget;
-          const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
-          onPinnedStateChange(pinned);
+          const distanceFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
+          const scrollingUp = el.scrollTop < lastScrollTopRef.current;
+          lastScrollTopRef.current = el.scrollTop;
+          onPinnedStateChange(!scrollingUp && distanceFromBottom < 48);
         }}
       >
         {sessionLogEntries.length ? (

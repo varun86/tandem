@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { renderIcons } from "../../app/icons.js";
 import { AutomationCalendar } from "./AutomationCalendar";
 import {
   DeleteAutomationDialog,
@@ -190,6 +191,10 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
       ...current,
       [section]: !current[section],
     }));
+
+  useEffect(() => {
+    if (rootRef.current) renderIcons(rootRef.current);
+  }, [rootRef, runningSectionsOpen]);
 
   const workflowSortLabel =
     WORKFLOW_SORT_MODES.find((option) => option.value === workflowSortMode)?.label ||
