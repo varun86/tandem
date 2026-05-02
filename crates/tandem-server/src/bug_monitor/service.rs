@@ -32,8 +32,7 @@ const BUG_MONITOR_TRIAGE_AGENT_ROLE: &str = "bug_monitor_triage_agent";
 /// 180000 ms` and `timed out after 600000 ms` are genuinely different
 /// failure shapes and should not collapse to one incident.
 fn normalize_reason_for_fingerprint(reason: &str) -> String {
-    let after_run_ids =
-        automation_run_id_regex().replace_all(reason, "automation-v2-run-RUNID");
+    let after_run_ids = automation_run_id_regex().replace_all(reason, "automation-v2-run-RUNID");
     uuid_regex()
         .replace_all(after_run_ids.as_ref(), "UUID")
         .into_owned()
@@ -1116,8 +1115,7 @@ pub async fn build_bug_monitor_submission_from_event(
     }
     let sanitized_properties = sanitize_json_value(&event.properties);
     let serialized = serde_json::to_string(&sanitized_properties).unwrap_or_default();
-    let normalized_reason =
-        normalize_reason_for_fingerprint(reason.as_deref().unwrap_or(""));
+    let normalized_reason = normalize_reason_for_fingerprint(reason.as_deref().unwrap_or(""));
     let fingerprint = sha256_hex(&[
         repo.as_str(),
         workspace_root.as_str(),

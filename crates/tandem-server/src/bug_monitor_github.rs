@@ -497,6 +497,21 @@ async fn create_issue_from_draft(
             post: Some(existing),
         });
     }
+    if let Some(previous) = latest_failed_create_post_for_draft(state, &draft).await {
+        let detail = format!(
+            "suppressed automatic GitHub issue creation for fingerprint {} after previous {} post attempt {} failed; refusing to retry create_issue because the previous attempt may have created an issue without returning a parseable payload",
+            draft.fingerprint, previous.operation, previous.post_id
+        );
+        draft.status = "github_post_failed".to_string();
+        draft.github_status = Some("github_post_failed".to_string());
+        draft.last_post_error = Some(truncate_text(&detail, 500));
+        let draft = state.put_bug_monitor_draft(draft).await?;
+        return Ok(PublishOutcome {
+            action: "create_issue_retry_suppressed".to_string(),
+            draft,
+            post: Some(previous),
+        });
+    }
 
     let owner_repo = split_owner_repo(&draft.repo)?;
     let title = issue_draft
@@ -513,9 +528,28 @@ async fn create_issue_from_draft(
             build_issue_body(&draft, incident, matched_closed_issue, evidence_digest)
         });
     let body = append_error_provenance_section(state, body, &draft, incident).await;
-    let created = call_create_issue(state, tools, &owner_repo, title, &body)
-        .await
-        .context("create Bug Monitor issue on GitHub")?;
+    let created = match call_create_issue(state, tools, &owner_repo, title, &body).await {
+        Ok(created) => created,
+        Err(error) => {
+            if let Err(record_err) = record_post_failure(
+                state,
+                &draft,
+                incident.map(|row| row.incident_id.as_str()),
+                "create_issue",
+                Some(evidence_digest),
+                &error.to_string(),
+            )
+            .await
+            {
+                tracing::warn!(
+                    draft_id = %draft.draft_id,
+                    error = %record_err,
+                    "failed to record ambiguous Bug Monitor create_issue failure",
+                );
+            }
+            return Err(error).context("create Bug Monitor issue on GitHub");
+        }
+    };
     let post = BugMonitorPostRecord {
         post_id: format!("failure-post-{}", uuid::Uuid::new_v4().simple()),
         draft_id: draft.draft_id.clone(),
@@ -795,6 +829,32 @@ async fn successful_post_for_draft(
                 None => true,
             }
     })
+}
+
+fn failed_post_suppresses_create(
+    draft: &BugMonitorDraftRecord,
+    post: &BugMonitorPostRecord,
+) -> bool {
+    post.repo == draft.repo
+        && post.fingerprint == draft.fingerprint
+        && post.status == "failed"
+        && matches!(post.operation.as_str(), "create_issue" | "auto_post")
+}
+
+async fn latest_failed_create_post_for_draft(
+    state: &AppState,
+    draft: &BugMonitorDraftRecord,
+) -> Option<BugMonitorPostRecord> {
+    let mut rows = state
+        .bug_monitor_posts
+        .read()
+        .await
+        .values()
+        .filter(|post| failed_post_suppresses_create(draft, post))
+        .cloned()
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    rows.into_iter().next()
 }
 
 /// Hashes the IDENTITY of the failure being reported — not the
@@ -1876,6 +1936,49 @@ mod tests {
         assert!(issues[0].body.contains("deadbeef"));
     }
 
+    #[test]
+    fn failed_create_posts_suppress_unsafe_create_retries() {
+        let draft = BugMonitorDraftRecord {
+            draft_id: "draft-1".to_string(),
+            repo: "acme/platform".to_string(),
+            fingerprint: "fp-create".to_string(),
+            ..Default::default()
+        };
+        let failed_create = BugMonitorPostRecord {
+            post_id: "post-create".to_string(),
+            repo: draft.repo.clone(),
+            fingerprint: draft.fingerprint.clone(),
+            operation: "create_issue".to_string(),
+            status: "failed".to_string(),
+            ..Default::default()
+        };
+        let failed_auto_post = BugMonitorPostRecord {
+            operation: "auto_post".to_string(),
+            ..failed_create.clone()
+        };
+        let failed_comment = BugMonitorPostRecord {
+            operation: "comment".to_string(),
+            ..failed_create.clone()
+        };
+        let posted_create = BugMonitorPostRecord {
+            status: "posted".to_string(),
+            ..failed_create.clone()
+        };
+        let different_fingerprint = BugMonitorPostRecord {
+            fingerprint: "other-fingerprint".to_string(),
+            ..failed_create.clone()
+        };
+
+        assert!(failed_post_suppresses_create(&draft, &failed_create));
+        assert!(failed_post_suppresses_create(&draft, &failed_auto_post));
+        assert!(!failed_post_suppresses_create(&draft, &failed_comment));
+        assert!(!failed_post_suppresses_create(&draft, &posted_create));
+        assert!(!failed_post_suppresses_create(
+            &draft,
+            &different_fingerprint
+        ));
+    }
+
     fn make_incident_with_excerpt_and_last_error(
         excerpt: Vec<String>,
         last_error: Option<String>,
@@ -1964,9 +2067,18 @@ mod tests {
             occurrence_count: count,
             ..Default::default()
         };
-        assert_eq!(baseline, compute_evidence_digest(&base, Some(&mk_inc("r", "s", 1))));
-        assert_eq!(baseline, compute_evidence_digest(&base, Some(&mk_inc("r", "s", 99))));
-        assert_eq!(baseline, compute_evidence_digest(&base, Some(&mk_inc("r2", "s2", 1))));
+        assert_eq!(
+            baseline,
+            compute_evidence_digest(&base, Some(&mk_inc("r", "s", 1)))
+        );
+        assert_eq!(
+            baseline,
+            compute_evidence_digest(&base, Some(&mk_inc("r", "s", 99)))
+        );
+        assert_eq!(
+            baseline,
+            compute_evidence_digest(&base, Some(&mk_inc("r2", "s2", 1)))
+        );
         let mut recreated = base.clone();
         recreated.triage_run_id = Some("triage-2".to_string());
         assert_eq!(baseline, compute_evidence_digest(&recreated, None));
