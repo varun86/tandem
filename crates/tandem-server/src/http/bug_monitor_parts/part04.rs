@@ -121,7 +121,7 @@ pub(crate) fn normalize_bug_monitor_triage_output_contracts(spec: &mut crate::Au
 
 fn bug_monitor_triage_repo_evidence_guidance(artifact_type: &str) -> String {
     format!(
-        "Required output: valid completed JSON for `{artifact_type}`. Before writing, perform a local repo evidence pass using `codesearch`, `grep`, `glob`, and `read` as appropriate. Prefer fast local search for symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload. Include `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, say which searches were run and why they were inconclusive. Do not finish with only generic diagnosis."
+        "Required output: valid completed JSON for `{artifact_type}` in the final response. Do not write Bug Monitor artifacts into the workspace; Tandem will store the accepted JSON in the global context-run artifact store. Before responding, perform a local repo evidence pass using `codesearch`, `grep`, `glob`, and `read` as appropriate. Prefer fast local search for symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload. Include `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, say which searches were run and why they were inconclusive. Do not finish with only generic diagnosis."
     )
 }
 
@@ -131,7 +131,7 @@ fn bug_monitor_triage_node(
     objective: &str,
     depends_on: Vec<String>,
     timeout_ms: u64,
-    artifact_path: &str,
+    context_artifact_path: &str,
     artifact_type: &str,
     _require_local_source_reads: bool,
     payload: serde_json::Value,
@@ -160,7 +160,6 @@ fn bug_monitor_triage_node(
             "builder": {
                 "task_kind": artifact_type,
                 "title": objective,
-                "output_path": artifact_path,
                 "knowledge": {
                     "subject": objective,
                     "payload": payload,
@@ -168,6 +167,7 @@ fn bug_monitor_triage_node(
             },
             "bug_monitor": {
                 "artifact_type": artifact_type,
+                "context_artifact_path": context_artifact_path,
             },
         })),
     }
@@ -217,7 +217,6 @@ pub(crate) fn bug_monitor_triage_spec(
                     "glob".to_string(),
                     "codesearch".to_string(),
                     "mcp_list".to_string(),
-                    "write".to_string(),
                     "web_search".to_string(),
                 ],
                 denylist: vec!["edit".to_string(), "apply_patch".to_string()],
@@ -236,7 +235,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "Analyze the failure report, extract concrete search terms, then use fast local repo discovery to identify affected files, functions, modules, and evidence lines before writing the inspection artifact",
                     Vec::new(),
                     240_000,
-                    ".tandem/artifacts/bug_monitor.inspection.json",
+                    "artifacts/bug_monitor.inspection.json",
                     "bug_monitor_inspection",
                     false,
                     inspection_payload,
@@ -247,7 +246,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "Research likely root cause and related prior failures by combining the inspection artifact with local repo search, failure memory, issue search when available, and artifact/log review; include concrete file references and searched terms",
                     vec!["inspect_failure_report".to_string()],
                     600_000,
-                    ".tandem/artifacts/bug_monitor.research.json",
+                    "artifacts/bug_monitor.research.json",
                     "bug_monitor_research",
                     true,
                     research_payload,
@@ -258,7 +257,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "Validate the failure scope using the researched files, symbols, artifacts, and logs; classify config versus capability versus provider/tool versus code defect, and cite the repo evidence used",
                     vec!["research_likely_root_cause".to_string()],
                     240_000,
-                    ".tandem/artifacts/bug_monitor.validation.json",
+                    "artifacts/bug_monitor.validation.json",
                     "bug_monitor_validation",
                     true,
                     validation_payload,
@@ -269,7 +268,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "Propose a bounded fix and verification plan grounded in specific file references, likely edit points, acceptance criteria, and smoke-test commands; mark coder_ready only when evidence is concrete",
                     vec!["validate_failure_scope".to_string()],
                     360_000,
-                    ".tandem/artifacts/bug_monitor.fix_proposal.json",
+                    "artifacts/bug_monitor.fix_proposal.json",
                     "bug_monitor_fix_proposal",
                     true,
                     fix_payload,

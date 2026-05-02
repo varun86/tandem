@@ -1612,6 +1612,45 @@ fn parse_status_json_accepts_standup_completion_metadata() {
 }
 
 #[test]
+fn bug_monitor_context_artifacts_do_not_require_workspace_output_paths() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research_likely_root_cause".to_string(),
+        agent_id: "bug_monitor_triage_agent".to_string(),
+        objective: "Research the failure".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/bug_monitor.research.json"
+            },
+            "bug_monitor": {
+                "artifact_type": "bug_monitor_research",
+                "context_artifact_path": "artifacts/bug_monitor.research.json"
+            }
+        })),
+    };
+
+    assert_eq!(super::automation_node_required_output_path(&node), None);
+    assert_eq!(
+        super::automation_node_required_output_path_for_run(&node, Some("automation-v2-run-test")),
+        None
+    );
+}
+
+#[test]
 fn bug_monitor_recovery_rejects_mcp_inventory_json() {
     let payload = json!({
         "connected_server_names": ["githubcopilot"],

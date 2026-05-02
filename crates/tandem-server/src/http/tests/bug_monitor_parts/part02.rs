@@ -1205,6 +1205,49 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
         .and_then(Value::as_str)
         .expect("run id")
         .to_string();
+    let automation_id = triage_payload
+        .get("run")
+        .and_then(|row| row.get("automation_id"))
+        .and_then(Value::as_str)
+        .expect("automation id")
+        .to_string();
+    let automation = state
+        .get_automation_v2(&automation_id)
+        .await
+        .expect("stored triage automation");
+    let bug_monitor_nodes = automation
+        .flow
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("bug_monitor"))
+                .and_then(|metadata| metadata.get("artifact_type"))
+                .and_then(Value::as_str)
+                .is_some()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bug_monitor_nodes.len(), 4);
+    for node in bug_monitor_nodes {
+        assert!(node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(|builder| builder.get("output_path"))
+            .is_none());
+        assert!(node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("bug_monitor"))
+            .and_then(|bug_monitor| bug_monitor.get("context_artifact_path"))
+            .and_then(Value::as_str)
+            .is_some_and(|path| path.starts_with("artifacts/bug_monitor.")));
+        assert_eq!(
+            crate::app::state::automation_node_required_output_path(node),
+            None
+        );
+    }
     assert_eq!(
         triage_payload
             .get("draft")

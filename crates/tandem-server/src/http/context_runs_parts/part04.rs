@@ -43,22 +43,39 @@ async fn sync_bug_monitor_automation_node_artifact(
     }
     let payload = output
         .get("content")
+        .and_then(|content| content.get("structured_handoff"))
         .cloned()
+        .or_else(|| output.get("content").cloned())
         .filter(|value| !value.is_null())
         .unwrap_or_else(|| output.clone());
-    let relative_path = match artifact_type {
-        "bug_monitor_inspection" => "artifacts/bug_monitor.inspection.json",
-        "bug_monitor_research" => "artifacts/bug_monitor.research.json",
-        "bug_monitor_validation" => "artifacts/bug_monitor.validation.json",
-        "bug_monitor_fix_proposal" => "artifacts/bug_monitor.fix_proposal.json",
-        _ => return Ok(()),
+    let relative_path = node
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("bug_monitor"))
+        .and_then(|metadata| metadata.get("context_artifact_path"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            match artifact_type {
+                "bug_monitor_inspection" => Some("artifacts/bug_monitor.inspection.json"),
+                "bug_monitor_research" => Some("artifacts/bug_monitor.research.json"),
+                "bug_monitor_validation" => Some("artifacts/bug_monitor.validation.json"),
+                "bug_monitor_fix_proposal" => Some("artifacts/bug_monitor.fix_proposal.json"),
+                _ => None,
+            }
+            .map(str::to_string)
+        });
+    let Some(relative_path) = relative_path else {
+        return Ok(());
     };
     append_json_artifact_to_context_run(
         state,
         context_run_id,
         &artifact_id,
         artifact_type,
-        relative_path,
+        &relative_path,
         &payload,
     )
     .await

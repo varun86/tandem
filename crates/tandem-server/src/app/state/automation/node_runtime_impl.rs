@@ -691,6 +691,9 @@ pub(crate) fn write_automation_inline_artifact(
 }
 
 pub(crate) fn automation_node_declared_output_path(node: &AutomationFlowNode) -> Option<String> {
+    if automation_node_is_bug_monitor_context_artifact(node) {
+        return None;
+    }
     node.metadata
         .as_ref()
         .and_then(|metadata| metadata.get("builder"))
@@ -701,6 +704,16 @@ pub(crate) fn automation_node_declared_output_path(node: &AutomationFlowNode) ->
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .or_else(|| automation_node_default_output_path(node))
+}
+
+pub(crate) fn automation_node_is_bug_monitor_context_artifact(node: &AutomationFlowNode) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("bug_monitor"))
+        .and_then(|metadata| metadata.get("artifact_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 pub(crate) fn automation_node_required_output_path_for_run(
@@ -718,6 +731,9 @@ pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option
 }
 
 pub(crate) fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
+    if automation_node_is_bug_monitor_context_artifact(node) {
+        return None;
+    }
     let contract_kind = node
         .output_contract
         .as_ref()
