@@ -15,6 +15,7 @@ This is the canonical release-notes file used by release tooling.
 - **MCP policy names are less brittle**: missing or renamed policy-selected MCP server names are treated as stale configuration warnings instead of fatal preflight blockers, while disconnected/disabled existing servers still fail fast. The node can discover currently available tools through `mcp_list` rather than being trapped by an old server name.
 - **Run-scoped triage artifact paths**: Bug Monitor triage outputs now use `.tandem/artifacts/...`, which resolves into `.tandem/runs/<run_id>/artifacts/...`; a root `/artifacts/` ignore guard was added for accidental mis-scoped workflow output.
 - **Operational doc added**: added `docs/BUG_MONITOR_FALLBACK_GITHUB_POSTING.md` with the fallback body policy, source fields, truncation controls, and triage troubleshooting guidance.
+- **Managed worktree cleanup tools**: Tandem now includes a dedicated stale-worktree cleanup endpoint plus a `Settings -> Maintenance` UI that previews and removes leaked repo-local `.tandem/worktrees` entries, deletes associated managed branches when possible, removes orphaned directories, and shows an animated per-item cleanup log so operators can see exactly what was scanned, skipped, removed, or failed.
 
 This major release reorganizes Tandem's local storage so large runtime histories stop accumulating as huge root-level JSON files, and so startup no longer pays the cost of browser setup or stale legacy scans.
 

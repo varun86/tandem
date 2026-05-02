@@ -756,6 +756,238 @@ pub(super) async fn reset_worktree(
     })))
 }
 
+#[derive(Debug, Clone)]
+struct RegisteredWorktreeEntry {
+    path: String,
+    branch: Option<String>,
+}
+
+fn parse_registered_worktree_entries(
+    repo_root: &str,
+) -> Result<Vec<RegisteredWorktreeEntry>, StatusCode> {
+    let output = std::process::Command::new("git")
+        .args(["-C", repo_root, "worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !output.status.success() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let mut entries = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.is_empty() {
+            if let Some(path) = current_path.take() {
+                entries.push(RegisteredWorktreeEntry {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_path = Some(path.trim().to_string());
+            continue;
+        }
+        if let Some(branch) = line.strip_prefix("branch ") {
+            current_branch = branch
+                .trim()
+                .strip_prefix("refs/heads/")
+                .map(ToString::to_string)
+                .or_else(|| Some(branch.trim().to_string()));
+        }
+    }
+    if let Some(path) = current_path.take() {
+        entries.push(RegisteredWorktreeEntry {
+            path,
+            branch: current_branch.take(),
+        });
+    }
+    Ok(entries)
+}
+
+pub(super) async fn cleanup_worktrees(
+    State(state): State<AppState>,
+    payload: Option<Json<WorktreeCleanupInput>>,
+) -> Result<Json<Value>, StatusCode> {
+    let input = payload
+        .map(|Json(value)| value)
+        .unwrap_or_else(WorktreeCleanupInput::default);
+    let repo_root = resolve_worktree_repo_root(&state, input.repo_root.as_deref()).await?;
+    let dry_run = input.dry_run.unwrap_or(false);
+    let remove_orphan_dirs = input.remove_orphan_dirs.unwrap_or(true);
+    let managed_root = crate::runtime::worktrees::managed_worktree_root(&repo_root);
+    let managed_root_string = managed_root.to_string_lossy().to_string();
+    let records = state.managed_worktrees.read().await.clone();
+    let git_managed_worktrees = parse_registered_worktree_entries(&repo_root)?
+        .into_iter()
+        .filter(|entry| StdPath::new(&entry.path).starts_with(&managed_root))
+        .collect::<Vec<_>>();
+
+    let active_paths = records
+        .values()
+        .filter(|row| row.repo_root == repo_root)
+        .map(|row| row.path.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let tracked_paths = records
+        .values()
+        .filter(|row| row.repo_root == repo_root)
+        .map(|row| row.path.clone())
+        .collect::<Vec<_>>();
+
+    let mut stale = Vec::new();
+    let mut active = Vec::new();
+    for entry in &git_managed_worktrees {
+        if active_paths.contains(&entry.path) {
+            active.push(entry.path.clone());
+        } else {
+            stale.push(entry.clone());
+        }
+    }
+
+    let mut cleaned = Vec::new();
+    let mut failures = Vec::new();
+    if !dry_run {
+        for entry in &stale {
+            let remove_output = std::process::Command::new("git")
+                .args([
+                    "-C",
+                    &repo_root,
+                    "worktree",
+                    "remove",
+                    "--force",
+                    &entry.path,
+                ])
+                .output();
+            match remove_output {
+                Ok(result) if result.status.success() => {
+                    state
+                        .managed_worktrees
+                        .write()
+                        .await
+                        .retain(|_, row| row.repo_root != repo_root || row.path != entry.path);
+                    let mut branch_deleted = None;
+                    let mut branch_delete_error = None;
+                    if let Some(branch) = entry.branch.as_deref() {
+                        match std::process::Command::new("git")
+                            .args(["-C", &repo_root, "branch", "-D", branch])
+                            .output()
+                        {
+                            Ok(branch_output) if branch_output.status.success() => {
+                                branch_deleted = Some(true);
+                            }
+                            Ok(branch_output) => {
+                                branch_deleted = Some(false);
+                                branch_delete_error = Some(
+                                    String::from_utf8_lossy(&branch_output.stderr).to_string(),
+                                );
+                            }
+                            Err(err) => {
+                                branch_deleted = Some(false);
+                                branch_delete_error = Some(err.to_string());
+                            }
+                        }
+                    }
+                    cleaned.push(json!({
+                        "path": entry.path,
+                        "branch": entry.branch,
+                        "branch_deleted": branch_deleted,
+                        "branch_delete_error": branch_delete_error,
+                        "via": "git_worktree_remove",
+                    }));
+                }
+                Ok(result) => {
+                    failures.push(json!({
+                        "path": entry.path,
+                        "branch": entry.branch,
+                        "code": "WORKTREE_REMOVE_FAILED",
+                        "stderr": String::from_utf8_lossy(&result.stderr).to_string(),
+                    }));
+                }
+                Err(err) => {
+                    failures.push(json!({
+                        "path": entry.path,
+                        "branch": entry.branch,
+                        "code": "WORKTREE_REMOVE_FAILED",
+                        "error": err.to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
+    let mut orphan_dirs = Vec::new();
+    if managed_root.exists() {
+        let entries =
+            std::fs::read_dir(&managed_root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let registered_paths = if dry_run {
+            git_managed_worktrees
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<std::collections::HashSet<_>>()
+        } else {
+            parse_registered_worktree_entries(&repo_root)?
+                .into_iter()
+                .map(|entry| entry.path)
+                .filter(|path| StdPath::new(path).starts_with(&managed_root))
+                .collect::<std::collections::HashSet<_>>()
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let path_string = path.to_string_lossy().to_string();
+            if registered_paths.contains(&path_string) {
+                continue;
+            }
+            if active_paths.contains(&path_string) {
+                continue;
+            }
+            orphan_dirs.push(path_string);
+        }
+    }
+
+    let mut orphan_removed = Vec::new();
+    if !dry_run && remove_orphan_dirs {
+        for path in &orphan_dirs {
+            match std::fs::remove_dir_all(path) {
+                Ok(_) => {
+                    orphan_removed.push(json!({
+                        "path": path,
+                        "via": "filesystem_remove_dir_all",
+                    }));
+                }
+                Err(err) => {
+                    failures.push(json!({
+                        "path": path,
+                        "code": "WORKTREE_ORPHAN_DIR_REMOVE_FAILED",
+                        "error": err.to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": failures.is_empty(),
+        "dry_run": dry_run,
+        "repo_root": repo_root,
+        "managed_root": managed_root_string,
+        "tracked_paths": tracked_paths,
+        "active_paths": active,
+        "stale_paths": stale.iter().map(|entry| json!({
+            "path": entry.path,
+            "branch": entry.branch,
+        })).collect::<Vec<_>>(),
+        "cleaned_worktrees": cleaned,
+        "orphan_dirs": orphan_dirs,
+        "orphan_dirs_removed": orphan_removed,
+        "failures": failures,
+    })))
+}
+
 async fn resolve_worktree_repo_root(
     state: &AppState,
     repo_root: Option<&str>,

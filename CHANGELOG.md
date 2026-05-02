@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bug Monitor GitHub fallback body evidence policy**: Added bounded evidence rendering for fallback Bug Monitor issue bodies so failed triage and timed-out runs still produce actionable GitHub artifacts. Fallback bodies now include capped logs, evidence references, diagnostic metadata, triage signal quality details, and explicit triage status markers when the issue is posted without LLM-rendered content.
 - **Automation V2-backed Bug Monitor triage**: Bug Monitor triage runs now launch as Automation V2 runs instead of orphaned context runs, preserving the inspect/research/validate/fix-proposal graph while using the same scheduler and executor as saved workflows.
 - **Bug Monitor triage artifact adapter**: Automation V2 triage node outputs are mirrored back into the existing Bug Monitor artifact registry so issue drafting can consume inspection, research, validation, and fix-proposal artifacts without a second artifact path.
+- **Managed worktree cleanup API and Settings panel**: Added `POST /api/engine/worktree/cleanup` plus a new `Settings -> Maintenance` control-panel surface that previews and removes stale repo-local managed worktrees under `.tandem/worktrees`, animates scan/removal progress, reports exactly what was deleted or skipped, and also prunes orphaned leftover directories.
 
 ### Changed
 
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automation V2 tool denylist is enforced**: Node tool policies now remove denylisted tools after allowlist expansion, preventing read/research triage nodes from being offered source-editing tools that the workflow explicitly blocked.
 - **Automation V2 metadata artifacts are writable**: Node `metadata.artifacts` now feed the session write policy, matching the prompt contract that treats those paths as outputs to create instead of blocking writes with “no declared output targets.”
 - **Guardrail for mis-scoped artifacts**: Root-level `/artifacts/` is ignored as a safety net for any future mis-scoped automation output, while the runtime path fix sends Bug Monitor artifacts to `.tandem`.
+- **Stale managed worktrees no longer require manual Git surgery**: Operators can now clean up leaked Git worktrees after blocked, failed, or restarted runs without hand-removing `git worktree` entries and leftover `.tandem/worktrees/*` directories.
 
 ### Added
 

@@ -243,6 +243,15 @@ struct WorktreeListQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct WorktreeCleanupInput {
+    repo_root: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+    #[serde(default)]
+    remove_orphan_dirs: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct LogInput {
     level: Option<String>,
     message: Option<String>,

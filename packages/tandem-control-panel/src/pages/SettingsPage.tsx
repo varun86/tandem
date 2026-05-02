@@ -60,6 +60,36 @@ type BrowserSmokeTestResponse = {
   closed?: boolean;
 };
 
+type WorktreeCleanupActionRow = {
+  path?: string;
+  branch?: string | null;
+  via?: string | null;
+  code?: string | null;
+  error?: string | null;
+  stderr?: string | null;
+  branch_deleted?: boolean | null;
+  branch_delete_error?: string | null;
+};
+
+type WorktreeCleanupStaleRow = {
+  path?: string;
+  branch?: string | null;
+};
+
+type WorktreeCleanupResponse = {
+  ok?: boolean;
+  dry_run?: boolean;
+  repo_root?: string;
+  managed_root?: string;
+  tracked_paths?: string[];
+  active_paths?: string[];
+  stale_paths?: WorktreeCleanupStaleRow[];
+  cleaned_worktrees?: WorktreeCleanupActionRow[];
+  orphan_dirs?: string[];
+  orphan_dirs_removed?: WorktreeCleanupActionRow[];
+  failures?: WorktreeCleanupActionRow[];
+};
+
 const PENDING_PROVIDER_OAUTH_STORAGE_KEY = "tandem_control_panel_pending_provider_oauth";
 
 function loadPendingProviderOauthSessions() {
@@ -118,7 +148,8 @@ type SettingsSection =
   | "channels"
   | "mcp"
   | "bug_monitor"
-  | "browser";
+  | "browser"
+  | "maintenance";
 
 type SearchSettingsResponse = {
   available?: boolean;
@@ -1113,6 +1144,11 @@ export function SettingsPage({
   const [bugMonitorAutoCreateIssues, setBugMonitorAutoCreateIssues] = useState(true);
   const [bugMonitorRequireApproval, setBugMonitorRequireApproval] = useState(false);
   const [bugMonitorAutoComment, setBugMonitorAutoComment] = useState(true);
+  const [worktreeCleanupRepoRoot, setWorktreeCleanupRepoRoot] = useState("");
+  const [worktreeCleanupDryRun, setWorktreeCleanupDryRun] = useState(false);
+  const [worktreeCleanupPulse, setWorktreeCleanupPulse] = useState(0);
+  const [worktreeCleanupResult, setWorktreeCleanupResult] =
+    useState<WorktreeCleanupResponse | null>(null);
   const [bugMonitorWorkspaceBrowserOpen, setBugMonitorWorkspaceBrowserOpen] = useState(false);
   const [bugMonitorWorkspaceBrowserDir, setBugMonitorWorkspaceBrowserDir] = useState("");
   const [bugMonitorWorkspaceBrowserSearch, setBugMonitorWorkspaceBrowserSearch] = useState("");
@@ -1267,6 +1303,11 @@ export function SettingsPage({
   }, [providersAuth.data]);
   const localEngine = systemHealthQuery.data?.localEngine === true;
   const hostedManaged = installProfileQuery.data?.hosted_managed === true;
+  useEffect(() => {
+    const workspaceRoot = String(systemHealthQuery.data?.workspace_root || "").trim();
+    if (!workspaceRoot) return;
+    setWorktreeCleanupRepoRoot((current) => (current.trim() ? current : workspaceRoot));
+  }, [systemHealthQuery.data?.workspace_root]);
   const channelDefaultModel = useMemo(() => {
     const defaultProvider = String(providersConfig.data?.default || "").trim();
     const defaultModel = String(
@@ -1365,6 +1406,50 @@ export function SettingsPage({
       toast("err", error instanceof Error ? error.message : String(error));
     },
   });
+  const worktreeCleanupMutation = useMutation({
+    mutationFn: (payload: { repoRoot?: string; dryRun?: boolean }) =>
+      api("/api/engine/worktree/cleanup", {
+        method: "POST",
+        body: JSON.stringify({
+          repo_root: payload.repoRoot,
+          dry_run: payload.dryRun,
+          remove_orphan_dirs: true,
+        }),
+      }) as Promise<WorktreeCleanupResponse>,
+    onMutate: () => {
+      setWorktreeCleanupResult(null);
+    },
+    onSuccess: (result) => {
+      setWorktreeCleanupResult(result);
+      const removedCount =
+        (result.cleaned_worktrees?.length || 0) + (result.orphan_dirs_removed?.length || 0);
+      const failureCount = result.failures?.length || 0;
+      toast(
+        failureCount ? "warn" : result.dry_run ? "info" : "ok",
+        result.dry_run
+          ? `Found ${result.stale_paths?.length || 0} stale worktrees and ${
+              result.orphan_dirs?.length || 0
+            } orphan directories.`
+          : failureCount
+            ? `Cleanup removed ${removedCount} entries with ${failureCount} failures.`
+            : `Cleanup removed ${removedCount} stale worktree entries.`
+      );
+    },
+    onError: (error) => {
+      setWorktreeCleanupResult(null);
+      toast("err", error instanceof Error ? error.message : String(error));
+    },
+  });
+  useEffect(() => {
+    if (!worktreeCleanupMutation.isPending) {
+      setWorktreeCleanupPulse(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setWorktreeCleanupPulse((value) => value + 1);
+    }, 800);
+    return () => window.clearInterval(timer);
+  }, [worktreeCleanupMutation.isPending]);
   const mcpServersQuery = useQuery({
     queryKey: ["settings", "mcp", "servers"],
     queryFn: () => client.mcp.list().catch(() => ({})),
@@ -2845,6 +2930,86 @@ export function SettingsPage({
     toast("ok", "Bug Monitor debug payload copied.");
   };
 
+  const worktreeCleanupPendingMessages = [
+    "Scanning registered Git worktrees...",
+    "Comparing managed worktrees against live runtime records...",
+    "Removing stale worktrees and orphan directories...",
+  ];
+  const worktreeCleanupPendingMessage =
+    worktreeCleanupPendingMessages[worktreeCleanupPulse % worktreeCleanupPendingMessages.length];
+  const worktreeCleanupActionRows = useMemo(() => {
+    const rows: Array<{
+      kind: "removed" | "orphan_removed" | "stale" | "active" | "failure";
+      title: string;
+      detail: string;
+      tone: "ok" | "warn" | "err" | "info";
+    }> = [];
+    for (const row of worktreeCleanupResult?.cleaned_worktrees || []) {
+      rows.push({
+        kind: "removed",
+        title: row.path || "Removed worktree",
+        detail:
+          row.branch && row.branch_deleted === false && row.branch_delete_error
+            ? `Removed worktree, but branch cleanup failed: ${row.branch_delete_error}`
+            : row.branch
+              ? `Removed registered worktree and branch ${row.branch}.`
+              : "Removed registered worktree.",
+        tone: "ok",
+      });
+    }
+    for (const path of worktreeCleanupResult?.active_paths || []) {
+      rows.push({
+        kind: "active",
+        title: path,
+        detail: "Skipped because the current Tandem runtime still tracks it as active.",
+        tone: "info",
+      });
+    }
+    for (const row of worktreeCleanupResult?.stale_paths || []) {
+      const alreadyRemoved = (worktreeCleanupResult?.cleaned_worktrees || []).some(
+        (cleaned) => cleaned.path === row.path
+      );
+      if (alreadyRemoved) continue;
+      rows.push({
+        kind: "stale",
+        title: row.path || "Stale worktree",
+        detail: worktreeCleanupResult?.dry_run
+          ? row.branch
+            ? `Would remove managed worktree and branch ${row.branch}.`
+            : "Would remove managed worktree."
+          : "Marked stale but not removed.",
+        tone: "warn",
+      });
+    }
+    for (const row of worktreeCleanupResult?.orphan_dirs_removed || []) {
+      rows.push({
+        kind: "orphan_removed",
+        title: row.path || "Removed orphan directory",
+        detail: "Removed an unregistered directory left behind under .tandem/worktrees.",
+        tone: "ok",
+      });
+    }
+    if (worktreeCleanupResult?.dry_run) {
+      for (const path of worktreeCleanupResult?.orphan_dirs || []) {
+        rows.push({
+          kind: "stale",
+          title: path,
+          detail: "Would remove orphaned directory left on disk.",
+          tone: "warn",
+        });
+      }
+    }
+    for (const row of worktreeCleanupResult?.failures || []) {
+      rows.push({
+        kind: "failure",
+        title: row.path || row.code || "Cleanup failure",
+        detail: row.error || row.stderr || row.branch_delete_error || "Cleanup failed.",
+        tone: "err",
+      });
+    }
+    return rows;
+  }, [worktreeCleanupResult]);
+
   const sectionTabs: Array<{ id: SettingsSection; label: string; icon: string }> = [
     { id: "install", label: "Install", icon: "clipboard-list" },
     { id: "navigation", label: "Navigation", icon: "panel-left" },
@@ -2857,6 +3022,7 @@ export function SettingsPage({
     { id: "mcp", label: "MCP", icon: "plug-zap" },
     { id: "bug_monitor", label: "Bug Monitor", icon: "bug-play" },
     { id: "browser", label: "Browser", icon: "monitor-cog" },
+    { id: "maintenance", label: "Maintenance", icon: "wrench" },
   ];
   const mcpAuthPreviewText = useMemo(
     () => mcpAuthPreview(mcpAuthMode, mcpToken, mcpCustomHeader, mcpTransport),
@@ -6378,6 +6544,223 @@ export function SettingsPage({
                       ) : (
                         <EmptyState text="No GitHub post attempts yet." />
                       )}
+                    </div>
+                  </div>
+                </PanelCard>
+              ) : null}
+
+              {activeSection === "maintenance" ? (
+                <PanelCard
+                  title="Managed worktree cleanup"
+                  subtitle="Scan repo-local .tandem/worktrees entries, keep live runtime worktrees, and remove stale or orphaned leftovers."
+                  actions={
+                    <Toolbar>
+                      <button
+                        className="tcp-btn"
+                        onClick={() => {
+                          setWorktreeCleanupResult(null);
+                          void systemHealthQuery.refetch();
+                        }}
+                      >
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh root
+                      </button>
+                      <button
+                        className="tcp-btn"
+                        onClick={() =>
+                          worktreeCleanupMutation.mutate({
+                            repoRoot: worktreeCleanupRepoRoot.trim(),
+                            dryRun: true,
+                          })
+                        }
+                        disabled={
+                          worktreeCleanupMutation.isPending || !worktreeCleanupRepoRoot.trim()
+                        }
+                      >
+                        <i data-lucide="search"></i>
+                        Preview stale worktrees
+                      </button>
+                      <button
+                        className="tcp-btn-primary"
+                        onClick={() =>
+                          worktreeCleanupMutation.mutate({
+                            repoRoot: worktreeCleanupRepoRoot.trim(),
+                            dryRun: worktreeCleanupDryRun,
+                          })
+                        }
+                        disabled={
+                          worktreeCleanupMutation.isPending || !worktreeCleanupRepoRoot.trim()
+                        }
+                      >
+                        <i data-lucide="trash-2"></i>
+                        {worktreeCleanupMutation.isPending
+                          ? "Cleaning up..."
+                          : worktreeCleanupDryRun
+                            ? "Run preview"
+                            : "Clean stale worktrees"}
+                      </button>
+                    </Toolbar>
+                  }
+                >
+                  <div className="grid gap-4">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium">Repository root</span>
+                      <input
+                        className="tcp-input"
+                        value={worktreeCleanupRepoRoot}
+                        onInput={(event) =>
+                          setWorktreeCleanupRepoRoot((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="/absolute/path/to/repo"
+                      />
+                    </label>
+                    <label className="flex items-center gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={worktreeCleanupDryRun}
+                        onChange={(event) => setWorktreeCleanupDryRun(event.target.checked)}
+                      />
+                      Use dry run when clicking the primary action
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="tcp-list-item">
+                        <div className="text-sm font-medium">Detected workspace root</div>
+                        <div className="mt-1 break-all text-xs">
+                          {String(systemHealthQuery.data?.workspace_root || "Unavailable")}
+                        </div>
+                      </div>
+                      <div className="tcp-list-item">
+                        <div className="text-sm font-medium">Cleanup target</div>
+                        <div className="mt-1 break-all text-xs">
+                          {worktreeCleanupResult?.managed_root ||
+                            `${worktreeCleanupRepoRoot || "repo"}/.tandem/worktrees`}
+                        </div>
+                      </div>
+                      <div className="tcp-list-item">
+                        <div className="text-sm font-medium">Host mode</div>
+                        <div className="mt-1 text-xs">
+                          {localEngine ? "Local engine" : "Remote engine"} ·{" "}
+                          {hostedManaged ? "hosted-managed" : "self-managed"}
+                        </div>
+                      </div>
+                    </div>
+                    {worktreeCleanupMutation.isPending ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium">Cleanup running</div>
+                            <div className="tcp-subtle mt-1 text-xs">
+                              {worktreeCleanupPendingMessage}
+                            </div>
+                          </div>
+                          <motion.div
+                            className="h-2 w-24 overflow-hidden rounded-full bg-slate-800"
+                            initial={false}
+                          >
+                            <motion.div
+                              className="h-full rounded-full bg-cyan-400"
+                              animate={{ x: ["-100%", "120%"] }}
+                              transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                            />
+                          </motion.div>
+                        </div>
+                      </motion.div>
+                    ) : null}
+                    {worktreeCleanupResult ? (
+                      <div className="grid gap-3">
+                        <div className="grid gap-3 md:grid-cols-4">
+                          <div className="tcp-list-item">
+                            <div className="text-sm font-medium">Tracked active</div>
+                            <div className="mt-1 text-2xl font-semibold">
+                              {worktreeCleanupResult.active_paths?.length || 0}
+                            </div>
+                          </div>
+                          <div className="tcp-list-item">
+                            <div className="text-sm font-medium">Stale candidates</div>
+                            <div className="mt-1 text-2xl font-semibold">
+                              {worktreeCleanupResult.stale_paths?.length || 0}
+                            </div>
+                          </div>
+                          <div className="tcp-list-item">
+                            <div className="text-sm font-medium">Removed</div>
+                            <div className="mt-1 text-2xl font-semibold">
+                              {(worktreeCleanupResult.cleaned_worktrees?.length || 0) +
+                                (worktreeCleanupResult.orphan_dirs_removed?.length || 0)}
+                            </div>
+                          </div>
+                          <div className="tcp-list-item">
+                            <div className="text-sm font-medium">Failures</div>
+                            <div className="mt-1 text-2xl font-semibold">
+                              {worktreeCleanupResult.failures?.length || 0}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="font-medium">
+                                {worktreeCleanupResult.dry_run ? "Preview results" : "Cleanup log"}
+                              </div>
+                              <div className="tcp-subtle mt-1 text-xs">
+                                {worktreeCleanupResult.repo_root || worktreeCleanupRepoRoot}
+                              </div>
+                            </div>
+                            <Badge
+                              tone={
+                                (worktreeCleanupResult.failures?.length || 0) > 0
+                                  ? "warn"
+                                  : worktreeCleanupResult.dry_run
+                                    ? "info"
+                                    : "ok"
+                              }
+                            >
+                              {worktreeCleanupResult.dry_run ? "Dry run" : "Applied"}
+                            </Badge>
+                          </div>
+                          <div className="mt-3 grid gap-2">
+                            <AnimatePresence initial={false}>
+                              {worktreeCleanupActionRows.map((row, index) => (
+                                <motion.div
+                                  key={`${row.kind}-${row.title}-${index}`}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -8 }}
+                                  transition={{ duration: 0.18, delay: index * 0.03 }}
+                                  className="tcp-list-item"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-medium break-all">
+                                        {row.title}
+                                      </div>
+                                      <div className="tcp-subtle mt-1 text-xs">{row.detail}</div>
+                                    </div>
+                                    <Badge tone={row.tone}>
+                                      {row.kind === "orphan_removed"
+                                        ? "orphan"
+                                        : row.kind.replaceAll("_", " ")}
+                                    </Badge>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
+                            {!worktreeCleanupActionRows.length ? (
+                              <div className="tcp-subtle text-xs">
+                                No stale managed worktrees were detected for this repository.
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="tcp-subtle text-xs">
+                      This action only targets repo-local managed worktrees under{" "}
+                      <code>.tandem/worktrees</code> and skips paths that the current Tandem process
+                      still tracks as active.
                     </div>
                   </div>
                 </PanelCard>

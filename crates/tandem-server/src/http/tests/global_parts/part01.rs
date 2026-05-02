@@ -363,6 +363,109 @@ async fn managed_worktree_create_rejects_unknown_lease() {
 }
 
 #[tokio::test]
+async fn stale_worktree_cleanup_removes_untracked_managed_worktrees() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let repo_root = init_git_repo();
+    let repo_root_str = repo_root.to_string_lossy().to_string();
+    insert_test_lease(&state, "lease-cleanup").await;
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/worktree")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "repo_root": repo_root_str,
+                "task_id": "task-cleanup",
+                "owner_run_id": "run-cleanup",
+                "lease_id": "lease-cleanup",
+                "managed": true
+            })
+            .to_string(),
+        ))
+        .expect("create worktree request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create worktree response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create worktree body"),
+    )
+    .expect("create worktree json");
+    let worktree_path = create_payload
+        .get("path")
+        .and_then(Value::as_str)
+        .expect("worktree path")
+        .to_string();
+    let branch = create_payload
+        .get("branch")
+        .and_then(Value::as_str)
+        .expect("branch")
+        .to_string();
+    assert!(std::path::Path::new(&worktree_path).exists());
+
+    // Simulate a restarted process that lost the in-memory managed_worktrees map.
+    state.managed_worktrees.write().await.clear();
+
+    let cleanup_req = Request::builder()
+        .method("POST")
+        .uri("/worktree/cleanup")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "repo_root": repo_root.to_string_lossy(),
+            })
+            .to_string(),
+        ))
+        .expect("cleanup worktree request");
+    let cleanup_resp = app
+        .clone()
+        .oneshot(cleanup_req)
+        .await
+        .expect("cleanup worktree response");
+    assert_eq!(cleanup_resp.status(), StatusCode::OK);
+    let cleanup_payload: Value = serde_json::from_slice(
+        &to_bytes(cleanup_resp.into_body(), usize::MAX)
+            .await
+            .expect("cleanup worktree body"),
+    )
+    .expect("cleanup worktree json");
+    assert_eq!(
+        cleanup_payload.get("ok").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(cleanup_payload
+        .get("stale_paths")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| {
+            row.get("path").and_then(Value::as_str) == Some(worktree_path.as_str())
+        })));
+    assert!(cleanup_payload
+        .get("cleaned_worktrees")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| {
+            row.get("path").and_then(Value::as_str) == Some(worktree_path.as_str())
+        })));
+    assert!(!std::path::Path::new(&worktree_path).exists());
+
+    let branch_output = Command::new("git")
+        .args(["branch", "--list", &branch])
+        .current_dir(&repo_root)
+        .output()
+        .expect("git branch list");
+    assert!(String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .is_empty());
+
+    let _ = std::fs::remove_dir_all(repo_root);
+}
+
+#[tokio::test]
 async fn managed_worktree_create_rejects_external_path_override() {
     let state = test_state().await;
     let app = app_router(state.clone());
