@@ -91,6 +91,7 @@ from .types import (
     SkillTemplatesResponse,
     StorageFilesResponse,
     StorageRepairResponse,
+    WorktreeCleanupResponse,
     SystemHealth,
     ToolExecuteResult,
     ToolSchema,
@@ -150,6 +151,7 @@ class TandemClient:
         self.channels = _Channels(self._http)
         self.browser = _Browser(self._http)
         self.storage = _Storage(self._http)
+        self.worktrees = _Worktrees(self._http)
         self.mcp = _Mcp(self._http)
         self.workflows = _Workflows(self._base_url, self._token, self._http)
         self.routines = _Routines(self._base_url, self._token, self._http)
@@ -308,6 +310,29 @@ class _Storage:
         res = await self._http.post("/global/storage/repair", json={"force": force})
         res.raise_for_status()
         return StorageRepairResponse.model_validate(res.json())
+
+
+class _Worktrees:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def cleanup(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        dry_run: bool = False,
+        remove_orphan_dirs: bool = True,
+    ) -> WorktreeCleanupResponse:
+        """Preview or apply stale managed-worktree cleanup for a repository root."""
+        payload: dict[str, Any] = {
+            "dry_run": dry_run,
+            "remove_orphan_dirs": remove_orphan_dirs,
+        }
+        if repo_root:
+            payload["repo_root"] = repo_root
+        res = await self._http.post("/worktree/cleanup", json=payload)
+        res.raise_for_status()
+        return WorktreeCleanupResponse.model_validate(res.json())
 
 
 class _Workflows:

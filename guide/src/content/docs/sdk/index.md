@@ -7,7 +7,7 @@ import { LinkCard, CardGrid } from "@astrojs/starlight/components";
 
 The Tandem engine exposes a full HTTP + SSE API. The official SDKs wrap this API with typed, ergonomic interfaces for TypeScript (Node.js) and Python.
 
-Both SDKs cover the main engine namespaces, including sessions, streaming, memory, storage inspection, skills, channels, MCP, workflows, workflow plans, routines, automations, agent teams, and missions.
+Both SDKs cover the main engine namespaces, including sessions, streaming, memory, storage inspection, managed worktree cleanup, skills, channels, MCP, workflows, workflow plans, routines, automations, agent teams, and missions.
 
 ## Prerequisites
 
@@ -95,6 +95,7 @@ All namespaces exist on both the TypeScript and Python clients.
 | `mcp`                              | Register, connect, refresh MCP servers and tools                         |
 | `browser`                          | Browser sidecar status, install, and smoke testing only                  |
 | `storage`                          | Engine storage file inspection and legacy repair helpers                 |
+| `worktrees`                        | Repo-local stale managed-worktree preview and cleanup helpers            |
 | `memory`                           | Global memory: import, put, search, list, promote, demote, delete, audit |
 | `skills`                           | Agent skill packs: list, import, preview, install templates              |
 | `resources`                        | Key-value resource store (shared agent state)                            |
@@ -108,6 +109,6 @@ All namespaces exist on both the TypeScript and Python clients.
 | `agentTeams`                       | Spawn and manage multi-agent teams                                       |
 | `missions`                         | Multi-agent goals and work item tracking                                 |
 
-For the storage model behind the `memory` namespace, see [Memory Internals](../memory-internals/). For local cleanup, context-run archives, and Automation V2 run-history shards, see [Storage Maintenance For Agents](../storage-maintenance/).
+For the storage model behind the `memory` namespace, see [Memory Internals](../memory-internals/). For local cleanup, context-run archives, Automation V2 run-history shards, and repo-local managed worktree cleanup, see [Storage Maintenance For Agents](../storage-maintenance/).
 
 For browser automation itself, use standard engine tools such as `browser_open`, `browser_click`, and `browser_screenshot` through `execute_tool(...)` or session-based runs with those tools in the allowlist. The `browser` namespace is for diagnostics and install flows.

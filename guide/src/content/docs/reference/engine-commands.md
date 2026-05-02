@@ -145,7 +145,7 @@ For a full setup and test flow, see [Browser Setup and Testing](../browser-setup
 Inspect and clean local Tandem storage.
 
 ```bash
-tandem-engine storage <doctor|cleanup> [OPTIONS]
+tandem-engine storage <doctor|worktrees|cleanup> [OPTIONS]
 ```
 
 ### `storage doctor`
@@ -188,6 +188,26 @@ sudo systemctl restart tandem-engine
 ```
 
 If a developer machine has more than one `tandem-engine` on `PATH`, run `which -a tandem-engine` first and call the intended binary explicitly.
+
+### `storage worktrees`
+
+Preview or remove stale repo-local managed worktrees through a running engine. This targets `<repo>/.tandem/worktrees`, not the engine state root.
+
+```bash
+tandem-engine storage worktrees --repo-root /abs/path/to/repo
+tandem-engine storage worktrees --repo-root /abs/path/to/repo --apply --json
+```
+
+Common options:
+
+- `--hostname <HOSTNAME>` / `--host <HOSTNAME>`: Hostname or IP address of the running engine (default: `127.0.0.1`, env: `TANDEM_ENGINE_HOST`).
+- `--port <PORT>`: Port of the running engine (default: `39731`, env: `TANDEM_ENGINE_PORT`).
+- `--repo-root <PATH>`: Absolute repository root whose `.tandem/worktrees` should be inspected.
+- `--apply`: Remove stale worktrees instead of running a dry-run preview.
+- `--keep-orphan-dirs`: Leave unregistered leftover directories on disk.
+- `--json`: Print the full cleanup report as JSON.
+
+This command calls `POST /worktree/cleanup` on the running engine. It skips worktrees the current runtime still tracks as active, removes stale Git worktree entries and managed branches when possible, and can also remove orphaned directories left under `.tandem/worktrees`.
 
 ## `memory`
 

@@ -525,6 +525,72 @@ async function buildDiagnostics(env = process.env) {
   };
 }
 
+function buildWorktreeCleanupPayload(cli) {
+  const repoRoot = String(cli.value("repo-root") || "").trim();
+  return {
+    repo_root: repoRoot || undefined,
+    dry_run: !cli.has("apply"),
+    remove_orphan_dirs: !cli.has("keep-orphan-dirs"),
+  };
+}
+
+async function requestWorktreeCleanup(cli, env = process.env) {
+  const paths = resolveTandemPaths(env);
+  const engineUrl = `http://${paths.engineHost}:${paths.enginePort}`;
+  const response = await fetch(`${engineUrl}/worktree/cleanup`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(buildWorktreeCleanupPayload(cli)),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Worktree cleanup failed (${response.status})${text ? `: ${text}` : ""}`);
+  }
+  return await response.json();
+}
+
+function printWorktreeCleanupReport(report, json = false) {
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  const staleCount = Array.isArray(report.stale_paths) ? report.stale_paths.length : 0;
+  const activeCount = Array.isArray(report.active_paths) ? report.active_paths.length : 0;
+  const removedCount =
+    (Array.isArray(report.cleaned_worktrees) ? report.cleaned_worktrees.length : 0) +
+    (Array.isArray(report.orphan_dirs_removed) ? report.orphan_dirs_removed.length : 0);
+  const failureCount = Array.isArray(report.failures) ? report.failures.length : 0;
+  printLines([
+    `[Tandem] worktree cleanup: ${report.dry_run ? "preview" : "applied"}`,
+    `[Tandem] repo root:         ${report.repo_root || "unknown"}`,
+    `[Tandem] managed root:      ${report.managed_root || "unknown"}`,
+    `[Tandem] active tracked:    ${activeCount}`,
+    `[Tandem] stale candidates:  ${staleCount}`,
+    `[Tandem] removed:           ${removedCount}`,
+    `[Tandem] failures:          ${failureCount}`,
+  ]);
+  const logRows = [];
+  for (const row of Array.isArray(report.cleaned_worktrees) ? report.cleaned_worktrees : []) {
+    logRows.push(`  removed worktree: ${row.path}${row.branch ? ` (${row.branch})` : ""}`);
+  }
+  for (const row of Array.isArray(report.orphan_dirs_removed) ? report.orphan_dirs_removed : []) {
+    logRows.push(`  removed orphan dir: ${row.path}`);
+  }
+  if (report.dry_run) {
+    for (const row of Array.isArray(report.stale_paths) ? report.stale_paths : []) {
+      logRows.push(`  stale candidate: ${row.path}${row.branch ? ` (${row.branch})` : ""}`);
+    }
+    for (const path of Array.isArray(report.orphan_dirs) ? report.orphan_dirs : []) {
+      logRows.push(`  orphan dir: ${path}`);
+    }
+  }
+  for (const row of Array.isArray(report.failures) ? report.failures : []) {
+    logRows.push(`  failure: ${row.path || row.code || "unknown"}${row.error ? ` -> ${row.error}` : row.stderr ? ` -> ${row.stderr}` : ""}`);
+  }
+  if (logRows.length) printLines(logRows);
+}
+
 async function printDiagnostics(report, json = false) {
   if (json) {
     console.log(JSON.stringify(report, null, 2));
@@ -744,7 +810,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
   if (!command) {
     console.log(`[Tandem] ${packageInfo.name} ${packageInfo.version}`);
-    console.log("[Tandem] Use: tandem doctor | tandem status | tandem service install | tandem install panel");
+    console.log("[Tandem] Use: tandem doctor | tandem doctor worktrees | tandem status | tandem service install | tandem install panel");
     return 0;
   }
 
@@ -754,6 +820,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       "",
       "Commands:",
       "  tandem doctor",
+      "  tandem doctor worktrees [--repo-root /abs/path] [--apply] [--json]",
       "  tandem status",
       "  tandem service install|start|stop|restart|status|logs",
       "  tandem install panel",
@@ -767,6 +834,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   }
 
   if (command === "doctor") {
+    const subcommand = String(argv[1] || "").trim().toLowerCase();
+    if (subcommand === "worktrees" || subcommand === "worktree") {
+      const report = await requestWorktreeCleanup(cli, env);
+      printWorktreeCleanupReport(report, cli.has("json"));
+      return Array.isArray(report.failures) && report.failures.length ? 1 : 0;
+    }
     const report = await buildDiagnostics(env);
     await printDiagnostics(report, cli.has("json"));
     return report.engine.reachable ? 0 : 1;
@@ -853,10 +926,13 @@ module.exports = {
   parseArgs,
   printDiagnostics,
   printStatus,
+  printWorktreeCleanupReport,
   queryEngineServiceState,
+  requestWorktreeCleanup,
   resolveTandemHomeDir,
   resolveTandemPaths,
   runAddonCli,
   runCommand,
+  buildWorktreeCleanupPayload,
   updatePackage,
 };

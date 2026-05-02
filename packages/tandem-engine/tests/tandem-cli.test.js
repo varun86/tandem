@@ -7,6 +7,7 @@ const {
 } = require("../scripts/install.js");
 
 const {
+  buildWorktreeCleanupPayload,
   buildEngineServiceDefinition,
   detectPackageManager,
   findCommandOnPath,
@@ -54,6 +55,26 @@ test("buildEngineServiceDefinition emits platform-specific artifacts", () => {
 
 test("findCommandOnPath ignores missing commands", () => {
   assert.equal(findCommandOnPath("definitely-not-a-real-command"), "");
+});
+
+test("buildWorktreeCleanupPayload defaults to dry-run cleanup", () => {
+  const payload = buildWorktreeCleanupPayload(parseArgs(["worktrees", "--repo-root", "/tmp/repo"]));
+  assert.deepEqual(payload, {
+    repo_root: "/tmp/repo",
+    dry_run: true,
+    remove_orphan_dirs: true,
+  });
+});
+
+test("buildWorktreeCleanupPayload honors apply and orphan retention flags", () => {
+  const payload = buildWorktreeCleanupPayload(
+    parseArgs(["worktrees", "--repo-root=/tmp/repo", "--apply", "--keep-orphan-dirs"])
+  );
+  assert.deepEqual(payload, {
+    repo_root: "/tmp/repo",
+    dry_run: false,
+    remove_orphan_dirs: false,
+  });
 });
 
 test("installer parses tandem-engine version output", () => {

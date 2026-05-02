@@ -336,6 +336,7 @@ const result = await client.memory.contextDistill("session-abc", [
 The TypeScript SDK also exposes the newer engine surfaces used across the Tandem repo:
 
 - `client.browser` for `status()`, `install()`, and `smokeTest()` host flows
+- `client.worktrees` for repo-local stale managed-worktree preview and cleanup
 - `client.workflows` for workflow registry, runs, hooks, simulation, and live events
 - `client.resources` for key-value resources
 - `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
@@ -344,12 +345,18 @@ The TypeScript SDK also exposes the newer engine surfaces used across the Tandem
 
 ```typescript
 const browser = await client.browser.status();
+const preview = await client.worktrees.cleanup({
+  repoRoot: "/abs/path/to/repo",
+  dryRun: true,
+});
 const workflows = await client.workflows.list();
 const resources = await client.resources.list({ prefix: "agent-config/" });
 const catalog = await client.skills.catalog();
 ```
 
 For actual browser automation, use the standard engine tool execution path with tools like `browser_open`, `browser_click`, `browser_type`, `browser_extract`, and `browser_screenshot`, or run a session with those tools in the allowlist. The `client.browser` namespace is intentionally limited to diagnostics and install flows.
+
+Use `client.worktrees.cleanup(...)` for operator-directed repo maintenance only. It wraps `POST /worktree/cleanup`, should usually be called in `dryRun` mode first, and is meant for leaked `.tandem/worktrees` entries after blocked, failed, or restarted repo tasks.
 
 ### `client.bugMonitor`
 

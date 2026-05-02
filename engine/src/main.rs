@@ -118,6 +118,8 @@ const BROWSER_EXAMPLES: &str = r#"Examples:
 const STORAGE_EXAMPLES: &str = r#"Examples:
   tandem-engine storage doctor
   tandem-engine storage doctor --json
+  tandem-engine storage worktrees --repo-root /abs/path/to/repo
+  tandem-engine storage worktrees --repo-root /abs/path/to/repo --apply --json
   tandem-engine storage cleanup --dry-run --context-runs --default-knowledge --json
   tandem-engine storage cleanup --quarantine --json
 "#;
@@ -337,6 +339,42 @@ enum StorageCommand {
             help = "Engine data directory or Tandem root. If omitted, uses TANDEM_STATE_DIR or the shared Tandem path."
         )]
         state_dir: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    #[command(
+        about = "Preview or remove stale managed worktrees for a repository via the running engine."
+    )]
+    Worktrees {
+        #[arg(
+            long,
+            env = "TANDEM_ENGINE_HOST",
+            alias = "host",
+            default_value = DEFAULT_ENGINE_HOST,
+            help = "Hostname or IP address of the running engine."
+        )]
+        hostname: String,
+        #[arg(
+            long,
+            env = "TANDEM_ENGINE_PORT",
+            default_value_t = DEFAULT_ENGINE_PORT,
+            help = "Port of the running engine."
+        )]
+        port: u16,
+        #[arg(long, help = "Absolute repository root to inspect.")]
+        repo_root: Option<String>,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Apply cleanup instead of running a dry-run preview."
+        )]
+        apply: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Keep orphan directories on disk instead of removing them."
+        )]
+        keep_orphan_dirs: bool,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -843,6 +881,37 @@ async fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
                     print_storage_report(&report);
+                }
+            }
+            StorageCommand::Worktrees {
+                hostname,
+                port,
+                repo_root,
+                apply,
+                keep_orphan_dirs,
+                json,
+            } => {
+                let url = format!("http://{hostname}:{port}/worktree/cleanup");
+                let resp = reqwest::Client::new()
+                    .post(&url)
+                    .json(&json!({
+                        "repo_root": repo_root,
+                        "dry_run": !apply,
+                        "remove_orphan_dirs": !keep_orphan_dirs,
+                    }))
+                    .send()
+                    .await?;
+                let status = resp.status();
+                let body = resp.text().await?;
+                if !status.is_success() {
+                    anyhow::bail!("worktree cleanup failed: {} {}", status, body);
+                }
+                let report: serde_json::Value = serde_json::from_str(&body)
+                    .unwrap_or_else(|_| serde_json::json!({ "raw": body }));
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print_worktree_cleanup_report(&report);
                 }
             }
             StorageCommand::Cleanup {
@@ -1923,6 +1992,131 @@ fn print_storage_cleanup_report(report: &StorageCleanupReport) {
     }
     for path in &report.files_quarantined {
         println!("  - quarantined {path}");
+    }
+}
+
+fn print_worktree_cleanup_report(report: &serde_json::Value) {
+    let repo_root = report
+        .get("repo_root")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let managed_root = report
+        .get("managed_root")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let dry_run = report
+        .get("dry_run")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let active_count = report
+        .get("active_paths")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let stale_count = report
+        .get("stale_paths")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let cleaned_count = report
+        .get("cleaned_worktrees")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let orphan_removed_count = report
+        .get("orphan_dirs_removed")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let failure_count = report
+        .get("failures")
+        .and_then(|value| value.as_array())
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+
+    println!(
+        "Managed worktree cleanup: {}",
+        if dry_run { "preview" } else { "applied" }
+    );
+    println!("Repository root: {}", repo_root);
+    println!("Managed root: {}", managed_root);
+    println!("Active tracked worktrees: {}", active_count);
+    println!("Stale candidates: {}", stale_count);
+    println!("Removed entries: {}", cleaned_count + orphan_removed_count);
+    println!("Failures: {}", failure_count);
+
+    if let Some(rows) = report
+        .get("cleaned_worktrees")
+        .and_then(|value| value.as_array())
+    {
+        for row in rows {
+            let path = row
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<unknown>");
+            let branch = row
+                .get("branch")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if branch.is_empty() {
+                println!("  removed worktree: {}", path);
+            } else {
+                println!("  removed worktree: {} ({})", path, branch);
+            }
+        }
+    }
+    if dry_run {
+        if let Some(rows) = report.get("stale_paths").and_then(|value| value.as_array()) {
+            for row in rows {
+                let path = row
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let branch = row
+                    .get("branch")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if branch.is_empty() {
+                    println!("  stale candidate: {}", path);
+                } else {
+                    println!("  stale candidate: {} ({})", path, branch);
+                }
+            }
+        }
+    }
+    if let Some(rows) = report
+        .get("orphan_dirs_removed")
+        .and_then(|value| value.as_array())
+    {
+        for row in rows {
+            if let Some(path) = row.get("path").and_then(|value| value.as_str()) {
+                println!("  removed orphan dir: {}", path);
+            }
+        }
+    }
+    if dry_run {
+        if let Some(rows) = report.get("orphan_dirs").and_then(|value| value.as_array()) {
+            for row in rows {
+                if let Some(path) = row.as_str() {
+                    println!("  orphan dir: {}", path);
+                }
+            }
+        }
+    }
+    if let Some(rows) = report.get("failures").and_then(|value| value.as_array()) {
+        for row in rows {
+            let path = row
+                .get("path")
+                .and_then(|value| value.as_str())
+                .or_else(|| row.get("code").and_then(|value| value.as_str()))
+                .unwrap_or("<unknown>");
+            let detail = row
+                .get("error")
+                .and_then(|value| value.as_str())
+                .or_else(|| row.get("stderr").and_then(|value| value.as_str()))
+                .unwrap_or("cleanup failed");
+            println!("  failure: {} -> {}", path, detail);
+        }
     }
 }
 

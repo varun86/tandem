@@ -67,6 +67,7 @@ import type {
   BrowserSmokeTestResponse,
   StorageFilesResponse,
   StorageRepairResponse,
+  WorktreeCleanupResponse,
   WorkflowRecord,
   WorkflowListResponse,
   WorkflowRunRecord,
@@ -287,6 +288,8 @@ export class TandemClient {
   readonly browser: Browser;
   /** Engine storage inspection and legacy repair helpers */
   readonly storage: Storage;
+  /** Managed Git worktree maintenance helpers */
+  readonly worktrees: Worktrees;
   /** Workflow registry, runs, and hooks */
   readonly workflows: Workflows;
   /** Bug monitor incident and draft operations */
@@ -325,6 +328,7 @@ export class TandemClient {
     this.resources = new Resources(this.baseUrl, getToken, req);
     this.browser = new Browser(req);
     this.storage = new Storage(req);
+    this.worktrees = new Worktrees(req);
     this.workflows = new Workflows(this.baseUrl, getToken, req);
     this.bugMonitor = new BugMonitor(req);
     this.coder = new Coder(req);
@@ -547,6 +551,26 @@ class Storage {
     return this.req<StorageRepairResponse>("/global/storage/repair", {
       method: "POST",
       body: JSON.stringify({ force: options?.force ?? false }),
+    });
+  }
+}
+
+class Worktrees {
+  constructor(private req: TandemClient["_request"]) {}
+
+  /** Preview or apply stale managed-worktree cleanup for a repository root. */
+  async cleanup(options?: {
+    repoRoot?: string;
+    dryRun?: boolean;
+    removeOrphanDirs?: boolean;
+  }): Promise<WorktreeCleanupResponse> {
+    return this.req<WorktreeCleanupResponse>("/worktree/cleanup", {
+      method: "POST",
+      body: JSON.stringify({
+        repo_root: options?.repoRoot,
+        dry_run: options?.dryRun ?? false,
+        remove_orphan_dirs: options?.removeOrphanDirs ?? true,
+      }),
     });
   }
 }

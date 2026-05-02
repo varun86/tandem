@@ -349,6 +349,7 @@ result = await client.memory.context_distill("session-abc", [
 The Python SDK also exposes the newer engine surfaces used across the Tandem repo:
 
 - `client.browser` for `status()`, `install()`, and `smoke_test()` host flows
+- `client.worktrees` for repo-local stale managed-worktree preview and cleanup
 - `client.workflows` for workflow registry, runs, hooks, simulation, and live events
 - `client.resources` for key-value resources
 - `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
@@ -357,12 +358,18 @@ The Python SDK also exposes the newer engine surfaces used across the Tandem rep
 
 ```python
 browser = await client.browser.status()
+preview = await client.worktrees.cleanup(
+    repo_root="/abs/path/to/repo",
+    dry_run=True,
+)
 workflows = await client.workflows.list()
 resources = await client.resources.list(prefix="agent-config/")
 catalog = await client.skills.templates()
 ```
 
 For actual browser automation, use `client.execute_tool(...)` with tools like `browser_open`, `browser_click`, `browser_type`, `browser_extract`, and `browser_screenshot`, or run a session with those tools in the allowlist. The `client.browser` namespace does not wrap those actions directly.
+
+Use `client.worktrees.cleanup(...)` for operator-directed repo maintenance only. It wraps `POST /worktree/cleanup`, should usually be called in `dry_run` mode first, and is meant for leaked `.tandem/worktrees` entries after blocked, failed, or restarted repo tasks.
 
 ### `client.bug_monitor`
 

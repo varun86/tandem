@@ -125,6 +125,49 @@ export interface StorageRepairResponse {
   [key: string]: unknown;
 }
 
+export interface WorktreeCleanupStaleRecord {
+  path?: string;
+  branch?: string | null;
+  [key: string]: unknown;
+}
+
+export interface WorktreeCleanupActionRecord {
+  path?: string;
+  branch?: string | null;
+  via?: string | null;
+  code?: string | null;
+  error?: string | null;
+  stderr?: string | null;
+  branch_deleted?: boolean | null;
+  branchDeleteError?: string | null;
+  branch_delete_error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface WorktreeCleanupResponse {
+  ok?: boolean;
+  dry_run?: boolean;
+  dryRun?: boolean;
+  repo_root?: string;
+  repoRoot?: string;
+  managed_root?: string;
+  managedRoot?: string;
+  tracked_paths?: string[];
+  trackedPaths?: string[];
+  active_paths?: string[];
+  activePaths?: string[];
+  stale_paths?: WorktreeCleanupStaleRecord[];
+  stalePaths?: WorktreeCleanupStaleRecord[];
+  cleaned_worktrees?: WorktreeCleanupActionRecord[];
+  cleanedWorktrees?: WorktreeCleanupActionRecord[];
+  orphan_dirs?: string[];
+  orphanDirs?: string[];
+  orphan_dirs_removed?: WorktreeCleanupActionRecord[];
+  orphanDirsRemoved?: WorktreeCleanupActionRecord[];
+  failures?: WorktreeCleanupActionRecord[];
+  [key: string]: unknown;
+}
+
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
 export interface CreateSessionOptions {

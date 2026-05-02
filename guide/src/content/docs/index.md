@@ -52,6 +52,7 @@ _You want to build custom clients, connect external tools via MCP, or programmat
 - **[Automation Examples For Teams](./automation-examples-for-teams/)** — End-to-end workflow proofs for control-panel and SDK-driven automation.
 - **[Build an Automation With the AI Assistant](./automation-composer-workflows/)** — Prompt-first workflow authoring with preview, validation, and run-now.
 - **[Memory Internals](./memory-internals/)** — Learn how Tandem stores transcript history, retrieval memory, replay state, and reusable knowledge.
+- **[Storage Maintenance For Agents](./storage-maintenance/)** — Clean local storage safely and remove stale repo-local managed worktrees when `.tandem/worktrees` leaks after blocked or failed runs.
 - **[Governance Reference](./reference/governance/)** — Review provenance chains, capability grants, approval queues, and audit events. Premium governance feature set required for managed mutation flows.
 - **[Automation Governance Lifecycle](./reference/governance-lifecycle/)** — Inspect the concrete review, pause, approval, and retirement state machine used by the premium governance engine.
 - **[Engine Authentication For Agents](./engine-authentication-for-agents/)** — Get the token, authorize calls, and connect agents safely.

@@ -50,21 +50,85 @@ On developer machines with more than one `tandem-engine` on `PATH`, run `which -
 
 Use `--retention-days <N>` to tune how long terminal context runs stay hot. The default is conservative for local repair work.
 
+## Managed worktree cleanup
+
+Managed Git worktrees are different from the engine state root. Tandem creates them per repository under:
+
+- `<repo>/.tandem/worktrees/<slug>`
+
+These worktrees are used for isolated coder runs, agent-team instances, and other edit-capable repo tasks. If a run is blocked, crashes, or the process restarts before teardown, the Git worktree entry can remain registered even after the task is gone.
+
+Typical symptoms:
+
+- `.tandem/worktrees/` grows large inside a repo
+- `git worktree list` shows many old `tandem/...` branches
+- operators have to manually remove worktrees and branches
+
+Use the packaged CLI for a preview first:
+
+```bash
+tandem-engine storage worktrees --repo-root /abs/path/to/repo --json
+```
+
+Apply cleanup only after reviewing the preview:
+
+```bash
+tandem-engine storage worktrees --repo-root /abs/path/to/repo --apply --json
+```
+
+What this cleanup does:
+
+1. Reads Git-registered worktrees under `<repo>/.tandem/worktrees`
+2. Compares them to Tandem's currently tracked in-memory managed worktrees
+3. Skips worktrees that the live runtime still considers active
+4. Removes stale Git worktrees and their managed branches when possible
+5. Removes orphaned leftover directories that are no longer Git-registered
+
+This cleanup is also available from the control panel at `Settings -> Maintenance`, where operators can preview stale worktrees, run cleanup, and inspect an animated per-item log of what was skipped, removed, or failed.
+
+### Runtime API and SDK access
+
+The same operation is available through the engine runtime API:
+
+```http
+POST /worktree/cleanup
+```
+
+Example request:
+
+```json
+{
+  "repo_root": "/abs/path/to/repo",
+  "dry_run": true,
+  "remove_orphan_dirs": true
+}
+```
+
+Use the HTTP or SDK path when an operator tool, external service, or governed agent flow needs to inspect or clean stale worktrees without shelling out to the CLI.
+
 ## SDK inspection
 
-The TypeScript and Python SDKs expose storage inspection helpers for agents and tools that need to list files or trigger the legacy session-storage repair scan:
+The TypeScript and Python SDKs expose storage inspection helpers for agents and tools that need to list files or trigger the legacy session-storage repair scan, plus worktree cleanup helpers for repo-local stale worktree maintenance:
 
 ```ts
 const files = await client.storage.listFiles({ path: "data/context-runs", limit: 100 });
 await client.storage.repair({ force: true });
+const preview = await client.worktrees.cleanup({
+  repoRoot: "/abs/path/to/repo",
+  dryRun: true,
+});
 ```
 
 ```python
 files = await client.storage.list_files(path="data/context-runs", limit=100)
 await client.storage.repair(force=True)
+preview = await client.worktrees.cleanup(
+    repo_root="/abs/path/to/repo",
+    dry_run=True,
+)
 ```
 
-These SDK methods do not run archive cleanup. Cleanup changes local files and may quarantine data, so agents should use the CLI command with explicit operator intent.
+Storage SDK methods do not run archive cleanup. Worktree cleanup only affects repo-local managed worktrees for the selected repository. Both should still be treated as operator-directed maintenance actions rather than background workflow behavior.
 
 ## Agent guidance
 
@@ -82,3 +146,10 @@ Prefer this order:
 3. Run cleanup with `--quarantine` so moved root files can be recovered.
 4. Restart the engine and verify startup time.
 5. Only then continue debugging workflow behavior.
+
+For worktree maintenance, prefer this order:
+
+1. Run `tandem-engine storage worktrees --repo-root ... --json` first.
+2. Confirm the reported stale paths are not tied to an active operator session.
+3. Apply cleanup with `--apply`.
+4. Re-run `git worktree list` and verify the repo is back to the expected set of worktrees.

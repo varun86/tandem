@@ -111,6 +111,41 @@ class StorageRepairResponse(BaseModel):
     imported_counts: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("importedCounts", "imported_counts"))
 
 
+class WorktreeCleanupStaleRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: Optional[str] = None
+    branch: Optional[str] = None
+
+
+class WorktreeCleanupActionRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: Optional[str] = None
+    branch: Optional[str] = None
+    via: Optional[str] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+    stderr: Optional[str] = None
+    branch_deleted: Optional[bool] = None
+    branch_delete_error: Optional[str] = Field(
+        None, validation_alias=AliasChoices("branchDeleteError", "branch_delete_error")
+    )
+
+
+class WorktreeCleanupResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ok: Optional[bool] = None
+    dry_run: Optional[bool] = Field(None, validation_alias=AliasChoices("dryRun", "dry_run"))
+    repo_root: Optional[str] = Field(None, validation_alias=AliasChoices("repoRoot", "repo_root"))
+    managed_root: Optional[str] = Field(None, validation_alias=AliasChoices("managedRoot", "managed_root"))
+    tracked_paths: list[str] = Field(default_factory=list, validation_alias=AliasChoices("trackedPaths", "tracked_paths"))
+    active_paths: list[str] = Field(default_factory=list, validation_alias=AliasChoices("activePaths", "active_paths"))
+    stale_paths: list[WorktreeCleanupStaleRecord] = Field(default_factory=list, validation_alias=AliasChoices("stalePaths", "stale_paths"))
+    cleaned_worktrees: list[WorktreeCleanupActionRecord] = Field(default_factory=list, validation_alias=AliasChoices("cleanedWorktrees", "cleaned_worktrees"))
+    orphan_dirs: list[str] = Field(default_factory=list, validation_alias=AliasChoices("orphanDirs", "orphan_dirs"))
+    orphan_dirs_removed: list[WorktreeCleanupActionRecord] = Field(default_factory=list, validation_alias=AliasChoices("orphanDirsRemoved", "orphan_dirs_removed"))
+    failures: list[WorktreeCleanupActionRecord] = []
+
+
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 
