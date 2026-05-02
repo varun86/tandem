@@ -1328,6 +1328,8 @@ fn mcp_tools_are_exempt_from_workspace_sandbox_path_checks() {
     assert!(is_mcp_tool_name("MCP.TANDEM_MCP.GET_DOC"));
     assert!(!is_mcp_tool_name("read"));
     assert!(!is_mcp_tool_name("glob"));
+    assert!(is_mcp_sandbox_exempt_server("tandem_mcp"));
+    assert!(is_mcp_sandbox_exempt_server("tandem-mcp"));
 }
 
 #[test]

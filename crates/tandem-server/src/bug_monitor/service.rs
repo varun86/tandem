@@ -1053,6 +1053,20 @@ pub async fn build_bug_monitor_submission_from_event(
         ),
         12,
     );
+    let missing_workspace_files = strings_from_value(
+        first_value(
+            &event.properties,
+            &["missing_workspace_files", "missingWorkspaceFiles"],
+        ),
+        20,
+    );
+    let required_next_tool_actions = strings_from_value(
+        first_value(
+            &event.properties,
+            &["required_next_tool_actions", "requiredNextToolActions"],
+        ),
+        20,
+    );
     let recent_attempt_evidence = strings_from_value(
         first_value(
             &event.properties,
@@ -1212,6 +1226,18 @@ pub async fn build_bug_monitor_submission_from_event(
             String::new()
         } else {
             validation_errors.join("\n")
+        },
+        "missing_workspace_files:".to_string(),
+        if missing_workspace_files.is_empty() {
+            String::new()
+        } else {
+            missing_workspace_files.join("\n")
+        },
+        "required_next_tool_actions:".to_string(),
+        if required_next_tool_actions.is_empty() {
+            String::new()
+        } else {
+            required_next_tool_actions.join("\n")
         },
         "recent_node_attempt_evidence:".to_string(),
         if recent_attempt_evidence.is_empty() {

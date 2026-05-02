@@ -85,6 +85,28 @@ fn automation_failure_is_provider_stream_related(detail: &str) -> bool {
         || lowered.contains("incomplete streamed response")
 }
 
+fn strings_from_json_array(value: Option<&Value>, max_items: usize) -> Vec<String> {
+    let mut rows = value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    rows.truncate(max_items);
+    rows
+}
+
+fn dedupe_strings(rows: &mut Vec<String>) {
+    rows.sort();
+    rows.dedup();
+}
+
 fn lifecycle_missing_workspace_paths(metadata: &Value) -> Vec<String> {
     metadata
         .get("must_write_file_statuses")
@@ -103,6 +125,44 @@ fn lifecycle_missing_workspace_paths(metadata: &Value) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn output_missing_workspace_paths(output: Option<&Value>) -> Vec<String> {
+    let Some(output) = output else {
+        return Vec::new();
+    };
+    let mut paths = strings_from_json_array(
+        output
+            .pointer("/artifact_validation/missing_workspace_files")
+            .or_else(|| output.pointer("/validator_summary/missing_workspace_files")),
+        20,
+    );
+    paths.extend(lifecycle_missing_workspace_paths(
+        output.get("artifact_validation").unwrap_or(&Value::Null),
+    ));
+    dedupe_strings(&mut paths);
+    paths
+}
+
+fn output_required_next_tool_actions(output: Option<&Value>) -> Vec<String> {
+    let mut actions = strings_from_json_array(
+        output.and_then(|row| {
+            row.pointer("/artifact_validation/required_next_tool_actions")
+                .or_else(|| row.pointer("/validator_summary/required_next_tool_actions"))
+        }),
+        20,
+    );
+    dedupe_strings(&mut actions);
+    actions
+}
+
+fn evidence_string_array(evidence: &[Value], field: &str) -> Vec<String> {
+    let mut rows = Vec::new();
+    for item in evidence {
+        rows.extend(strings_from_json_array(item.get(field), 20));
+    }
+    dedupe_strings(&mut rows);
+    rows
 }
 
 fn recent_node_attempt_evidence(

@@ -499,6 +499,50 @@ async fn bug_monitor_submission_preserves_prior_contract_failure_when_provider_s
 
 #[tokio::test]
 #[serial_test::serial(bug_monitor_http)]
+async fn bug_monitor_submission_renders_workspace_file_repair_fields() {
+    let state = test_state().await;
+    let config = crate::BugMonitorConfig {
+        enabled: true,
+        repo: Some("acme/platform".to_string()),
+        workspace_root: Some("/tmp/acme".to_string()),
+        ..Default::default()
+    };
+    let event = EngineEvent::new(
+        "automation_v2.run.failed",
+        json!({
+            "workflow_id": "review-workflow",
+            "run_id": "run-review-2",
+            "task_id": "research_sources",
+            "node_id": "research_sources",
+            "attempt": 2,
+            "max_attempts": 3,
+            "retry_exhausted": false,
+            "error_kind": "validation_error",
+            "reason": "automation run blocked by upstream node outcome",
+            "validation_errors": ["required_workspace_files_missing"],
+            "missing_workspace_files": ["tandem-review.md"],
+            "required_next_tool_actions": [
+                "Write `tandem-review.md` before updating the run artifact."
+            ],
+        }),
+    );
+
+    let submission = crate::bug_monitor::service::build_bug_monitor_submission_from_event(
+        &state, &config, &event,
+    )
+    .await
+    .expect("submission");
+    let detail = submission.detail.expect("detail");
+
+    assert!(detail.contains("retry_exhausted: false"));
+    assert!(detail.contains("missing_workspace_files:"));
+    assert!(detail.contains("tandem-review.md"));
+    assert!(detail.contains("required_next_tool_actions:"));
+    assert!(detail.contains("Write `tandem-review.md` before updating the run artifact."));
+}
+
+#[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_report_creates_and_dedupes_draft() {
     let state = test_state().await;
     state

@@ -67,21 +67,39 @@ fn publish_automation_v2_failure_event(
                 .map(|path| json!([path]))
                 .unwrap_or_else(|| json!([]))
         });
+    let mut missing_workspace_files = output_missing_workspace_paths(output);
+    let mut required_next_tool_actions = output_required_next_tool_actions(output);
     let final_error_text = [
         reason.as_str(),
         failure.map(|row| row.reason.as_str()).unwrap_or_default(),
         run.detail.as_deref().unwrap_or_default(),
     ]
     .join("\n");
-    let recent_attempt_evidence =
-        if automation_failure_is_provider_stream_related(&final_error_text) {
-            recent_node_attempt_evidence(run, node_id)
-        } else {
-            Vec::new()
-        };
+    let should_include_recent_attempt_evidence =
+        automation_failure_is_provider_stream_related(&final_error_text)
+            || validation_errors
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+            || !missing_workspace_files.is_empty()
+            || !required_next_tool_actions.is_empty();
+    let recent_attempt_evidence = if should_include_recent_attempt_evidence {
+        recent_node_attempt_evidence(run, node_id)
+    } else {
+        Vec::new()
+    };
     if !recent_attempt_evidence.is_empty() {
         validation_errors =
             validation_errors_with_prior_evidence(validation_errors, &recent_attempt_evidence);
+        missing_workspace_files.extend(evidence_string_array(
+            &recent_attempt_evidence,
+            "missing_workspace_files",
+        ));
+        required_next_tool_actions.extend(evidence_string_array(
+            &recent_attempt_evidence,
+            "required_next_tool_actions",
+        ));
+        dedupe_strings(&mut missing_workspace_files);
+        dedupe_strings(&mut required_next_tool_actions);
     }
     let has_validation_errors = validation_errors
         .as_array()
@@ -129,6 +147,8 @@ fn publish_automation_v2_failure_event(
             "expected_output": node.and_then(|row| row.output_contract.as_ref()).map(|row| serde_json::to_value(row).unwrap_or(Value::Null)),
             "actual_output": output.and_then(|row| row.get("summary")).and_then(Value::as_str),
             "artifact_refs": artifact_refs,
+            "missing_workspace_files": missing_workspace_files,
+            "required_next_tool_actions": required_next_tool_actions,
             "input_refs": node.map(|row| serde_json::to_value(&row.input_refs).unwrap_or(Value::Null)).unwrap_or(Value::Null),
             "output_contract": node.and_then(|row| row.output_contract.as_ref()).map(|row| serde_json::to_value(row).unwrap_or(Value::Null)),
             "validation_errors": validation_errors,
@@ -473,6 +493,31 @@ fn automation_activation_validation_failure(
             )
         })
         .or_else(|| Some("plan package not ready for activation".to_string()))
+}
+
+fn reconcile_pending_nodes_after_node_output(
+    checkpoint: &mut crate::automation_v2::types::AutomationRunCheckpoint,
+    node_id: &str,
+    needs_repair: bool,
+    terminal_repair_block: bool,
+    blocked_descendants: &std::collections::HashSet<String>,
+) {
+    checkpoint.pending_nodes.retain(|pending_id| {
+        if pending_id == node_id {
+            needs_repair && !terminal_repair_block
+        } else {
+            !blocked_descendants.contains(pending_id)
+        }
+    });
+    if needs_repair
+        && !terminal_repair_block
+        && !checkpoint
+            .pending_nodes
+            .iter()
+            .any(|pending_id| pending_id == node_id)
+    {
+        checkpoint.pending_nodes.push(node_id.to_string());
+    }
 }
 
 fn derive_terminal_run_state(
@@ -1245,23 +1290,13 @@ pub async fn run_automation_v2_run(
                             } else {
                                 std::collections::HashSet::new()
                             };
-                            row.checkpoint.pending_nodes.retain(|id| {
-                                if id == &node_id {
-                                    needs_repair && !terminal_repair_block
-                                } else {
-                                    !blocked_descendants.contains(id)
-                                }
-                            });
-                            if needs_repair && !terminal_repair_block {
-                                if !crate::app::state::automation_node_has_passing_artifact(
-                                    &node_id,
-                                    &row.checkpoint,
-                                ) {
-                                    if !row.checkpoint.pending_nodes.iter().any(|id| id == &node_id) {
-                                        row.checkpoint.pending_nodes.push(node_id.clone());
-                                    }
-                                }
-                            }
+                            reconcile_pending_nodes_after_node_output(
+                                &mut row.checkpoint,
+                                &node_id,
+                                needs_repair,
+                                terminal_repair_block,
+                                &blocked_descendants,
+                            );
                             if !blocked
                                 && !needs_repair
                                 && !verify_failed

@@ -316,6 +316,93 @@ fn derive_terminal_run_state_fails_pending_nodes_that_exhausted_attempts() {
 }
 
 #[test]
+fn repairable_workspace_file_failure_requeues_even_when_run_artifact_passed() {
+    let mut run = test_run_with_output(json!({
+        "status": "needs_repair",
+        "failure_kind": "artifact_rejected",
+        "validator_summary": {
+            "outcome": "passed",
+            "unmet_requirements": []
+        },
+        "artifact_validation": {
+            "validation_outcome": "needs_repair",
+            "unmet_requirements": ["required_workspace_files_missing"],
+            "required_next_tool_actions": ["Write `tandem-review.md` before updating the run artifact."],
+            "repair_exhausted": false
+        }
+    }));
+    run.checkpoint.pending_nodes.clear();
+    assert!(crate::app::state::automation_node_has_passing_artifact(
+        "research-brief",
+        &run.checkpoint
+    ));
+
+    reconcile_pending_nodes_after_node_output(
+        &mut run.checkpoint,
+        "research-brief",
+        true,
+        false,
+        &std::collections::HashSet::new(),
+    );
+
+    assert_eq!(
+        run.checkpoint.pending_nodes,
+        vec!["research-brief".to_string()]
+    );
+}
+
+#[test]
+fn terminal_workspace_file_repair_failure_does_not_requeue() {
+    let mut run = test_run_with_output(json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "outcome": "passed",
+            "unmet_requirements": []
+        },
+        "artifact_validation": {
+            "unmet_requirements": ["required_workspace_files_missing"],
+            "repair_exhausted": true
+        }
+    }));
+    run.checkpoint.pending_nodes = vec!["research-brief".to_string()];
+
+    reconcile_pending_nodes_after_node_output(
+        &mut run.checkpoint,
+        "research-brief",
+        true,
+        true,
+        &std::collections::HashSet::new(),
+    );
+
+    assert!(run.checkpoint.pending_nodes.is_empty());
+}
+
+#[test]
+fn workflow_failure_evidence_extracts_missing_workspace_files_and_actions() {
+    let output = json!({
+        "artifact_validation": {
+            "must_write_file_statuses": [{
+                "path": "tandem-review.md",
+                "materialized_by_current_attempt": false,
+                "touched_by_current_attempt": false
+            }],
+            "required_next_tool_actions": [
+                "Write `tandem-review.md` before updating the run artifact."
+            ]
+        }
+    });
+
+    assert_eq!(
+        output_missing_workspace_paths(Some(&output)),
+        vec!["tandem-review.md".to_string()]
+    );
+    assert_eq!(
+        output_required_next_tool_actions(Some(&output)),
+        vec!["Write `tandem-review.md` before updating the run artifact.".to_string()]
+    );
+}
+
+#[test]
 fn transient_execution_error_output_requests_retry_without_handoff_requirements() {
     let node = &test_automation().flow.nodes[0];
     let output = build_node_execution_error_output(

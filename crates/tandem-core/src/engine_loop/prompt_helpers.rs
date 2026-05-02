@@ -292,6 +292,12 @@ pub(super) fn extract_tool_candidate_paths(tool: &str, args: &Value) -> Vec<Stri
 /// Set `TANDEM_MCP_SANDBOX_EXEMPT_SERVERS` to a comma-separated list of server names
 /// (e.g. `composio,github`) to exempt those servers from workspace path containment.
 pub(super) fn is_mcp_sandbox_exempt_server(server_name: &str) -> bool {
+    if matches!(
+        server_name,
+        "tandem_mcp" | "tandem-mcp" | "tandemDocs" | "tandem_docs" | "tandem-docs"
+    ) {
+        return true;
+    }
     let Ok(raw) = std::env::var("TANDEM_MCP_SANDBOX_EXEMPT_SERVERS") else {
         return false;
     };
