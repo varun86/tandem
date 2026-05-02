@@ -38,6 +38,127 @@ fn normalize_reason_for_fingerprint(reason: &str) -> String {
         .into_owned()
 }
 
+fn node_id_from_failure_reason(reason: &str) -> Option<String> {
+    for regex in [
+        node_outcomes_reason_regex(),
+        automation_node_timeout_reason_regex(),
+    ] {
+        if let Some(captures) = regex.captures(reason) {
+            let value = captures
+                .get(1)
+                .map(|match_| match_.as_str())
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('`')
+                .trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn is_node_outcomes_reason(reason: &str) -> bool {
+    node_outcomes_reason_regex().is_match(reason)
+}
+
+fn node_outcomes_reason_regex() -> &'static regex::Regex {
+    static REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    REGEX.get_or_init(|| {
+        regex::Regex::new(r"(?i)node outcomes:\s*`?([A-Za-z0-9_.:-]+)`?")
+            .expect("node outcomes reason regex")
+    })
+}
+
+fn node_incident_matches_aggregate_outcome(
+    incident: &BugMonitorIncidentRecord,
+    repo: &str,
+    workspace_root: &str,
+    event_type: &str,
+    workflow_id: &str,
+    run_id: &str,
+    node_id: &str,
+) -> bool {
+    if incident.repo != repo
+        || incident.workspace_root != workspace_root
+        || incident.event_type != event_type
+        || incident.run_id.as_deref() != Some(run_id)
+        || incident.fingerprint.trim().is_empty()
+    {
+        return false;
+    }
+    let Some(payload) = incident.event_payload.as_ref() else {
+        return false;
+    };
+    let incident_workflow_id = first_string_deep(
+        payload,
+        &["workflow_id", "workflowID", "automation_id", "automationID"],
+    );
+    if incident_workflow_id.as_deref() != Some(workflow_id) {
+        return false;
+    }
+    let incident_node_id = first_string_deep(
+        payload,
+        &[
+            "node_id", "nodeID", "task_id", "taskID", "stage_id", "stageID",
+        ],
+    );
+    if incident_node_id.as_deref() != Some(node_id) {
+        return false;
+    }
+    let incident_reason = first_string_deep(payload, &["reason", "error", "message"]);
+    !incident_reason
+        .as_deref()
+        .is_some_and(is_node_outcomes_reason)
+}
+
+async fn existing_node_incident_fingerprint_for_aggregate_outcome(
+    state: &AppState,
+    repo: &str,
+    workspace_root: &str,
+    event_type: &str,
+    workflow_id: Option<&str>,
+    run_id: Option<&str>,
+    node_id: Option<&str>,
+    reason: Option<&str>,
+) -> Option<String> {
+    if !reason.is_some_and(is_node_outcomes_reason) {
+        return None;
+    }
+    let workflow_id = workflow_id?;
+    let run_id = run_id?;
+    let node_id = node_id?;
+    let mut rows = state
+        .bug_monitor_incidents
+        .read()
+        .await
+        .values()
+        .filter(|incident| {
+            node_incident_matches_aggregate_outcome(
+                incident,
+                repo,
+                workspace_root,
+                event_type,
+                workflow_id,
+                run_id,
+                node_id,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    rows.into_iter().next().map(|incident| incident.fingerprint)
+}
+
+fn automation_node_timeout_reason_regex() -> &'static regex::Regex {
+    static REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    REGEX.get_or_init(|| {
+        regex::Regex::new(r"(?i)automation node\s+`([^`]+)`\s+timed out")
+            .expect("automation node timeout reason regex")
+    })
+}
+
 fn automation_run_id_regex() -> &'static regex::Regex {
     static REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     REGEX.get_or_init(|| {
@@ -977,9 +1098,16 @@ pub async fn build_bug_monitor_submission_from_event(
     let workflow_name = first_string_deep(&event.properties, &["workflow_name", "workflowName"]);
     let run_id = first_string_deep(&event.properties, &["run_id", "runID"]);
     let session_id = first_string_deep(&event.properties, &["session_id", "sessionID"]);
-    let task_id = first_string_deep(&event.properties, &["task_id", "taskID", "task.id"]);
-    let stage_id = first_string_deep(&event.properties, &["stage_id", "stageID", "actionID"]);
-    let node_id = first_string_deep(&event.properties, &["node_id", "nodeID"]);
+    let inferred_node_id = reason
+        .as_deref()
+        .and_then(node_id_from_failure_reason)
+        .map(|value| truncate_text(&value, 160));
+    let task_id = first_string_deep(&event.properties, &["task_id", "taskID", "task.id"])
+        .or_else(|| inferred_node_id.clone());
+    let stage_id = first_string_deep(&event.properties, &["stage_id", "stageID", "actionID"])
+        .or_else(|| inferred_node_id.clone());
+    let node_id = first_string_deep(&event.properties, &["node_id", "nodeID"])
+        .or_else(|| inferred_node_id.clone());
     let automation_id = first_string_deep(&event.properties, &["automation_id", "automationID"]);
     let routine_id = first_string_deep(&event.properties, &["routine_id", "routineID"]);
     let agent_role = first_string_deep(&event.properties, &["agent_role", "agentRole"]);
@@ -1130,7 +1258,7 @@ pub async fn build_bug_monitor_submission_from_event(
     let sanitized_properties = sanitize_json_value(&event.properties);
     let serialized = serde_json::to_string(&sanitized_properties).unwrap_or_default();
     let normalized_reason = normalize_reason_for_fingerprint(reason.as_deref().unwrap_or(""));
-    let fingerprint = sha256_hex(&[
+    let mut fingerprint = sha256_hex(&[
         repo.as_str(),
         workspace_root.as_str(),
         event.event_type.as_str(),
@@ -1150,6 +1278,23 @@ pub async fn build_bug_monitor_submission_from_event(
         // structurally specific without the per-run noise.
         component.as_deref().unwrap_or(""),
     ]);
+    if let Some(node_fingerprint) = existing_node_incident_fingerprint_for_aggregate_outcome(
+        state,
+        &repo,
+        &workspace_root,
+        &event.event_type,
+        workflow_id.as_deref().or(automation_id.as_deref()),
+        run_id.as_deref(),
+        node_id
+            .as_deref()
+            .or(task_id.as_deref())
+            .or(stage_id.as_deref()),
+        reason.as_deref(),
+    )
+    .await
+    {
+        fingerprint = node_fingerprint;
+    }
     let failure_place = stage_id
         .as_ref()
         .or(node_id.as_ref())
@@ -1538,5 +1683,145 @@ mod tests {
         // unchanged.
         let reason = "failed to reach provider `openai-codex` at https://chatgpt.com/backend-api/codex (request error)";
         assert_eq!(normalize_reason_for_fingerprint(reason), reason);
+    }
+
+    #[test]
+    fn node_id_from_failure_reason_extracts_node_outcome() {
+        assert_eq!(
+            node_id_from_failure_reason(
+                "automation run failed from node outcomes: research_sources"
+            )
+            .as_deref(),
+            Some("research_sources")
+        );
+    }
+
+    #[test]
+    fn node_incident_matches_aggregate_outcome_only_for_concrete_node_failure() {
+        let incident = BugMonitorIncidentRecord {
+            fingerprint: "node-fingerprint".to_string(),
+            repo: "frumu-ai/tandem".to_string(),
+            workspace_root: "/workspace".to_string(),
+            event_type: "automation_v2.run.failed".to_string(),
+            run_id: Some("automation-v2-run-1".to_string()),
+            updated_at_ms: 10,
+            event_payload: Some(json!({
+                "workflow_id": "automation-v2-workflow",
+                "run_id": "automation-v2-run-1",
+                "node_id": "research_sources",
+                "reason": "required_workspace_files_missing",
+            })),
+            ..Default::default()
+        };
+        assert!(node_incident_matches_aggregate_outcome(
+            &incident,
+            "frumu-ai/tandem",
+            "/workspace",
+            "automation_v2.run.failed",
+            "automation-v2-workflow",
+            "automation-v2-run-1",
+            "research_sources"
+        ));
+
+        let aggregate_incident = BugMonitorIncidentRecord {
+            event_payload: Some(json!({
+                "workflow_id": "automation-v2-workflow",
+                "run_id": "automation-v2-run-1",
+                "node_id": "research_sources",
+                "reason": "automation run failed from node outcomes: research_sources",
+            })),
+            ..incident.clone()
+        };
+        assert!(!node_incident_matches_aggregate_outcome(
+            &aggregate_incident,
+            "frumu-ai/tandem",
+            "/workspace",
+            "automation_v2.run.failed",
+            "automation-v2-workflow",
+            "automation-v2-run-1",
+            "research_sources"
+        ));
+
+        let wrong_node = BugMonitorIncidentRecord {
+            event_payload: Some(json!({
+                "workflow_id": "automation-v2-workflow",
+                "run_id": "automation-v2-run-1",
+                "node_id": "generate_report",
+                "reason": "required_workspace_files_missing",
+            })),
+            ..incident.clone()
+        };
+        assert!(!node_incident_matches_aggregate_outcome(
+            &wrong_node,
+            "frumu-ai/tandem",
+            "/workspace",
+            "automation_v2.run.failed",
+            "automation-v2-workflow",
+            "automation-v2-run-1",
+            "research_sources"
+        ));
+    }
+
+    #[tokio::test]
+    async fn aggregate_node_outcome_lookup_reuses_existing_node_fingerprint() {
+        let state = AppState::new_starting("bug-monitor-aggregate-merge-test".to_string(), true);
+        let node_incident = BugMonitorIncidentRecord {
+            incident_id: "incident-node".to_string(),
+            fingerprint: "node-fingerprint".to_string(),
+            repo: "frumu-ai/tandem".to_string(),
+            workspace_root: "/workspace".to_string(),
+            event_type: "automation_v2.run.failed".to_string(),
+            status: "draft_created".to_string(),
+            title: "Node failure".to_string(),
+            run_id: Some("automation-v2-run-1".to_string()),
+            updated_at_ms: 10,
+            event_payload: Some(json!({
+                "workflow_id": "automation-v2-workflow",
+                "run_id": "automation-v2-run-1",
+                "node_id": "research_sources",
+                "reason": "required_workspace_files_missing",
+            })),
+            ..Default::default()
+        };
+        state
+            .put_bug_monitor_incident(node_incident)
+            .await
+            .expect("store incident");
+        let event = event_with(json!({
+            "repo": "frumu-ai/tandem",
+            "workspace_root": "/workspace",
+            "workflow_id": "automation-v2-workflow",
+            "run_id": "automation-v2-run-1",
+            "reason": "automation run failed from node outcomes: research_sources",
+            "component": "automation_v2",
+        }));
+        let reason = first_string_deep(&event.properties, &["reason"]);
+        let node_id = reason.as_deref().and_then(node_id_from_failure_reason);
+
+        let fingerprint = existing_node_incident_fingerprint_for_aggregate_outcome(
+            &state,
+            "frumu-ai/tandem",
+            "/workspace",
+            &event.event_type,
+            Some("automation-v2-workflow"),
+            Some("automation-v2-run-1"),
+            node_id.as_deref(),
+            reason.as_deref(),
+        )
+        .await
+        .expect("aggregate should reuse concrete node incident fingerprint");
+
+        assert_eq!(fingerprint, "node-fingerprint");
+    }
+
+    #[test]
+    fn node_id_from_failure_reason_extracts_timed_out_node() {
+        assert_eq!(
+            node_id_from_failure_reason(
+                "automation node `prepare_search_manifest` timed out after 180000 ms"
+            )
+            .as_deref(),
+            Some("prepare_search_manifest")
+        );
     }
 }
