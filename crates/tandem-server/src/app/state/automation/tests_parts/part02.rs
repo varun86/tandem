@@ -680,6 +680,52 @@ fn local_citations_contract_defaults_to_local_research_not_external_research() {
 }
 
 #[test]
+fn bug_monitor_downstream_structured_json_nodes_reuse_upstream_source_evidence() {
+    let mut inspection = bare_node();
+    inspection.node_id = "inspect_failure_report".to_string();
+    inspection.metadata = Some(json!({
+        "bug_monitor": {
+            "artifact_type": "bug_monitor_inspection"
+        }
+    }));
+
+    let mut research = bare_node();
+    research.node_id = "research_likely_root_cause".to_string();
+    research.depends_on = vec!["inspect_failure_report".to_string()];
+    research.metadata = Some(json!({
+        "bug_monitor": {
+            "artifact_type": "bug_monitor_research"
+        }
+    }));
+
+    let mut validation = bare_node();
+    validation.node_id = "validate_failure_scope".to_string();
+    validation.depends_on = vec!["research_likely_root_cause".to_string()];
+    validation.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    validation.metadata = Some(json!({
+        "bug_monitor": {
+            "artifact_type": "bug_monitor_validation"
+        }
+    }));
+
+    assert!(!automation_node_uses_upstream_validation_evidence(
+        &inspection
+    ));
+    assert!(!automation_node_uses_upstream_validation_evidence(
+        &research
+    ));
+    assert!(automation_node_uses_upstream_validation_evidence(
+        &validation
+    ));
+}
+
+#[test]
 fn mcp_citations_contract_defaults_to_artifact_only_without_local_read_gates() {
     let enforcement = automation_node_output_enforcement(&mcp_citations_contract_node());
     assert_eq!(
@@ -1274,4 +1320,3 @@ async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
-
