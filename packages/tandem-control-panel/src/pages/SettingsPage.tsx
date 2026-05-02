@@ -3115,7 +3115,7 @@ export function SettingsPage({
                   title="Sidebar navigation"
                   subtitle={
                     navigation?.acaMode
-                      ? "ACA mode keeps Dashboard, Chat, Coding, and Settings visible by default."
+                      ? "ACA mode keeps Dashboard, Chat, Coder, and Settings visible by default."
                       : "Choose which sections appear in the sidebar. Advanced and experimental surfaces stay hidden until you turn them on."
                   }
                   actions={

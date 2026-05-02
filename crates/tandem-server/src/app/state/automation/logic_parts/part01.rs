@@ -1600,6 +1600,7 @@ pub(crate) fn automation_filter_runnable_by_write_scope_conflicts(
     }
     let mut selected = Vec::new();
     let mut selected_scopes = Vec::<Vec<String>>::new();
+    let mut selected_mcp_tools = Vec::<Vec<String>>::new();
     for node in runnable {
         let is_code = automation_node_is_code_workflow(&node);
         let scope_entries = if is_code {
@@ -1607,12 +1608,19 @@ pub(crate) fn automation_filter_runnable_by_write_scope_conflicts(
         } else {
             Vec::new()
         };
+        let mcp_tool_entries = automation_node_explicit_mcp_tool_entries(&node);
         let conflicts = is_code
             && selected.iter().enumerate().any(|(index, existing)| {
                 automation_node_is_code_workflow(existing)
                     && write_scope_entries_conflict(&scope_entries, &selected_scopes[index])
             });
-        if conflicts {
+        let mcp_conflicts = !mcp_tool_entries.is_empty()
+            && selected_mcp_tools.iter().any(|existing| {
+                existing
+                    .iter()
+                    .any(|tool| mcp_tool_entries.iter().any(|candidate| candidate == tool))
+            });
+        if conflicts || mcp_conflicts {
             continue;
         }
         if is_code {
@@ -1620,12 +1628,33 @@ pub(crate) fn automation_filter_runnable_by_write_scope_conflicts(
         } else {
             selected_scopes.push(Vec::new());
         }
+        selected_mcp_tools.push(mcp_tool_entries);
         selected.push(node);
         if selected.len() >= max_parallel {
             break;
         }
     }
     selected
+}
+
+fn automation_node_explicit_mcp_tool_entries(node: &AutomationFlowNode) -> Vec<String> {
+    let mut text = node.objective.clone();
+    if let Some(metadata) = node.metadata.as_ref() {
+        text.push(' ');
+        text.push_str(&metadata.to_string());
+    }
+    let mut tools = text
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '*')))
+        .map(str::trim)
+        .filter(|token| token.starts_with("mcp."))
+        .filter(|token| !token.ends_with(".*"))
+        .filter(|token| token.split('.').count() >= 3)
+        .map(|token| token.trim_matches('.').to_ascii_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tools.sort();
+    tools.dedup();
+    tools
 }
 
 pub(crate) fn automation_blocked_nodes(

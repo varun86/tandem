@@ -149,7 +149,7 @@ fn bug_monitor_triage_node(
             true,
         )),
         retry_policy: Some(json!({
-            "max_attempts": 2,
+            "max_attempts": 3,
             "backoff_ms": 10_000,
         })),
         timeout_ms: Some(timeout_ms),

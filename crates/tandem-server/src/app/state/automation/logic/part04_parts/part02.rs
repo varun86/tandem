@@ -87,14 +87,7 @@ pub(crate) async fn run_automation_node_prompt_with_timeout<F>(
 where
     F: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let timeout_ms = node
-        .timeout_ms
-        .filter(|value| *value > 0)
-        .unwrap_or_else(|| match automation_output_validator_kind(node) {
-            crate::AutomationOutputValidatorKind::StandupUpdate => 120_000,
-            crate::AutomationOutputValidatorKind::StructuredJson => 180_000,
-            _ => 600_000,
-        });
+    let timeout_ms = effective_automation_node_timeout_ms(node);
     match tokio::time::timeout(Duration::from_millis(timeout_ms), future).await {
         Ok(result) => result,
         Err(_) => {
@@ -106,6 +99,31 @@ where
             );
         }
     }
+}
+
+pub(crate) fn effective_automation_node_timeout_ms(node: &AutomationFlowNode) -> u64 {
+    node.timeout_ms
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| match automation_output_validator_kind(node) {
+            crate::AutomationOutputValidatorKind::StandupUpdate => 120_000,
+            crate::AutomationOutputValidatorKind::StructuredJson
+                if automation_node_needs_long_execute_budget(node) =>
+            {
+                crate::config::env::resolve_automation_execute_node_timeout_ms()
+            }
+            crate::AutomationOutputValidatorKind::StructuredJson => 180_000,
+            _ => 600_000,
+        })
+}
+
+fn automation_node_needs_long_execute_budget(node: &AutomationFlowNode) -> bool {
+    let node_id = node.node_id.trim().to_ascii_lowercase();
+    if node_id == "execute_goal" || node_id.ends_with("_execute_goal") {
+        return true;
+    }
+    let objective = node.objective.to_ascii_lowercase();
+    objective.contains("execute the requested automation goal")
+        || objective.contains("execute the automation goal")
 }
 
 pub(crate) async fn execute_automation_v2_node(

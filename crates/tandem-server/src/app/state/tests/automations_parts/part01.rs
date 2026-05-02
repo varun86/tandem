@@ -679,6 +679,48 @@ fn runnable_write_scope_filter_allows_non_code_nodes_to_run_in_parallel() {
 }
 
 #[test]
+fn runnable_filter_serializes_nodes_targeting_same_mcp_tool() {
+    let reddit_a = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "search_agents_keep".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Use mcp.reddit_gmail.reddit_search_across_subreddits to search agents keep."
+            .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: None,
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+    let reddit_b = AutomationFlowNode {
+        node_id: "search_agent_failing".to_string(),
+        objective: "Use mcp.reddit_gmail.reddit_search_across_subreddits to search agent failing."
+            .to_string(),
+        ..reddit_a.clone()
+    };
+    let notion = AutomationFlowNode {
+        node_id: "resolve_notion_targets".to_string(),
+        objective: "Use mcp.notion.notion_search to resolve the target page.".to_string(),
+        ..reddit_a.clone()
+    };
+
+    let filtered = automation_filter_runnable_by_write_scope_conflicts(
+        vec![reddit_a.clone(), reddit_b, notion.clone()],
+        3,
+    );
+
+    let ids = filtered
+        .iter()
+        .map(|node| node.node_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["search_agents_keep", "resolve_notion_targets"]);
+}
+
+#[test]
 fn generic_required_tools_prewrite_requirements_enable_repair() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

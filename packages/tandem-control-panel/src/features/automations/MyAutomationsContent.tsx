@@ -180,6 +180,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     workflowCompletedNodeCount,
     workflowBlockedNodeCount,
     workflowActiveSessionCount,
+    workflowTotalNodeCount,
     isActiveRunStatus,
     compactIdentifier,
     sessionLabel,
@@ -199,6 +200,22 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
   const workflowSortLabel =
     WORKFLOW_SORT_MODES.find((option) => option.value === workflowSortMode)?.label ||
     "Created: newest first";
+
+  const runExecutionSummary = (run: any) => {
+    const completed = workflowCompletedNodeCount(run);
+    const total = workflowTotalNodeCount(run);
+    const blocked = workflowBlockedNodeCount(run);
+    const workers = workflowActiveSessionCount(run);
+    const parts = [];
+    if (total > 0) {
+      parts.push(`${completed}/${total} nodes`);
+    } else if (completed > 0) {
+      parts.push(`${completed} completed`);
+    }
+    if (workers > 0) parts.push(`${workers} worker${workers === 1 ? "" : "s"}`);
+    if (blocked > 0) parts.push(`${blocked} blocked`);
+    return parts.join(" · ");
+  };
 
   const renderWorkflowAutomationCard = (row: any) => {
     const automation = row?.automation || row;
@@ -633,6 +650,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                 const startedAt =
                   run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs;
                 const runStatusDetail = workflowStatusSubtleDetail(run);
+                const executionSummary = runExecutionSummary(run);
                 return (
                   <div key={runId || index} className="tcp-list-item">
                     <div className="flex items-center justify-between gap-2">
@@ -645,6 +663,9 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                           <span className="tcp-subtle text-xs">
                             Started: {formatRunDateTime(startedAt)}
                           </span>
+                        ) : null}
+                        {executionSummary ? (
+                          <span className="tcp-subtle text-xs">{executionSummary}</span>
                         ) : null}
                         {runObjectiveText(run) ? (
                           <span className="text-xs text-slate-400">
@@ -756,12 +777,16 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                 const runId = String(run?.run_id || run?.id || index).trim();
                 const failedRunStatus = workflowStatusDisplay(run);
                 const runStatusDetail = workflowStatusSubtleDetail(run);
+                const executionSummary = runExecutionSummary(run);
                 return (
                   <div key={`failed-${runId || index}`} className="tcp-list-item">
                     <div className="flex items-center justify-between gap-2">
                       <div className="grid gap-0.5">
                         <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
                         <span className="tcp-subtle text-xs">{runId || "unknown run"}</span>
+                        {executionSummary ? (
+                          <span className="tcp-subtle text-xs">{executionSummary}</span>
+                        ) : null}
                         {formatRunDateTime(
                           run?.finished_at_ms ||
                             run?.finishedAtMs ||
@@ -828,64 +853,70 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             </div>
           </button>
           {runningSectionsOpen.history
-            ? runs.slice(0, 12).map((run: any, index: number) => (
-                <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                    <span className={statusColor(workflowStatusDisplay(run))}>
-                      {workflowStatusDisplay(run) || "unknown"}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <div className="grid gap-0.5">
-                      <span className="tcp-subtle text-xs">
-                        {String(run?.run_id || run?.id || "")}
+            ? runs.slice(0, 12).map((run: any, index: number) => {
+                const executionSummary = runExecutionSummary(run);
+                return (
+                  <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
+                      <span className={statusColor(workflowStatusDisplay(run))}>
+                        {workflowStatusDisplay(run) || "unknown"}
                       </span>
-                      {formatRunDateTime(
-                        run?.started_at_ms ||
-                          run?.startedAtMs ||
-                          run?.created_at_ms ||
-                          run?.createdAtMs
-                      ) ? (
-                        <span className="tcp-subtle text-xs">
-                          Started:{" "}
-                          {formatRunDateTime(
-                            run?.started_at_ms ||
-                              run?.startedAtMs ||
-                              run?.created_at_ms ||
-                              run?.createdAtMs
-                          )}
-                        </span>
-                      ) : null}
-                      {run?.finished_at_ms || run?.finishedAtMs ? (
-                        <span className="tcp-subtle text-xs">
-                          Finished: {formatRunDateTime(run?.finished_at_ms || run?.finishedAtMs)}
-                        </span>
-                      ) : null}
-                      {runObjectiveText(run) ? (
-                        <span className="text-xs text-slate-400">
-                          {shortText(runObjectiveText(run), 160)}
-                        </span>
-                      ) : null}
-                      {workflowStatusSubtleDetail(run) ? (
-                        <span className="tcp-subtle text-xs">
-                          {workflowStatusSubtleDetail(run)}
-                        </span>
-                      ) : null}
                     </div>
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => {
-                        onSelectRunId(String(run?.run_id || run?.id || "").trim());
-                        onOpenRunningView();
-                      }}
-                    >
-                      <i data-lucide="info"></i>
-                      {viewMode === "running" ? "Logs" : "Details"}
-                    </button>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <div className="grid gap-0.5">
+                        <span className="tcp-subtle text-xs">
+                          {String(run?.run_id || run?.id || "")}
+                        </span>
+                        {executionSummary ? (
+                          <span className="tcp-subtle text-xs">{executionSummary}</span>
+                        ) : null}
+                        {formatRunDateTime(
+                          run?.started_at_ms ||
+                            run?.startedAtMs ||
+                            run?.created_at_ms ||
+                            run?.createdAtMs
+                        ) ? (
+                          <span className="tcp-subtle text-xs">
+                            Started:{" "}
+                            {formatRunDateTime(
+                              run?.started_at_ms ||
+                                run?.startedAtMs ||
+                                run?.created_at_ms ||
+                                run?.createdAtMs
+                            )}
+                          </span>
+                        ) : null}
+                        {run?.finished_at_ms || run?.finishedAtMs ? (
+                          <span className="tcp-subtle text-xs">
+                            Finished: {formatRunDateTime(run?.finished_at_ms || run?.finishedAtMs)}
+                          </span>
+                        ) : null}
+                        {runObjectiveText(run) ? (
+                          <span className="text-xs text-slate-400">
+                            {shortText(runObjectiveText(run), 160)}
+                          </span>
+                        ) : null}
+                        {workflowStatusSubtleDetail(run) ? (
+                          <span className="tcp-subtle text-xs">
+                            {workflowStatusSubtleDetail(run)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() => {
+                          onSelectRunId(String(run?.run_id || run?.id || "").trim());
+                          onOpenRunningView();
+                        }}
+                      >
+                        <i data-lucide="info"></i>
+                        {viewMode === "running" ? "Logs" : "Details"}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             : null}
         </div>
       ) : null}

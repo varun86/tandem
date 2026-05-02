@@ -41,6 +41,7 @@ import {
   workflowTelemetrySeedEvents,
   workflowBlockedNodeCount,
   workflowNeedsRepairNodeIds,
+  workflowTotalNodeCount,
 } from "../orchestration/workflowStability";
 import { useEngineStream } from "../stream/useEngineStream";
 import { MyAutomationsContent } from "./MyAutomationsContent";
@@ -2567,6 +2568,7 @@ export function MyAutomationsContainer({
         workflowCompletedNodeCount,
         workflowBlockedNodeCount,
         workflowActiveSessionCount,
+        workflowTotalNodeCount,
         isActiveRunStatus,
         compactIdentifier,
         sessionLabel,

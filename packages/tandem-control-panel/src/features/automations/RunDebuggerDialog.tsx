@@ -199,6 +199,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
   const pendingRunActionMessage = pendingRunAction
     ? `Waiting for ${pendingRunAction} request to finish.`
     : "";
+  const activeAgentCount = isWorkflowRun ? workflowActiveSessionCount(selectedRun) : 0;
 
   if (!selectedRunId) return null;
 
@@ -386,6 +387,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                     <div className="tcp-subtle text-xs">
                       context run: {compactIdentifier(selectedContextRunId || "unlinked", 44)}
                       {" · "}tasks: {workflowProjection.tasks.length}
+                      {" · "}agents running: {activeAgentCount}
                       {" · "}artifacts: {runArtifacts.length}
                     </div>
                   </div>
@@ -401,6 +403,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                   tasks={workflowProjection.tasks}
                   currentTaskId={workflowProjection.currentTaskId}
                   selectedTaskId={selectedBoardTaskId}
+                  activeAgentCount={activeAgentCount}
                   onTaskSelect={(task) =>
                     onSelectBoardTaskId((current: string) => (current === task.id ? "" : task.id))
                   }

@@ -112,6 +112,38 @@ test("ACA proxy forwards authenticated project requests through the control pane
         res.end(JSON.stringify({ runs: [{ run_id: "run-1", project_slug: "demo", status: "running" }] }));
         return;
       }
+      if ((req.url || "") === "/operator/coder-runs" && req.method === "GET") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            coder_runs: [
+              {
+                run_id: "run-1",
+                coder_run_id: "coder-1",
+                task_title: "Fix the bug",
+                status: "running",
+                phase: "working",
+                coder_supervision: {
+                  tandem_status: "running",
+                  tandem_phase: "working",
+                  last_checked_at_ms: 1700000000000,
+                },
+              },
+            ],
+          })
+        );
+        return;
+      }
+      if ((req.url || "") === "/operator/coder-runs/run-1/reconcile" && req.method === "POST") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ run_id: "run-1", status: "running", reconciled: true }));
+        return;
+      }
+      if ((req.url || "") === "/operator/coder-runs/run-1/cancel" && req.method === "POST") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ run_id: "run-1", status: "cancelled" }));
+        return;
+      }
       if ((req.url || "").startsWith("/mcp")) {
         let body = "";
         req.on("data", (chunk) => {
@@ -205,4 +237,23 @@ test("ACA proxy forwards authenticated project requests through the control pane
   assert.equal(overview.status, 200);
   assert.equal(overview.json().overview.latest_run.run_id, "run-1");
   assert.equal(overview.json().overview.github_mcp.connected, true);
+
+  const coderRuns = await request(baseUrl, "/api/aca/operator/coder-runs", { cookie });
+  assert.equal(coderRuns.status, 200);
+  assert.equal(coderRuns.json().coder_runs[0].coder_run_id, "coder-1");
+
+  const reconciled = await request(baseUrl, "/api/aca/operator/coder-runs/run-1/reconcile", {
+    cookie,
+    method: "POST",
+  });
+  assert.equal(reconciled.status, 200);
+  assert.equal(reconciled.json().reconciled, true);
+
+  const cancelled = await request(baseUrl, "/api/aca/operator/coder-runs/run-1/cancel", {
+    cookie,
+    method: "POST",
+    body: { reason: "test cancel" },
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.json().status, "cancelled");
 });

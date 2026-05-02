@@ -429,6 +429,12 @@ export function CodingWorkflowsPage({
     queryFn: () => api("/api/aca/runs"),
     enabled: acaAvailable,
   });
+  const coderRunsQuery = useQuery({
+    queryKey: ["coding-workflows", "coder-runs"],
+    queryFn: () => api("/api/aca/operator/coder-runs"),
+    enabled: acaAvailable,
+    refetchInterval: acaAvailable ? 15000 : false,
+  });
   const projectTasksQuery = useQuery({
     queryKey: ["coding-workflows", "aca-project-tasks", selectedProjectSlug],
     queryFn: () => api(`/api/aca/projects/${encodeURIComponent(selectedProjectSlug)}/tasks`),
@@ -503,6 +509,10 @@ export function CodingWorkflowsPage({
   const mcpTools = useMemo(() => normalizeTools(mcpToolsQuery.data), [mcpToolsQuery.data]);
   const projects = useMemo(() => normalizeProjects(projectsQuery.data), [projectsQuery.data]);
   const runs = useMemo(() => toArray(runsQuery.data, "runs"), [runsQuery.data]);
+  const coderRuns = useMemo(
+    () => toArray(coderRunsQuery.data, "coder_runs"),
+    [coderRunsQuery.data]
+  );
   const githubBoard = useMemo(
     () => normalizeGithubBoard(projectBoardQuery.data),
     [projectBoardQuery.data]
@@ -660,6 +670,7 @@ export function CodingWorkflowsPage({
       const eventType = String(envelope.event_type || "event").trim();
       setLastGlobalEvent(eventType);
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "coder-runs"] });
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-projects"] });
       if (selectedProjectSlug) {
@@ -693,6 +704,7 @@ export function CodingWorkflowsPage({
       void queryClient.invalidateQueries({
         queryKey: ["coding-workflows", "aca-runs"],
       });
+      void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "coder-runs"] });
       void queryClient.invalidateQueries({
         queryKey: ["coding-workflows", "aca-run-detail", selectedRunId],
       });
@@ -777,6 +789,38 @@ export function CodingWorkflowsPage({
     { id: "manual", label: "Manual tasks", icon: "code" },
     { id: "integrations", label: "Integrations", icon: "plug-zap" },
   ];
+
+  async function reconcileCoderRun(runId: string) {
+    const id = String(runId || "").trim();
+    if (!id) return;
+    try {
+      await api(`/api/aca/operator/coder-runs/${encodeURIComponent(id)}/reconcile`, {
+        method: "POST",
+      });
+      await queryClient.invalidateQueries({ queryKey: ["coding-workflows", "coder-runs"] });
+      await queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-runs"] });
+      toast("ok", `Reconciled coder run ${id}.`);
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function cancelCoderRun(runId: string) {
+    const id = String(runId || "").trim();
+    if (!id) return;
+    if (!window.confirm(`Cancel coder run ${id}?`)) return;
+    try {
+      await api(`/api/aca/operator/coder-runs/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "cancelled from Tandem Control Panel Coder view" }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["coding-workflows", "coder-runs"] });
+      await queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-runs"] });
+      toast("ok", `Cancelled coder run ${id}.`);
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  }
 
   async function registerProject() {
     const repoRef = parseGithubRepoRef(newRepoUrl);
@@ -1055,11 +1099,11 @@ export function CodingWorkflowsPage({
         <PanelCard className="overflow-hidden">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)] xl:items-start">
             <div className="min-w-0">
-              <div className="tcp-page-eyebrow">Coding workflows</div>
-              <h1 className="tcp-page-title">Autonomous Coding</h1>
+              <div className="tcp-page-eyebrow">Coder</div>
+              <h1 className="tcp-page-title">Coder dashboard</h1>
               <p className="tcp-subtle mt-2 max-w-3xl">
-                ACA integration is required for the coding dashboard. Connect the ACA control plane
-                so this workspace can load registered projects, task intake, and live run details.
+                ACA integration is required for Coder. Connect the ACA control plane so this
+                workspace can load registered projects, task intake, and live run details.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge tone={engineAvailable ? "ok" : "warn"}>
@@ -1089,11 +1133,11 @@ export function CodingWorkflowsPage({
       <PanelCard className="overflow-hidden">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)] xl:items-start">
           <div className="min-w-0">
-            <div className="tcp-page-eyebrow">Coding workflows</div>
-            <h1 className="tcp-page-title">ACA project intake and run dashboard</h1>
+            <div className="tcp-page-eyebrow">Coder</div>
+            <h1 className="tcp-page-title">Coder project intake and run dashboard</h1>
             <p className="tcp-subtle mt-2 max-w-3xl">
-              This view now talks to the ACA FastAPI control plane for project registration, task
-              preview, run launch, run detail, logs, and final handoff artifacts.
+              This view talks to the ACA control plane for project registration, task preview,
+              durable coder runs, live logs, and final handoff artifacts.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge tone={acaHealth.data?.status === "healthy" ? "ok" : "warn"}>
@@ -1182,6 +1226,10 @@ export function CodingWorkflowsPage({
           projectTasksQuery={projectTasksQuery}
           refreshTaskPreview={refreshTaskPreview}
           taskPreviewRefreshAt={taskPreviewRefreshAt}
+          coderRuns={coderRuns}
+          coderRunsQuery={coderRunsQuery}
+          reconcileCoderRun={reconcileCoderRun}
+          cancelCoderRun={cancelCoderRun}
           visibleRunsCount={filteredRuns.length}
           activeRunsCount={activeRuns.length}
           connectedMcpServersCount={mcpServers.length}

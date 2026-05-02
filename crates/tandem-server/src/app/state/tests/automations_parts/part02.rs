@@ -1060,6 +1060,43 @@ async fn automation_node_prompt_timeout_cancels_the_session() {
     assert!(cancellation.is_cancelled());
 }
 
+#[test]
+fn execute_goal_structured_json_default_timeout_uses_long_workflow_budget() {
+    let execute_goal = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Execute the requested automation goal directly.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    assert_eq!(
+        crate::app::state::automation::effective_automation_node_timeout_ms(&execute_goal),
+        1_800_000
+    );
+
+    let mut generic_structured = execute_goal.clone();
+    generic_structured.node_id = "summarize_results".to_string();
+    generic_structured.objective = "Summarize the result.".to_string();
+    assert_eq!(
+        crate::app::state::automation::effective_automation_node_timeout_ms(&generic_structured),
+        180_000
+    );
+}
+
 #[tokio::test]
 async fn automation_v2_approved_plan_materialization_is_recovered_from_snapshot() {
     let automation = AutomationV2Spec {

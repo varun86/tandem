@@ -223,6 +223,7 @@ export function TaskBoard({
   tasks,
   currentTaskId,
   selectedTaskId,
+  activeAgentCount = 0,
   workflowSummaryByTaskId,
   onTaskSelect,
   onRetryTask,
@@ -230,6 +231,7 @@ export function TaskBoard({
   tasks: OrchestrationTask[];
   currentTaskId?: string;
   selectedTaskId?: string;
+  activeAgentCount?: number;
   workflowSummaryByTaskId?: Record<string, { runs: number; failed: number }>;
   onTaskSelect?: (task: OrchestrationTask) => void;
   onRetryTask?: (task: OrchestrationTask) => void;
@@ -337,6 +339,11 @@ export function TaskBoard({
               Jump to active task
             </button>
           ) : null}
+          {activeAgentCount > 0 ? (
+            <span className="rounded-full border border-cyan-400/50 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-medium text-cyan-200">
+              {activeAgentCount} agent{activeAgentCount === 1 ? "" : "s"} running
+            </span>
+          ) : null}
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {columns.map((column) => {
@@ -395,6 +402,11 @@ export function TaskBoard({
             >
               Jump to active task
             </button>
+          ) : null}
+          {activeAgentCount > 0 ? (
+            <span className="rounded-full border border-cyan-400/50 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-medium text-cyan-200">
+              {activeAgentCount} agent{activeAgentCount === 1 ? "" : "s"} running
+            </span>
           ) : null}
           <div className="flex flex-wrap gap-2">
             {columns.map((column) => {

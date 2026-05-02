@@ -56,7 +56,7 @@ where
             retry_policy: Some(json!({
                 "max_attempts": 3
             })),
-            timeout_ms: None,
+            timeout_ms: workflow_runtime_step_timeout_ms(step),
             stage_kind: None,
             gate: None,
             metadata: step.metadata.clone(),
@@ -83,6 +83,16 @@ where
             "workflow_plan_source": plan.plan_source,
             "workflow_plan_version": plan.planner_version,
         }),
+    }
+}
+
+fn workflow_runtime_step_timeout_ms<I, O>(step: &WorkflowPlanStep<I, O>) -> Option<u64> {
+    let step_id = step.step_id.trim().to_ascii_lowercase();
+    let kind = step.kind.trim().to_ascii_lowercase();
+    if step_id == "execute_goal" || kind == "execute" {
+        Some(1_800_000)
+    } else {
+        None
     }
 }
 
@@ -155,6 +165,7 @@ mod tests {
         assert_eq!(projection.agents[0].agent_id, "agent_worker");
         assert_eq!(projection.nodes.len(), 1);
         assert_eq!(projection.nodes[0].node_id, "execute_goal");
+        assert_eq!(projection.nodes[0].timeout_ms, Some(1_800_000));
         assert_eq!(projection.execution.max_parallel_agents, Some(1));
         assert_eq!(projection.name, "Runtime Test");
         assert_eq!(

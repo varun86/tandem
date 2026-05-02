@@ -378,6 +378,32 @@ fn terminal_workspace_file_repair_failure_does_not_requeue() {
 }
 
 #[test]
+fn needs_repair_output_with_passing_validator_is_not_settled_completed() {
+    let run = test_run_with_output(json!({
+        "status": "needs_repair",
+        "blocked_reason": "Required workspace files were not written in the current attempt.",
+        "validator_summary": {
+            "outcome": "passed",
+            "unmet_requirements": []
+        },
+        "artifact_validation": {
+            "validation_outcome": "passed",
+            "unmet_requirements": [],
+            "repair_exhausted": false
+        }
+    }));
+
+    assert!(crate::app::state::automation_node_has_passing_artifact(
+        "research-brief",
+        &run.checkpoint
+    ));
+    assert!(
+        !run_node_is_settled_completed(&run, "research-brief"),
+        "a stale needs_repair output must not suppress later repair attempts"
+    );
+}
+
+#[test]
 fn workflow_failure_evidence_extracts_missing_workspace_files_and_actions() {
     let output = json!({
         "artifact_validation": {

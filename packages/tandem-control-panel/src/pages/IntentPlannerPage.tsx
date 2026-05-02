@@ -193,7 +193,7 @@ function plannerPromptFromBrief(brief: IntentBriefDraft) {
     "Default knowledge behavior: project-scoped preflight reuse with promoted trust floor.",
     "Use clarifying questions instead of guessing when important details are missing.",
     "Prefer multi-agent decomposition, milestones, and timeline-aware work waves when appropriate.",
-    "Return a workflow plan that can later be handed off to Automations, Coding, or Orchestrator.",
+    "Return a workflow plan that can later be handed off to Automations, Coder, or Orchestrator.",
   ]
     .filter(Boolean)
     .join("\n");

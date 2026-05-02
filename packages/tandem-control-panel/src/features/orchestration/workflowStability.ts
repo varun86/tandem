@@ -164,6 +164,24 @@ export function workflowBlockedNodeCount(run: any) {
   return workflowBlockedNodeIds(run).length;
 }
 
+export function workflowTotalNodeCount(run: any) {
+  const snapshotNodes = Array.isArray(run?.automation_snapshot?.flow?.nodes)
+    ? run.automation_snapshot.flow.nodes
+    : Array.isArray(run?.automationSnapshot?.flow?.nodes)
+      ? run.automationSnapshot.flow.nodes
+      : [];
+  if (snapshotNodes.length) return snapshotNodes.length;
+  const knownNodeIds = new Set([
+    ...workflowCompletedNodeIds(run),
+    ...workflowPendingNodeIds(run),
+    ...workflowBlockedNodeIds(run),
+    ...workflowFailedNodeIds(run),
+    ...workflowNeedsRepairNodeIds(run),
+    ...workflowNodeOutputEntries(run).map((entry) => entry.nodeId),
+  ]);
+  return knownNodeIds.size;
+}
+
 const WORKFLOW_RUNNING_STALE_AFTER_MS = 300_000;
 const WORKFLOW_RUNNING_POSSIBLY_STALE_AFTER_MS = 60_000;
 
@@ -291,9 +309,11 @@ export function workflowTaskState(
   const outputStatus = String(output?.status || output?.content?.status || "")
     .trim()
     .toLowerCase();
+  if (completed.has(taskId) || outputStatus === "done" || outputStatus === "completed") {
+    return "done";
+  }
   if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
   if (outputStatus === "verify_failed" || outputStatus === "failed") return "failed";
-  if (completed.has(taskId) || outputStatus === "done") return "done";
   const errorText = String(
     output?.error ||
       output?.content?.error ||

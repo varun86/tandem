@@ -42,7 +42,7 @@ const TARGET_SURFACE_OPTIONS: Array<{ id: PlannerTargetSurface; label: string; d
   },
   {
     id: "coding",
-    label: "Coding workflow",
+    label: "Coder",
     detail: "Turn intent into repo-aware work that can publish into coding flows.",
   },
   {

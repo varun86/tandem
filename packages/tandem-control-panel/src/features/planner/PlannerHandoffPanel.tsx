@@ -186,7 +186,7 @@ export function PlannerHandoffPanel({
           </button>
           <button type="button" className="tcp-btn" onClick={seedCodingBundle}>
             <i data-lucide="code" className="mr-1 h-3 w-3"></i>
-            Publish coding task bundle
+            Publish Coder task bundle
           </button>
           <button type="button" className="tcp-btn" onClick={() => navigate("orchestrator")}>
             <i data-lucide="sparkles" className="mr-1 h-3 w-3"></i>

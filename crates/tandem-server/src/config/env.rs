@@ -39,6 +39,15 @@ pub(crate) fn resolve_automation_quality_legacy_rollback_enabled() -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn resolve_automation_execute_node_timeout_ms() -> u64 {
+    std::env::var("TANDEM_AUTOMATION_EXECUTE_NODE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1_800_000)
+        .clamp(180_000, 3_600_000)
+}
+
 pub(crate) fn resolve_bug_monitor_env_config() -> BugMonitorConfig {
     fn env_value(new_name: &str, legacy_name: &str) -> Option<String> {
         std::env::var(new_name)
@@ -140,7 +149,7 @@ pub(crate) fn resolve_bug_monitor_env_config() -> BugMonitorConfig {
         .as_deref()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .map(Some)
-        .unwrap_or(Some(300_000)),
+        .unwrap_or(Some(1_800_000)),
         updated_at_ms: 0,
     }
 }

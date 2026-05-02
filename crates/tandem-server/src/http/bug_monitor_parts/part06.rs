@@ -1,3 +1,23 @@
+fn automation_node_timeout_from_reason(reason: &str) -> Option<(String, u64)> {
+    let marker = "automation node `";
+    let start = reason.find(marker)? + marker.len();
+    let rest = &reason[start..];
+    let end = rest.find('`')?;
+    let node_id = rest[..end].trim();
+    if node_id.is_empty() {
+        return None;
+    }
+    let after = rest[end..].to_ascii_lowercase();
+    let timeout_marker = "timed out after ";
+    let timeout_start = after.find(timeout_marker)? + timeout_marker.len();
+    let timeout_digits = after[timeout_start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    let timeout_ms = timeout_digits.parse::<u64>().ok()?;
+    Some((node_id.to_string(), timeout_ms))
+}
+
 async fn synthesize_bug_monitor_triage_summary(
     state: &AppState,
     draft: &BugMonitorDraftRecord,
@@ -43,6 +63,7 @@ async fn synthesize_bug_monitor_triage_summary(
         .or_else(|| bug_monitor_value_string(&incident_payload, &["event_type", "event", "type"]))
         .unwrap_or_else(|| "bug_monitor.failure".to_string());
     let failure_type = bug_monitor_failure_type(&reason, &event_type);
+    let automation_node_timeout = automation_node_timeout_from_reason(&reason);
     let workflow_id = bug_monitor_value_string(&incident_payload, &["workflow_id", "workflowID"]);
     let run_id = incident
         .as_ref()
@@ -141,7 +162,11 @@ async fn synthesize_bug_monitor_triage_summary(
     .flatten()
     .collect::<Vec<_>>()
     .join("\n");
-    let why = if likely_files_to_edit.is_empty() {
+    let why = if let Some((node_id, timeout_ms)) = automation_node_timeout.as_ref() {
+        format!(
+            "The target workflow node `{node_id}` exhausted its {timeout_ms} ms node timeout. That is the reportable failure even when deeper task-specific logs are unavailable. For generated workflows, especially `execute_goal`, this usually means the runtime budget was too short for real work or the node stalled without producing progress evidence before the timeout."
+        )
+    } else if likely_files_to_edit.is_empty() {
         format!(
             "The failure is classified as `{failure_type}` from the reported event and error text, but local file evidence was not strong enough to mark this coder-ready."
         )
@@ -155,7 +180,13 @@ async fn synthesize_bug_monitor_triage_summary(
             "Tighten the failing artifact/output validation path so terminal failures include the exact missing or invalid output, and ensure the node writes a completed artifact before it can finish.".to_string()
         }
         "timeout" => {
-            "Identify why the node exceeded its timeout, add a fast readiness/failure path for unavailable dependencies, and make retry output deterministic.".to_string()
+            if let Some((node_id, timeout_ms)) = automation_node_timeout.as_ref() {
+                format!(
+                    "Increase or explicitly materialize the timeout budget for workflow node `{node_id}` beyond {timeout_ms} ms when it performs long-running work, and preserve the node timeout reason in Bug Monitor issue drafts so operators can distinguish a slow/stuck workflow from a generic triage failure."
+                )
+            } else {
+                "Identify why the node exceeded its timeout, add a fast readiness/failure path for unavailable dependencies, and make retry output deterministic.".to_string()
+            }
         }
         "tool_error" => {
             "Route the failing tool call through the shared readiness/resolution path, preserve the typed tool error, and add a regression fixture for the selected tool alias.".to_string()
@@ -167,6 +198,7 @@ async fn synthesize_bug_monitor_triage_summary(
     let acceptance_criteria = vec![
         "The same failure event produces one Bug Monitor draft with a completed triage summary.".to_string(),
         "The triage summary includes file references, a suspected cause, a bounded fix, and verification steps.".to_string(),
+        "Workflow node timeout reports preserve the node id and timeout budget in the generated issue draft.".to_string(),
         "Issue draft generation remains blocked when research or validation artifacts are missing.".to_string(),
     ];
     let verification_steps = vec![

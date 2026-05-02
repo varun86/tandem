@@ -8,7 +8,7 @@ export const ROUTES = [
   ["studio", "Studio", "blocks"],
   ["automations", "Automations", "bot"],
   ["experiments", "Experiments", "flask-conical"],
-  ["coding", "Coding", "code"],
+  ["coding", "Coder", "code"],
   ["agents", "Agents", "users"],
   ["orchestrator", "Task Board", "workflow"],
   ["files", "Files", "folder"],

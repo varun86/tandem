@@ -44,6 +44,35 @@ function formatOverviewTime(value: any) {
   return new Date(timestamp).toLocaleString();
 }
 
+function coderRunId(run: any) {
+  return String(run?.run_id || run?.aca_run_id || run?.id || "").trim();
+}
+
+function coderRunTandemId(run: any) {
+  return String(
+    run?.coder_run_id || run?.tandem_run_id || run?.coder_supervision?.coder_run_id || ""
+  ).trim();
+}
+
+function coderRunStatus(run: any) {
+  return String(run?.coder_supervision?.tandem_status || run?.status || "unknown").trim();
+}
+
+function coderRunPhase(run: any) {
+  return String(run?.coder_supervision?.tandem_phase || run?.phase || "").trim();
+}
+
+function coderRunUpdatedAt(run: any) {
+  return Number(
+    run?.coder_supervision?.last_checked_at_ms || run?.updated_at_ms || run?.started_at_ms || 0
+  );
+}
+
+function coderRunIsActive(run: any) {
+  const status = coderRunStatus(run).toLowerCase();
+  return !["completed", "failed", "cancelled", "canceled", "terminal"].includes(status);
+}
+
 export function CodingWorkflowsOverviewTab({
   projects,
   selectedProjectSlug,
@@ -53,6 +82,10 @@ export function CodingWorkflowsOverviewTab({
   projectTasksQuery,
   refreshTaskPreview,
   taskPreviewRefreshAt,
+  coderRuns,
+  coderRunsQuery,
+  reconcileCoderRun,
+  cancelCoderRun,
   visibleRunsCount,
   activeRunsCount,
   connectedMcpServersCount,
@@ -66,11 +99,17 @@ export function CodingWorkflowsOverviewTab({
   projectTasksQuery: any;
   refreshTaskPreview: () => void;
   taskPreviewRefreshAt: number | null;
+  coderRuns: any[];
+  coderRunsQuery: any;
+  reconcileCoderRun: (runId: string) => void;
+  cancelCoderRun: (runId: string) => void;
   visibleRunsCount: number;
   activeRunsCount: number;
   connectedMcpServersCount: number;
   registeredToolsCount: number;
 }) {
+  const activeCoderRuns = coderRuns.filter(coderRunIsActive);
+
   return (
     <>
       <div className="grid gap-4">
@@ -104,7 +143,7 @@ export function CodingWorkflowsOverviewTab({
               </div>
             </div>
           ) : (
-            <EmptyState text="Register an ACA project to start using the coding dashboard." />
+            <EmptyState text="Register an ACA project to start using Coder." />
           )}
         </PanelCard>
 
@@ -118,10 +157,14 @@ export function CodingWorkflowsOverviewTab({
             tone={projects.length ? "ok" : "warn"}
           />
           <Metric
-            label="Visible runs"
-            value={visibleRunsCount}
-            helper={activeRunsCount ? `${activeRunsCount} active` : "Idle"}
-            tone={activeRunsCount ? "warn" : "ok"}
+            label="Coder runs"
+            value={coderRuns.length || visibleRunsCount}
+            helper={
+              activeCoderRuns.length || activeRunsCount
+                ? `${activeCoderRuns.length || activeRunsCount} active`
+                : "Idle"
+            }
+            tone={activeCoderRuns.length || activeRunsCount ? "warn" : "ok"}
           />
           <Metric
             label="Connected MCP servers"
@@ -139,8 +182,96 @@ export function CodingWorkflowsOverviewTab({
 
         <div className="grid gap-4">
           <PanelCard
-            title="ACA snapshot"
-            subtitle="Read-only runtime view the agent can use before intake"
+            title="Coder runs"
+            subtitle="Long-running repository work supervised by ACA"
+            actions={
+              <Badge tone={activeCoderRuns.length ? "warn" : "ok"}>
+                {activeCoderRuns.length ? `${activeCoderRuns.length} active` : "Idle"}
+              </Badge>
+            }
+          >
+            {coderRunsQuery.isLoading ? (
+              <div className="tcp-subtle text-sm">Loading coder runs...</div>
+            ) : coderRunsQuery.isError ? (
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+                {coderRunsQuery.error instanceof Error
+                  ? coderRunsQuery.error.message
+                  : "Could not load coder runs."}
+              </div>
+            ) : coderRuns.length ? (
+              <div className="grid gap-3">
+                {coderRuns.map((run: any, index: number) => {
+                  const id = coderRunId(run) || `coder-run-${index}`;
+                  const tandemId = coderRunTandemId(run);
+                  const phase = coderRunPhase(run);
+                  const lastError = String(
+                    run?.coder_supervision?.last_error || run?.error || ""
+                  ).trim();
+                  return (
+                    <div key={id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="break-words text-sm font-semibold">
+                            {safeText(run?.task_title || run?.title, id)}
+                          </div>
+                          <div className="tcp-subtle mt-1 break-words text-xs leading-5">
+                            ACA run {id}
+                            {tandemId ? ` · Coder ${tandemId}` : ""}
+                          </div>
+                          <div className="tcp-subtle mt-1 break-words text-xs leading-5">
+                            {safeText(
+                              run?.repo_slug || run?.project_slug || selectedProjectSlug,
+                              "No project"
+                            )}
+                            {run?.repo_path ? ` · ${safeText(run.repo_path)}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone={coderRunIsActive(run) ? "info" : "ok"}>
+                            {formatStatus(coderRunStatus(run))}
+                          </Badge>
+                          {phase ? <Badge tone="ghost">{formatStatus(phase)}</Badge> : null}
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <div className="tcp-subtle text-xs">
+                          Last checked {formatOverviewTime(coderRunUpdatedAt(run))}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={() => reconcileCoderRun(id)}
+                          >
+                            Reconcile
+                          </button>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={() => cancelCoderRun(id)}
+                            disabled={!coderRunIsActive(run)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                      {lastError ? (
+                        <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs leading-5 text-amber-100">
+                          {lastError}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState text="No active coder runs. New repository work will appear here while it is supervised." />
+            )}
+          </PanelCard>
+
+          <PanelCard
+            title="Coder runtime snapshot"
+            subtitle="Read-only ACA runtime view the agent can use before intake"
             actions={
               <Badge tone={acaOverview.data ? "ok" : "warn"}>
                 {acaOverview.data ? "Live" : "Loading"}

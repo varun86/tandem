@@ -33,8 +33,8 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: "Hidden by default. Turn this on in Settings when you need experimental surfaces.",
   },
   coding: {
-    title: "Coding Workflows",
-    subtitle: "Internal Kanban, manual task launchers, and MCP-aware coding runs.",
+    title: "Coder",
+    subtitle: "Durable coder runs, project intake, and repository work.",
   },
   agents: {
     title: "Agents",

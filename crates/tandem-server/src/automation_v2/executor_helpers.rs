@@ -73,7 +73,20 @@ fn run_node_is_settled_completed(
         .completed_nodes
         .iter()
         .any(|id| id == node_id)
-        || crate::app::state::automation_node_has_passing_artifact(node_id, &run.checkpoint)
+        || run
+            .checkpoint
+            .node_outputs
+            .get(node_id)
+            .is_some_and(|output| {
+                let status = node_output_status(output);
+                !matches!(
+                    status.as_str(),
+                    "needs_repair" | "blocked" | "failed" | "verify_failed"
+                ) && crate::app::state::automation_node_has_passing_artifact(
+                    node_id,
+                    &run.checkpoint,
+                )
+            })
 }
 
 fn automation_failure_is_provider_stream_related(detail: &str) -> bool {
