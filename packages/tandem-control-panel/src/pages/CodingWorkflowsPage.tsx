@@ -17,6 +17,12 @@ import { LazyJson } from "../features/automations/LazyJson";
 type CodingTab = "overview" | "board" | "planning" | "manual" | "integrations";
 type TaskSourceType = "manual" | "kanban_board" | "github_project" | "local_backlog";
 
+type GithubRepoRef = {
+  owner: string;
+  repo: string;
+  slug: string;
+};
+
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.[key])) return input[key];
@@ -263,19 +269,48 @@ function dedupeRuns(runs: any[]) {
   return Array.from(latestByIdentity.values()).sort((a, b) => runUpdatedAt(b) - runUpdatedAt(a));
 }
 
+function parseGithubRepoRef(raw: string): GithubRepoRef | null {
+  const input = String(raw || "").trim();
+  if (!input) return null;
+
+  const cleanPath = (path: string) => {
+    const parts = path
+      .replace(/^\/+/, "")
+      .replace(/\.git$/i, "")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length < 2) return null;
+    const [owner, repo] = parts;
+    if (!owner || !repo) return null;
+    return { owner, repo, slug: `${owner}/${repo}` };
+  };
+
+  const sshMatch = input.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i);
+  if (sshMatch?.[1] && sshMatch?.[2]) {
+    return cleanPath(`${sshMatch[1]}/${sshMatch[2]}`);
+  }
+
+  try {
+    const url = new URL(input);
+    if (url.hostname.toLowerCase() !== "github.com") return null;
+    return cleanPath(url.pathname);
+  } catch {
+    return cleanPath(input);
+  }
+}
+
 function buildTaskSourcePayload(
   taskSourceType: TaskSourceType,
   {
     prompt,
     path,
-    owner,
-    repo,
+    repoRef,
     projectNumber,
   }: {
     prompt: string;
     path: string;
-    owner: string;
-    repo: string;
+    repoRef: GithubRepoRef | null;
     projectNumber: string;
   }
 ) {
@@ -290,8 +325,8 @@ function buildTaskSourcePayload(
   }
   return {
     type: "github_project",
-    owner: owner.trim(),
-    repo: repo.trim(),
+    owner: repoRef?.owner || "",
+    repo: repoRef?.repo || "",
     project: projectNumber.trim(),
   };
 }
@@ -338,8 +373,6 @@ export function CodingWorkflowsPage({
   const [taskSourceType, setTaskSourceType] = useState<TaskSourceType>("github_project");
   const [taskSourcePrompt, setTaskSourcePrompt] = useState("");
   const [taskSourcePath, setTaskSourcePath] = useState("");
-  const [taskSourceOwner, setTaskSourceOwner] = useState("");
-  const [taskSourceRepo, setTaskSourceRepo] = useState("");
   const [taskSourceProject, setTaskSourceProject] = useState("");
   const [runItem, setRunItem] = useState("");
   // Empty run overrides are intentional: ACA should inherit its configured base provider/model.
@@ -487,6 +520,7 @@ export function CodingWorkflowsPage({
     providersCatalogQuery.data,
     providersConfigQuery.data,
   ]);
+  const newRepoRef = useMemo(() => parseGithubRepoRef(newRepoUrl), [newRepoUrl]);
 
   useEffect(() => {
     if (!projects.length) return;
@@ -745,7 +779,9 @@ export function CodingWorkflowsPage({
   ];
 
   async function registerProject() {
-    const slug = newProjectSlug.trim();
+    const repoRef = parseGithubRepoRef(newRepoUrl);
+    const slug =
+      newProjectSlug.trim() || (taskSourceType === "github_project" ? repoRef?.slug || "" : "");
     const name = newProjectName.trim();
     const repoUrl = newRepoUrl.trim();
     const repoPath = newRepoPath.trim();
@@ -753,6 +789,10 @@ export function CodingWorkflowsPage({
     const defaultBranch = newDefaultBranch.trim();
     const remoteName = newRemoteName.trim();
     const credentialFile = newCredentialFile.trim();
+    if (taskSourceType === "github_project" && !repoRef) {
+      toast("warn", "Paste a GitHub repository URL like https://github.com/owner/repo.");
+      return;
+    }
     if (!slug) {
       toast("warn", "Project slug is required.");
       return;
@@ -767,8 +807,7 @@ export function CodingWorkflowsPage({
     const taskSource = buildTaskSourcePayload(taskSourceType, {
       prompt: taskSourcePrompt,
       path: taskSourcePath,
-      owner: taskSourceOwner,
-      repo: taskSourceRepo,
+      repoRef,
       projectNumber: taskSourceProject,
     });
     if (taskSource.type === "manual" && !taskSource.prompt) {
@@ -783,7 +822,7 @@ export function CodingWorkflowsPage({
       taskSource.type === "github_project" &&
       (!taskSource.owner || !taskSource.repo || !taskSource.project)
     ) {
-      toast("warn", "GitHub Project task sources require owner, repo, and project number.");
+      toast("warn", "GitHub Project task sources require a repo URL and project number.");
       return;
     }
 
@@ -1536,24 +1575,28 @@ export function CodingWorkflowsPage({
               subtitle="Bind a repository, managed checkout, and task source into ACA"
             >
               <div className="grid gap-3">
-                <input
-                  className="tcp-input"
-                  placeholder="Project slug, e.g. frumu-ai/tandem"
-                  value={newProjectSlug}
-                  onInput={(event) => setNewProjectSlug((event.target as HTMLInputElement).value)}
-                />
-                <input
-                  className="tcp-input"
-                  placeholder="Project display name (optional)"
-                  value={newProjectName}
-                  onInput={(event) => setNewProjectName((event.target as HTMLInputElement).value)}
-                />
-                <input
-                  className="tcp-input"
-                  placeholder="Repo URL (optional)"
-                  value={newRepoUrl}
-                  onInput={(event) => setNewRepoUrl((event.target as HTMLInputElement).value)}
-                />
+                {taskSourceType === "github_project" ? (
+                  <>
+                    <input
+                      className="tcp-input"
+                      placeholder="GitHub repo URL, e.g. https://github.com/frumu-ai/tandem"
+                      value={newRepoUrl}
+                      onInput={(event) => setNewRepoUrl((event.target as HTMLInputElement).value)}
+                    />
+                    <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+                      {newRepoRef
+                        ? `Detected ${newRepoRef.owner}/${newRepoRef.repo}. ACA will use this for the GitHub Project owner/repo binding.`
+                        : "Paste a GitHub repository URL and ACA will derive the owner, repo, and default project slug."}
+                    </div>
+                  </>
+                ) : (
+                  <input
+                    className="tcp-input"
+                    placeholder="Repo URL (optional)"
+                    value={newRepoUrl}
+                    onInput={(event) => setNewRepoUrl((event.target as HTMLInputElement).value)}
+                  />
+                )}
                 {hostedManaged ? (
                   <>
                     <input
@@ -1604,6 +1647,22 @@ export function CodingWorkflowsPage({
                     checkout directories without exposing an interactive shell.
                   </div>
                 ) : null}
+                <input
+                  className="tcp-input"
+                  placeholder={
+                    taskSourceType === "github_project"
+                      ? "Project slug (optional, defaults to owner/repo)"
+                      : "Project slug"
+                  }
+                  value={newProjectSlug}
+                  onInput={(event) => setNewProjectSlug((event.target as HTMLInputElement).value)}
+                />
+                <input
+                  className="tcp-input"
+                  placeholder="Project display name (optional)"
+                  value={newProjectName}
+                  onInput={(event) => setNewProjectName((event.target as HTMLInputElement).value)}
+                />
                 <select
                   className="tcp-input"
                   value={taskSourceType}
@@ -1638,28 +1697,16 @@ export function CodingWorkflowsPage({
                   <>
                     <input
                       className="tcp-input"
-                      placeholder="GitHub owner"
-                      value={taskSourceOwner}
-                      onInput={(event) =>
-                        setTaskSourceOwner((event.target as HTMLInputElement).value)
-                      }
-                    />
-                    <input
-                      className="tcp-input"
-                      placeholder="Repository name"
-                      value={taskSourceRepo}
-                      onInput={(event) =>
-                        setTaskSourceRepo((event.target as HTMLInputElement).value)
-                      }
-                    />
-                    <input
-                      className="tcp-input"
-                      placeholder="Project number"
+                      placeholder="GitHub Project number"
                       value={taskSourceProject}
                       onInput={(event) =>
                         setTaskSourceProject((event.target as HTMLInputElement).value)
                       }
                     />
+                    <div className="tcp-subtle text-xs">
+                      Only GitHub Project board tasks are imported. Public issues that are not on
+                      this project board remain outside ACA intake.
+                    </div>
                   </>
                 ) : null}
                 <button
