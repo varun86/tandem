@@ -1800,18 +1800,20 @@ pub(super) async fn automations_v2_run_recover(
         && current.detail.as_deref()
             == Some("runtime context partition missing for automation run");
     let reset_nodes = if current.status == AutomationRunStatus::Failed {
-        let Some(failure_node_id) = automation_v2_recoverable_failure_node_id(&current) else {
+        let mut roots = blocked_node_ids
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        if let Some(failure_node_id) = automation_v2_recoverable_failure_node_id(&current) {
+            roots.insert(failure_node_id);
+        }
+        if roots.is_empty() {
             return Err((
                 StatusCode::CONFLICT,
                 Json(
                     json!({"error":"Run has no recoverable failed node", "code":"AUTOMATION_V2_RUN_FAILURE_CONTEXT_MISSING", "runID": run_id}),
                 ),
             ));
-        };
-        let mut roots = blocked_node_ids
-            .into_iter()
-            .collect::<std::collections::HashSet<_>>();
-        roots.insert(failure_node_id);
+        }
         crate::collect_automation_descendants(&automation, &roots)
     } else if blocked_run_is_recoverable {
         if blocked_node_ids.is_empty() {

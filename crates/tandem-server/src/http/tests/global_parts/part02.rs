@@ -1844,7 +1844,7 @@ async fn automations_v2_run_recover_clears_stale_blocked_nodes_on_failed_run() {
 async fn automations_v2_run_recover_uses_failed_node_outputs_when_last_failure_missing() {
     let state = test_state().await;
     let app = app_router(state.clone());
-    let automation = create_branched_test_automation_v2(&state, "auto-v2-derive-failure").await;
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-derive-fail").await;
     let run = state
         .create_automation_v2_run(&automation, "manual")
         .await
@@ -1922,6 +1922,73 @@ async fn automations_v2_run_recover_uses_failed_node_outputs_when_last_failure_m
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "publish"));
+}
+
+#[tokio::test]
+async fn automations_v2_run_recover_uses_blocked_nodes_when_failed_context_missing() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-failed-blocked").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.detail = Some("automation run interrupted by server restart".to_string());
+            row.checkpoint.completed_nodes = vec![
+                "research".to_string(),
+                "analysis".to_string(),
+                "draft".to_string(),
+            ];
+            row.checkpoint.pending_nodes = vec!["publish".to_string()];
+            row.checkpoint.blocked_nodes = vec!["publish".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("research".to_string(), json!({"summary":"research"}));
+            row.checkpoint
+                .node_outputs
+                .insert("analysis".to_string(), json!({"summary":"analysis"}));
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.last_failure = None;
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/recover", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "recover interrupted run" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let recovered = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after recover");
+    assert_eq!(recovered.status, crate::AutomationRunStatus::Queued);
+    assert!(!recovered
+        .checkpoint
+        .blocked_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(recovered.checkpoint.last_failure.is_none());
 }
 
 #[tokio::test]
