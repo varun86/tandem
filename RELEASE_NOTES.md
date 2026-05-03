@@ -2,6 +2,12 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.5.3 (Released 2026-05-03)
+
+Automation V2 workflow definitions now use per-workflow storage shards. Instead of rewriting every saved workflow into one large `automations_v2.json` file, Tandem writes each definition to `data/automations-v2/<automation-id>.json` and keeps a small `index.json` alongside the shards. On startup, existing aggregate installs are migrated automatically and the old aggregate is preserved as `automations_v2.legacy-aggregate.json` for rollback/debugging.
+
+Generated workflow planning now has a deterministic 8-task budget for AI-created plans. If the model returns a large valid graph, Tandem compacts it into request-aware macro steps before preview or revision storage, preserving tool/source intent, Notion collection ids, required report sections, and delivery/verification details. Apply and planner-session boundaries reject uncompacted oversized generated plans with `WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED`, while manual Workflow Studio plans and explicit imports remain exempt. The control panel shows the compaction outcome directly in planner diagnostics.
+
 ## v0.5.2 (Released 2026-05-03)
 
 This patch hardens the demo-critical workflow and Bug Monitor loop.

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - Released 2026-05-03
+
+### Changed
+
+- **Automation V2 definitions are stored as per-workflow shards**: Saved workflow definitions now persist under `data/automations-v2/<automation-id>.json` with a small index instead of rewriting every workflow into one growing `automations_v2.json` aggregate. Existing aggregate files are migrated on load and archived as `automations_v2.legacy-aggregate.json`.
+- **Generated workflow planning uses deterministic task-budget compaction**: AI-generated workflow plans now have a hard 8-step budget. Oversized planner output is compacted into request-aware macro steps before preview or chat-revision storage, preserving source/tool intent and destinations such as Notion collection ids instead of falling back to a generic `execute_goal` plan. Manual Studio workflows and explicit imports remain exempt.
+- **Planner diagnostics expose task-budget status**: Preview/revision diagnostics now include `task_budget.max_generated_steps`, `generated_step_count`, `status`, and `original_step_count` when compaction occurs; the control panel surfaces messages such as “Planner compacted 29 generated tasks into 6 runnable workflow steps.”
+
+### Fixed
+
+- **Apply/session boundaries reject runaway generated plans**: `/workflow-plans/apply` and planner-session creation reject over-budget generated plans with `WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED` if an uncompacted oversized plan reaches them.
+
 ## [0.5.2] - Released 2026-05-03
 
 ### Changed

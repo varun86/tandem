@@ -12,7 +12,8 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- execution_target must be automation_v2\n",
             "- workspace_root must be a non-empty absolute path\n",
             "- step ids must stay descriptive and stable instead of reusing legacy placeholder names from unrelated workflow domains\n",
-            "- decompose complex work into phase-aware microtask DAGs instead of forcing every plan into a flat 7-10 step graph\n",
+            "- generated plans must stay within 8 leaf tasks; larger DAGs require manual Workflow Studio authoring or an explicit import bundle\n",
+            "- decompose complex work into phase-aware macro steps instead of expanding into one task per section, source subtype, validation branch, or repair path\n",
             "- keep each leaf task narrow enough to own one objective, one output contract, and one validation path\n",
             "- for compact research-delivery requests such as \"research this, create a concise brief, and save it to Notion\", prefer 5-8 leaf tasks and bundle related research, synthesis, destination write, and verification work\n",
             "- do not split a concise report into one task per requested section; draft required sections together in one synthesis or brief-writing step\n",
@@ -81,7 +82,8 @@ mod tests {
         assert!(sections.contains("proof points"));
         assert!(sections.contains("connector-backed work"));
         assert!(sections.contains("code_patch"));
-        assert!(sections.contains("phase-aware microtask DAGs"));
+        assert!(sections.contains("within 8 leaf tasks"));
+        assert!(sections.contains("phase-aware macro steps"));
         assert!(sections.contains("one objective, one output contract"));
         assert!(sections.contains("compact research-delivery requests"));
         assert!(sections.contains("5-8 leaf tasks"));

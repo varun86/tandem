@@ -441,36 +441,36 @@ pub fn derive_workflow_decomposition_profile(
             (WorkflowDecompositionTier::Moderate, 5, 8, 2)
         } else {
             match complexity_score {
-                0..=24 => (WorkflowDecompositionTier::Simple, 5, 10, 1),
-                25..=44 => (WorkflowDecompositionTier::Moderate, 10, 20, 2),
-                45..=69 => (WorkflowDecompositionTier::Complex, 20, 30, 3),
-                _ => (WorkflowDecompositionTier::VeryComplex, 30, 50, 4),
+                0..=24 => (WorkflowDecompositionTier::Simple, 1, 4, 1),
+                25..=44 => (WorkflowDecompositionTier::Moderate, 4, 8, 2),
+                45..=69 => (WorkflowDecompositionTier::Complex, 6, 8, 3),
+                _ => (WorkflowDecompositionTier::VeryComplex, 6, 8, 4),
             }
         };
     let requires_phased_dag = recommended_phase_count > 1;
     let mut guidance = match tier {
         WorkflowDecompositionTier::Simple => vec![
-            "Keep the plan at 5-10 leaf tasks.".to_string(),
+            "Keep generated plans at 1-4 leaf tasks unless the user explicitly asks for manual detailed decomposition.".to_string(),
             "A single phase is acceptable when the work has one evidence source and one output.".to_string(),
         ],
         WorkflowDecompositionTier::Moderate => vec![
-            "Target 10-20 leaf tasks.".to_string(),
+            "Target 4-8 generated leaf tasks.".to_string(),
             "Split discovery from synthesis or delivery when they are separate responsibilities.".to_string(),
         ],
         WorkflowDecompositionTier::Complex => vec![
-            "Target 20-30 leaf tasks.".to_string(),
+            "Use at most 8 generated leaf tasks; compact detailed work into phase-level macro steps.".to_string(),
             "Use explicit phases for discover, synthesize, validate, and deliver/repair leaves.".to_string(),
-            "Do not combine multiple major outputs in one leaf task.".to_string(),
+            "Do not create one task per section, source subtype, or repair branch unless the user explicitly authored that structure.".to_string(),
         ],
         WorkflowDecompositionTier::VeryComplex => vec![
-            "Use 30-50 leaf tasks only as phased sub-DAGs.".to_string(),
+            "Generated workflows still have an 8-task ceiling; larger DAGs require manual Studio authoring or explicit import.".to_string(),
             "Keep each leaf to one primary objective, one output contract, and one validation path.".to_string(),
             "Use parent_step_id and phase_id hints so the runtime can narrow retries instead of reopening the whole graph.".to_string(),
         ],
     };
     if compact_research_delivery {
         guidance = vec![
-            "Target 5-8 leaf tasks for this compact research-delivery workflow.".to_string(),
+            "Target 5-6 leaf tasks for this compact research-delivery workflow.".to_string(),
             "Bundle related web, MCP, and community research by evidence source or phase; do not create one task per report section.".to_string(),
             "Use one synthesis task to draft the requested brief sections together.".to_string(),
             "Use one destination-write task for Notion/database creation and one lightweight verification task when needed.".to_string(),
@@ -605,7 +605,8 @@ mod tests {
         assert_eq!(simple.tier, WorkflowDecompositionTier::Simple);
         assert!(simple.complexity_score < complex.complexity_score);
         assert!(complex.requires_phased_dag);
-        assert!(complex.recommended_min_leaf_tasks >= 10);
+        assert!(complex.recommended_min_leaf_tasks >= 4);
+        assert!(complex.recommended_max_leaf_tasks <= 8);
         assert!(complex.recommended_phase_count >= 2);
         assert!(complex
             .signals

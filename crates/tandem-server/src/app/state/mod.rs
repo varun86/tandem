@@ -448,6 +448,9 @@ fn candidate_automation_v2_runs_paths(active_path: &PathBuf) -> Vec<PathBuf> {
 }
 
 fn parse_automation_v2_file(raw: &str) -> std::collections::HashMap<String, AutomationV2Spec> {
+    if raw.trim().is_empty() {
+        return std::collections::HashMap::new();
+    }
     serde_json::from_str::<std::collections::HashMap<String, AutomationV2Spec>>(raw)
         .unwrap_or_default()
 }
@@ -455,8 +458,177 @@ fn parse_automation_v2_file(raw: &str) -> std::collections::HashMap<String, Auto
 fn parse_automation_v2_file_strict(
     raw: &str,
 ) -> anyhow::Result<std::collections::HashMap<String, AutomationV2Spec>> {
+    if raw.trim().is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
     serde_json::from_str::<std::collections::HashMap<String, AutomationV2Spec>>(raw)
         .map_err(anyhow::Error::from)
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct AutomationV2DefinitionIndexFile {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default)]
+    definitions: Vec<AutomationV2DefinitionIndexEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct AutomationV2DefinitionIndexEntry {
+    automation_id: String,
+    path: String,
+    updated_at_ms: u64,
+}
+
+fn automation_v2_definitions_root(active_path: &Path) -> PathBuf {
+    active_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("automations-v2")
+}
+
+fn automation_v2_definition_file_name(automation_id: &str) -> String {
+    let sanitized = automation_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let stem = if sanitized.trim().is_empty() {
+        "automation".to_string()
+    } else {
+        sanitized
+    };
+    format!("{stem}.json")
+}
+
+fn automation_v2_definition_shard_path(active_path: &Path, automation_id: &str) -> PathBuf {
+    automation_v2_definitions_root(active_path)
+        .join(automation_v2_definition_file_name(automation_id))
+}
+
+fn automation_v2_definitions_index_path(active_path: &Path) -> PathBuf {
+    automation_v2_definitions_root(active_path).join("index.json")
+}
+
+async fn load_automation_v2_definition_shards(
+    active_path: &Path,
+) -> anyhow::Result<std::collections::HashMap<String, AutomationV2Spec>> {
+    let root = automation_v2_definitions_root(active_path);
+    if !root.exists() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let mut out = std::collections::HashMap::new();
+    let mut entries = fs::read_dir(&root).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if !path.is_file()
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name == "index.json")
+            || path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let raw = fs::read_to_string(&path).await?;
+        let automation = serde_json::from_str::<AutomationV2Spec>(&raw).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to parse automation v2 definition shard `{}`: {}",
+                path.display(),
+                error
+            )
+        })?;
+        out.insert(automation.automation_id.clone(), automation);
+    }
+    Ok(out)
+}
+
+async fn persist_automation_v2_definition_shards(
+    active_path: &Path,
+    automations: &std::collections::HashMap<String, AutomationV2Spec>,
+) -> anyhow::Result<()> {
+    let root = automation_v2_definitions_root(active_path);
+    fs::create_dir_all(&root).await?;
+    let mut expected_paths = std::collections::HashSet::new();
+    let mut index = AutomationV2DefinitionIndexFile {
+        schema_version: 1,
+        definitions: Vec::new(),
+    };
+    for automation in automations.values() {
+        let path = automation_v2_definition_shard_path(active_path, &automation.automation_id);
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("automation.json")
+            .to_string();
+        expected_paths.insert(path.clone());
+        index.definitions.push(AutomationV2DefinitionIndexEntry {
+            automation_id: automation.automation_id.clone(),
+            path: file_name,
+            updated_at_ms: automation.updated_at_ms,
+        });
+        let payload = serde_json::to_string_pretty(automation)?;
+        write_string_atomic(&path, &payload).await?;
+    }
+    index
+        .definitions
+        .sort_by(|a, b| a.automation_id.cmp(&b.automation_id));
+    let index_payload = serde_json::to_string_pretty(&index)?;
+    write_string_atomic(
+        &automation_v2_definitions_index_path(active_path),
+        &index_payload,
+    )
+    .await?;
+
+    let mut entries = fs::read_dir(&root).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if !path.is_file()
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name == "index.json")
+            || path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            continue;
+        }
+        if !expected_paths.contains(&path) {
+            fs::remove_file(path).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn archive_automation_v2_aggregate_file(active_path: &Path) -> anyhow::Result<()> {
+    if !active_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(active_path).await?;
+    if parse_automation_v2_file(&raw).is_empty() {
+        fs::remove_file(active_path).await?;
+        return Ok(());
+    }
+    let active_stem = active_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("automations_v2");
+    let archive_path = active_path.with_file_name(format!("{active_stem}.legacy-aggregate.json"));
+    if archive_path.exists() {
+        fs::remove_file(active_path).await?;
+        return Ok(());
+    }
+    fs::rename(active_path, &archive_path).await?;
+    tracing::info!(
+        active_path = active_path.display().to_string(),
+        archive_path = archive_path.display().to_string(),
+        "archived legacy automation v2 aggregate file after shard persistence"
+    );
+    Ok(())
 }
 
 async fn write_string_atomic(path: &Path, payload: &str) -> anyhow::Result<()> {

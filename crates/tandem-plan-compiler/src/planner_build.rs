@@ -16,13 +16,14 @@ use crate::planner_invoke::invoke_planner_json;
 use crate::planner_prompts::workflow_plan_common_sections;
 use crate::planner_types::{PlannerClarifier, PlannerInvocationFailure};
 use crate::workflow_plan::{
-    build_minimal_fallback_plan, decode_planner_plan_value, infer_explicit_output_targets,
-    infer_read_only_source_paths, manual_schedule, normalize_and_validate_planner_plan,
-    normalize_operator_preferences, normalize_prompt, normalize_string_list, plan_save_options,
-    plan_title, planner_diagnostics, planner_llm_provider_unconfigured_hint, planner_model_spec,
-    schedule_from_value, truncate_text, workflow_plan_mentions_email_delivery,
-    workflow_plan_mentions_web_research_tools, workflow_plan_should_surface_mcp_discovery,
-    PlannerPlanMode, PlannerPlanNormalizationContext,
+    build_minimal_fallback_plan, compact_generated_workflow_plan_to_budget,
+    decode_planner_plan_value, infer_explicit_output_targets, infer_read_only_source_paths,
+    manual_schedule, normalize_and_validate_planner_plan, normalize_operator_preferences,
+    normalize_prompt, normalize_string_list, plan_save_options, plan_title, planner_diagnostics,
+    planner_llm_provider_unconfigured_hint, planner_model_spec, schedule_from_value, truncate_text,
+    validate_workflow_plan, workflow_plan_decomposition_observation_with_task_budget,
+    workflow_plan_mentions_email_delivery, workflow_plan_mentions_web_research_tools,
+    workflow_plan_should_surface_mcp_discovery, PlannerPlanMode, PlannerPlanNormalizationContext,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +372,64 @@ where
                     &mut normalize_step,
                 ) {
                     Ok(plan) => {
+                        let original_step_count = plan.steps.len();
+                        let (plan, task_budget_report) =
+                            compact_generated_workflow_plan_to_budget(plan, &decomposition_profile);
+                        if let Some(report) = task_budget_report.clone() {
+                            if report
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .is_some_and(|status| status == "compacted")
+                            {
+                                if let Err(error) = validate_workflow_plan(&plan) {
+                                    let detail = truncate_text(&error, 500);
+                                    host.warn(&format!(
+                                        "workflow planner compacted output rejected by validation: {detail}"
+                                    ));
+                                    return PlannerBuildResult {
+                                        plan: build_profile_fallback_plan(
+                                            Some("Planner fallback draft. The planner returned an oversized workflow and Tandem could not validate the compacted version. Reason: task_budget_compaction_validation_rejected.".to_string()),
+                                            fallback_step.clone(),
+                                        ),
+                                        assistant_text: payload.assistant_text.or(Some(
+                                            "The planner returned too many tasks, and Tandem could not validate the compacted version. Tandem used a phased fallback workflow instead.".to_string(),
+                                        )),
+                                        clarifier: Value::Null,
+                                        planner_diagnostics: planner_diagnostics(
+                                            Some("task_budget_compaction_validation_rejected"),
+                                            Some(detail),
+                                            Some(workflow_plan_decomposition_observation_with_task_budget(
+                                                &decomposition_profile,
+                                                &plan,
+                                                Some(report),
+                                            )),
+                                        ),
+                                    };
+                                }
+                                let compacted_count = plan.steps.len();
+                                let detail = format!(
+                                    "Planner compacted {original_step_count} generated tasks into {compacted_count} runnable workflow steps."
+                                );
+                                host.warn(&format!(
+                                    "workflow planner llm output compacted to generated task budget: {detail}"
+                                ));
+                                let diagnostics = planner_diagnostics(
+                                    Some("task_budget_compacted"),
+                                    Some(detail.clone()),
+                                    Some(workflow_plan_decomposition_observation_with_task_budget(
+                                        &decomposition_profile,
+                                        &plan,
+                                        Some(report),
+                                    )),
+                                );
+                                return PlannerBuildResult {
+                                    plan,
+                                    assistant_text: payload.assistant_text.or(Some(detail.clone())),
+                                    clarifier: Value::Null,
+                                    planner_diagnostics: diagnostics,
+                                };
+                            }
+                        }
                         if workflow_plan_is_too_flat_for_profile(
                             &decomposition_profile,
                             plan.steps.len(),
@@ -443,9 +502,10 @@ where
                             let diagnostics = planner_diagnostics(
                                 None,
                                 None,
-                                Some(workflow_plan_decomposition_observation(
+                                Some(workflow_plan_decomposition_observation_with_task_budget(
                                     &decomposition_profile,
-                                    plan.steps.len(),
+                                    &plan,
+                                    None,
                                 )),
                             );
                             PlannerBuildResult {
@@ -552,10 +612,10 @@ fn workflow_plan_is_too_flat_for_profile(
 }
 
 fn workflow_plan_exceeds_profile_budget(
-    profile: &crate::decomposition::WorkflowDecompositionProfile,
+    _profile: &crate::decomposition::WorkflowDecompositionProfile,
     step_count: usize,
 ) -> bool {
-    step_count > usize::from(profile.recommended_max_leaf_tasks) + 2
+    step_count > crate::workflow_plan::GENERATED_WORKFLOW_MAX_STEPS
 }
 
 fn profile_is_compact_research_delivery(
@@ -1254,7 +1314,8 @@ mod tests {
         assert!(prompt.contains("Call `mcp_list`"));
         assert!(prompt.contains("Allowed MCP servers"));
         assert!(prompt.contains("Decomposition profile:"));
-        assert!(prompt.contains("phase-aware microtask DAGs"));
+        assert!(prompt.contains("within 8 leaf tasks"));
+        assert!(prompt.contains("phase-aware macro steps"));
     }
 
     #[test]

@@ -69,6 +69,15 @@ export function TaskPlanningPanelView(props: any) {
     githubProjectBoardSnapshot,
     connectedMcpServers,
   } = provider as any;
+  const taskBudget =
+    plannerDiagnostics?.task_budget ||
+    plannerDiagnostics?.taskBudget ||
+    plannerDiagnostics?.decomposition_observation?.task_budget ||
+    plannerDiagnostics?.decompositionObservation?.taskBudget ||
+    plannerDiagnostics?.observation?.task_budget ||
+    plannerDiagnostics?.observation?.taskBudget ||
+    null;
+  const taskBudgetRejected = String(taskBudget?.status || "").trim() === "rejected";
   const {
     activatePlannerSession,
     createNewPlannerSession,
@@ -625,7 +634,8 @@ export function TaskPlanningPanelView(props: any) {
                         !workspaceRoot.trim() ||
                         clarificationNeeded ||
                         plannerTimedOut ||
-                        planIsFallbackOnly
+                        planIsFallbackOnly ||
+                        taskBudgetRejected
                       }
                       onClick={() => void publishTasks()}
                     >
@@ -645,11 +655,13 @@ export function TaskPlanningPanelView(props: any) {
                         ? "Answer the planner's question before approving or publishing tasks."
                         : plannerTimedOut
                           ? "Retry the planner revision or switch models before approving tasks."
-                          : planIsFallbackOnly
-                            ? "Wait for a real task breakdown before approving or publishing tasks."
-                            : isGitHubProject && canPublishToGitHub
-                              ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
-                              : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
+                          : taskBudgetRejected
+                            ? "Regenerate the plan so Tandem can compact it into the generated 8-task budget before publishing."
+                            : planIsFallbackOnly
+                              ? "Wait for a real task breakdown before approving or publishing tasks."
+                              : isGitHubProject && canPublishToGitHub
+                                ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
+                                : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
                     </div>
                   </div>
                 </div>

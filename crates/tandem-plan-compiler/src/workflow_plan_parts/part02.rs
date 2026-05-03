@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +292,174 @@ Here is the planner response:
                 .and_then(|value| value.get("recommended_phase_count"))
                 .and_then(Value::as_u64),
             Some(3)
+        );
+    }
+
+    #[test]
+    fn generated_research_destination_plan_compacts_to_request_aware_macro_steps() {
+        let prompt = r#"research this topic:
+
+"What are the current approaches to making AI agents reliable for business workflows?"
+
+Use the connected Tandem MCP docs as reference if needed, and use the connected Reddit MCP plus web research to gather current market signals, discussions, examples, and source links.
+
+Then create a concise market brief and save the completed report into the Notion database:
+
+Operational Workflow Results
+collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d
+
+The Notion page should include:
+- Summary
+- Key Findings
+- Market Notes
+- Reddit Signals
+- Sources
+- Tandem Run details"#;
+        let profile = crate::decomposition::derive_workflow_decomposition_profile(
+            prompt,
+            &[
+                "tandem_mcp".to_string(),
+                "reddit".to_string(),
+                "notion".to_string(),
+            ],
+            &[],
+            false,
+        );
+        let mut original_steps = Vec::new();
+        let objectives = [
+            "Define scope, success criteria, and report requirements.",
+            "Use mcp.tandem_mcp.search_docs for reliable workflow design docs.",
+            "Use mcp.tandem_mcp.get_doc for selected Tandem docs.",
+            "Use web_research and web_fetch for current market approaches.",
+            "Collect vendor and enterprise examples with web source links.",
+            "Collect observability, guardrails, evals, retries, and fallback practices.",
+            "Use mcp.composio.reddit_get_subreddits_search for Reddit signals.",
+            "Use mcp.composio.reddit_search_across_subreddits for candidate posts.",
+            "Use mcp.composio.reddit_retrieve_reddit_post for discussion excerpts.",
+            "Extract practitioner Reddit concerns and reliability tactics.",
+            "Normalize sources into one ledger.",
+            "Synthesize a taxonomy of reliable AI agent workflow approaches.",
+            "Draft Summary section.",
+            "Draft Key Findings section.",
+            "Draft Market Notes section.",
+            "Draft Reddit Signals section.",
+            "Draft Sources section.",
+            "Draft Tandem Run details section.",
+            "Assemble concise market brief.",
+            "Validate the brief is current, concise, and section-complete.",
+            "Transform brief into Notion page payload.",
+            "Create Notion page in collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d.",
+            "Verify Notion page has Summary.",
+            "Verify Notion page has Key Findings.",
+            "Verify Notion page has Market Notes.",
+            "Verify Notion page has Reddit Signals.",
+            "Verify Notion page has Sources.",
+            "Verify Notion page has Tandem Run details.",
+            "Capture final Notion page URL and run details.",
+        ];
+        for (index, objective) in objectives.iter().enumerate() {
+            original_steps.push(WorkflowPlanStep {
+                step_id: format!("generated_step_{:02}", index + 1),
+                kind: if objective.contains("Draft")
+                    || objective.contains("Assemble")
+                    || objective.contains("Synthesize")
+                {
+                    "synthesize".to_string()
+                } else if objective.contains("Notion") || objective.contains("collection://") {
+                    "deliver".to_string()
+                } else {
+                    "research".to_string()
+                },
+                objective: objective.to_string(),
+                depends_on: if index == 0 {
+                    Vec::new()
+                } else {
+                    vec![format!("generated_step_{index:02}")]
+                },
+                agent_role: "agent_planner".to_string(),
+                input_refs: Vec::new(),
+                output_contract: Some(json!({"kind":"structured_json"})),
+                metadata: None,
+            });
+        }
+        let mut plan = test_plan_with_steps(original_steps);
+        plan.original_prompt = prompt.to_string();
+        plan.normalized_prompt = normalize_prompt(prompt);
+        plan.allowed_mcp_servers = vec![
+            "tandem_mcp".to_string(),
+            "reddit".to_string(),
+            "notion".to_string(),
+        ];
+
+        let (compacted, report) = compact_generated_workflow_plan_to_budget(plan, &profile);
+
+        assert!(compacted.steps.len() <= GENERATED_WORKFLOW_MAX_STEPS);
+        assert_eq!(
+            report
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str),
+            Some("compacted")
+        );
+        assert_eq!(
+            report
+                .as_ref()
+                .and_then(|value| value.get("original_step_count"))
+                .and_then(Value::as_u64),
+            Some(29)
+        );
+        let step_ids = compacted
+            .steps
+            .iter()
+            .map(|step| step.step_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(step_ids.contains(&"confirm_scope_and_destination"));
+        assert!(step_ids.contains(&"gather_tandem_docs"));
+        assert!(step_ids.contains(&"gather_market_sources"));
+        assert!(step_ids.contains(&"gather_reddit_signals"));
+        assert!(step_ids.contains(&"draft_market_brief"));
+        assert!(step_ids.contains(&"create_and_verify_notion_page"));
+        let all_objectives = compacted
+            .steps
+            .iter()
+            .map(|step| step.objective.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all_objectives.contains("mcp.tandem_mcp.search_docs"));
+        assert!(all_objectives.contains("web_research"));
+        assert!(all_objectives.contains("mcp.composio.reddit"));
+        assert!(all_objectives.contains("collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d"));
+        assert!(all_objectives.contains("Summary"));
+        assert!(all_objectives.contains("Key Findings"));
+        assert!(all_objectives.contains("Market Notes"));
+        assert!(all_objectives.contains("Reddit Signals"));
+        assert!(all_objectives.contains("Sources"));
+        assert!(all_objectives.contains("Tandem Run details"));
+    }
+
+    #[test]
+    fn manual_or_imported_plans_are_exempt_from_generated_task_budget() {
+        let steps = (0..12)
+            .map(|index| WorkflowPlanStep {
+                step_id: format!("manual_step_{index}"),
+                kind: "manual".to_string(),
+                objective: "Human-authored workflow step.".to_string(),
+                depends_on: Vec::new(),
+                agent_role: "operator".to_string(),
+                input_refs: Vec::new(),
+                output_contract: None,
+                metadata: None,
+            })
+            .collect::<Vec<_>>();
+        let mut plan = test_plan_with_steps(steps);
+        plan.plan_source = "workflow_studio_manual".to_string();
+
+        assert!(!workflow_plan_generated_task_budget_exceeded(&plan));
+        assert_eq!(
+            workflow_task_budget_report_for_plan(&plan, None, None, None)
+                .get("status")
+                .and_then(Value::as_str),
+            Some("exempt_manual")
         );
     }
 

@@ -190,6 +190,107 @@ fn routine_dependency_plan_package() -> tandem_plan_compiler::api::PlanPackage {
 }
 
 #[tokio::test]
+async fn automation_v2_definitions_are_persisted_as_per_workflow_shards() {
+    let root = std::env::temp_dir().join(format!(
+        "tandem-automation-v2-shards-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("state root");
+    let active_path = root.join("automations_v2.json");
+    let mut state = test_state_with_path(root.join("shared.json"));
+    state.automations_v2_path = active_path.clone();
+    state.automation_governance_path = root.join("automation_governance.json");
+
+    let automation = AutomationSpecBuilder::new("automation-v2-sharded-test")
+        .name("Large workflow")
+        .metadata(json!({
+            "planner_trace": "x".repeat(16_384),
+            "approved_plan": {
+                "notes": "persisted as a shard instead of growing the hot aggregate file"
+            }
+        }))
+        .build();
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("persist automation");
+
+    assert!(
+        !active_path.exists(),
+        "legacy aggregate file should not be rewritten after shard persistence"
+    );
+    let shard_path = root
+        .join("automations-v2")
+        .join("automation-v2-sharded-test.json");
+    assert!(shard_path.exists(), "automation shard should exist");
+    assert!(
+        root.join("automations-v2").join("index.json").exists(),
+        "definition index should exist"
+    );
+
+    let mut reloaded = test_state_with_path(root.join("shared-reloaded.json"));
+    reloaded.automations_v2_path = active_path.clone();
+    reloaded.automation_governance_path = root.join("automation_governance-reloaded.json");
+    reloaded
+        .load_automations_v2()
+        .await
+        .expect("load sharded automations");
+    let loaded = reloaded
+        .get_automation_v2("automation-v2-sharded-test")
+        .await
+        .expect("loaded automation");
+    assert_eq!(loaded.name, automation.name);
+    assert_eq!(loaded.metadata, automation.metadata);
+}
+
+#[tokio::test]
+async fn automation_v2_legacy_aggregate_is_migrated_to_shards() {
+    let root = std::env::temp_dir().join(format!(
+        "tandem-automation-v2-legacy-migrate-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("state root");
+    let active_path = root.join("automations_v2.json");
+    let automation = AutomationSpecBuilder::new("automation-v2-legacy-test")
+        .metadata(json!({ "legacy": true }))
+        .build();
+    let aggregate =
+        std::collections::HashMap::from([(automation.automation_id.clone(), automation.clone())]);
+    std::fs::write(
+        &active_path,
+        serde_json::to_string_pretty(&aggregate).expect("serialize aggregate"),
+    )
+    .expect("write legacy aggregate");
+
+    let mut state = test_state_with_path(root.join("shared.json"));
+    state.automations_v2_path = active_path.clone();
+    state.automation_governance_path = root.join("automation_governance.json");
+    state
+        .load_automations_v2()
+        .await
+        .expect("migrate legacy aggregate");
+
+    assert!(
+        !active_path.exists(),
+        "legacy aggregate should be archived out of the hot path"
+    );
+    assert!(
+        root.join("automations_v2.legacy-aggregate.json").exists(),
+        "legacy aggregate backup should be preserved"
+    );
+    assert!(
+        root.join("automations-v2")
+            .join("automation-v2-legacy-test.json")
+            .exists(),
+        "migrated automation shard should exist"
+    );
+    assert!(state
+        .get_automation_v2("automation-v2-legacy-test")
+        .await
+        .is_some());
+}
+
+#[tokio::test]
 async fn automation_attempt_receipt_append_uses_jsonl_path_and_skips_malformed_lines() {
     let state_dir =
         std::env::temp_dir().join(format!("tandem-receipt-ledger-{}", uuid::Uuid::new_v4()));

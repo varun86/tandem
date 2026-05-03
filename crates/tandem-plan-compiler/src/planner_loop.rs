@@ -21,8 +21,10 @@ use crate::planner_messages::{
 };
 use crate::planner_types::{PlannerClarifier, PlannerInvocationFailure};
 use crate::workflow_plan::{
-    decode_planner_plan_value, infer_explicit_output_targets, normalize_and_validate_planner_plan,
-    planner_llm_provider_unconfigured_hint, planner_model_spec, workflow_schedule_equal,
+    compact_generated_workflow_plan_to_budget, decode_planner_plan_value,
+    infer_explicit_output_targets, normalize_and_validate_planner_plan,
+    planner_llm_provider_unconfigured_hint, planner_model_spec,
+    workflow_plan_decomposition_observation_with_task_budget, workflow_schedule_equal,
     workflow_steps_equal, PlannerPlanMode, PlannerPlanNormalizationContext, WorkflowInputRefLike,
 };
 
@@ -289,6 +291,9 @@ where
             let candidate = decode_planner_plan_value(payload.plan?)?;
             let revised_plan =
                 normalize_and_validate_planner_plan(candidate, ctx, normalize_step).ok()?;
+            let original_step_count = revised_plan.steps.len();
+            let (revised_plan, task_budget_report) =
+                compact_generated_workflow_plan_to_budget(revised_plan, decomposition_profile);
             if workflow_steps_equal(&revised_plan.steps, &current_plan.steps)
                 && revised_plan.title == current_plan.title
                 && revised_plan.description == current_plan.description
@@ -310,24 +315,37 @@ where
                     )),
                 ));
             }
-            let change_summary = if payload.change_summary.is_empty() {
+            let mut change_summary = if payload.change_summary.is_empty() {
                 vec!["updated workflow plan".to_string()]
             } else {
                 payload.change_summary
             };
+            if task_budget_report
+                .as_ref()
+                .and_then(|report| report.get("status"))
+                .and_then(Value::as_str)
+                .is_some_and(|status| status == "compacted")
+            {
+                change_summary.push(format!(
+                    "compacted {} generated tasks into {} runnable workflow steps",
+                    original_step_count,
+                    revised_plan.steps.len()
+                ));
+            }
             let assistant_text = payload
                 .assistant_text
                 .unwrap_or_else(|| format!("Updated the plan: {}.", change_summary.join(", ")));
-            let revised_step_count = revised_plan.steps.len();
+            let observation = workflow_plan_decomposition_observation_with_task_budget(
+                decomposition_profile,
+                &revised_plan,
+                task_budget_report,
+            );
             Some((
                 revised_plan,
                 assistant_text,
                 change_summary,
                 Value::Null,
-                Some(workflow_plan_decomposition_observation(
-                    decomposition_profile,
-                    revised_step_count,
-                )),
+                Some(observation),
             ))
         }
     }
@@ -452,7 +470,7 @@ mod tests {
         );
 
         assert!(prompt.contains("Decomposition profile:"));
-        assert!(prompt.contains("phase-aware microtask DAGs"));
+        assert!(prompt.contains("within 8 leaf tasks"));
         assert!(prompt.contains("one primary objective"));
     }
 }

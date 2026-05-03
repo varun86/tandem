@@ -1,7 +1,20 @@
 use crate::contracts::{research_output_contract_policy_seed, ProjectedOutputValidatorKind};
 use crate::decomposition::{
     derive_step_decomposition_hints, derive_workflow_decomposition_profile,
+    WorkflowDecompositionProfile,
 };
+
+pub const GENERATED_WORKFLOW_MAX_STEPS: usize = 8;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowTaskBudgetReport {
+    pub status: String,
+    pub max_generated_steps: usize,
+    pub generated_step_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_step_count: Option<usize>,
+    pub enforcement: String,
+}
 
 pub fn plan_save_options() -> Value {
     json!({
@@ -477,6 +490,474 @@ pub fn build_minimal_fallback_plan<S, Step>(
         operator_preferences,
         save_options: plan_save_options(),
     }
+}
+
+pub fn workflow_plan_source_exempts_generated_task_budget(plan_source: &str) -> bool {
+    let lowered = plan_source.trim().to_ascii_lowercase();
+    !lowered.is_empty()
+        && (lowered.contains("import")
+            || lowered.contains("imported_bundle")
+            || lowered.contains("workflow_studio")
+            || lowered.contains("studio_manual")
+            || lowered.contains("manual_author"))
+}
+
+pub fn workflow_plan_generated_task_budget_exceeded<S, Step>(plan: &WorkflowPlan<S, Step>) -> bool {
+    !workflow_plan_source_exempts_generated_task_budget(&plan.plan_source)
+        && plan.steps.len() > GENERATED_WORKFLOW_MAX_STEPS
+}
+
+pub fn workflow_task_budget_report_value(
+    status: &str,
+    generated_step_count: usize,
+    original_step_count: Option<usize>,
+    enforcement: &str,
+) -> Value {
+    serde_json::to_value(WorkflowTaskBudgetReport {
+        status: status.to_string(),
+        max_generated_steps: GENERATED_WORKFLOW_MAX_STEPS,
+        generated_step_count,
+        original_step_count,
+        enforcement: enforcement.to_string(),
+    })
+    .unwrap_or_else(|_| {
+        json!({
+            "status": status,
+            "max_generated_steps": GENERATED_WORKFLOW_MAX_STEPS,
+            "generated_step_count": generated_step_count,
+            "original_step_count": original_step_count,
+            "enforcement": enforcement,
+        })
+    })
+}
+
+pub fn workflow_task_budget_report_for_plan<S, Step>(
+    plan: &WorkflowPlan<S, Step>,
+    status_override: Option<&str>,
+    original_step_count: Option<usize>,
+    enforcement_override: Option<&str>,
+) -> Value {
+    if workflow_plan_source_exempts_generated_task_budget(&plan.plan_source) {
+        return workflow_task_budget_report_value(
+            status_override.unwrap_or("exempt_manual"),
+            plan.steps.len(),
+            original_step_count,
+            enforcement_override.unwrap_or("exempt"),
+        );
+    }
+    let status = status_override.unwrap_or(if plan.steps.len() > GENERATED_WORKFLOW_MAX_STEPS {
+        "rejected"
+    } else {
+        "within_budget"
+    });
+    let enforcement = enforcement_override.unwrap_or(if status == "rejected" {
+        "rejected"
+    } else {
+        "accepted"
+    });
+    workflow_task_budget_report_value(status, plan.steps.len(), original_step_count, enforcement)
+}
+
+pub fn workflow_plan_decomposition_observation_with_task_budget<S, Step>(
+    profile: &WorkflowDecompositionProfile,
+    plan: &WorkflowPlan<S, Step>,
+    task_budget: Option<Value>,
+) -> Value {
+    let mut observation =
+        crate::decomposition::workflow_plan_decomposition_observation(profile, plan.steps.len());
+    let budget =
+        task_budget.unwrap_or_else(|| workflow_task_budget_report_for_plan(plan, None, None, None));
+    if let Some(object) = observation.as_object_mut() {
+        object.insert("task_budget".to_string(), budget);
+    }
+    observation
+}
+
+fn text_has_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn compact_bucket_for_step<I, O>(step: &WorkflowPlanStep<I, O>) -> &'static str {
+    let text = format!("{} {} {}", step.step_id, step.kind, step.objective).to_ascii_lowercase();
+    if text_has_any(
+        &text,
+        &[
+            "notion",
+            "database",
+            "collection://",
+            "create page",
+            "update page",
+            "verify page",
+            "page identifier",
+            "page url",
+        ],
+    ) {
+        return "create_and_verify_notion_page";
+    }
+    if text_has_any(&text, &["reddit", "subreddit", "community", "practitioner"]) {
+        return "gather_reddit_signals";
+    }
+    if text_has_any(&text, &["tandem", "docs", "documentation", "mcp docs"]) {
+        return "gather_tandem_docs";
+    }
+    if text_has_any(
+        &text,
+        &[
+            "web",
+            "websearch",
+            "web_fetch",
+            "market",
+            "vendor",
+            "platform",
+            "enterprise",
+            "source",
+            "sources",
+        ],
+    ) {
+        return "gather_market_sources";
+    }
+    if text_has_any(
+        &text,
+        &[
+            "synthes",
+            "draft",
+            "brief",
+            "summary",
+            "key finding",
+            "market notes",
+            "sources section",
+            "run details",
+            "final report",
+        ],
+    ) {
+        return "draft_market_brief";
+    }
+    if text_has_any(
+        &text,
+        &[
+            "verify", "validate", "review", "check", "quality", "complete",
+        ],
+    ) {
+        return "validate_result";
+    }
+    if text_has_any(
+        &text,
+        &[
+            "scope",
+            "criteria",
+            "confirm",
+            "inspect",
+            "destination",
+            "requirements",
+        ],
+    ) || step.depends_on.is_empty()
+    {
+        return "confirm_scope_and_destination";
+    }
+    "synthesize_work"
+}
+
+fn compact_bucket_label(bucket: &str) -> (&'static str, &'static str, &'static str) {
+    match bucket {
+        "confirm_scope_and_destination" => (
+            "assess",
+            "agent_research_planner",
+            "Confirm the workflow scope, destination, required deliverable sections, and available MCP/web research capabilities before research begins.",
+        ),
+        "gather_tandem_docs" => (
+            "research",
+            "agent_docs_researcher",
+            "Use the connected Tandem MCP documentation tools to gather source-ready notes relevant to the requested topic.",
+        ),
+        "gather_market_sources" => (
+            "research",
+            "agent_market_researcher",
+            "Use web research to gather current market coverage, vendor examples, operational practices, and source links for the requested topic.",
+        ),
+        "gather_reddit_signals" => (
+            "research",
+            "agent_community_researcher",
+            "Use the connected Reddit MCP tools to collect relevant practitioner discussions, links, repeated concerns, and market signals.",
+        ),
+        "draft_market_brief" => (
+            "synthesize",
+            "agent_brief_writer",
+            "Synthesize all upstream evidence into one concise brief; do not split each requested report section into separate workflow tasks.",
+        ),
+        "create_and_verify_notion_page" => (
+            "deliver",
+            "agent_notion_operator",
+            "Create or update the requested destination item and verify the required sections plus final identifier or URL are captured.",
+        ),
+        "validate_result" => (
+            "validate",
+            "agent_reviewer",
+            "Validate the completed deliverable against the user's requested scope, sections, source links, and destination.",
+        ),
+        _ => (
+            "synthesize",
+            "agent_workflow_executor",
+            "Complete the remaining request-specific work using the upstream context and original user intent.",
+        ),
+    }
+}
+
+fn prompt_collection_refs(prompt: &str) -> Vec<String> {
+    prompt
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|ch: char| ch == '"' || ch == '\'' || ch == ',' || ch == '.')
+        })
+        .filter(|token| token.starts_with("collection://"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn prompt_requested_sections(prompt: &str) -> Vec<String> {
+    prompt
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            line.strip_prefix("- ")
+                .or_else(|| line.strip_prefix("* "))
+                .map(str::trim)
+        })
+        .filter(|line| !line.is_empty() && line.len() <= 80)
+        .map(str::to_string)
+        .collect()
+}
+
+fn compact_objective<I, O>(
+    bucket: &str,
+    default_objective: &str,
+    original_steps: &[WorkflowPlanStep<I, O>],
+    prompt: &str,
+) -> String {
+    let refs = prompt_collection_refs(prompt);
+    let sections = prompt_requested_sections(prompt);
+    let mut parts = vec![format!(
+        "Compact {} original planner task(s). {}",
+        original_steps.len(),
+        default_objective
+    )];
+    if !refs.is_empty()
+        && matches!(
+            bucket,
+            "create_and_verify_notion_page" | "confirm_scope_and_destination"
+        )
+    {
+        parts.push(format!("Destination: {}.", refs.join(", ")));
+    }
+    if !sections.is_empty()
+        && matches!(
+            bucket,
+            "draft_market_brief" | "create_and_verify_notion_page" | "validate_result"
+        )
+    {
+        parts.push(format!("Required sections: {}.", sections.join(", ")));
+    }
+    let original_intent = original_steps
+        .iter()
+        .take(4)
+        .map(|step| step.objective.trim())
+        .filter(|objective| !objective.is_empty())
+        .collect::<Vec<_>>();
+    if !original_intent.is_empty() {
+        parts.push(format!(
+            "Preserve source/tool intent from: {}.",
+            original_intent.join(" | ")
+        ));
+    }
+    parts.join(" ")
+}
+
+fn compact_step_dependencies(bucket: &str, available: &[String]) -> Vec<String> {
+    let has = |id: &str| available.iter().any(|value| value == id);
+    match bucket {
+        "confirm_scope_and_destination" => Vec::new(),
+        "gather_tandem_docs" | "gather_market_sources" | "gather_reddit_signals" => {
+            if has("confirm_scope_and_destination") {
+                vec!["confirm_scope_and_destination".to_string()]
+            } else {
+                Vec::new()
+            }
+        }
+        "draft_market_brief" => available
+            .iter()
+            .filter(|id| {
+                matches!(
+                    id.as_str(),
+                    "gather_tandem_docs" | "gather_market_sources" | "gather_reddit_signals"
+                )
+            })
+            .cloned()
+            .collect(),
+        "create_and_verify_notion_page" => {
+            if has("draft_market_brief") {
+                vec!["draft_market_brief".to_string()]
+            } else {
+                available.last().cloned().into_iter().collect()
+            }
+        }
+        "validate_result" => {
+            if has("create_and_verify_notion_page") {
+                vec!["create_and_verify_notion_page".to_string()]
+            } else if has("draft_market_brief") {
+                vec!["draft_market_brief".to_string()]
+            } else {
+                available.last().cloned().into_iter().collect()
+            }
+        }
+        _ => available.last().cloned().into_iter().collect(),
+    }
+}
+
+pub fn compact_generated_workflow_plan_to_budget<M, I, O>(
+    mut plan: WorkflowPlan<AutomationV2Schedule<M>, WorkflowPlanStep<I, O>>,
+    profile: &WorkflowDecompositionProfile,
+) -> (
+    WorkflowPlan<AutomationV2Schedule<M>, WorkflowPlanStep<I, O>>,
+    Option<Value>,
+)
+where
+    I: Clone + WorkflowInputRefLike,
+    O: Clone + Serialize,
+{
+    if workflow_plan_source_exempts_generated_task_budget(&plan.plan_source)
+        || plan.steps.len() <= GENERATED_WORKFLOW_MAX_STEPS
+    {
+        return (plan, None);
+    }
+
+    let original_step_count = plan.steps.len();
+    let original_steps = plan.steps.clone();
+    let bucket_order = [
+        "confirm_scope_and_destination",
+        "gather_tandem_docs",
+        "gather_market_sources",
+        "gather_reddit_signals",
+        "draft_market_brief",
+        "create_and_verify_notion_page",
+        "validate_result",
+        "synthesize_work",
+    ];
+    let mut bucketed = std::collections::BTreeMap::<String, Vec<WorkflowPlanStep<I, O>>>::new();
+    for step in original_steps {
+        bucketed
+            .entry(compact_bucket_for_step(&step).to_string())
+            .or_default()
+            .push(step);
+    }
+
+    let prompt = plan.original_prompt.clone();
+    let mut next_steps = Vec::new();
+    for bucket in bucket_order {
+        let Some(steps) = bucketed.remove(bucket) else {
+            continue;
+        };
+        if next_steps.len() >= GENERATED_WORKFLOW_MAX_STEPS {
+            break;
+        }
+        let (kind, agent_role, default_objective) = compact_bucket_label(bucket);
+        let mut step = steps.first().cloned().unwrap_or_else(|| WorkflowPlanStep {
+            step_id: bucket.to_string(),
+            kind: kind.to_string(),
+            objective: default_objective.to_string(),
+            depends_on: Vec::new(),
+            agent_role: agent_role.to_string(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            metadata: None,
+        });
+        step.step_id = bucket.to_string();
+        step.kind = kind.to_string();
+        step.agent_role = agent_role.to_string();
+        step.objective = compact_objective(bucket, default_objective, &steps, &prompt);
+        step.depends_on = compact_step_dependencies(
+            bucket,
+            &next_steps
+                .iter()
+                .map(|row: &WorkflowPlanStep<I, O>| row.step_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        step.input_refs = Vec::new();
+        let original_ids = steps
+            .iter()
+            .map(|row| row.step_id.clone())
+            .collect::<Vec<_>>();
+        let mut metadata = step.metadata.take().unwrap_or_else(|| json!({}));
+        if !metadata.is_object() {
+            metadata = json!({});
+        }
+        let metadata_obj = metadata.as_object_mut().expect("metadata object");
+        let builder = metadata_obj
+            .entry("builder".to_string())
+            .or_insert_with(|| json!({}));
+        if !builder.is_object() {
+            *builder = json!({});
+        }
+        if let Some(builder_obj) = builder.as_object_mut() {
+            builder_obj.insert("compacted_from_step_ids".to_string(), json!(original_ids));
+            builder_obj.insert(
+                "compaction_bucket".to_string(),
+                Value::String(bucket.to_string()),
+            );
+            builder_obj.insert(
+                "task_budget".to_string(),
+                workflow_task_budget_report_value(
+                    "compacted",
+                    0,
+                    Some(original_step_count),
+                    "compacted",
+                ),
+            );
+        }
+        step.metadata = Some(metadata);
+        next_steps.push(step);
+    }
+
+    if next_steps.is_empty() {
+        let report = workflow_task_budget_report_for_plan(
+            &plan,
+            Some("rejected"),
+            Some(original_step_count),
+            Some("rejected"),
+        );
+        return (plan, Some(report));
+    }
+
+    let compacted_step_count = next_steps.len();
+    let compacted_budget = workflow_task_budget_report_value(
+        "compacted",
+        compacted_step_count,
+        Some(original_step_count),
+        "compacted",
+    );
+    for (step_index, step) in next_steps.iter_mut().enumerate() {
+        if let Some(builder) = workflow_step_builder_map_mut(step) {
+            builder.insert("task_budget".to_string(), compacted_budget.clone());
+        }
+        workflow_step_decomposition_metadata_defaults(
+            step,
+            profile,
+            step_index,
+            compacted_step_count,
+        );
+    }
+    plan.steps = next_steps;
+    plan.description = Some(match plan.description.take() {
+        Some(description) if !description.trim().is_empty() => format!(
+            "{}\n\nPlanner compacted {} generated tasks into {} runnable workflow steps.",
+            description.trim(),
+            original_step_count,
+            compacted_step_count
+        ),
+        _ => format!(
+            "Planner compacted {} generated tasks into {} runnable workflow steps.",
+            original_step_count, compacted_step_count
+        ),
+    });
+    (plan, Some(compacted_budget))
 }
 
 pub fn plan_title(prompt: &str, schedule_type: &AutomationV2ScheduleType) -> String {

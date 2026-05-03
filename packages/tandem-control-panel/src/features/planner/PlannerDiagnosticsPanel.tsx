@@ -25,6 +25,38 @@ export function PlannerDiagnosticsPanel({
     plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason || ""
   );
   const summary = safeString(plannerDiagnostics?.summary || plannerDiagnostics?.detail || "");
+  const taskBudget =
+    plannerDiagnostics?.task_budget ||
+    plannerDiagnostics?.taskBudget ||
+    plannerDiagnostics?.decomposition_observation?.task_budget ||
+    plannerDiagnostics?.decompositionObservation?.taskBudget ||
+    plannerDiagnostics?.observation?.task_budget ||
+    plannerDiagnostics?.observation?.taskBudget ||
+    null;
+  const taskBudgetStatus = safeString(taskBudget?.status || "");
+  const originalStepCount = Number(
+    taskBudget?.original_step_count ?? taskBudget?.originalStepCount
+  );
+  const generatedStepCount = Number(
+    taskBudget?.generated_step_count ?? taskBudget?.generatedStepCount
+  );
+  const maxGeneratedSteps = Number(
+    taskBudget?.max_generated_steps ?? taskBudget?.maxGeneratedSteps
+  );
+  const taskBudgetMessage =
+    taskBudgetStatus === "compacted" &&
+    Number.isFinite(originalStepCount) &&
+    Number.isFinite(generatedStepCount)
+      ? `Planner compacted ${originalStepCount} generated tasks into ${generatedStepCount} runnable workflow steps.`
+      : taskBudgetStatus === "rejected" &&
+          Number.isFinite(generatedStepCount) &&
+          Number.isFinite(maxGeneratedSteps)
+        ? `Generated plan has ${generatedStepCount} tasks, above the ${maxGeneratedSteps} task budget.`
+        : taskBudgetStatus === "within_budget" &&
+            Number.isFinite(generatedStepCount) &&
+            Number.isFinite(maxGeneratedSteps)
+          ? `Generated plan is within budget: ${generatedStepCount}/${maxGeneratedSteps} tasks.`
+          : "";
 
   return (
     <PanelCard title="Diagnostics" subtitle="Planner guidance, change summary, and compiler notes.">
@@ -37,10 +69,20 @@ export function PlannerDiagnosticsPanel({
             {explanations.length ? "teaching library ready" : "teaching library pending"}
           </Badge>
           {fallbackReason ? <Badge tone="info">{fallbackReason.replace(/_/g, " ")}</Badge> : null}
+          {taskBudgetStatus ? (
+            <Badge tone={taskBudgetStatus === "rejected" ? "warn" : "ok"}>
+              task budget {taskBudgetStatus.replace(/_/g, " ")}
+            </Badge>
+          ) : null}
         </div>
 
         <PlannerSubsection title="Planner diagnostics">
           <div className="text-slate-200">{summary || "No planner diagnostics yet."}</div>
+          {taskBudgetMessage ? (
+            <div className="mt-2 rounded-lg border border-lime-400/30 bg-lime-400/10 p-2 text-lime-100">
+              {taskBudgetMessage}
+            </div>
+          ) : null}
         </PlannerSubsection>
 
         {planningChangeSummary.length ? (

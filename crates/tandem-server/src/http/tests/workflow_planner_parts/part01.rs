@@ -212,6 +212,88 @@ fn chat_message_request(plan_id: &str, message: &str) -> Request<Body> {
         .expect("chat message request")
 }
 
+fn compact_research_prompt() -> &'static str {
+    r#"research this topic:
+
+"What are the current approaches to making AI agents reliable for business workflows?"
+
+Use the connected Tandem MCP docs as reference if needed, and use the connected Reddit MCP plus web research to gather current market signals, discussions, examples, and source links.
+
+Then create a concise market brief and save the completed report into the Notion database:
+
+Operational Workflow Results
+collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d
+
+The Notion page should include:
+- Summary
+- Key Findings
+- Market Notes
+- Reddit Signals
+- Sources
+- Tandem Run details"#
+}
+
+fn oversized_compact_research_steps() -> Vec<Value> {
+    let objectives = [
+        "Define scope, success criteria, and report requirements.",
+        "Use mcp.tandem_mcp.search_docs for reliable workflow design docs.",
+        "Use mcp.tandem_mcp.get_doc for selected Tandem docs.",
+        "Use web_research and web_fetch for current market approaches.",
+        "Collect vendor and enterprise examples with web source links.",
+        "Collect observability, guardrails, evals, retries, and fallback practices.",
+        "Use mcp.composio.reddit_get_subreddits_search for Reddit signals.",
+        "Use mcp.composio.reddit_search_across_subreddits for candidate posts.",
+        "Use mcp.composio.reddit_retrieve_reddit_post for discussion excerpts.",
+        "Extract practitioner Reddit concerns and reliability tactics.",
+        "Normalize sources into one ledger.",
+        "Synthesize a taxonomy of reliable AI agent workflow approaches.",
+        "Draft Summary section.",
+        "Draft Key Findings section.",
+        "Draft Market Notes section.",
+        "Draft Reddit Signals section.",
+        "Draft Sources section.",
+        "Draft Tandem Run details section.",
+        "Assemble concise market brief.",
+        "Validate the brief is current, concise, and section-complete.",
+        "Transform brief into Notion page payload.",
+        "Create Notion page in collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d.",
+        "Verify Notion page has Summary.",
+        "Verify Notion page has Key Findings.",
+        "Verify Notion page has Market Notes.",
+        "Verify Notion page has Reddit Signals.",
+        "Verify Notion page has Sources.",
+        "Verify Notion page has Tandem Run details.",
+        "Capture final Notion page URL and run details.",
+    ];
+    objectives
+        .iter()
+        .enumerate()
+        .map(|(index, objective)| {
+            let step_id = format!("generated_step_{:02}", index + 1);
+            let previous = (index > 0).then(|| format!("generated_step_{index:02}"));
+            let depends_on = previous.iter().map(String::as_str).collect::<Vec<_>>();
+            step_json(
+                &step_id,
+                if objective.contains("Notion") || objective.contains("collection://") {
+                    "deliver"
+                } else if objective.contains("Draft")
+                    || objective.contains("Assemble")
+                    || objective.contains("Synthesize")
+                {
+                    "synthesize"
+                } else {
+                    "research"
+                },
+                objective,
+                &depends_on,
+                "agent_planner",
+                json!([]),
+                "structured_json",
+            )
+        })
+        .collect()
+}
+
 async fn seed_prior_overlap_automation(state: &AppState, plan_payload: Value) {
     let mut prior_plan_package = tandem_plan_compiler::api::compile_workflow_plan_preview_package(
         &serde_json::from_value::<tandem_plan_compiler::api::WorkflowPlanJson>(
@@ -457,6 +539,135 @@ async fn workflow_plan_preview_accepts_valid_llm_created_plan() {
             .and_then(|row| row.get("validator"))
             .and_then(Value::as_str),
         Some("generic_artifact")
+    );
+}
+
+#[tokio::test]
+async fn workflow_plan_preview_compacts_oversized_generated_llm_plan() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "assistant_text": "Built an oversized workflow plan.",
+            "plan": llm_plan_json(
+                "AI workflow reliability market brief",
+                "Oversized section/source split draft.",
+                manual_schedule_json(),
+                "/tmp/ignored-by-normalizer",
+                oversized_compact_research_steps(),
+                None
+            )
+        })
+        .to_string(),
+    );
+
+    let resp = app
+        .oneshot(preview_request(json!({
+            "prompt": compact_research_prompt(),
+            "workspace_root": "/tmp/custom-workspace",
+            "allowed_mcp_servers": ["tandem_mcp", "reddit", "notion"],
+            "operator_preferences": planner_preferences()
+        })))
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let steps = payload
+        .get("plan")
+        .and_then(|row| row.get("steps"))
+        .and_then(Value::as_array)
+        .expect("steps");
+    assert!(steps.len() <= tandem_plan_compiler::api::GENERATED_WORKFLOW_MAX_STEPS);
+    let step_ids = steps
+        .iter()
+        .filter_map(|step| step.get("step_id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(step_ids.contains(&"gather_tandem_docs"));
+    assert!(step_ids.contains(&"gather_reddit_signals"));
+    assert!(step_ids.contains(&"gather_market_sources"));
+    assert!(step_ids.contains(&"draft_market_brief"));
+    assert!(step_ids.contains(&"create_and_verify_notion_page"));
+    let objectives = steps
+        .iter()
+        .filter_map(|step| step.get("objective").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(objectives.contains("mcp.tandem_mcp.search_docs"));
+    assert!(objectives.contains("web_research"));
+    assert!(objectives.contains("mcp.composio.reddit"));
+    assert!(objectives.contains("collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d"));
+    assert!(objectives.contains("Summary"));
+    assert!(objectives.contains("Key Findings"));
+    assert_eq!(
+        payload
+            .get("planner_diagnostics")
+            .and_then(|row| row.get("task_budget"))
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("compacted")
+    );
+    assert_eq!(
+        payload
+            .get("planner_diagnostics")
+            .and_then(|row| row.get("task_budget"))
+            .and_then(|row| row.get("original_step_count"))
+            .and_then(Value::as_u64),
+        Some(29)
+    );
+}
+
+#[tokio::test]
+async fn workflow_plan_apply_rejects_oversized_generated_plan_without_compaction_metadata() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let plan = llm_plan_json(
+        "Oversized generated plan",
+        "This plan should be rejected at apply.",
+        manual_schedule_json(),
+        "/tmp/workspace",
+        oversized_compact_research_steps(),
+        None,
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "plan": plan }).to_string()))
+                .expect("apply request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED")
+    );
+    assert_eq!(
+        payload
+            .get("task_budget")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        payload
+            .get("task_budget")
+            .and_then(|row| row.get("max_generated_steps"))
+            .and_then(Value::as_u64),
+        Some(8)
     );
 }
 
@@ -2056,4 +2267,49 @@ async fn workflow_planner_session_create_normalizes_control_panel_provenance() {
         session.get("current_plan_id").and_then(Value::as_str)
     );
     let _ = next_event_of_type(&mut rx, "workflow_planner.session.started").await;
+}
+
+#[tokio::test]
+async fn workflow_planner_session_create_rejects_oversized_generated_plan() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let plan = llm_plan_json(
+        "Oversized generated session plan",
+        "This session draft should be rejected.",
+        manual_schedule_json(),
+        "/tmp/workspace",
+        oversized_compact_research_steps(),
+        None,
+    );
+
+    let create_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-control-panel",
+                        "title": "Oversized Draft",
+                        "workspace_root": "/tmp/workspace",
+                        "goal": compact_research_prompt(),
+                        "plan_source": "intent_planner_page",
+                        "plan": plan,
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let payload: Value = serde_json::from_slice(&body).expect("create json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED")
+    );
 }

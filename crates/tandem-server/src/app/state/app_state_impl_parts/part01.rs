@@ -1230,7 +1230,14 @@ impl AppState {
         let mut migrated = false;
         let mut path_counts = Vec::new();
         let mut canonical_loaded = false;
-        if self.automations_v2_path.exists() {
+        let shard_root = automation_v2_definitions_root(&self.automations_v2_path);
+        let sharded = load_automation_v2_definition_shards(&self.automations_v2_path).await?;
+        let shards_loaded = !sharded.is_empty();
+        if shards_loaded {
+            path_counts.push((shard_root, sharded.len()));
+            canonical_loaded = true;
+            merged = sharded;
+        } else if self.automations_v2_path.exists() {
             let raw = fs::read_to_string(&self.automations_v2_path).await?;
             if raw.trim().is_empty() || raw.trim() == "{}" {
                 path_counts.push((self.automations_v2_path.clone(), 0usize));
@@ -1307,9 +1314,10 @@ impl AppState {
             migrated = repair_automation_output_contracts(automation) || migrated;
         }
         *self.automations_v2.write().await = merged;
-        if loaded_from_alternate || migrated {
+        if loaded_from_alternate || migrated || !shards_loaded {
             let _ = self.persist_automations_v2().await;
         } else if canonical_loaded {
+            let _ = archive_automation_v2_aggregate_file(&self.automations_v2_path).await;
             let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
         }
         Ok(())
@@ -1321,14 +1329,9 @@ impl AppState {
     }
 
     async fn persist_automations_v2_locked(&self) -> anyhow::Result<()> {
-        let payload = {
-            let guard = self.automations_v2.read().await;
-            serde_json::to_string_pretty(&*guard)?
-        };
-        if let Some(parent) = self.automations_v2_path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        write_string_atomic(&self.automations_v2_path, &payload).await?;
+        let automations = { self.automations_v2.read().await.clone() };
+        persist_automation_v2_definition_shards(&self.automations_v2_path, &automations).await?;
+        archive_automation_v2_aggregate_file(&self.automations_v2_path).await?;
         let _ = cleanup_stale_legacy_automations_v2_file(&self.automations_v2_path).await;
         Ok(())
     }
@@ -1552,26 +1555,37 @@ impl AppState {
         automation_id: &str,
         expected_present: bool,
     ) -> anyhow::Result<()> {
-        let active_raw = if self.automations_v2_path.exists() {
-            fs::read_to_string(&self.automations_v2_path).await?
-        } else {
-            String::new()
-        };
-        let active_parsed = parse_automation_v2_file_strict(&active_raw).map_err(|error| {
-            anyhow::anyhow!(
-                "failed to parse automation v2 persistence file `{}` during verification: {}",
-                self.automations_v2_path.display(),
-                error
+        let active_shards = load_automation_v2_definition_shards(&self.automations_v2_path).await?;
+        let (active_present, active_count) = if !active_shards.is_empty() {
+            (
+                active_shards.contains_key(automation_id),
+                active_shards.len(),
             )
-        })?;
-        let active_present = active_parsed.contains_key(automation_id);
+        } else {
+            let active_raw = if self.automations_v2_path.exists() {
+                fs::read_to_string(&self.automations_v2_path).await?
+            } else {
+                String::new()
+            };
+            let active_parsed = parse_automation_v2_file_strict(&active_raw).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to parse automation v2 persistence file `{}` during verification: {}",
+                    self.automations_v2_path.display(),
+                    error
+                )
+            })?;
+            (
+                active_parsed.contains_key(automation_id),
+                active_parsed.len(),
+            )
+        };
         if active_present != expected_present {
             let active_path = self.automations_v2_path.display().to_string();
             tracing::error!(
                 automation_id,
                 expected_present,
                 actual_present = active_present,
-                count = active_parsed.len(),
+                count = active_count,
                 active_path,
                 "automation v2 persistence verification failed"
             );

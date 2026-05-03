@@ -23,6 +23,37 @@ fn planner_session_operation_error(
         .unwrap_or_else(|| format!("{fallback} ({status})"))
 }
 
+fn workflow_plan_task_budget_exceeded_error(
+    plan: &crate::WorkflowPlan,
+) -> (StatusCode, Json<Value>) {
+    let task_budget = compiler_api::workflow_task_budget_report_for_plan(
+        plan,
+        Some("rejected"),
+        Some(plan.steps.len()),
+        Some("rejected"),
+    );
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": format!(
+                "Generated workflow plans may include at most {} steps. Regenerate or compact this plan before applying.",
+                compiler_api::GENERATED_WORKFLOW_MAX_STEPS
+            ),
+            "code": "WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED",
+            "task_budget": task_budget,
+            "planner_diagnostics": {
+                "fallback_reason": "task_budget_rejected",
+                "detail": format!(
+                    "Generated plan contained {} steps, above the {} step limit.",
+                    plan.steps.len(),
+                    compiler_api::GENERATED_WORKFLOW_MAX_STEPS
+                ),
+                "task_budget": task_budget,
+            },
+        })),
+    )
+}
+
 fn planner_session_operation_running(session: &WorkflowPlannerSessionRecord) -> bool {
     session
         .operation
@@ -541,6 +572,9 @@ pub(super) async fn workflow_planner_session_create(
     };
     let mut session = session;
     if let Some(plan) = input.plan {
+        if compiler_api::workflow_plan_generated_task_budget_exceeded(&plan) {
+            return Err(workflow_plan_task_budget_exceeded_error(&plan));
+        }
         let conversation = input
             .conversation
             .unwrap_or_else(|| crate::WorkflowPlanConversation {
@@ -699,11 +733,7 @@ pub(super) async fn workflow_planner_session_patch(
     }
     let now = crate::now_ms();
     if let Some(planning) = session.planning.as_mut() {
-        normalize_workflow_planning_record(
-            planning,
-            session.current_plan_id.as_deref(),
-            now,
-        );
+        normalize_workflow_planning_record(planning, session.current_plan_id.as_deref(), now);
     }
     let stored = state
         .put_workflow_planner_session(session)
@@ -1140,6 +1170,9 @@ pub(super) async fn workflow_plan_apply(
             ));
         }
     };
+    if compiler_api::workflow_plan_generated_task_budget_exceeded(&plan) {
+        return Err(workflow_plan_task_budget_exceeded_error(&plan));
+    }
     compiler_api::validate_workflow_plan(&plan).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
