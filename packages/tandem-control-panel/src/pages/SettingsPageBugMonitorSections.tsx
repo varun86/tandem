@@ -85,6 +85,14 @@ export function SettingsPageBugMonitorSections({
     setGithubMcpGuideOpen,
     toast,
   } = controller;
+  const safeMcpServers = Array.isArray(mcpServers) ? mcpServers : [];
+  const safeProviders = Array.isArray(providers) ? providers : [];
+  const safeBugMonitorProviderModels = Array.isArray(bugMonitorProviderModels)
+    ? bugMonitorProviderModels
+    : [];
+  const safeBugMonitorIncidents = Array.isArray(bugMonitorIncidents) ? bugMonitorIncidents : [];
+  const safeBugMonitorDrafts = Array.isArray(bugMonitorDrafts) ? bugMonitorDrafts : [];
+  const safeBugMonitorPosts = Array.isArray(bugMonitorPosts) ? bugMonitorPosts : [];
 
   return (
     <>
@@ -320,7 +328,7 @@ export function SettingsPageBugMonitorSections({
                   onChange={(event) => setBugMonitorMcpServer(event.target.value)}
                 >
                   <option value="">Select an MCP server</option>
-                  {mcpServers.map((server) => (
+                  {safeMcpServers.map((server) => (
                     <option key={server.name} value={server.name}>
                       {server.name}
                     </option>
@@ -356,7 +364,7 @@ export function SettingsPageBugMonitorSections({
                   }}
                 >
                   <option value="">Select a provider</option>
-                  {providers.map((provider: any) => (
+                  {safeProviders.map((provider: any) => (
                     <option key={String(provider?.id || "")} value={String(provider?.id || "")}>
                       {String(provider?.id || "")}
                     </option>
@@ -378,14 +386,14 @@ export function SettingsPageBugMonitorSections({
                   spellCheck={false}
                 />
                 <datalist id="bug-monitor-models">
-                  {bugMonitorProviderModels.map((modelId) => (
+                  {safeBugMonitorProviderModels.map((modelId) => (
                     <option key={modelId} value={modelId} />
                   ))}
                 </datalist>
                 <div className="tcp-subtle text-xs">
                   {bugMonitorProviderId
-                    ? bugMonitorProviderModels.length
-                      ? `${bugMonitorProviderModels.length} suggested models from provider catalog`
+                    ? safeBugMonitorProviderModels.length
+                      ? `${safeBugMonitorProviderModels.length} suggested models from provider catalog`
                       : "No provider catalog models available. Manual model ids are allowed."
                     : "Select a provider to load model suggestions."}
                 </div>
@@ -723,9 +731,9 @@ export function SettingsPageBugMonitorSections({
 
             <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
               <div className="mb-2 font-medium">Recent incidents</div>
-              {bugMonitorIncidents.length ? (
+              {safeBugMonitorIncidents.length ? (
                 <div className="grid gap-2">
-                  {bugMonitorIncidents.map((incident) => (
+                  {safeBugMonitorIncidents.map((incident) => (
                     <div key={incident.incident_id} className="tcp-list-item">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="font-medium">{incident.title || incident.event_type}</div>
@@ -782,9 +790,9 @@ export function SettingsPageBugMonitorSections({
 
             <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
               <div className="mb-2 font-medium">Recent reporter drafts</div>
-              {bugMonitorDrafts.length ? (
+              {safeBugMonitorDrafts.length ? (
                 <div className="grid gap-2">
-                  {bugMonitorDrafts.map((draft) => (
+                  {safeBugMonitorDrafts.map((draft) => (
                     <div key={draft.draft_id} className="tcp-list-item">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="font-medium">{draft.title || draft.fingerprint}</div>
@@ -935,9 +943,9 @@ export function SettingsPageBugMonitorSections({
 
             <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
               <div className="mb-2 font-medium">Recent GitHub posts</div>
-              {bugMonitorPosts.length ? (
+              {safeBugMonitorPosts.length ? (
                 <div className="grid gap-2">
-                  {bugMonitorPosts.map((post) => (
+                  {safeBugMonitorPosts.map((post) => (
                     <div key={post.post_id} className="tcp-list-item">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="font-medium">{post.operation}</div>

@@ -33,6 +33,10 @@ export function SettingsPageMaintenanceBrowserSections({
     setWorktreeCleanupRepoRoot,
     setWorktreeCleanupResult,
   } = controller;
+  const safeWorktreeCleanupActionRows = Array.isArray(worktreeCleanupActionRows)
+    ? worktreeCleanupActionRows
+    : [];
+  const safeBrowserIssues = Array.isArray(browserIssues) ? browserIssues : [];
 
   return (
     <>
@@ -204,7 +208,7 @@ export function SettingsPageMaintenanceBrowserSections({
                   </div>
                   <div className="mt-3 grid gap-2">
                     <AnimatePresence initial={false}>
-                      {worktreeCleanupActionRows.map((row, index) => (
+                      {safeWorktreeCleanupActionRows.map((row, index) => (
                         <motion.div
                           key={`${row.kind}-${row.title}-${index}`}
                           initial={{ opacity: 0, y: 10 }}
@@ -227,7 +231,7 @@ export function SettingsPageMaintenanceBrowserSections({
                         </motion.div>
                       ))}
                     </AnimatePresence>
-                    {!worktreeCleanupActionRows.length ? (
+                    {!safeWorktreeCleanupActionRows.length ? (
                       <div className="tcp-subtle text-xs">
                         No stale managed worktrees were detected for this repository.
                       </div>
@@ -315,9 +319,9 @@ export function SettingsPageMaintenanceBrowserSections({
               </div>
             </div>
           </div>
-          {browserIssues.length ? (
+          {safeBrowserIssues.length ? (
             <div className="mt-3 grid gap-2">
-              {browserIssues.map((issue, index) => (
+              {safeBrowserIssues.map((issue, index) => (
                 <div key={`${issue.code || "issue"}-${index}`} className="tcp-list-item">
                   <div className="text-sm font-medium">{issue.code || "browser_issue"}</div>
                   <div className="tcp-subtle text-xs">

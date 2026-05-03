@@ -11,12 +11,13 @@ import type { AppPageProps } from "./pageTypes";
 export function SettingsPage(props: AppPageProps) {
   const controller = useSettingsPageController(props);
   const { rootRef, sectionTabs, activeSection, setActiveSection } = controller;
+  const safeSectionTabs = Array.isArray(sectionTabs) ? sectionTabs : [];
 
   return (
     <AnimatedPage className="grid gap-4">
       <div ref={rootRef} className="grid gap-4">
         <div className="tcp-settings-tabs">
-          {sectionTabs.map((section) => (
+          {safeSectionTabs.map((section) => (
             <button
               key={section.id}
               type="button"

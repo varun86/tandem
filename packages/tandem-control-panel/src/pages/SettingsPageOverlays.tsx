@@ -76,6 +76,18 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
     setMcpTransport,
     toast,
   } = controller;
+  const safeFilteredBugMonitorWorkspaceDirectories = Array.isArray(
+    filteredBugMonitorWorkspaceDirectories
+  )
+    ? filteredBugMonitorWorkspaceDirectories
+    : [];
+  const safeBrowserIssues = Array.isArray(browserIssues) ? browserIssues : [];
+  const safeBrowserRecommendations = Array.isArray(browserRecommendations)
+    ? browserRecommendations
+    : [];
+  const safeBrowserInstallHints = Array.isArray(browserInstallHints) ? browserInstallHints : [];
+  const safeFilteredMcpCatalog = Array.isArray(filteredMcpCatalog) ? filteredMcpCatalog : [];
+  const safeMcpExtraHeaders = Array.isArray(mcpExtraHeaders) ? mcpExtraHeaders : [];
 
   return (
     <>
@@ -260,8 +272,8 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                 />
               </div>
               <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
-                {filteredBugMonitorWorkspaceDirectories.length ? (
-                  filteredBugMonitorWorkspaceDirectories.map((entry: any) => {
+                {safeFilteredBugMonitorWorkspaceDirectories.length ? (
+                  safeFilteredBugMonitorWorkspaceDirectories.map((entry: any) => {
                     const entryPath = String(entry?.path || "");
                     const hint = hostedWorkspaceDirectoryHint(entryPath);
                     return (
@@ -379,10 +391,10 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
             <EmptyState text="Loading browser diagnostics..." />
           ) : browserStatus.data ? (
             <>
-              {browserIssues.length ? (
+              {safeBrowserIssues.length ? (
                 <div className="grid gap-2">
                   <div className="text-sm font-medium">Blocking issues</div>
-                  {browserIssues.map((issue, index) => (
+                  {safeBrowserIssues.map((issue, index) => (
                     <div key={`${issue.code || "issue"}-${index}`} className="tcp-list-item">
                       <div className="text-sm font-medium">{issue.code || "browser_issue"}</div>
                       <div className="tcp-subtle text-xs">
@@ -421,10 +433,10 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                 </div>
               ) : null}
 
-              {browserRecommendations.length ? (
+              {safeBrowserRecommendations.length ? (
                 <div className="grid gap-2">
                   <div className="text-sm font-medium">Recommendations</div>
-                  {browserRecommendations.map((row, index) => (
+                  {safeBrowserRecommendations.map((row, index) => (
                     <div key={`browser-recommendation-${index}`} className="tcp-list-item text-sm">
                       {row}
                     </div>
@@ -432,10 +444,10 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                 </div>
               ) : null}
 
-              {browserInstallHints.length ? (
+              {safeBrowserInstallHints.length ? (
                 <div className="grid gap-2">
                   <div className="text-sm font-medium">Install hints</div>
-                  {browserInstallHints.map((row, index) => (
+                  {safeBrowserInstallHints.map((row, index) => (
                     <div key={`browser-install-hint-${index}`} className="tcp-list-item text-sm">
                       {row}
                     </div>
@@ -549,8 +561,8 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                       placeholder="Search built-in MCP packs"
                     />
                     <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-                      {filteredMcpCatalog.length ? (
-                        filteredMcpCatalog.map((row) => {
+                      {safeFilteredMcpCatalog.length ? (
+                        safeFilteredMcpCatalog.map((row) => {
                           const alreadyConfigured = configuredMcpServerNames.has(
                             String(row.serverConfigName || row.slug || "").toLowerCase()
                           );
@@ -781,16 +793,19 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                           type="button"
                           className="tcp-btn h-8 px-3 text-xs"
                           onClick={() =>
-                            setMcpExtraHeaders((prev) => [...prev, { key: "", value: "" }])
+                            setMcpExtraHeaders((prev) => [
+                              ...(Array.isArray(prev) ? prev : []),
+                              { key: "", value: "" },
+                            ])
                           }
                         >
                           <i data-lucide="plus"></i>
                           Add header
                         </button>
                       </div>
-                      {mcpExtraHeaders.length ? (
+                      {safeMcpExtraHeaders.length ? (
                         <div className="grid gap-2">
-                          {mcpExtraHeaders.map((row, index) => (
+                          {safeMcpExtraHeaders.map((row, index) => (
                             <div
                               key={`mcp-header-${index}`}
                               className="grid gap-2 md:grid-cols-[1fr_1fr_auto]"
@@ -800,7 +815,7 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                                 value={row.key}
                                 onInput={(event) =>
                                   setMcpExtraHeaders((prev) =>
-                                    prev.map((entry, entryIndex) =>
+                                    (Array.isArray(prev) ? prev : []).map((entry, entryIndex) =>
                                       entryIndex === index
                                         ? {
                                             ...entry,
@@ -817,7 +832,7 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                                 value={row.value}
                                 onInput={(event) =>
                                   setMcpExtraHeaders((prev) =>
-                                    prev.map((entry, entryIndex) =>
+                                    (Array.isArray(prev) ? prev : []).map((entry, entryIndex) =>
                                       entryIndex === index
                                         ? {
                                             ...entry,
@@ -834,7 +849,9 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
                                 className="tcp-btn"
                                 onClick={() =>
                                   setMcpExtraHeaders((prev) =>
-                                    prev.filter((_, entryIndex) => entryIndex !== index)
+                                    (Array.isArray(prev) ? prev : []).filter(
+                                      (_, entryIndex) => entryIndex !== index
+                                    )
                                   )
                                 }
                               >

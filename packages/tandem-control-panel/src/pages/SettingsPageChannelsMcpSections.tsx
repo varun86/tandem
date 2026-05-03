@@ -65,6 +65,7 @@ export function SettingsPageChannelsMcpSections({
     setChannelToolScopeSelection,
     verifyChannelMutation,
   } = controller;
+  const safeMcpServers = Array.isArray(mcpServers) ? mcpServers : [];
 
   return (
     <>
@@ -105,7 +106,7 @@ export function SettingsPageChannelsMcpSections({
                 (channelToolPreferencesQuery.data as Record<string, any> | undefined)?.[channel] ||
                   defaultChannelToolPreferences()
               );
-              const knownExactMcpToolPrefixes = mcpServers.map(
+              const knownExactMcpToolPrefixes = safeMcpServers.map(
                 (server) => `mcp.${normalizeMcpNamespaceSegment(server.name)}.`
               );
               const knownExactMcpTools = new Set(
@@ -614,9 +615,9 @@ export function SettingsPageChannelsMcpSections({
                               <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
                                 MCP servers
                               </div>
-                              {mcpServers.length ? (
+                              {safeMcpServers.length ? (
                                 <div className="grid gap-2 md:grid-cols-2">
-                                  {mcpServers.map((server) => {
+                                  {safeMcpServers.map((server) => {
                                     const enabled =
                                       !publicDemo &&
                                       toolPrefs.enabled_mcp_servers.includes(server.name);
@@ -673,9 +674,9 @@ export function SettingsPageChannelsMcpSections({
                                 Choose exact tool names for this {scopeTargetLabel}. This narrows
                                 access without changing the whole-server toggles above.
                               </div>
-                              {mcpServers.length ? (
+                              {safeMcpServers.length ? (
                                 <div className="grid gap-3">
-                                  {mcpServers.map((server) => {
+                                  {safeMcpServers.map((server) => {
                                     const discoveredTools = normalizeMcpTools(
                                       Array.isArray(server.toolCache) ? server.toolCache : []
                                     );
@@ -777,7 +778,7 @@ export function SettingsPageChannelsMcpSections({
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Badge tone={connectedMcpCount ? "ok" : "warn"}>
-                {connectedMcpCount}/{mcpServers.length} connected
+                {connectedMcpCount}/{safeMcpServers.length} connected
               </Badge>
               <Badge tone="info">{mcpToolIds.length} tools</Badge>
               <button className="tcp-btn" onClick={() => setActiveSection("channels")}>
@@ -795,8 +796,8 @@ export function SettingsPageChannelsMcpSections({
           }
         >
           <div className="grid gap-3">
-            {mcpServers.length ? (
-              mcpServers.map((server) => {
+            {safeMcpServers.length ? (
+              safeMcpServers.map((server) => {
                 const headerKeys = Object.keys(server.headers || {}).filter(Boolean);
                 const toolCount = Array.isArray(server.toolCache) ? server.toolCache.length : 0;
                 return (

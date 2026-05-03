@@ -77,6 +77,17 @@ export function SettingsPageNavigationProvidersSections({
     useLocalCodexSessionMutation,
     visibleNavigationCount,
   } = controller;
+  const safeNavigationRows = Array.isArray(navigationRows) ? navigationRows : [];
+  const safeDefaultNavigationRows = Array.isArray(defaultNavigationRows)
+    ? defaultNavigationRows
+    : [];
+  const safeAdvancedNavigationRows = Array.isArray(advancedNavigationRows)
+    ? advancedNavigationRows
+    : [];
+  const safeCustomConfiguredProviders = Array.isArray(customConfiguredProviders)
+    ? customConfiguredProviders
+    : [];
+  const safeProviders = Array.isArray(providers) ? providers : [];
 
   return (
     <>
@@ -94,7 +105,7 @@ export function SettingsPageNavigationProvidersSections({
                 {navigation?.acaMode ? "ACA compact default" : "Core-first default"}
               </Badge>
               <Badge tone="ghost">
-                {visibleNavigationCount}/{navigationRows.length} visible
+                {visibleNavigationCount}/{safeNavigationRows.length} visible
               </Badge>
               <button
                 className="tcp-btn"
@@ -123,12 +134,12 @@ export function SettingsPageNavigationProvidersSections({
                   </div>
                 </div>
                 <Badge tone="ok">
-                  {defaultNavigationRows.filter((row) => row.enabled).length}/
-                  {defaultNavigationRows.length} shown
+                  {safeDefaultNavigationRows.filter((row) => row.enabled).length}/
+                  {safeDefaultNavigationRows.length} shown
                 </Badge>
               </div>
               <div className="mt-3 grid gap-2">
-                {defaultNavigationRows.map((row) => (
+                {safeDefaultNavigationRows.map((row) => (
                   <button
                     key={row.routeId}
                     type="button"
@@ -180,7 +191,7 @@ export function SettingsPageNavigationProvidersSections({
                 </Badge>
               </div>
               <div className="mt-3 grid gap-2">
-                {advancedNavigationRows.map((row) => (
+                {safeAdvancedNavigationRows.map((row) => (
                   <button
                     key={row.routeId}
                     type="button"
@@ -422,7 +433,7 @@ export function SettingsPageNavigationProvidersSections({
                     </span>
                   </div>
                   <div className="tcp-subtle mt-1 text-xs">
-                    {providers.length} providers available for configuration. Expand to change
+                    {safeProviders.length} providers available for configuration. Expand to change
                     models and API keys.
                   </div>
                 </div>
@@ -446,8 +457,8 @@ export function SettingsPageNavigationProvidersSections({
                           Add providers like MiniMax by ID, base URL, default model, and API key.
                         </div>
                       </div>
-                      <Badge tone={customConfiguredProviders.length ? "ok" : "info"}>
-                        {customConfiguredProviders.length} configured
+                      <Badge tone={safeCustomConfiguredProviders.length ? "ok" : "info"}>
+                        {safeCustomConfiguredProviders.length} configured
                       </Badge>
                     </div>
 
@@ -576,9 +587,9 @@ export function SettingsPageNavigationProvidersSections({
                       ) : null}
                     </AnimatePresence>
 
-                    {customConfiguredProviders.length ? (
+                    {safeCustomConfiguredProviders.length ? (
                       <div className="grid gap-2">
-                        {customConfiguredProviders.map((provider) => (
+                        {safeCustomConfiguredProviders.map((provider) => (
                           <div
                             key={provider.id}
                             className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2"
@@ -623,8 +634,8 @@ export function SettingsPageNavigationProvidersSections({
                         Tandem is checking live provider models and auth state now.
                       </div>
                     </div>
-                  ) : providers.length ? (
-                    providers.map((provider: any) => {
+                  ) : safeProviders.length ? (
+                    safeProviders.map((provider: any) => {
                       const providerId = String(provider?.id || "");
                       const models = Object.keys(provider?.models || {});
                       const defaultModel = String(
