@@ -353,6 +353,62 @@ fn score_workflow_terms(lowered: &str, score: &mut u16, signals: &mut Vec<String
     }
 }
 
+fn is_compact_research_delivery_prompt(lowered: &str) -> bool {
+    let asks_for_research = has_any(
+        lowered,
+        &[
+            "research",
+            "search",
+            "collect",
+            "gather",
+            "market signal",
+            "market signals",
+        ],
+    );
+    let asks_for_concise_deliverable = has_any(
+        lowered,
+        &[
+            "concise brief",
+            "concise market brief",
+            "market brief",
+            "brief",
+            "report",
+            "summary",
+        ],
+    ) && has_any(lowered, &["concise", "short", "brief"]);
+    let asks_for_external_save = has_any(
+        lowered,
+        &[
+            "notion",
+            "database",
+            "collection://",
+            "save the completed report",
+            "create a page",
+            "create one page",
+        ],
+    );
+    let asks_for_large_work_program = has_any(
+        lowered,
+        &[
+            "comprehensive",
+            "exhaustive",
+            "deep dive",
+            "all sources",
+            "every source",
+            "multi-week",
+            "many deliverables",
+            "approval before",
+            "require approval",
+            "human approval",
+        ],
+    );
+
+    asks_for_research
+        && asks_for_concise_deliverable
+        && asks_for_external_save
+        && !asks_for_large_work_program
+}
+
 pub fn derive_workflow_decomposition_profile(
     prompt: &str,
     allowed_mcp_servers: &[String],
@@ -373,16 +429,26 @@ pub fn derive_workflow_decomposition_profile(
         push_signal(&mut signals, "scheduled_workflow");
     }
 
+    let compact_research_delivery = is_compact_research_delivery_prompt(&lowered);
+    if compact_research_delivery {
+        score = score.min(39);
+        push_signal(&mut signals, "compact_research_delivery");
+    }
+
     let complexity_score = score.min(100) as u8;
     let (tier, recommended_min_leaf_tasks, recommended_max_leaf_tasks, recommended_phase_count) =
-        match complexity_score {
-            0..=24 => (WorkflowDecompositionTier::Simple, 5, 10, 1),
-            25..=44 => (WorkflowDecompositionTier::Moderate, 10, 20, 2),
-            45..=69 => (WorkflowDecompositionTier::Complex, 20, 30, 3),
-            _ => (WorkflowDecompositionTier::VeryComplex, 30, 50, 4),
+        if compact_research_delivery {
+            (WorkflowDecompositionTier::Moderate, 5, 8, 2)
+        } else {
+            match complexity_score {
+                0..=24 => (WorkflowDecompositionTier::Simple, 5, 10, 1),
+                25..=44 => (WorkflowDecompositionTier::Moderate, 10, 20, 2),
+                45..=69 => (WorkflowDecompositionTier::Complex, 20, 30, 3),
+                _ => (WorkflowDecompositionTier::VeryComplex, 30, 50, 4),
+            }
         };
     let requires_phased_dag = recommended_phase_count > 1;
-    let guidance = match tier {
+    let mut guidance = match tier {
         WorkflowDecompositionTier::Simple => vec![
             "Keep the plan at 5-10 leaf tasks.".to_string(),
             "A single phase is acceptable when the work has one evidence source and one output.".to_string(),
@@ -402,6 +468,15 @@ pub fn derive_workflow_decomposition_profile(
             "Use parent_step_id and phase_id hints so the runtime can narrow retries instead of reopening the whole graph.".to_string(),
         ],
     };
+    if compact_research_delivery {
+        guidance = vec![
+            "Target 5-8 leaf tasks for this compact research-delivery workflow.".to_string(),
+            "Bundle related web, MCP, and community research by evidence source or phase; do not create one task per report section.".to_string(),
+            "Use one synthesis task to draft the requested brief sections together.".to_string(),
+            "Use one destination-write task for Notion/database creation and one lightweight verification task when needed.".to_string(),
+            "Do not add a human approval gate unless the user explicitly asked for approval before publishing.".to_string(),
+        ];
+    }
 
     WorkflowDecompositionProfile {
         complexity_score,
@@ -586,6 +661,57 @@ mod tests {
         assert!(sections.contains("recommended_leaf_tasks"));
         assert!(sections.contains("phase_id"));
         assert!(sections.contains("one primary objective"));
+    }
+
+    #[test]
+    fn decomposition_profile_caps_compact_research_delivery_workflows() {
+        let prompt = r#"research this topic:
+
+"What are the current approaches to making AI agents reliable for business workflows?"
+
+Use the connected Tandem MCP docs as reference if needed, and use the connected Reddit MCP plus web research to gather current market signals, discussions, examples, and source links.
+
+Then create a concise market brief and save the completed report into the Notion database:
+
+Operational Workflow Results
+collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d
+
+The Notion page should include:
+- Summary
+- Key Findings
+- Market Notes
+- Reddit Signals
+- Sources
+- Tandem Run details"#;
+
+        let profile = derive_workflow_decomposition_profile(
+            prompt,
+            &[
+                "tandem_mcp".to_string(),
+                "reddit".to_string(),
+                "notion".to_string(),
+            ],
+            &[],
+            false,
+        );
+
+        assert_eq!(profile.tier, WorkflowDecompositionTier::Moderate);
+        assert_eq!(profile.recommended_min_leaf_tasks, 5);
+        assert_eq!(profile.recommended_max_leaf_tasks, 8);
+        assert_eq!(profile.recommended_phase_count, 2);
+        assert!(profile.requires_phased_dag);
+        assert!(profile
+            .signals
+            .iter()
+            .any(|signal| signal == "compact_research_delivery"));
+        assert!(profile
+            .guidance
+            .iter()
+            .any(|line| line.contains("do not create one task per report section")));
+        assert!(profile
+            .guidance
+            .iter()
+            .any(|line| line.contains("Do not add a human approval gate")));
     }
 
     #[test]

@@ -11,54 +11,25 @@ fn bug_monitor_triage_manual_schedule() -> crate::AutomationV2Schedule {
 fn bug_monitor_triage_output_contract(
     _artifact_type: &str,
     summary_guidance: &str,
-    require_local_source_reads: bool,
+    _require_local_source_reads: bool,
 ) -> crate::AutomationFlowOutputContract {
     crate::AutomationFlowOutputContract {
         kind: "structured_json".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
         enforcement: Some(crate::AutomationOutputEnforcement {
-            validation_profile: Some("local_research".to_string()),
-            required_tools: if require_local_source_reads {
-                vec!["read", "codesearch", "glob"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect()
-            } else {
-                vec!["codesearch", "glob"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect()
-            },
+            validation_profile: Some("artifact_only".to_string()),
+            required_tools: vec!["codesearch", "glob"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             required_tool_calls: Vec::new(),
-            required_evidence: if require_local_source_reads {
-                vec!["local_source_reads".to_string()]
-            } else {
-                Vec::new()
-            },
+            required_evidence: Vec::new(),
             required_sections: Vec::new(),
-            prewrite_gates: if require_local_source_reads {
-                vec!["concrete_reads".to_string()]
-            } else {
-                Vec::new()
-            },
-            retry_on_missing: if require_local_source_reads {
-                vec![
-                    "no_concrete_reads".to_string(),
-                    "local_source_reads".to_string(),
-                ]
-            } else {
-                Vec::new()
-            },
-            terminal_on: if require_local_source_reads {
-                vec![
-                    "no_concrete_reads".to_string(),
-                    "local_source_reads".to_string(),
-                ]
-            } else {
-                Vec::new()
-            },
+            prewrite_gates: Vec::new(),
+            retry_on_missing: Vec::new(),
+            terminal_on: Vec::new(),
             repair_budget: Some(2),
-            session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+            session_text_recovery: Some("allow".to_string()),
         }),
         schema: None,
         summary_guidance: Some(summary_guidance.to_string()),
@@ -121,7 +92,7 @@ pub(crate) fn normalize_bug_monitor_triage_output_contracts(spec: &mut crate::Au
 
 fn bug_monitor_triage_repo_evidence_guidance(artifact_type: &str) -> String {
     format!(
-        "Required output: valid completed JSON for `{artifact_type}` in the final response. Do not write Bug Monitor artifacts into the workspace; Tandem will store the accepted JSON in the global context-run artifact store. Before responding, you must perform a local repo evidence pass inside the configured `workspace_root` from Node Inputs: call `codesearch`, `grep`, or `glob` for focused symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload, then call `read` on at least one concrete workspace source file discovered by that search. Search-only evidence is not enough. Do not claim local repo inspection if no workspace tool calls were made. Include `workspace_root`, `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, still read the closest Bug Monitor or automation source file and explain which searches were inconclusive. Do not finish with only generic diagnosis."
+        "Required output: valid completed JSON for `{artifact_type}` in the final response. Do not write Bug Monitor artifacts into the workspace; Tandem will store the accepted JSON in the global context-run artifact store. Before responding, perform the best available local repo evidence pass inside the configured `workspace_root` from Node Inputs: call `codesearch`, `grep`, or `glob` for focused symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload, then prefer calling `read` on at least one concrete workspace source file discovered by that search. If no relevant code is found, or if `read` cannot be completed, still return a completed JSON artifact that preserves the search evidence, tool limitations, uncertainty, and the original workflow failure. Do not block Bug Monitor reporting solely because source reads were inconclusive. Include `workspace_root`, `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. Do not finish with only generic diagnosis."
     )
 }
 
@@ -150,7 +121,7 @@ fn bug_monitor_triage_node(
             object.insert(
                 "source_read_instruction".to_string(),
                 serde_json::Value::String(format!(
-                    "Use `{workspace_root}` as the repo root. After discovery, call `read` on at least one concrete source file under this directory before finalizing."
+                    "Use `{workspace_root}` as the repo root. After discovery, prefer calling `read` on at least one concrete source file under this directory, but if the read is unavailable or inconclusive, return completed JSON with the search evidence, limitations, and original workflow failure preserved."
                 )),
             );
         }
@@ -342,6 +313,7 @@ fn bug_monitor_automation_run_is_terminal_for_triage(status: &crate::AutomationR
         status,
         crate::AutomationRunStatus::Completed
             | crate::AutomationRunStatus::Failed
+            | crate::AutomationRunStatus::Blocked
             | crate::AutomationRunStatus::Cancelled
     )
 }
@@ -770,28 +742,31 @@ mod bug_monitor_triage_spec_tests {
             .as_ref()
             .and_then(|contract| contract.enforcement.as_ref());
         let inspect_enforcement = inspect_contract.unwrap();
-        assert!(inspect_enforcement
+        assert_eq!(
+            inspect_enforcement.validation_profile.as_deref(),
+            Some("artifact_only")
+        );
+        assert!(!inspect_enforcement
             .required_tools
             .iter()
             .any(|tool| tool == "read"));
-        assert!(inspect_enforcement
+        assert!(!inspect_enforcement
             .required_evidence
             .iter()
             .any(|item| item == "local_source_reads"));
         assert_eq!(
             inspect_enforcement.session_text_recovery.as_deref(),
-            Some("require_prewrite_satisfied")
+            Some("allow")
         );
         assert_eq!(inspect_enforcement.repair_budget, Some(2));
         assert!(spec.flow.nodes.iter().all(|node| node
             .output_contract
             .as_ref()
             .and_then(|contract| contract.enforcement.as_ref())
-            .is_some_and(|enforcement| enforcement
-                .required_tools
-                .iter()
-                .any(|tool| tool == "read")
-                && enforcement
+            .is_some_and(|enforcement| enforcement.validation_profile.as_deref()
+                == Some("artifact_only")
+                && !enforcement.required_tools.iter().any(|tool| tool == "read")
+                && !enforcement
                     .required_evidence
                     .iter()
                     .any(|item| item == "local_source_reads"))));
@@ -918,17 +893,17 @@ mod bug_monitor_triage_spec_tests {
                     .enforcement
                     .as_ref()
                     .and_then(|row| row.validation_profile.as_deref()),
-                Some("local_research")
+                Some("artifact_only")
             );
             assert!(contract.enforcement.as_ref().is_some_and(|row| {
-                row.required_tools.iter().any(|tool| tool == "read")
-                    && row.session_text_recovery.as_deref() == Some("require_prewrite_satisfied")
+                !row.required_tools.iter().any(|tool| tool == "read")
+                    && row.session_text_recovery.as_deref() == Some("allow")
             }));
         }
     }
 
     #[test]
-    fn triage_terminal_status_only_treats_completed_failed_and_cancelled_as_terminal() {
+    fn triage_terminal_status_treats_blocked_as_fallback_publishable() {
         use crate::AutomationRunStatus::{
             Blocked, Cancelled, Completed, Failed, Paused, Queued, Running,
         };
@@ -939,9 +914,9 @@ mod bug_monitor_triage_spec_tests {
         assert!(bug_monitor_automation_run_is_terminal_for_triage(
             &Cancelled
         ));
+        assert!(bug_monitor_automation_run_is_terminal_for_triage(&Blocked));
         assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Queued));
         assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Running));
-        assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Blocked));
         assert!(!bug_monitor_automation_run_is_terminal_for_triage(&Paused));
     }
 }

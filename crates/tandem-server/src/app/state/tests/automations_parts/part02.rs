@@ -1095,6 +1095,23 @@ fn execute_goal_structured_json_default_timeout_uses_long_workflow_budget() {
         crate::app::state::automation::effective_automation_node_timeout_ms(&generic_structured),
         180_000
     );
+
+    let mut notion_inspection = execute_goal.clone();
+    notion_inspection.node_id = "inspect_notion_collection".to_string();
+    notion_inspection.objective = "Use mcp.notion.notion_fetch on collection://database-id to confirm the Notion database is writable.".to_string();
+    assert_eq!(
+        crate::app::state::automation::effective_automation_node_timeout_ms(&notion_inspection),
+        1_800_000
+    );
+
+    let mut web_research = execute_goal.clone();
+    web_research.node_id = "gather_market_research".to_string();
+    web_research.objective =
+        "Use web research and webfetch to gather current market sources.".to_string();
+    assert_eq!(
+        crate::app::state::automation::effective_automation_node_timeout_ms(&web_research),
+        1_800_000
+    );
 }
 
 #[tokio::test]

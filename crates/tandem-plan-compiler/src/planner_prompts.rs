@@ -14,6 +14,8 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- step ids must stay descriptive and stable instead of reusing legacy placeholder names from unrelated workflow domains\n",
             "- decompose complex work into phase-aware microtask DAGs instead of forcing every plan into a flat 7-10 step graph\n",
             "- keep each leaf task narrow enough to own one objective, one output contract, and one validation path\n",
+            "- for compact research-delivery requests such as \"research this, create a concise brief, and save it to Notion\", prefer 5-8 leaf tasks and bundle related research, synthesis, destination write, and verification work\n",
+            "- do not split a concise report into one task per requested section; draft required sections together in one synthesis or brief-writing step\n",
             "- steps must form a valid DAG\n",
             "- input_refs and depends_on must reference existing steps\n",
             "WorkflowPlan.step schema:\n",
@@ -35,6 +37,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "Approval gates:\n",
             "- the runtime auto-wraps any step whose tool allowlist includes a high-stakes action (outbound communications, CRM/SOR writes, payments, public posts, file deletes outside scratch) in a human-approval gate\n",
             "- you do not need to add gates yourself; describe the workflow as if approvals are present at those points so the human reviewing scope sees a coherent picture\n",
+            "- do not add a standalone human approval step before a connector write unless the user explicitly asked to review or approve before publishing\n",
             "- batch related external actions into one step when possible (e.g. one `send_outreach` step that emits five drafts) so the human approves once instead of N times\n",
             "- when an approval gate is the point of a step (e.g. a Review stage that humans MUST decide before downstream work runs), declare it explicitly with stage_kind=Approval so the gate is part of the blueprint instead of compiler-injected\n",
             "{}",
@@ -80,6 +83,9 @@ mod tests {
         assert!(sections.contains("code_patch"));
         assert!(sections.contains("phase-aware microtask DAGs"));
         assert!(sections.contains("one objective, one output contract"));
+        assert!(sections.contains("compact research-delivery requests"));
+        assert!(sections.contains("5-8 leaf tasks"));
+        assert!(sections.contains("do not split a concise report"));
         assert!(sections.contains("inspect -> patch -> apply -> test -> repair"));
         assert!(sections.contains("reserve `write` for brand-new files"));
         assert!(sections.contains("recap and synthesis files"));
@@ -103,6 +109,7 @@ mod tests {
         assert!(sections.contains("Approval gates:"));
         assert!(sections.contains("auto-wraps any step whose tool allowlist"));
         assert!(sections.contains("you do not need to add gates yourself"));
+        assert!(sections.contains("do not add a standalone human approval step"));
         assert!(sections.contains("batch related external actions"));
         assert!(sections.contains("stage_kind=Approval"));
     }

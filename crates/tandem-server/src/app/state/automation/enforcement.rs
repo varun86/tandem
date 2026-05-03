@@ -1,11 +1,7 @@
 use super::*;
 use serde_json::Value;
 
-fn bug_monitor_triage_inspection_node(node: &AutomationFlowNode) -> bool {
-    if node.node_id == "inspect_failure_report" {
-        return true;
-    }
-
+fn bug_monitor_triage_artifact_type(node: &AutomationFlowNode) -> Option<&str> {
     node.metadata
         .as_ref()
         .and_then(Value::as_object)
@@ -13,7 +9,22 @@ fn bug_monitor_triage_inspection_node(node: &AutomationFlowNode) -> bool {
         .and_then(Value::as_object)
         .and_then(|bug_monitor| bug_monitor.get("artifact_type"))
         .and_then(Value::as_str)
-        .is_some_and(|artifact_type| artifact_type == "bug_monitor_inspection")
+}
+
+fn bug_monitor_triage_artifact_node(node: &AutomationFlowNode) -> bool {
+    if node.node_id == "inspect_failure_report" {
+        return true;
+    }
+
+    bug_monitor_triage_artifact_type(node).is_some_and(|artifact_type| {
+        matches!(
+            artifact_type,
+            "bug_monitor_inspection"
+                | "bug_monitor_research"
+                | "bug_monitor_validation"
+                | "bug_monitor_fix_proposal"
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -686,7 +697,7 @@ pub(crate) fn automation_node_output_enforcement(
         .as_ref()
         .map(|contract| contract.kind.trim().to_ascii_lowercase())
         .is_some_and(|kind| kind == "code_patch");
-    let is_bug_monitor_inspection = bug_monitor_triage_inspection_node(node);
+    let is_bug_monitor_triage_artifact = bug_monitor_triage_artifact_node(node);
     let contract_kind = node
         .output_contract
         .as_ref()
@@ -734,7 +745,7 @@ pub(crate) fn automation_node_output_enforcement(
             }
         });
     enforcement.validation_profile = Some(validation_profile.clone());
-    if is_bug_monitor_inspection {
+    if is_bug_monitor_triage_artifact {
         enforcement.validation_profile = Some("artifact_only".to_string());
     }
     let is_standup_update = validation_profile == "standup_update";
@@ -1010,7 +1021,7 @@ pub(crate) fn automation_node_output_enforcement(
         super::super::normalize_non_empty_list(enforcement.retry_on_missing);
     enforcement.terminal_on = super::super::normalize_non_empty_list(enforcement.terminal_on);
 
-    if is_bug_monitor_inspection {
+    if is_bug_monitor_triage_artifact {
         if enforcement.validation_profile.as_deref() != Some("artifact_only") {
             enforcement.validation_profile = Some("artifact_only".to_string());
         }
@@ -1042,7 +1053,7 @@ pub(crate) fn automation_node_output_enforcement(
 mod tests {
     use super::*;
 
-    fn bug_monitor_inspection_node() -> AutomationFlowNode {
+    fn bug_monitor_triage_node(artifact_type: &str) -> AutomationFlowNode {
         AutomationFlowNode {
             node_id: "inspect_failure_report".to_string(),
             agent_id: "bug_monitor_triage_agent".to_string(),
@@ -1078,10 +1089,14 @@ mod tests {
             gate: None,
             metadata: Some(serde_json::json!({
                 "bug_monitor": {
-                    "artifact_type": "bug_monitor_inspection",
+                    "artifact_type": artifact_type,
                 },
             })),
         }
+    }
+
+    fn bug_monitor_inspection_node() -> AutomationFlowNode {
+        bug_monitor_triage_node("bug_monitor_inspection")
     }
 
     fn non_bug_monitor_node() -> AutomationFlowNode {
@@ -1092,39 +1107,47 @@ mod tests {
     }
 
     #[test]
-    fn bug_monitor_inspection_stops_concrete_read_gating() {
-        let node = bug_monitor_inspection_node();
-        let enforcement = automation_node_output_enforcement(&node);
+    fn bug_monitor_triage_artifacts_stop_concrete_read_gating() {
+        for artifact_type in [
+            "bug_monitor_inspection",
+            "bug_monitor_research",
+            "bug_monitor_validation",
+            "bug_monitor_fix_proposal",
+        ] {
+            let node = bug_monitor_triage_node(artifact_type);
+            let enforcement = automation_node_output_enforcement(&node);
 
-        assert_eq!(
-            enforcement.validation_profile,
-            Some("artifact_only".to_string())
-        );
-        assert!(!enforcement.required_tools.iter().any(|tool| tool == "read"));
-        assert!(!enforcement
-            .required_evidence
-            .iter()
-            .any(|item| item == "local_source_reads"));
-        assert!(!enforcement
-            .prewrite_gates
-            .iter()
-            .any(|gate| gate == "concrete_reads"));
-        assert!(!enforcement
-            .retry_on_missing
-            .iter()
-            .any(|item| item == "no_concrete_reads"));
-        assert!(!enforcement
-            .retry_on_missing
-            .iter()
-            .any(|item| item == "local_source_reads"));
-        assert!(!enforcement
-            .terminal_on
-            .iter()
-            .any(|item| item == "no_concrete_reads"));
-        assert!(!enforcement
-            .terminal_on
-            .iter()
-            .any(|item| item == "local_source_reads"));
+            assert_eq!(
+                enforcement.validation_profile,
+                Some("artifact_only".to_string()),
+                "{artifact_type} should use artifact-only validation"
+            );
+            assert!(!enforcement.required_tools.iter().any(|tool| tool == "read"));
+            assert!(!enforcement
+                .required_evidence
+                .iter()
+                .any(|item| item == "local_source_reads"));
+            assert!(!enforcement
+                .prewrite_gates
+                .iter()
+                .any(|gate| gate == "concrete_reads"));
+            assert!(!enforcement
+                .retry_on_missing
+                .iter()
+                .any(|item| item == "no_concrete_reads"));
+            assert!(!enforcement
+                .retry_on_missing
+                .iter()
+                .any(|item| item == "local_source_reads"));
+            assert!(!enforcement
+                .terminal_on
+                .iter()
+                .any(|item| item == "no_concrete_reads"));
+            assert!(!enforcement
+                .terminal_on
+                .iter()
+                .any(|item| item == "local_source_reads"));
+        }
     }
 
     #[test]

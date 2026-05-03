@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bug Monitor triage evidence is advisory, not report-blocking**: Automation V2-backed Bug Monitor triage still asks agents to search the configured repo and prefer concrete source `read` evidence, but missing or inconclusive reads no longer hard-block Bug Monitor's own inspection/research/validation/fix artifacts. This keeps GitHub reporting focused on the original workflow failure instead of recursively failing on `no_concrete_reads`.
+- **Bug Monitor blocked triage can still publish fallback evidence**: Blocked Bug Monitor triage Automation V2 runs are now treated as terminal enough for fallback summary synthesis and GitHub publication, so issue drafts can preserve the real workflow failure even when triage cannot satisfy every evidence preference.
+- **Generated compact research-to-destination workflows stay compact**: The workflow planner now recognizes concise research/report/save prompts, caps them around 5-8 leaf tasks, avoids splitting every report section into its own node, and rejects over-budget LLM plans in favor of a compact fallback.
+- **Connector-backed inspection and research nodes get the long workflow budget**: Structured JSON nodes that inspect or fetch external sources such as Notion collections, Reddit, or web research now inherit the long-running workflow timeout instead of the generic 180-second structured JSON default.
 - **Bug Monitor triage receives explicit repo-root inputs**: Automation V2-backed Bug Monitor triage nodes now carry the resolved `workspace_root` in node inputs and prompt guidance, making local source reads target the selected repo checkout instead of relying on implicit workspace context.
 - **Bug Monitor setup explains hosted repo layout**: The control panel now shows a hosted path map for Bug Monitor, quick actions for `/workspace/repos/<repo>`, setup warnings for parent/runtime-state folders, and Coder sync hints so operators know which checkout Bug Monitor will inspect.
 - **Bug Monitor triage is project-aware**: Triage run creation now prefers the linked incident or monitored project `workspace_root`, `model_policy`, and `mcp_server` before falling back to global Bug Monitor config, so external project failures are inspected in the correct repo/workspace.
@@ -24,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bug Monitor no longer masks workflow failures with its own source-read gate**: Triage artifacts now use artifact-only validation and preserve tool/search limitations in completed JSON instead of blocking issue publication when an agent searches but does not produce a concrete `read` receipt.
+- **Notion collection inspection nodes no longer default to 3-minute timeouts**: Generated workflow nodes such as `inspect_notion_collection` that call external data sources now receive the long-running automation budget, reducing premature `automation node ... timed out after 180000 ms` failures.
 - **Bug Monitor research retries missing concrete reads more reliably**: Triage research now gets an additional repair attempt when it searches the repo but fails to perform the required concrete source-file `read`, reducing blocked `no_concrete_reads` demo failures.
 - **External log paths fail closed**: Monitored log paths are validated under their configured workspace root, including symlink/absolute path escape rejection, before watcher polling.
 - **Split log lines keep correct evidence offsets**: Partial trailing lines now preserve their starting byte offset so failures spanning polls produce accurate evidence ranges.

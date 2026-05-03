@@ -1167,6 +1167,27 @@ fn automation_node_needs_long_execute_budget(node: &AutomationFlowNode) -> bool 
     let objective = node.objective.to_ascii_lowercase();
     objective.contains("execute the requested automation goal")
         || objective.contains("execute the automation goal")
+        || automation_node_uses_external_data_source_budget(&node_id, &objective)
+}
+
+fn automation_node_uses_external_data_source_budget(node_id: &str, objective: &str) -> bool {
+    let mentions_external_source = objective.contains("mcp.")
+        || objective.contains("notion")
+        || objective.contains("collection://")
+        || objective.contains("reddit")
+        || objective.contains("web research")
+        || objective.contains("web_research")
+        || objective.contains("websearch")
+        || objective.contains("webfetch");
+    let is_inspection_or_fetch = node_id.contains("inspect")
+        || node_id.contains("fetch")
+        || node_id.contains("research")
+        || objective.contains("fetch")
+        || objective.contains("inspect")
+        || objective.contains("database")
+        || objective.contains("collection");
+
+    mentions_external_source && is_inspection_or_fetch
 }
 
 pub(crate) async fn execute_automation_v2_node(

@@ -405,6 +405,40 @@ where
                                     )),
                                 ),
                             }
+                        } else if workflow_plan_exceeds_profile_budget(
+                            &decomposition_profile,
+                            plan.steps.len(),
+                        ) {
+                            let detail = format!(
+                                "workflow plan produced {} step(s) but the decomposition profile recommends no more than {} leaf task(s)",
+                                plan.steps.len(),
+                                decomposition_profile.recommended_max_leaf_tasks
+                            );
+                            host.warn(&format!(
+                                "workflow planner llm output rejected for exceeding decomposition budget: {detail}"
+                            ));
+                            PlannerBuildResult {
+                                plan: build_profile_fallback_plan(
+                                    Some(
+                                        "Planner fallback draft. The planner returned a workflow that exceeded the requested decomposition budget. Reason: decomposition_profile_too_large."
+                                            .to_string(),
+                                    ),
+                                    fallback_step.clone(),
+                                ),
+                                assistant_text: payload.assistant_text.or(Some(
+                                    "The planner returned a workflow with too many tasks for this request. Tandem used a compact fallback workflow instead."
+                                        .to_string(),
+                                )),
+                                clarifier: Value::Null,
+                                planner_diagnostics: planner_diagnostics(
+                                    Some("decomposition_profile_too_large"),
+                                    Some(detail),
+                                    Some(workflow_plan_decomposition_observation(
+                                        &decomposition_profile,
+                                        plan.steps.len(),
+                                    )),
+                                ),
+                            }
                         } else {
                             let diagnostics = planner_diagnostics(
                                 None,
@@ -517,6 +551,22 @@ fn workflow_plan_is_too_flat_for_profile(
     profile.requires_phased_dag && step_count <= usize::from(profile.recommended_phase_count)
 }
 
+fn workflow_plan_exceeds_profile_budget(
+    profile: &crate::decomposition::WorkflowDecompositionProfile,
+    step_count: usize,
+) -> bool {
+    step_count > usize::from(profile.recommended_max_leaf_tasks) + 2
+}
+
+fn profile_is_compact_research_delivery(
+    profile: &crate::decomposition::WorkflowDecompositionProfile,
+) -> bool {
+    profile
+        .signals
+        .iter()
+        .any(|signal| signal == "compact_research_delivery")
+}
+
 fn describe_path_set(label: &str, paths: &[String], fallback: &str) -> String {
     if paths.is_empty() {
         return fallback.to_string();
@@ -590,6 +640,7 @@ where
     );
     let wants_delivery = workflow_plan_mentions_email_delivery(prompt);
     let wants_web_research = workflow_plan_mentions_web_research_tools(prompt);
+    let compact_research_delivery = profile_is_compact_research_delivery(decomposition_profile);
 
     let mut steps = Vec::new();
     let mut push_step = |step_id: &str,
@@ -608,7 +659,66 @@ where
         steps.push(step);
     };
 
-    push_step(
+    if compact_research_delivery {
+        push_step(
+            "confirm_scope_and_destination",
+            "assess",
+            "Confirm the concise market-brief scope, the requested Notion/database destination, required page sections, and available MCP/web research capabilities before research begins."
+                .to_string(),
+            "agent_research_planner",
+            Vec::new(),
+        );
+        push_step(
+            "gather_tandem_docs",
+            "research",
+            "Use the connected Tandem MCP documentation tools to collect only the source-ready notes relevant to reliable AI workflow patterns."
+                .to_string(),
+            "agent_docs_researcher",
+            vec!["confirm_scope_and_destination".to_string()],
+        );
+        push_step(
+            "gather_market_sources",
+            "research",
+            if wants_web_research {
+                "Use websearch/webfetch to gather current market coverage, vendor examples, and source links for reliable AI agents in business workflows."
+                    .to_string()
+            } else {
+                "Gather current market coverage, vendor examples, and source links for reliable AI agents in business workflows."
+                    .to_string()
+            },
+            "agent_market_researcher",
+            vec!["confirm_scope_and_destination".to_string()],
+        );
+        push_step(
+            "gather_reddit_signals",
+            "research",
+            "Use the connected Reddit MCP tools to collect a small set of relevant recent practitioner discussions, links, and repeated reliability concerns."
+                .to_string(),
+            "agent_community_researcher",
+            vec!["confirm_scope_and_destination".to_string()],
+        );
+        push_step(
+            "draft_market_brief",
+            "synthesize",
+            "Synthesize Tandem docs, web market sources, and Reddit signals into one concise market brief with Summary, Key Findings, Market Notes, Reddit Signals, Sources, and Tandem Run details sections; do not split each section into separate tasks."
+                .to_string(),
+            "agent_brief_writer",
+            vec![
+                "gather_tandem_docs".to_string(),
+                "gather_market_sources".to_string(),
+                "gather_reddit_signals".to_string(),
+            ],
+        );
+        push_step(
+            "create_and_verify_notion_page",
+            "deliver",
+            "Create one Notion/database page for the completed concise market brief, then verify the required sections and final page identifier or URL are captured."
+                .to_string(),
+            "agent_notion_operator",
+            vec!["draft_market_brief".to_string()],
+        );
+    } else {
+        push_step(
         "assess",
         "assess",
         format!(
@@ -618,31 +728,31 @@ where
         "agent_triage_agent",
         Vec::new(),
     );
-    push_step(
-        "collect_inputs",
-        "collect",
-        format!(
-            "Read {} and capture the raw inputs needed for downstream steps.",
-            source_summary
-        ),
-        "agent_workspace_reader",
-        vec!["assess".to_string()],
-    );
+        push_step(
+            "collect_inputs",
+            "collect",
+            format!(
+                "Read {} and capture the raw inputs needed for downstream steps.",
+                source_summary
+            ),
+            "agent_workspace_reader",
+            vec!["assess".to_string()],
+        );
 
-    match decomposition_profile.tier {
-        crate::decomposition::WorkflowDecompositionTier::Simple => {}
-        crate::decomposition::WorkflowDecompositionTier::Moderate => {
-            push_step(
-                "summarize_inputs",
-                "summarize",
-                format!(
-                    "Turn the collected inputs into a concise working summary for {}.",
-                    target_summary
-                ),
-                "agent_profile_analyst",
-                vec!["collect_inputs".to_string()],
-            );
-            push_step(
+        match decomposition_profile.tier {
+            crate::decomposition::WorkflowDecompositionTier::Simple => {}
+            crate::decomposition::WorkflowDecompositionTier::Moderate => {
+                push_step(
+                    "summarize_inputs",
+                    "summarize",
+                    format!(
+                        "Turn the collected inputs into a concise working summary for {}.",
+                        target_summary
+                    ),
+                    "agent_profile_analyst",
+                    vec!["collect_inputs".to_string()],
+                );
+                push_step(
                 "finalize_outputs",
                 "finalize",
                 format!(
@@ -652,124 +762,126 @@ where
                 "agent_workflow_executor",
                 vec!["summarize_inputs".to_string()],
             );
-        }
-        crate::decomposition::WorkflowDecompositionTier::Complex => {
-            push_step(
-                "summarize_inputs",
-                "summarize",
-                "Turn the raw inputs into a structured working summary and isolate the important details."
-                    .to_string(),
-                "agent_profile_analyst",
-                vec!["collect_inputs".to_string()],
-            );
-            push_step(
-                "gather_supporting_sources",
-                "research",
-                if wants_web_research {
-                    "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
-                        .to_string()
-                } else {
-                    "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
-                        .to_string()
-                },
-                "agent_researcher",
-                vec!["summarize_inputs".to_string()],
-            );
-            push_step(
-                "refine_results",
-                "compare",
-                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
-                    .to_string(),
-                "agent_relevance_reviewer",
-                vec!["gather_supporting_sources".to_string()],
-            );
-            push_step(
-                "draft_deliverable",
-                "draft",
-                format!(
-                    "Read and synthesize the strongest upstream artifacts from the prior steps, then write the final report or daily artifact for {} using concrete evidence rather than a generic recap.",
-                    target_summary
-                ),
-                "agent_report_writer",
-                vec!["refine_results".to_string()],
-            );
-            push_step(
-                "finalize_outputs",
-                "finalize",
-                format!(
-                    "Complete the workflow by writing {}. Re-read the strongest upstream artifacts before finalizing, and preserve prior source-of-truth files.",
-                    target_summary
-                ),
-                "agent_workflow_executor",
-                vec!["draft_deliverable".to_string()],
-            );
-        }
-        crate::decomposition::WorkflowDecompositionTier::VeryComplex => {
-            push_step(
-                "summarize_inputs",
-                "summarize",
-                "Turn the raw inputs into a structured working summary and isolate the important details."
-                    .to_string(),
-                "agent_profile_analyst",
-                vec!["collect_inputs".to_string()],
-            );
-            push_step(
-                "organize_workstreams",
-                "cluster",
-                "Group the summary into task themes, search buckets, or work phases.".to_string(),
-                "agent_topic_clusterer",
-                vec!["summarize_inputs".to_string()],
-            );
-            push_step(
-                "gather_supporting_sources",
-                "research",
-                if wants_web_research {
-                    "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
-                        .to_string()
-                } else {
-                    "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
-                        .to_string()
-                },
-                "agent_researcher",
-                vec!["organize_workstreams".to_string()],
-            );
-            push_step(
-                "refine_results",
-                "compare",
-                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
-                    .to_string(),
-                "agent_relevance_reviewer",
-                vec!["gather_supporting_sources".to_string()],
-            );
-            push_step(
-                "draft_deliverable",
-                "draft",
-                format!(
-                    "Read and synthesize the strongest upstream artifacts from the prior steps, then write the final report or daily artifact for {} using concrete evidence rather than a generic recap.",
-                    target_summary
-                ),
-                "agent_report_writer",
-                vec!["refine_results".to_string()],
-            );
-            push_step(
-                "finalize_outputs",
-                "finalize",
-                format!(
-                    "Complete the workflow by writing {}. Re-read the strongest upstream artifacts before finalizing, and preserve prior source-of-truth files.",
-                    target_summary
-                ),
-                "agent_workflow_executor",
-                vec!["draft_deliverable".to_string()],
-            );
-            if wants_delivery {
+            }
+            crate::decomposition::WorkflowDecompositionTier::Complex => {
                 push_step(
-                    "deliver_summary",
-                    "deliver",
-                    "Provide the concise completion summary after the deliverable exists."
-                        .to_string(),
-                    "agent_notifier",
-                    vec!["finalize_outputs".to_string()],
+                "summarize_inputs",
+                "summarize",
+                "Turn the raw inputs into a structured working summary and isolate the important details."
+                    .to_string(),
+                "agent_profile_analyst",
+                vec!["collect_inputs".to_string()],
+            );
+                push_step(
+                    "gather_supporting_sources",
+                    "research",
+                    if wants_web_research {
+                        "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
+                        .to_string()
+                    } else {
+                        "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
+                        .to_string()
+                    },
+                    "agent_researcher",
+                    vec!["summarize_inputs".to_string()],
                 );
+                push_step(
+                "refine_results",
+                "compare",
+                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
+                    .to_string(),
+                "agent_relevance_reviewer",
+                vec!["gather_supporting_sources".to_string()],
+            );
+                push_step(
+                "draft_deliverable",
+                "draft",
+                format!(
+                    "Read and synthesize the strongest upstream artifacts from the prior steps, then write the final report or daily artifact for {} using concrete evidence rather than a generic recap.",
+                    target_summary
+                ),
+                "agent_report_writer",
+                vec!["refine_results".to_string()],
+            );
+                push_step(
+                "finalize_outputs",
+                "finalize",
+                format!(
+                    "Complete the workflow by writing {}. Re-read the strongest upstream artifacts before finalizing, and preserve prior source-of-truth files.",
+                    target_summary
+                ),
+                "agent_workflow_executor",
+                vec!["draft_deliverable".to_string()],
+            );
+            }
+            crate::decomposition::WorkflowDecompositionTier::VeryComplex => {
+                push_step(
+                "summarize_inputs",
+                "summarize",
+                "Turn the raw inputs into a structured working summary and isolate the important details."
+                    .to_string(),
+                "agent_profile_analyst",
+                vec!["collect_inputs".to_string()],
+            );
+                push_step(
+                    "organize_workstreams",
+                    "cluster",
+                    "Group the summary into task themes, search buckets, or work phases."
+                        .to_string(),
+                    "agent_topic_clusterer",
+                    vec!["summarize_inputs".to_string()],
+                );
+                push_step(
+                    "gather_supporting_sources",
+                    "research",
+                    if wants_web_research {
+                        "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
+                        .to_string()
+                    } else {
+                        "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
+                        .to_string()
+                    },
+                    "agent_researcher",
+                    vec!["organize_workstreams".to_string()],
+                );
+                push_step(
+                "refine_results",
+                "compare",
+                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
+                    .to_string(),
+                "agent_relevance_reviewer",
+                vec!["gather_supporting_sources".to_string()],
+            );
+                push_step(
+                "draft_deliverable",
+                "draft",
+                format!(
+                    "Read and synthesize the strongest upstream artifacts from the prior steps, then write the final report or daily artifact for {} using concrete evidence rather than a generic recap.",
+                    target_summary
+                ),
+                "agent_report_writer",
+                vec!["refine_results".to_string()],
+            );
+                push_step(
+                "finalize_outputs",
+                "finalize",
+                format!(
+                    "Complete the workflow by writing {}. Re-read the strongest upstream artifacts before finalizing, and preserve prior source-of-truth files.",
+                    target_summary
+                ),
+                "agent_workflow_executor",
+                vec!["draft_deliverable".to_string()],
+            );
+                if wants_delivery {
+                    push_step(
+                        "deliver_summary",
+                        "deliver",
+                        "Provide the concise completion summary after the deliverable exists."
+                            .to_string(),
+                        "agent_notifier",
+                        vec!["finalize_outputs".to_string()],
+                    );
+                }
             }
         }
     }
@@ -1250,5 +1362,103 @@ Replace `YYYY-MM-DD` with the actual resolved date for the run.";
             !plan.steps.iter().any(|step| step.step_id == "notify_user"),
             "file-only workflows should not add a delivery notification step"
         );
+    }
+
+    #[test]
+    fn compact_research_delivery_fallback_stays_small_and_names_sources() {
+        let prompt = r#"research this topic:
+
+"What are the current approaches to making AI agents reliable for business workflows?"
+
+Use the connected Tandem MCP docs as reference if needed, and use the connected Reddit MCP plus web research to gather current market signals, discussions, examples, and source links.
+
+Then create a concise market brief and save the completed report into the Notion database:
+
+Operational Workflow Results
+collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d
+
+The Notion page should include:
+- Summary
+- Key Findings
+- Market Notes
+- Reddit Signals
+- Sources
+- Tandem Run details"#;
+
+        let decomposition_profile = derive_workflow_decomposition_profile(
+            prompt,
+            &[
+                "tandem_mcp".to_string(),
+                "reddit".to_string(),
+                "notion".to_string(),
+            ],
+            &[],
+            false,
+        );
+        let fallback_step = crate::workflow_plan::plan_step_with_dep::<Value, Value>(
+            "collect_inputs",
+            "collect",
+            "Collect required inputs for the workflow.",
+            "worker",
+            &[] as &[String],
+            Vec::new(),
+            None,
+            None,
+        );
+
+        let plan = build_decomposition_fallback_plan(
+            "wfplan-test",
+            "v1",
+            "unit_test",
+            prompt,
+            &prompt.to_ascii_lowercase(),
+            "Test".to_string(),
+            "/tmp/workspace".to_string(),
+            manual_schedule("UTC".to_string(), Value::Null),
+            vec![
+                "tandem_mcp".to_string(),
+                "reddit".to_string(),
+                "notion".to_string(),
+            ],
+            None,
+            None,
+            &[],
+            &decomposition_profile,
+            fallback_step,
+        );
+
+        assert_eq!(plan.steps.len(), 6);
+        assert!(!workflow_plan_exceeds_profile_budget(
+            &decomposition_profile,
+            plan.steps.len()
+        ));
+        assert!(workflow_plan_exceeds_profile_budget(
+            &decomposition_profile,
+            26
+        ));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.step_id == "gather_tandem_docs"
+                && step.objective.contains("Tandem MCP")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.step_id == "gather_reddit_signals"
+                && step.objective.contains("Reddit MCP")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.step_id == "draft_market_brief"
+                && step.objective.contains("do not split each section")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.step_id == "create_and_verify_notion_page"
+                && step.objective.contains("Notion")));
+        assert!(!plan
+            .steps
+            .iter()
+            .any(|step| step.step_id.contains("approval")));
     }
 }
