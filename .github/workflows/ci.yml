@@ -44,6 +44,9 @@ jobs:
       - name: Validate i18n parity
         run: pnpm i18n:parity
 
+      - name: Validate Bug Monitor external log fixture
+        run: pnpm bug-monitor:fixture:test
+
       - name: Run linter
         run: pnpm lint
 

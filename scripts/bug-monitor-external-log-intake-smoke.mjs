@@ -18,6 +18,7 @@ const sourceId = process.env.BUG_MONITOR_DEMO_SOURCE_ID || "service-jsonl";
 const timeoutMs = Number(process.env.BUG_MONITOR_SMOKE_TIMEOUT_MS || 60_000);
 const startedAt = Date.now();
 const fingerprint = `external-demo-smoke-${startedAt}`;
+const dryRun = process.argv.includes("--dry-run");
 
 function headers() {
   return {
@@ -47,8 +48,8 @@ async function get(path) {
   return response.json().catch(() => ({}));
 }
 
-function appendDemoFailure() {
-  const line = {
+function demoFailureLine() {
+  return {
     timestamp: new Date().toISOString(),
     level: "error",
     service: "external-demo",
@@ -59,11 +60,34 @@ function appendDemoFailure() {
       "SmokeError: external log intake smoke marker\n    at smokeTest (docs/fixtures/bug-monitor-external-log-intake/service.log.jsonl:1:1)",
     fingerprint,
   };
+}
+
+function appendDemoFailure() {
+  const line = demoFailureLine();
   appendFileSync(fixturePath, `${JSON.stringify(line)}\n`, "utf8");
+  return line;
 }
 
 async function main() {
-  appendDemoFailure();
+  const line = dryRun ? demoFailureLine() : appendDemoFailure();
+  if (dryRun) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          dry_run: true,
+          base_url: baseUrl,
+          fixture_path: fixturePath,
+          project_id: projectId,
+          source_id: sourceId,
+          line,
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
   await post(
     `/bug-monitor/log-sources/${encodeURIComponent(projectId)}/${encodeURIComponent(
       sourceId
