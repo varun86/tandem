@@ -126,6 +126,11 @@ export function BugMonitorExternalProjectsPanel({
 }) {
   const [newKeyProjectId, setNewKeyProjectId] = useState("");
   const [newKeyName, setNewKeyName] = useState("external reporter");
+  const [starterProjectId, setStarterProjectId] = useState("external-demo");
+  const [starterRepo, setStarterRepo] = useState("owner/repo");
+  const [starterWorkspaceRoot, setStarterWorkspaceRoot] = useState("/path/to/repo");
+  const [starterSourceId, setStarterSourceId] = useState("app-log");
+  const [starterLogPath, setStarterLogPath] = useState("logs/app.log");
   const sources = Array.isArray(watcher.sources) ? watcher.sources : [];
   const statusBySource = new Map(
     sources.map((source) => [
@@ -188,6 +193,76 @@ export function BugMonitorExternalProjectsPanel({
 
       <label className="grid gap-2">
         <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Monitored projects</span>
+        <div className="grid gap-2 rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 md:grid-cols-5">
+          <input
+            className="tcp-input text-xs"
+            value={starterProjectId}
+            onChange={(event) => setStarterProjectId(event.currentTarget.value)}
+            placeholder="project_id"
+          />
+          <input
+            className="tcp-input text-xs"
+            value={starterRepo}
+            onChange={(event) => setStarterRepo(event.currentTarget.value)}
+            placeholder="owner/repo"
+          />
+          <input
+            className="tcp-input text-xs"
+            value={starterWorkspaceRoot}
+            onChange={(event) => setStarterWorkspaceRoot(event.currentTarget.value)}
+            placeholder="/path/to/repo"
+          />
+          <input
+            className="tcp-input text-xs"
+            value={starterLogPath}
+            onChange={(event) => setStarterLogPath(event.currentTarget.value)}
+            placeholder="logs/app.log"
+          />
+          <button
+            type="button"
+            className="tcp-btn"
+            onClick={() => {
+              const projectId = starterProjectId.trim() || "external-demo";
+              const sourceId = starterSourceId.trim() || "app-log";
+              onProjectsJsonChange(
+                JSON.stringify(
+                  [
+                    {
+                      project_id: projectId,
+                      name: projectId,
+                      enabled: true,
+                      repo: starterRepo.trim() || "owner/repo",
+                      workspace_root: starterWorkspaceRoot.trim() || "/path/to/repo",
+                      log_sources: [
+                        {
+                          source_id: sourceId,
+                          path: starterLogPath.trim() || "logs/app.log",
+                          format: "auto",
+                          minimum_level: "error",
+                          start_position: "end",
+                          watch_interval_seconds: 5,
+                        },
+                      ],
+                    },
+                  ],
+                  null,
+                  2
+                )
+              );
+            }}
+          >
+            Generate starter
+          </button>
+        </div>
+        <div className="tcp-subtle text-xs">
+          Starter source id:{" "}
+          <input
+            className="tcp-input ml-2 inline-block h-7 w-40 text-xs"
+            value={starterSourceId}
+            onChange={(event) => setStarterSourceId(event.currentTarget.value)}
+            placeholder="source_id"
+          />
+        </div>
         <textarea
           className="tcp-input min-h-48 font-mono text-xs"
           value={projectsJson}

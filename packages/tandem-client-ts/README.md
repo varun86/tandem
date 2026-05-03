@@ -213,6 +213,29 @@ const skillCatalog = await client.skills.catalog();
 
 Storage archive cleanup and root JSON migration are local maintenance operations. Run them with the engine CLI, for example `tandem-engine storage cleanup --dry-run --context-runs --json`.
 
+### `client.bugMonitor`
+
+`client.bugMonitor` includes external-project log intake helpers for project-scoped reporters and watched log sources:
+
+```typescript
+const keys = await client.bugMonitor.listIntakeKeys();
+const created = await client.bugMonitor.createIntakeKey({
+  project_id: "external-demo",
+  name: "CI reporter",
+  scopes: ["bug_monitor:report"],
+});
+
+console.log(created.raw_key); // Store this once; Tandem only keeps the hash.
+
+await client.bugMonitor.disableIntakeKey(keys.keys[0].key_id);
+await client.bugMonitor.resetLogSourceOffset("external-demo", "service-jsonl");
+const replay = await client.bugMonitor.replayLatestLogSourceCandidate(
+  "external-demo",
+  "service-jsonl"
+);
+console.log(replay.incident.incident_id, replay.draft?.draft_id);
+```
+
 ### `client.coder`
 
 `client.coder` also includes project-scoped GitHub Project intake helpers:
