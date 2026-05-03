@@ -22,6 +22,7 @@ type SettingsPageOverlaysProps = {
 export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) {
   const {
     api,
+    installBrowserMutation,
     browserInstallHints,
     browserIssues,
     browserRecommendations,
@@ -57,6 +58,7 @@ export function SettingsPageOverlays({ controller }: SettingsPageOverlaysProps) 
     mcpSaveMutation,
     mcpToken,
     mcpTransport,
+    smokeTestBrowserMutation,
     setBugMonitorWorkspaceBrowserDir,
     setBugMonitorWorkspaceBrowserOpen,
     setBugMonitorWorkspaceBrowserSearch,
