@@ -1401,6 +1401,9 @@ pub async fn build_bug_monitor_submission_from_event(
     }
 
     Ok(BugMonitorSubmission {
+        project_id: None,
+        workspace_root: None,
+        log_source_id: None,
         repo: Some(repo),
         title: Some(title),
         detail: Some(detail_lines.join("\n")),

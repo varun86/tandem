@@ -1,6 +1,6 @@
 {
   "name": "@frumu/tandem-tui",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Tandem TUI binary distribution",
   "homepage": "https://tandem.ac",
   "bin": {

@@ -117,6 +117,14 @@ pub struct AppState {
     pub bug_monitor_incidents:
         Arc<RwLock<std::collections::HashMap<String, BugMonitorIncidentRecord>>>,
     pub bug_monitor_posts: Arc<RwLock<std::collections::HashMap<String, BugMonitorPostRecord>>>,
+    pub bug_monitor_log_watcher_state_path: PathBuf,
+    pub bug_monitor_log_source_states:
+        Arc<RwLock<std::collections::HashMap<String, BugMonitorLogSourceState>>>,
+    pub bug_monitor_log_watcher_status: Arc<RwLock<BugMonitorLogWatcherStatus>>,
+    pub bug_monitor_log_evidence_dir: PathBuf,
+    pub bug_monitor_intake_keys:
+        Arc<RwLock<std::collections::HashMap<String, BugMonitorProjectIntakeKey>>>,
+    pub bug_monitor_intake_keys_path: PathBuf,
     pub external_actions: Arc<RwLock<std::collections::HashMap<String, ExternalActionRecord>>>,
     pub bug_monitor_runtime_status: Arc<RwLock<BugMonitorRuntimeStatus>>,
     pub(crate) provider_oauth_sessions: Arc<

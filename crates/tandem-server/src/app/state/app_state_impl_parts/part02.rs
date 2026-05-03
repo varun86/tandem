@@ -20,6 +20,9 @@ impl AppState {
         }
 
         submission.repo = normalize_optional(submission.repo);
+        submission.project_id = normalize_optional(submission.project_id);
+        submission.workspace_root = normalize_optional(submission.workspace_root);
+        submission.log_source_id = normalize_optional(submission.log_source_id);
         submission.title = normalize_optional(submission.title);
         submission.detail = normalize_optional(submission.detail);
         submission.source = normalize_optional(submission.source);
@@ -354,6 +357,7 @@ impl AppState {
         let mut status = BugMonitorStatus {
             config: config.clone(),
             runtime,
+            log_watcher: self.bug_monitor_log_watcher_status.read().await.clone(),
             pending_drafts,
             pending_posts,
             last_activity_at_ms,

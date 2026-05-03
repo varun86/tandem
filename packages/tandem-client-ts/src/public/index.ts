@@ -852,7 +852,37 @@ export interface BugMonitorConfigRow {
   require_approval_for_new_issues?: boolean;
   auto_comment_on_matched_open_issues?: boolean;
   label_mode?: string | null;
+  monitored_projects?: BugMonitorMonitoredProject[];
   [key: string]: unknown;
+}
+
+export interface BugMonitorLogSource {
+  source_id?: string;
+  path?: string;
+  format?: "auto" | "json" | "plaintext" | string;
+  minimum_level?: "error" | "warn" | string;
+  watch_interval_seconds?: number;
+  enabled?: boolean;
+  paused?: boolean;
+  start_position?: "end" | "beginning" | string;
+  max_bytes_per_poll?: number;
+  max_candidates_per_poll?: number;
+  fingerprint_cooldown_ms?: number;
+}
+
+export interface BugMonitorMonitoredProject {
+  project_id?: string;
+  name?: string;
+  enabled?: boolean;
+  paused?: boolean;
+  repo?: string;
+  workspace_root?: string;
+  mcp_server?: string | null;
+  model_policy?: JsonObject | null;
+  auto_create_new_issues?: boolean;
+  require_approval_for_new_issues?: boolean;
+  auto_comment_on_matched_open_issues?: boolean;
+  log_sources?: BugMonitorLogSource[];
 }
 
 export interface BugMonitorConfigResponse {
@@ -863,6 +893,7 @@ export interface BugMonitorStatusRow {
   config?: BugMonitorConfigRow;
   readiness?: Record<string, boolean>;
   runtime?: JsonObject;
+  log_watcher?: JsonObject;
   required_capabilities?: Record<string, boolean>;
   missing_required_capabilities?: string[];
   resolved_capabilities?: JsonObject[];

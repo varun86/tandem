@@ -1273,6 +1273,309 @@ pub(super) async fn report_bug_monitor_issue(
     }
 }
 
+pub(super) async fn report_bug_monitor_intake(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<BugMonitorIntakeReportInput>,
+) -> Response {
+    let project_id = input
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string();
+    if project_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "project_id is required",
+                "code": "BUG_MONITOR_INTAKE_PROJECT_REQUIRED",
+            })),
+        )
+            .into_response();
+    }
+    let Some(raw_key) = bug_monitor_intake_key_from_headers(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "Bug Monitor intake key is required",
+                "code": "BUG_MONITOR_INTAKE_KEY_REQUIRED",
+            })),
+        )
+            .into_response();
+    };
+    let Some(_key) = state
+        .validate_bug_monitor_intake_key(&raw_key, &project_id, "bug_monitor:report")
+        .await
+    else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "Bug Monitor intake key is invalid for this project or scope",
+                "code": "BUG_MONITOR_INTAKE_KEY_INVALID",
+            })),
+        )
+            .into_response();
+    };
+    let config = state.bug_monitor_config().await;
+    let Some(project) = config
+        .monitored_projects
+        .iter()
+        .find(|project| project.project_id == project_id)
+        .cloned()
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "monitored project is not configured",
+                "code": "BUG_MONITOR_INTAKE_PROJECT_UNKNOWN",
+            })),
+        )
+            .into_response();
+    };
+    let Some(mut report) = input.report else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "report object is required",
+                "code": "BUG_MONITOR_REPORT_REQUIRED",
+            })),
+        )
+            .into_response();
+    };
+    let source_id = input
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("external");
+    report.project_id = Some(project.project_id.clone());
+    report.workspace_root = Some(project.workspace_root.clone());
+    report.log_source_id = Some(source_id.to_string());
+    report.repo = Some(project.repo.clone());
+    if report.source.is_none() {
+        report.source = Some(format!("bug_monitor.intake.{source_id}"));
+    }
+    match state.submit_bug_monitor_draft(report.clone()).await {
+        Ok(draft) => {
+            let now = crate::now_ms();
+            let incident_id = format!("failure-incident-{}", uuid::Uuid::new_v4().simple());
+            let incident = BugMonitorIncidentRecord {
+                incident_id,
+                fingerprint: draft.fingerprint.clone(),
+                event_type: report
+                    .event
+                    .clone()
+                    .unwrap_or_else(|| "bug_monitor.external_report".to_string()),
+                status: "draft_created".to_string(),
+                repo: project.repo.clone(),
+                workspace_root: project.workspace_root.clone(),
+                title: draft
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| "External failure report".to_string()),
+                detail: draft.detail.clone(),
+                excerpt: report.excerpt.clone(),
+                source: report.source.clone(),
+                component: report.component.clone(),
+                level: report.level.clone(),
+                occurrence_count: 1,
+                created_at_ms: now,
+                updated_at_ms: now,
+                last_seen_at_ms: Some(now),
+                draft_id: Some(draft.draft_id.clone()),
+                confidence: draft.confidence.clone(),
+                risk_level: draft.risk_level.clone(),
+                expected_destination: draft.expected_destination.clone(),
+                evidence_refs: draft.evidence_refs.clone(),
+                quality_gate: draft.quality_gate.clone(),
+                event_payload: Some(json!({
+                    "project_id": project.project_id,
+                    "source_id": source_id,
+                    "workspace_root": project.workspace_root,
+                    "mcp_server": project.mcp_server,
+                    "model_policy": project.model_policy,
+                    "intake": true,
+                })),
+                ..BugMonitorIncidentRecord::default()
+            };
+            let _ = state.put_bug_monitor_incident(incident.clone()).await;
+            Json(json!({
+                "draft": draft,
+                "incident": incident,
+            }))
+            .into_response()
+        }
+        Err(error) => {
+            let detail = error.to_string();
+            let blocked_incident = if detail.contains("signal quality gate") {
+                persist_blocked_bug_monitor_report_observation(
+                    &state,
+                    &report,
+                    &project.repo,
+                    &detail,
+                )
+                .await
+            } else {
+                None
+            };
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Failed to create Bug Monitor draft",
+                    "code": "BUG_MONITOR_REPORT_INVALID",
+                    "detail": detail,
+                    "incident": blocked_incident,
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn bug_monitor_intake_key_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers
+        .get("x-tandem-bug-monitor-intake-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(value.to_string());
+    }
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    let token = auth
+        .strip_prefix("Bearer ")
+        .or_else(|| auth.strip_prefix("bearer "))?
+        .trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+pub(super) async fn list_bug_monitor_intake_keys(State(state): State<AppState>) -> Response {
+    let keys = state
+        .list_bug_monitor_intake_keys()
+        .await
+        .into_iter()
+        .map(|mut key| {
+            key.key_hash = "[redacted]".to_string();
+            key
+        })
+        .collect::<Vec<_>>();
+    Json(json!({ "keys": keys })).into_response()
+}
+
+pub(super) async fn create_bug_monitor_intake_key(
+    State(state): State<AppState>,
+    Json(input): Json<BugMonitorCreateIntakeKeyInput>,
+) -> Response {
+    let project_id = input.project_id.trim().to_string();
+    let name = input.name.trim().to_string();
+    let config = state.bug_monitor_config().await;
+    if !config
+        .monitored_projects
+        .iter()
+        .any(|project| project.project_id == project_id)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "monitored project is not configured",
+                "code": "BUG_MONITOR_INTAKE_PROJECT_UNKNOWN",
+            })),
+        )
+            .into_response();
+    }
+    if name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "name is required",
+                "code": "BUG_MONITOR_INTAKE_KEY_NAME_REQUIRED",
+            })),
+        )
+            .into_response();
+    }
+    let raw_key = format!(
+        "tbm_intake_{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let scopes = if input.scopes.is_empty() {
+        vec!["bug_monitor:report".to_string()]
+    } else {
+        input
+            .scopes
+            .into_iter()
+            .map(|scope| scope.trim().to_string())
+            .filter(|scope| !scope.is_empty())
+            .collect()
+    };
+    let key = crate::BugMonitorProjectIntakeKey {
+        key_id: format!("intake-key-{}", uuid::Uuid::new_v4().simple()),
+        project_id,
+        name,
+        key_hash: crate::sha256_hex(&[&raw_key]),
+        enabled: true,
+        scopes,
+        created_at_ms: Some(crate::now_ms()),
+        last_used_at_ms: None,
+    };
+    match state.put_bug_monitor_intake_key(key.clone()).await {
+        Ok(mut key) => {
+            key.key_hash = "[redacted]".to_string();
+            Json(json!({ "key": key, "raw_key": raw_key })).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to create Bug Monitor intake key",
+                "code": "BUG_MONITOR_INTAKE_KEY_CREATE_FAILED",
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+pub(super) async fn disable_bug_monitor_intake_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let Some(mut key) = state.bug_monitor_intake_keys.read().await.get(&id).cloned() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Bug Monitor intake key not found",
+                "code": "BUG_MONITOR_INTAKE_KEY_NOT_FOUND",
+            })),
+        )
+            .into_response();
+    };
+    key.enabled = false;
+    match state.put_bug_monitor_intake_key(key.clone()).await {
+        Ok(mut key) => {
+            key.key_hash = "[redacted]".to_string();
+            Json(json!({ "key": key })).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to disable Bug Monitor intake key",
+                "code": "BUG_MONITOR_INTAKE_KEY_DISABLE_FAILED",
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
 pub(super) async fn approve_bug_monitor_draft(
     State(state): State<AppState>,
     Path(id): Path<String>,

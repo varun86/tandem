@@ -1,3 +1,139 @@
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct BugMonitorLogWatcherStateFile {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default)]
+    sources: std::collections::HashMap<String, BugMonitorLogSourceState>,
+}
+
+fn bug_monitor_log_source_state_key(project_id: &str, source_id: &str) -> String {
+    format!("{}/{}", project_id.trim(), source_id.trim())
+}
+
+fn is_slug_like(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+}
+
+async fn write_state_file_atomically(path: &PathBuf, payload: String) -> anyhow::Result<()> {
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, payload).await?;
+    fs::rename(&tmp, path).await?;
+    Ok(())
+}
+
+async fn validate_bug_monitor_monitored_projects(
+    state: &AppState,
+    config: &mut BugMonitorConfig,
+) -> anyhow::Result<()> {
+    let needs_mcp_validation = config.monitored_projects.iter().any(|project| {
+        project
+            .mcp_server
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    let servers = if needs_mcp_validation && state.is_ready() {
+        Some(state.mcp.list().await)
+    } else {
+        None
+    };
+    let mut project_ids = std::collections::HashSet::new();
+    for project in &mut config.monitored_projects {
+        project.project_id = project.project_id.trim().to_string();
+        project.name = project.name.trim().to_string();
+        project.repo = project.repo.trim().to_string();
+        project.workspace_root = project.workspace_root.trim().to_string();
+        project.mcp_server = project
+            .mcp_server
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        if !is_slug_like(&project.project_id) {
+            anyhow::bail!("monitored project id must be ASCII slug-like");
+        }
+        if !project_ids.insert(project.project_id.clone()) {
+            anyhow::bail!("duplicate monitored project id `{}`", project.project_id);
+        }
+        if project.name.is_empty() {
+            anyhow::bail!(
+                "monitored project `{}` name is required",
+                project.project_id
+            );
+        }
+        if !is_valid_owner_repo_slug(&project.repo) {
+            anyhow::bail!(
+                "monitored project `{}` repo must be in owner/repo format",
+                project.project_id
+            );
+        }
+        crate::normalize_absolute_workspace_root(&project.workspace_root)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(server) = project.mcp_server.as_ref() {
+            if let Some(servers) = servers.as_ref() {
+                if !servers.contains_key(server) {
+                    anyhow::bail!(
+                        "monitored project `{}` references unknown mcp server `{server}`",
+                        project.project_id
+                    );
+                }
+            } else if !state.is_ready() {
+                // Unit tests often validate config before runtime wiring exists.
+                // Runtime-backed MCP validation still runs in normal ready state.
+            } else {
+                anyhow::bail!(
+                    "monitored project `{}` references unknown mcp server `{server}`",
+                    project.project_id
+                );
+            }
+        }
+        if let Some(model_policy) = project.model_policy.as_ref() {
+            crate::http::routines_automations::validate_model_policy(model_policy)
+                .map_err(anyhow::Error::msg)?;
+        }
+
+        let mut source_ids = std::collections::HashSet::new();
+        for source in &mut project.log_sources {
+            source.source_id = source.source_id.trim().to_string();
+            source.path = source.path.trim().to_string();
+            if !is_slug_like(&source.source_id) {
+                anyhow::bail!(
+                    "log source id for monitored project `{}` must be ASCII slug-like",
+                    project.project_id
+                );
+            }
+            if !source_ids.insert(source.source_id.clone()) {
+                anyhow::bail!(
+                    "duplicate log source id `{}` in monitored project `{}`",
+                    source.source_id,
+                    project.project_id
+                );
+            }
+            if source.path.is_empty() {
+                anyhow::bail!(
+                    "log source `{}` in monitored project `{}` path is required",
+                    source.source_id,
+                    project.project_id
+                );
+            }
+            let path_project = BugMonitorMonitoredProject {
+                project_id: project.project_id.clone(),
+                name: project.name.clone(),
+                repo: project.repo.clone(),
+                workspace_root: project.workspace_root.clone(),
+                ..BugMonitorMonitoredProject::default()
+            };
+            crate::bug_monitor::log_watcher::resolve_log_source_path(&path_project, source)?;
+            source.watch_interval_seconds = source.watch_interval_seconds.clamp(1, 86_400);
+            source.max_bytes_per_poll = source.max_bytes_per_poll.clamp(1_024, 10 * 1024 * 1024);
+            source.max_candidates_per_poll = source.max_candidates_per_poll.clamp(1, 200);
+        }
+    }
+    Ok(())
+}
+
 impl AppState {
     pub fn new_starting(attempt_id: String, in_process: bool) -> Self {
         #[cfg(feature = "premium-governance")]
@@ -58,6 +194,15 @@ impl AppState {
             bug_monitor_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_incidents: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_posts: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            bug_monitor_log_watcher_state_path:
+                config::paths::resolve_bug_monitor_log_watcher_state_path(),
+            bug_monitor_log_source_states: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            bug_monitor_log_watcher_status: Arc::new(RwLock::new(
+                BugMonitorLogWatcherStatus::default(),
+            )),
+            bug_monitor_log_evidence_dir: config::paths::resolve_bug_monitor_log_evidence_dir(),
+            bug_monitor_intake_keys: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            bug_monitor_intake_keys_path: config::paths::resolve_bug_monitor_intake_keys_path(),
             external_actions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_runtime_status: Arc::new(RwLock::new(BugMonitorRuntimeStatus::default())),
             provider_oauth_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -266,6 +411,8 @@ impl AppState {
         let _ = self.load_bug_monitor_drafts().await;
         let _ = self.load_bug_monitor_incidents().await;
         let _ = self.load_bug_monitor_posts().await;
+        let _ = self.load_bug_monitor_log_watcher_state().await;
+        let _ = self.load_bug_monitor_intake_keys().await;
         let _ = self.load_external_actions().await;
         let _ = self.load_workflow_planner_sessions().await;
         let _ = self.load_workflow_learning_candidates().await;
@@ -1585,10 +1732,144 @@ impl AppState {
             crate::http::routines_automations::validate_model_policy(model_policy)
                 .map_err(anyhow::Error::msg)?;
         }
+        validate_bug_monitor_monitored_projects(self, &mut config).await?;
         config.updated_at_ms = now_ms();
         *self.bug_monitor_config.write().await = config.clone();
         self.persist_bug_monitor_config().await?;
         Ok(config)
+    }
+
+    pub async fn load_bug_monitor_log_watcher_state(&self) -> anyhow::Result<()> {
+        if !self.bug_monitor_log_watcher_state_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.bug_monitor_log_watcher_state_path).await?;
+        let parsed =
+            serde_json::from_str::<BugMonitorLogWatcherStateFile>(&raw).unwrap_or_default();
+        *self.bug_monitor_log_source_states.write().await = parsed.sources;
+        Ok(())
+    }
+
+    pub async fn persist_bug_monitor_log_watcher_state(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.bug_monitor_log_watcher_state_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.bug_monitor_log_source_states.read().await;
+            serde_json::to_string_pretty(&BugMonitorLogWatcherStateFile {
+                schema_version: 1,
+                sources: guard.clone(),
+            })?
+        };
+        write_state_file_atomically(&self.bug_monitor_log_watcher_state_path, payload).await
+    }
+
+    pub async fn get_bug_monitor_log_source_state(
+        &self,
+        project_id: &str,
+        source_id: &str,
+    ) -> Option<BugMonitorLogSourceState> {
+        self.bug_monitor_log_source_states
+            .read()
+            .await
+            .get(&bug_monitor_log_source_state_key(project_id, source_id))
+            .cloned()
+    }
+
+    pub async fn put_bug_monitor_log_source_state(
+        &self,
+        source_state: BugMonitorLogSourceState,
+    ) -> anyhow::Result<BugMonitorLogSourceState> {
+        let key =
+            bug_monitor_log_source_state_key(&source_state.project_id, &source_state.source_id);
+        self.bug_monitor_log_source_states
+            .write()
+            .await
+            .insert(key, source_state.clone());
+        self.persist_bug_monitor_log_watcher_state().await?;
+        Ok(source_state)
+    }
+
+    pub async fn update_bug_monitor_log_watcher_status(
+        &self,
+        update: impl FnOnce(&mut BugMonitorLogWatcherStatus),
+    ) -> BugMonitorLogWatcherStatus {
+        let mut guard = self.bug_monitor_log_watcher_status.write().await;
+        update(&mut guard);
+        guard.clone()
+    }
+
+    pub async fn load_bug_monitor_intake_keys(&self) -> anyhow::Result<()> {
+        if !self.bug_monitor_intake_keys_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.bug_monitor_intake_keys_path).await?;
+        let parsed = serde_json::from_str::<
+            std::collections::HashMap<String, BugMonitorProjectIntakeKey>,
+        >(&raw)
+        .unwrap_or_default();
+        *self.bug_monitor_intake_keys.write().await = parsed;
+        Ok(())
+    }
+
+    pub async fn persist_bug_monitor_intake_keys(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.bug_monitor_intake_keys_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.bug_monitor_intake_keys.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        write_state_file_atomically(&self.bug_monitor_intake_keys_path, payload).await
+    }
+
+    pub async fn list_bug_monitor_intake_keys(&self) -> Vec<BugMonitorProjectIntakeKey> {
+        let mut rows = self
+            .bug_monitor_intake_keys
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| a.project_id.cmp(&b.project_id).then(a.name.cmp(&b.name)));
+        rows
+    }
+
+    pub async fn put_bug_monitor_intake_key(
+        &self,
+        key: BugMonitorProjectIntakeKey,
+    ) -> anyhow::Result<BugMonitorProjectIntakeKey> {
+        self.bug_monitor_intake_keys
+            .write()
+            .await
+            .insert(key.key_id.clone(), key.clone());
+        self.persist_bug_monitor_intake_keys().await?;
+        Ok(key)
+    }
+
+    pub async fn validate_bug_monitor_intake_key(
+        &self,
+        raw_key: &str,
+        project_id: &str,
+        required_scope: &str,
+    ) -> Option<BugMonitorProjectIntakeKey> {
+        let key_hash = crate::sha256_hex(&[raw_key.trim()]);
+        let mut matched = {
+            self.bug_monitor_intake_keys
+                .read()
+                .await
+                .values()
+                .find(|row| {
+                    row.enabled
+                        && row.project_id == project_id
+                        && row.key_hash == key_hash
+                        && row.scopes.iter().any(|scope| scope == required_scope)
+                })
+                .cloned()
+        }?;
+        matched.last_used_at_ms = Some(now_ms());
+        let _ = self.put_bug_monitor_intake_key(matched.clone()).await;
+        Some(matched)
     }
 
     pub async fn load_bug_monitor_drafts(&self) -> anyhow::Result<()> {

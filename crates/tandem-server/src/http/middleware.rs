@@ -29,6 +29,19 @@ pub(super) async fn auth_gate(
     if path == "/global/health" {
         return next.run(request).await;
     }
+    if path == "/bug-monitor/intake/report" || path == "/failure-reporter/intake/report" {
+        if !attach_enterprise_request_context(&mut request) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorEnvelope {
+                    error: "Unauthorized: tenant context denied".to_string(),
+                    code: Some("TENANT_CONTEXT_DENIED".to_string()),
+                }),
+            )
+                .into_response();
+        }
+        return next.run(request).await;
+    }
 
     let required = state.api_token().await;
     if let Some(expected) = required {

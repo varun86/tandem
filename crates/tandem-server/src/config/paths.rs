@@ -168,6 +168,18 @@ pub(crate) fn resolve_bug_monitor_posts_path() -> PathBuf {
     resolve_canonical_data_file_path("bug-monitor/posts.json")
 }
 
+pub(crate) fn resolve_bug_monitor_log_watcher_state_path() -> PathBuf {
+    resolve_canonical_data_file_path("bug-monitor/log-watcher-state.json")
+}
+
+pub(crate) fn resolve_bug_monitor_log_evidence_dir() -> PathBuf {
+    resolve_canonical_data_file_path("bug-monitor/evidence")
+}
+
+pub(crate) fn resolve_bug_monitor_intake_keys_path() -> PathBuf {
+    resolve_canonical_data_file_path("bug-monitor/intake-keys.json")
+}
+
 pub(crate) fn resolve_external_actions_path() -> PathBuf {
     resolve_canonical_data_file_path("actions/external_actions.json")
 }

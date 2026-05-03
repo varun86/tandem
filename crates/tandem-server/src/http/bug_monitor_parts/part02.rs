@@ -312,13 +312,6 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         }
     }
 
-    let model_policy = config.model_policy.clone();
-    let mcp_servers = config
-        .mcp_server
-        .as_ref()
-        .map(|row| vec![row.clone()])
-        .filter(|row| !row.is_empty());
-
     let duplicate_matches = super::coder::query_failure_pattern_matches(
         &state,
         &draft.repo,
@@ -333,6 +326,31 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         anyhow::anyhow!("Failed to query duplicate failure patterns: HTTP {status}")
     })?;
     let incident = latest_bug_monitor_incident_for_draft(&state, &draft.draft_id).await;
+    let project_config = bug_monitor_project_for_incident(&config, incident.as_ref());
+    let resolved_workspace_root =
+        workspace_root_for_bug_monitor_triage(&config, incident.as_ref(), project_config).await;
+    let model_policy = project_config
+        .and_then(|project| project.model_policy.clone())
+        .or_else(|| {
+            incident
+                .as_ref()
+                .and_then(|row| row.event_payload.as_ref())
+                .and_then(|payload| payload.get("model_policy").cloned())
+        })
+        .or_else(|| config.model_policy.clone());
+    let mcp_servers = project_config
+        .and_then(|project| project.mcp_server.clone())
+        .or_else(|| {
+            incident
+                .as_ref()
+                .and_then(|row| row.event_payload.as_ref())
+                .and_then(|payload| payload.get("mcp_server"))
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .or_else(|| config.mcp_server.clone())
+        .map(|row| vec![row])
+        .filter(|row| !row.is_empty());
     let incident_payload = incident
         .as_ref()
         .and_then(|row| row.event_payload.clone())
@@ -375,7 +393,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     // recommended-fix step instead of letting it hallucinate file
     // references from a fuzzy match on the workflow name.
     let error_provenance_payload = compute_error_provenance_payload(
-        config.workspace_root.as_deref(),
+        resolved_workspace_root.as_deref(),
         &draft,
         incident.as_ref(),
     )
@@ -451,7 +469,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
     });
     let triage_spec = bug_monitor_triage_spec(
         &draft,
-        config.workspace_root.clone(),
+        resolved_workspace_root.clone(),
         model_policy,
         mcp_servers.unwrap_or_default(),
         inspection_payload.clone(),
@@ -563,6 +581,45 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
 /// when no explicit config root is set). When neither is accessible
 /// or no error message can be picked, returns JSON null so payload
 /// consumers can `is_null()` cheaply.
+fn bug_monitor_project_for_incident<'a>(
+    config: &'a BugMonitorConfig,
+    incident: Option<&crate::BugMonitorIncidentRecord>,
+) -> Option<&'a crate::BugMonitorMonitoredProject> {
+    let project_id = incident
+        .and_then(|row| row.event_payload.as_ref())
+        .and_then(|payload| payload.get("project_id"))
+        .and_then(|value| value.as_str())?;
+    config
+        .monitored_projects
+        .iter()
+        .find(|project| project.project_id == project_id)
+}
+
+async fn workspace_root_for_bug_monitor_triage(
+    config: &BugMonitorConfig,
+    incident: Option<&crate::BugMonitorIncidentRecord>,
+    project: Option<&crate::BugMonitorMonitoredProject>,
+) -> Option<String> {
+    let candidates = [
+        incident.map(|row| row.workspace_root.clone()),
+        project.map(|row| row.workspace_root.clone()),
+        incident
+            .and_then(|row| row.event_payload.as_ref())
+            .and_then(|payload| payload.get("workspace_root"))
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        config.workspace_root.clone(),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .find(|value| {
+            let path = std::path::Path::new(value);
+            path.is_absolute() && path.exists()
+        })
+}
+
 async fn compute_error_provenance_payload(
     config_workspace_root: Option<&str>,
     draft: &BugMonitorDraftRecord,
@@ -616,8 +673,8 @@ fn pick_workspace_root_for_triage(
     incident: Option<&crate::BugMonitorIncidentRecord>,
 ) -> Option<String> {
     let candidates = [
-        config_workspace_root.map(str::to_string),
         incident.map(|row| row.workspace_root.clone()),
+        config_workspace_root.map(str::to_string),
     ];
     candidates
         .into_iter()

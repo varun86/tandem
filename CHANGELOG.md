@@ -5,7 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - Unreleased
+## [0.5.1] - Unreleased
+
+### Added
+
+- **Bug Monitor external project log intake**: Added monitored-project/log-source config, deterministic JSON-lines and plaintext log parsing, persisted offset state, evidence artifact writing, storm control, and a background watcher that turns local external project log failures into Bug Monitor incidents without requiring a workflow to hold the full engine token.
+- **Scoped Bug Monitor external report intake**: Added limited per-project intake keys plus `POST /bug-monitor/intake/report` and `/failure-reporter/intake/report` so CI systems and external apps can submit normalized failure reports without access to the full engine API token.
+- **Bug Monitor intake-key management APIs**: Added protected key list/create/disable endpoints under `/bug-monitor/intake/keys`, storing only key hashes and returning raw keys only at creation.
+- **Bug Monitor log evidence artifacts**: Added state-managed `tandem://bug-monitor/...` evidence refs and JSON evidence artifacts for log candidates, including byte offsets, source ids, redacted excerpts, and fingerprints.
+
+### Changed
+
+- **Bug Monitor triage is project-aware**: Triage run creation now prefers the linked incident or monitored project `workspace_root`, `model_policy`, and `mcp_server` before falling back to global Bug Monitor config, so external project failures are inspected in the correct repo/workspace.
+- **Bug Monitor config supports monitored projects**: The existing single-project/global config remains compatible, while `monitored_projects` can now define external repos, workspace roots, log sources, and project policy.
+- **Bug Monitor status exposes watcher health**: Status snapshots now include log watcher running state, enabled project/source counts, source health, offsets, file size, last poll/candidate/submission times, and source errors.
+
+### Fixed
+
+- **External log paths fail closed**: Monitored log paths are validated under their configured workspace root, including symlink/absolute path escape rejection, before watcher polling.
+- **Split log lines keep correct evidence offsets**: Partial trailing lines now preserve their starting byte offset so failures spanning polls produce accurate evidence ranges.
+- **External project dedupe avoids cross-repo collisions**: Watcher-created incidents dedupe by `repo + fingerprint` instead of fingerprint alone.
+
+## [0.5.0] - Released 2026-05-03
 
 ### Added
 

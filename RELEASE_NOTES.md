@@ -2,7 +2,17 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.5.0 (Unreleased)
+## v0.5.1 (Unreleased)
+
+This release adds the first engine-native Bug Monitor intake path for external projects.
+
+Bug Monitor can now watch configured local project log files without running a workflow. A monitored project declares its repo, workspace root, and log sources; the engine tails new bytes with persisted offsets, parses JSON-lines and plaintext stack traces deterministically, redacts sensitive snippets, writes state-managed evidence artifacts, and creates normal Bug Monitor incidents with `tandem://bug-monitor/...` evidence refs. The watcher starts with the server and reports per-source health, offsets, last poll/candidate/submission timestamps, and errors through Bug Monitor status.
+
+External systems can also report failures through a scoped intake API instead of the full engine token. `POST /bug-monitor/intake/report` and `/failure-reporter/intake/report` accept reports authenticated by per-project intake keys. Keys are hash-stored, scoped to `bug_monitor:report`, cannot override the configured repo/workspace/model/MCP routing, and cannot authorize config changes, issue publishing, workflow execution, tools, or arbitrary file reads. Protected admin endpoints can create, list, and disable intake keys; raw keys are returned only at creation.
+
+Triage routing is now project-aware for these external incidents. Bug Monitor triage prefers the linked incident or monitored project workspace, model policy, and MCP server before falling back to the global Bug Monitor config, so external project failures are inspected in the correct repository context. Existing single-project Bug Monitor config remains compatible.
+
+## v0.5.0 (Released 2026-05-03)
 
 - **Bug Monitor GitHub fallback issue-body hardening**: fallback rendering now includes bounded evidence from existing incident/draft records when triage output is missing (timeouts, triage failures, or publish races). Logs and evidence refs are capped to keep GitHub posts readable; a short triage status marker (`triage_timed_out`, `triage_pending`, `github_post_failed`) is preserved for quicker human triage.
 - **Bug Monitor triage now runs on Automation V2**: triage is no longer an orphaned context run that can sit forever in `Planning`. It now launches an Automation V2 run with inspect, research, validation, and fix-proposal nodes, and stores completed node handoffs in the global Bug Monitor context-run artifacts used for issue drafting.

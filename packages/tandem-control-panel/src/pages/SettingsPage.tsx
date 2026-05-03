@@ -249,6 +249,32 @@ type BugMonitorConfigRow = {
   require_approval_for_new_issues?: boolean;
   auto_comment_on_matched_open_issues?: boolean;
   label_mode?: string | null;
+  monitored_projects?: Array<{
+    project_id?: string;
+    name?: string;
+    enabled?: boolean;
+    paused?: boolean;
+    repo?: string;
+    workspace_root?: string;
+    mcp_server?: string | null;
+    model_policy?: Record<string, unknown> | null;
+    auto_create_new_issues?: boolean;
+    require_approval_for_new_issues?: boolean;
+    auto_comment_on_matched_open_issues?: boolean;
+    log_sources?: Array<{
+      source_id?: string;
+      path?: string;
+      format?: string;
+      minimum_level?: string;
+      watch_interval_seconds?: number;
+      enabled?: boolean;
+      paused?: boolean;
+      start_position?: string;
+      max_bytes_per_poll?: number;
+      max_candidates_per_poll?: number;
+      fingerprint_cooldown_ms?: number;
+    }>;
+  }>;
 };
 
 type BugMonitorStatusRow = {
@@ -263,6 +289,7 @@ type BugMonitorStatusRow = {
     last_incident_event_type?: string | null;
     last_runtime_error?: string | null;
   };
+  log_watcher?: Record<string, unknown>;
   required_capabilities?: Record<string, boolean>;
   missing_required_capabilities?: string[];
   resolved_capabilities?: Array<{

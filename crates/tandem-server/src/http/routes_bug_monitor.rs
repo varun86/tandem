@@ -110,6 +110,22 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/bug-monitor/report", post(report_bug_monitor_issue))
         .route("/failure-reporter/report", post(report_bug_monitor_issue))
         .route(
+            "/bug-monitor/intake/report",
+            post(report_bug_monitor_intake),
+        )
+        .route(
+            "/failure-reporter/intake/report",
+            post(report_bug_monitor_intake),
+        )
+        .route(
+            "/bug-monitor/intake/keys",
+            get(list_bug_monitor_intake_keys).post(create_bug_monitor_intake_key),
+        )
+        .route(
+            "/bug-monitor/intake/keys/{id}/disable",
+            post(disable_bug_monitor_intake_key),
+        )
+        .route(
             "/bug-monitor/drafts/{id}/triage-run",
             post(create_bug_monitor_triage_run),
         )

@@ -2,6 +2,34 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tandem_types::ModelSpec;
 
+fn default_bug_monitor_log_format() -> BugMonitorLogFormat {
+    BugMonitorLogFormat::Auto
+}
+
+fn default_bug_monitor_minimum_level() -> BugMonitorLogMinimumLevel {
+    BugMonitorLogMinimumLevel::Error
+}
+
+fn default_bug_monitor_watch_interval_seconds() -> u64 {
+    60
+}
+
+fn default_bug_monitor_log_start_position() -> BugMonitorLogStartPosition {
+    BugMonitorLogStartPosition::End
+}
+
+fn default_bug_monitor_max_bytes_per_poll() -> u64 {
+    262_144
+}
+
+fn default_bug_monitor_max_candidates_per_poll() -> usize {
+    20
+}
+
+fn default_bug_monitor_fingerprint_cooldown_ms() -> u64 {
+    3_600_000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BugMonitorProviderPreference {
@@ -63,6 +91,8 @@ pub struct BugMonitorConfig {
     #[serde(default = "default_triage_timeout_ms")]
     pub triage_timeout_ms: Option<u64>,
     #[serde(default)]
+    pub monitored_projects: Vec<BugMonitorMonitoredProject>,
+    #[serde(default)]
     pub updated_at_ms: u64,
 }
 
@@ -93,9 +123,222 @@ impl Default for BugMonitorConfig {
             auto_comment_on_matched_open_issues: true,
             label_mode: BugMonitorLabelMode::ReporterOnly,
             triage_timeout_ms: default_triage_timeout_ms(),
+            monitored_projects: Vec::new(),
             updated_at_ms: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorMonitoredProject {
+    pub project_id: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub paused: bool,
+    pub repo: String,
+    pub workspace_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_policy: Option<Value>,
+    #[serde(default = "default_true")]
+    pub auto_create_new_issues: bool,
+    #[serde(default)]
+    pub require_approval_for_new_issues: bool,
+    #[serde(default = "default_true")]
+    pub auto_comment_on_matched_open_issues: bool,
+    #[serde(default)]
+    pub log_sources: Vec<BugMonitorLogSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BugMonitorLogFormat {
+    Auto,
+    Json,
+    Plaintext,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BugMonitorLogMinimumLevel {
+    Error,
+    Warn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BugMonitorLogStartPosition {
+    End,
+    Beginning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BugMonitorLogSource {
+    pub source_id: String,
+    pub path: String,
+    #[serde(default = "default_bug_monitor_log_format")]
+    pub format: BugMonitorLogFormat,
+    #[serde(default = "default_bug_monitor_minimum_level")]
+    pub minimum_level: BugMonitorLogMinimumLevel,
+    #[serde(default = "default_bug_monitor_watch_interval_seconds")]
+    pub watch_interval_seconds: u64,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default = "default_bug_monitor_log_start_position")]
+    pub start_position: BugMonitorLogStartPosition,
+    #[serde(default = "default_bug_monitor_max_bytes_per_poll")]
+    pub max_bytes_per_poll: u64,
+    #[serde(default = "default_bug_monitor_max_candidates_per_poll")]
+    pub max_candidates_per_poll: usize,
+    #[serde(default = "default_bug_monitor_fingerprint_cooldown_ms")]
+    pub fingerprint_cooldown_ms: u64,
+}
+
+impl Default for BugMonitorLogSource {
+    fn default() -> Self {
+        Self {
+            source_id: String::new(),
+            path: String::new(),
+            format: default_bug_monitor_log_format(),
+            minimum_level: default_bug_monitor_minimum_level(),
+            watch_interval_seconds: default_bug_monitor_watch_interval_seconds(),
+            enabled: true,
+            paused: false,
+            start_position: default_bug_monitor_log_start_position(),
+            max_bytes_per_poll: default_bug_monitor_max_bytes_per_poll(),
+            max_candidates_per_poll: default_bug_monitor_max_candidates_per_poll(),
+            fingerprint_cooldown_ms: default_bug_monitor_fingerprint_cooldown_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorLogSourceState {
+    pub project_id: String,
+    pub source_id: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inode: Option<String>,
+    #[serde(default)]
+    pub offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_line_offset_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_line_hash: Option<String>,
+    #[serde(default)]
+    pub recent_fingerprints: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pub updated_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub consecutive_errors: u64,
+    #[serde(default)]
+    pub total_bytes_read: u64,
+    #[serde(default)]
+    pub total_candidates: u64,
+    #[serde(default)]
+    pub total_submitted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorLogCandidate {
+    pub project_id: String,
+    pub source_id: String,
+    pub repo: String,
+    pub workspace_root: String,
+    pub path: String,
+    pub offset_start: u64,
+    pub offset_end: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inode: Option<String>,
+    pub title: String,
+    pub detail: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    pub event: String,
+    pub level: String,
+    pub excerpt: Vec<String>,
+    pub raw_excerpt_redacted: Vec<String>,
+    pub fingerprint: String,
+    pub confidence: String,
+    pub risk_level: String,
+    pub expected_destination: String,
+    pub evidence_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorLogWatcherStatus {
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub enabled_projects: usize,
+    #[serde(default)]
+    pub enabled_sources: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_poll_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub sources: Vec<BugMonitorLogSourceRuntimeStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorLogSourceRuntimeStatus {
+    pub project_id: String,
+    pub source_id: String,
+    pub path: String,
+    pub healthy: bool,
+    #[serde(default)]
+    pub offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_poll_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_candidate_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_submitted_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub consecutive_errors: u64,
+    #[serde(default)]
+    pub total_bytes_read: u64,
+    #[serde(default)]
+    pub total_candidates: u64,
+    #[serde(default)]
+    pub total_submitted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BugMonitorProjectIntakeKey {
+    pub key_id: String,
+    pub project_id: String,
+    pub name: String,
+    pub key_hash: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -284,6 +527,12 @@ pub struct BugMonitorRuntimeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BugMonitorSubmission {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -381,6 +630,8 @@ pub struct BugMonitorStatus {
     pub readiness: BugMonitorReadiness,
     #[serde(default)]
     pub runtime: BugMonitorRuntimeStatus,
+    #[serde(default)]
+    pub log_watcher: BugMonitorLogWatcherStatus,
     pub required_capabilities: BugMonitorCapabilityReadiness,
     #[serde(default)]
     pub missing_required_capabilities: Vec<String>,

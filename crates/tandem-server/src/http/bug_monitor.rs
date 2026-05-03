@@ -1,8 +1,12 @@
 use crate::capability_resolver::canonicalize_tool_name;
 use crate::http::AppState;
-use crate::{bug_monitor_github, BugMonitorConfig, BugMonitorDraftRecord, BugMonitorSubmission};
+use crate::{
+    bug_monitor_github, BugMonitorConfig, BugMonitorDraftRecord, BugMonitorIncidentRecord,
+    BugMonitorSubmission,
+};
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,

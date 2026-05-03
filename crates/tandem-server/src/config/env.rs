@@ -150,6 +150,7 @@ pub(crate) fn resolve_bug_monitor_env_config() -> BugMonitorConfig {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .map(Some)
         .unwrap_or(Some(1_800_000)),
+        monitored_projects: Vec::new(),
         updated_at_ms: 0,
     }
 }

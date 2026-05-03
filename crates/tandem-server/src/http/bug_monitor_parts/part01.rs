@@ -55,6 +55,24 @@ pub(super) struct BugMonitorSubmissionInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct BugMonitorIntakeReportInput {
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub report: Option<BugMonitorSubmission>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct BugMonitorCreateIntakeKeyInput {
+    pub project_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct BugMonitorDecisionInput {
     #[serde(default)]
     pub reason: Option<String>,
