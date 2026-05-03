@@ -1192,9 +1192,15 @@ export function CodingWorkflowsPage({
                 {repoSyncResult?.repo?.dirty ? <Badge tone="warn">dirty</Badge> : null}
               </div>
               {repoSyncResult?.repo?.commit ? (
-                <div className="tcp-subtle truncate">
-                  Ready at {String(repoSyncResult.repo.path)} ·{" "}
-                  {String(repoSyncResult.repo.commit).slice(0, 7)}
+                <div className="grid gap-2">
+                  <div className="tcp-subtle truncate">
+                    Ready at {String(repoSyncResult.repo.path)} ·{" "}
+                    {String(repoSyncResult.repo.commit).slice(0, 7)}
+                  </div>
+                  <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-2 text-sky-100">
+                    Bug Monitor should use this checkout as its local directory when reporting
+                    issues for this repo.
+                  </div>
                 </div>
               ) : null}
             </div>

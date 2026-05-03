@@ -66,6 +66,59 @@ type BrowserSmokeTestResponse = {
   closed?: boolean;
 };
 
+const HOSTED_CODER_REPO_ROOT = "/workspace/repos";
+const HOSTED_CODER_COMPAT_REPO_ROOT = "/workspace/aca/repos";
+const HOSTED_TANDEM_DATA_ROOT = "/workspace/tandem-data";
+
+function repoNameFromSlug(repo: string): string {
+  const parts = String(repo || "")
+    .trim()
+    .replace(/\.git$/i, "")
+    .split(/[/:]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts[parts.length - 1] || "";
+}
+
+function suggestedBugMonitorWorkspaceRoot(repo: string): string {
+  const repoName = repoNameFromSlug(repo);
+  return repoName ? `${HOSTED_CODER_REPO_ROOT}/${repoName}` : HOSTED_CODER_REPO_ROOT;
+}
+
+function hostedWorkspaceDirectoryHint(path: string): string {
+  const normalized = String(path || "").trim();
+  if (normalized === HOSTED_CODER_REPO_ROOT) return "Shared Coder checkouts";
+  if (normalized.startsWith(`${HOSTED_CODER_REPO_ROOT}/`)) return "Synced repo checkout";
+  if (normalized === HOSTED_CODER_COMPAT_REPO_ROOT) return "Coder compatibility mount";
+  if (normalized.startsWith(`${HOSTED_CODER_COMPAT_REPO_ROOT}/`)) return "Same repo via ACA path";
+  if (normalized === HOSTED_TANDEM_DATA_ROOT) return "Runtime data, not source code";
+  return "";
+}
+
+function bugMonitorWorkspaceSetupWarning(workspaceRoot: string, repo: string): string {
+  const root = String(workspaceRoot || "").trim();
+  if (!root) return "Select the synced repo folder before enabling hosted Bug Monitor triage.";
+  if (root === HOSTED_CODER_REPO_ROOT) {
+    return `Select the repo folder under ${HOSTED_CODER_REPO_ROOT}, not the parent folder.`;
+  }
+  if (root === HOSTED_CODER_COMPAT_REPO_ROOT) {
+    return `Select the repo folder under ${HOSTED_CODER_COMPAT_REPO_ROOT}, not the parent folder.`;
+  }
+  if (root === HOSTED_TANDEM_DATA_ROOT || root.startsWith(`${HOSTED_TANDEM_DATA_ROOT}/`)) {
+    return `${HOSTED_TANDEM_DATA_ROOT} stores runtime state. Bug Monitor needs the source checkout under ${HOSTED_CODER_REPO_ROOT}.`;
+  }
+  const repoName = repoNameFromSlug(repo);
+  if (
+    repoName &&
+    (root.startsWith(`${HOSTED_CODER_REPO_ROOT}/`) ||
+      root.startsWith(`${HOSTED_CODER_COMPAT_REPO_ROOT}/`)) &&
+    root.split("/").filter(Boolean).pop() !== repoName
+  ) {
+    return `Target repo looks like \`${repoName}\`, but the selected folder is \`${root}\`. Confirm this is the intended checkout.`;
+  }
+  return "";
+}
+
 type WorktreeCleanupActionRow = {
   path?: string;
   branch?: string | null;
@@ -2962,6 +3015,15 @@ export function SettingsPage({
   const bugMonitorCurrentBrowseDir = String(
     bugMonitorWorkspaceBrowserQuery.data?.dir || bugMonitorWorkspaceBrowserDir || ""
   ).trim();
+  const bugMonitorSuggestedWorkspaceRoot = useMemo(
+    () => suggestedBugMonitorWorkspaceRoot(bugMonitorRepo),
+    [bugMonitorRepo]
+  );
+  const bugMonitorWorkspaceRootHint = hostedWorkspaceDirectoryHint(bugMonitorWorkspaceRoot);
+  const bugMonitorWorkspaceSetupWarningText = bugMonitorWorkspaceSetupWarning(
+    bugMonitorWorkspaceRoot,
+    bugMonitorRepo
+  );
 
   useEffect(() => {
     const config =
@@ -5994,6 +6056,38 @@ export function SettingsPage({
                         <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
                           Local directory
                         </span>
+                        <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-100">
+                          <div className="font-semibold">Hosted path map</div>
+                          <div className="mt-1 tcp-subtle">
+                            Coder syncs source checkouts into <code>{HOSTED_CODER_REPO_ROOT}</code>.
+                            For Bug Monitor analysis, select the repo folder itself, usually{" "}
+                            <code>{bugMonitorSuggestedWorkspaceRoot}</code>.
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              className="tcp-btn h-8 px-3 text-xs"
+                              type="button"
+                              onClick={() =>
+                                setBugMonitorWorkspaceRoot(bugMonitorSuggestedWorkspaceRoot)
+                              }
+                            >
+                              <i data-lucide="badge-check"></i>
+                              Use recommended path
+                            </button>
+                            <button
+                              className="tcp-btn h-8 px-3 text-xs"
+                              type="button"
+                              onClick={() => {
+                                setBugMonitorWorkspaceBrowserDir(HOSTED_CODER_REPO_ROOT);
+                                setBugMonitorWorkspaceBrowserSearch("");
+                                setBugMonitorWorkspaceBrowserOpen(true);
+                              }}
+                            >
+                              <i data-lucide="folder-open"></i>
+                              Browse synced repos
+                            </button>
+                          </div>
+                        </div>
                         <div className="grid gap-2 md:grid-cols-[auto_1fr_auto]">
                           <button
                             className="tcp-btn"
@@ -6026,9 +6120,27 @@ export function SettingsPage({
                         </div>
                         <div className="tcp-subtle text-xs">
                           {bugMonitorWorkspaceRoot
-                            ? `Reporter analysis root: ${bugMonitorWorkspaceRoot}`
+                            ? `Reporter analysis root: ${bugMonitorWorkspaceRoot}${
+                                bugMonitorWorkspaceRootHint
+                                  ? ` (${bugMonitorWorkspaceRootHint})`
+                                  : ""
+                              }`
                             : "Defaults to the engine workspace root if not set."}
                         </div>
+                        {bugMonitorWorkspaceSetupWarningText ? (
+                          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100">
+                            <div className="font-semibold">Setup check</div>
+                            <div className="mt-1">{bugMonitorWorkspaceSetupWarningText}</div>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                            <div className="font-semibold">Source checkout ready</div>
+                            <div className="mt-1">
+                              Bug Monitor triage will inspect this repo path and require concrete
+                              source-file reads before it marks research complete.
+                            </div>
+                          </div>
+                        )}
                       </label>
 
                       <label className="grid gap-2">
@@ -7206,6 +7318,16 @@ export function SettingsPage({
                 <p className="tcp-confirm-message">
                   Current: {bugMonitorCurrentBrowseDir || "n/a"}
                 </p>
+                <div className="mb-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
+                  <div className="font-semibold text-slate-100">Where should I go?</div>
+                  <div className="tcp-subtle mt-1">
+                    Hosted installs share Coder repositories at{" "}
+                    <code>{HOSTED_CODER_REPO_ROOT}</code>. Choose the repo folder, for example{" "}
+                    <code>{bugMonitorSuggestedWorkspaceRoot}</code>. The{" "}
+                    <code>{HOSTED_TANDEM_DATA_ROOT}</code> folder is runtime state, not the source
+                    checkout.
+                  </div>
+                </div>
                 <div className="mb-2 flex flex-wrap gap-2">
                   <button
                     className="tcp-btn"
@@ -7217,6 +7339,16 @@ export function SettingsPage({
                   >
                     <i data-lucide="arrow-up-circle"></i>
                     Up
+                  </button>
+                  <button
+                    className="tcp-btn"
+                    onClick={() => {
+                      setBugMonitorWorkspaceBrowserDir(HOSTED_CODER_REPO_ROOT);
+                      setBugMonitorWorkspaceBrowserSearch("");
+                    }}
+                  >
+                    <i data-lucide="folder-git-2"></i>
+                    Synced repos
                   </button>
                   <button
                     className="tcp-btn-primary"
@@ -7254,16 +7386,25 @@ export function SettingsPage({
                 </div>
                 <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
                   {filteredBugMonitorWorkspaceDirectories.length ? (
-                    filteredBugMonitorWorkspaceDirectories.map((entry: any) => (
-                      <button
-                        key={String(entry?.path || entry?.name)}
-                        className="tcp-list-item mb-1 w-full text-left"
-                        onClick={() => setBugMonitorWorkspaceBrowserDir(String(entry?.path || ""))}
-                      >
-                        <i data-lucide="folder-open"></i>
-                        {String(entry?.name || entry?.path || "")}
-                      </button>
-                    ))
+                    filteredBugMonitorWorkspaceDirectories.map((entry: any) => {
+                      const entryPath = String(entry?.path || "");
+                      const hint = hostedWorkspaceDirectoryHint(entryPath);
+                      return (
+                        <button
+                          key={String(entry?.path || entry?.name)}
+                          className="tcp-list-item mb-1 w-full text-left"
+                          onClick={() => setBugMonitorWorkspaceBrowserDir(entryPath)}
+                        >
+                          <i data-lucide="folder-open"></i>
+                          <span className="min-w-0">
+                            <span className="block truncate">
+                              {String(entry?.name || entry?.path || "")}
+                            </span>
+                            {hint ? <span className="tcp-subtle block text-xs">{hint}</span> : null}
+                          </span>
+                        </button>
+                      );
+                    })
                   ) : (
                     <EmptyState
                       text={

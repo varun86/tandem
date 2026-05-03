@@ -28,6 +28,31 @@ Use this when an external app, CI job, or long-running agent writes logs that sh
 7. Create a scoped intake key if CI or another external service needs to report directly.
 8. Keep `auto_create_new_issues` and `require_approval_for_new_issues` aligned with your team's policy.
 
+## Hosted Workspace Layout
+
+Hosted Tandem installs share the same checked-out repositories between Coder and Bug Monitor.
+
+Use Coder's `Sync repo` action first, then set Bug Monitor's local directory to the synced repo folder:
+
+```text
+/workspace/repos/<repo-name>
+```
+
+For example, the `frumu-ai/tandem` repo should use:
+
+```text
+/workspace/repos/tandem
+```
+
+Other hosted paths are for runtime state:
+
+| Path                           | Purpose                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `/workspace/repos`             | Shared source checkouts created by Coder sync.                                  |
+| `/workspace/repos/<repo-name>` | The repo folder Bug Monitor should inspect.                                     |
+| `/workspace/aca/repos`         | Compatibility mount for ACA/Coder internals; it points at the same repo volume. |
+| `/workspace/tandem-data`       | Runtime config, incidents, drafts, logs, and state; not the source checkout.    |
+
 ## Monitored Project Config
 
 Minimal example:

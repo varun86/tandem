@@ -404,6 +404,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Inspect failure report and affected area",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
+        "workspace_root": resolved_workspace_root,
         "summary": draft.title,
         "detail": draft.detail,
         "duplicate_matches": duplicate_matches,
@@ -420,6 +421,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Research likely root cause and related failures",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
+        "workspace_root": resolved_workspace_root,
         "depends_on": "inspect_failure_report",
         "research_requirements": {
             "search_repo": true,
@@ -440,6 +442,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Validate or reproduce failure scope",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
+        "workspace_root": resolved_workspace_root,
         "depends_on": "research_likely_root_cause",
         "validation_requirements": {
             "confirm_failure_scope": true,
@@ -454,6 +457,7 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         "title": "Propose fix and verification plan",
         "draft_id": draft.draft_id,
         "repo": draft.repo,
+        "workspace_root": resolved_workspace_root,
         "depends_on": "validate_failure_scope",
         "proposal_requirements": {
             "suspected_root_cause": true,

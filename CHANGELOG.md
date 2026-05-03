@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - Unreleased
+## [0.5.1] - Released 2026-05-03
 
 ### Added
 
@@ -16,12 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bug Monitor triage receives explicit repo-root inputs**: Automation V2-backed Bug Monitor triage nodes now carry the resolved `workspace_root` in node inputs and prompt guidance, making local source reads target the selected repo checkout instead of relying on implicit workspace context.
+- **Bug Monitor setup explains hosted repo layout**: The control panel now shows a hosted path map for Bug Monitor, quick actions for `/workspace/repos/<repo>`, setup warnings for parent/runtime-state folders, and Coder sync hints so operators know which checkout Bug Monitor will inspect.
 - **Bug Monitor triage is project-aware**: Triage run creation now prefers the linked incident or monitored project `workspace_root`, `model_policy`, and `mcp_server` before falling back to global Bug Monitor config, so external project failures are inspected in the correct repo/workspace.
 - **Bug Monitor config supports monitored projects**: The existing single-project/global config remains compatible, while `monitored_projects` can now define external repos, workspace roots, log sources, and project policy.
 - **Bug Monitor status exposes watcher health**: Status snapshots now include log watcher running state, enabled project/source counts, source health, offsets, file size, last poll/candidate/submission times, and source errors.
 
 ### Fixed
 
+- **Bug Monitor research retries missing concrete reads more reliably**: Triage research now gets an additional repair attempt when it searches the repo but fails to perform the required concrete source-file `read`, reducing blocked `no_concrete_reads` demo failures.
 - **External log paths fail closed**: Monitored log paths are validated under their configured workspace root, including symlink/absolute path escape rejection, before watcher polling.
 - **Split log lines keep correct evidence offsets**: Partial trailing lines now preserve their starting byte offset so failures spanning polls produce accurate evidence ranges.
 - **External project dedupe avoids cross-repo collisions**: Watcher-created incidents dedupe by `repo + fingerprint` instead of fingerprint alone.

@@ -2,7 +2,7 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.5.1 (Unreleased)
+## v0.5.1 (Released 2026-05-03)
 
 This release adds the first engine-native Bug Monitor intake path for external projects.
 
@@ -11,6 +11,10 @@ Bug Monitor can now watch configured local project log files without running a w
 External systems can also report failures through a scoped intake API instead of the full engine token. `POST /bug-monitor/intake/report` and `/failure-reporter/intake/report` accept reports authenticated by per-project intake keys. Keys are hash-stored, scoped to `bug_monitor:report`, cannot override the configured repo/workspace/model/MCP routing, and cannot authorize config changes, issue publishing, workflow execution, tools, or arbitrary file reads. Protected admin endpoints can create, list, and disable intake keys; raw keys are returned only at creation.
 
 Triage routing is now project-aware for these external incidents. Bug Monitor triage prefers the linked incident or monitored project workspace, model policy, and MCP server before falling back to the global Bug Monitor config, so external project failures are inspected in the correct repository context. Existing single-project Bug Monitor config remains compatible.
+
+Bug Monitor triage also now passes the resolved `workspace_root` into every Automation V2 triage node as explicit node input. Research guidance tells the agent to search inside that repo root and then call `read` on at least one concrete source file before finalizing, with an extra repair attempt when the required read evidence is missing. This prevents search-only triage attempts from blocking issue publication with `no_concrete_reads` after the repo has already been synced.
+
+The hosted control-panel setup flow now explains where source checkouts live. Coder sync hints and Bug Monitor settings point operators to `/workspace/repos/<repo-name>`, warn when they select `/workspace/repos`, `/workspace/aca/repos`, or `/workspace/tandem-data`, and show a ready state when the selected directory looks like the source checkout Bug Monitor should inspect.
 
 ## v0.5.0 (Released 2026-05-03)
 

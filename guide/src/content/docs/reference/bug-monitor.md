@@ -34,6 +34,8 @@ Bug Monitor can also watch local logs for projects outside a Tandem workflow. Co
 
 Use this path when CI, ACA, or another local service writes failures to JSON-lines or plaintext logs and should produce governed Bug Monitor incidents.
 
+On hosted installs, Coder and Bug Monitor share repositories under `/workspace/repos`. Sync the repo from the Coder page first, then set Bug Monitor's local directory to `/workspace/repos/<repo-name>` so triage can inspect the source tree. `/workspace/tandem-data` is runtime state, not source code.
+
 For setup steps, examples, and agent-facing guidance, see [Bug Monitor External Log Intake](../bug-monitor-external-log-intake/).
 
 ## TypeScript

@@ -57,7 +57,7 @@ fn bug_monitor_triage_output_contract(
             } else {
                 Vec::new()
             },
-            repair_budget: Some(1),
+            repair_budget: Some(2),
             session_text_recovery: Some("require_prewrite_satisfied".to_string()),
         }),
         schema: None,
@@ -121,7 +121,7 @@ pub(crate) fn normalize_bug_monitor_triage_output_contracts(spec: &mut crate::Au
 
 fn bug_monitor_triage_repo_evidence_guidance(artifact_type: &str) -> String {
     format!(
-        "Required output: valid completed JSON for `{artifact_type}` in the final response. Do not write Bug Monitor artifacts into the workspace; Tandem will store the accepted JSON in the global context-run artifact store. Before responding, you must perform a local repo evidence pass: call `codesearch`, `grep`, or `glob` for focused symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload, then call `read` on at least one concrete workspace source file discovered by that search. Search-only evidence is not enough. Do not claim local repo inspection if no workspace tool calls were made. Include `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, still read the closest Bug Monitor or automation source file and explain which searches were inconclusive. Do not finish with only generic diagnosis."
+        "Required output: valid completed JSON for `{artifact_type}` in the final response. Do not write Bug Monitor artifacts into the workspace; Tandem will store the accepted JSON in the global context-run artifact store. Before responding, you must perform a local repo evidence pass inside the configured `workspace_root` from Node Inputs: call `codesearch`, `grep`, or `glob` for focused symbols, node IDs, error strings, event names, artifact paths, and workflow IDs from the payload, then call `read` on at least one concrete workspace source file discovered by that search. Search-only evidence is not enough. Do not claim local repo inspection if no workspace tool calls were made. Include `workspace_root`, `search_queries_used`, `files_examined`, `file_references` with path and line/snippet when available, `likely_files_to_edit`, `affected_components`, `tool_evidence`, `uncertainty`, and `bounded_next_steps`. If no relevant code is found, still read the closest Bug Monitor or automation source file and explain which searches were inconclusive. Do not finish with only generic diagnosis."
     )
 }
 
@@ -134,8 +134,27 @@ fn bug_monitor_triage_node(
     context_artifact_path: &str,
     artifact_type: &str,
     _require_local_source_reads: bool,
+    workspace_root: Option<&str>,
     payload: serde_json::Value,
 ) -> crate::AutomationFlowNode {
+    let mut inputs = payload;
+    if let Some(workspace_root) = workspace_root
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(object) = inputs.as_object_mut() {
+            object.insert(
+                "workspace_root".to_string(),
+                serde_json::Value::String(workspace_root.to_string()),
+            );
+            object.insert(
+                "source_read_instruction".to_string(),
+                serde_json::Value::String(format!(
+                    "Use `{workspace_root}` as the repo root. After discovery, call `read` on at least one concrete source file under this directory before finalizing."
+                )),
+            );
+        }
+    }
     crate::AutomationFlowNode {
         node_id: node_id.to_string(),
         agent_id: agent_id.to_string(),
@@ -157,12 +176,13 @@ fn bug_monitor_triage_node(
         stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
         gate: None,
         metadata: Some(json!({
+            "inputs": inputs.clone(),
             "builder": {
                 "task_kind": artifact_type,
                 "title": objective,
                 "knowledge": {
                     "subject": objective,
-                    "payload": payload,
+                    "payload": inputs,
                 },
             },
             "bug_monitor": {
@@ -238,6 +258,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "artifacts/bug_monitor.inspection.json",
                     "bug_monitor_inspection",
                     false,
+                    workspace_root.as_deref(),
                     inspection_payload,
                 ),
                 bug_monitor_triage_node(
@@ -249,6 +270,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "artifacts/bug_monitor.research.json",
                     "bug_monitor_research",
                     true,
+                    workspace_root.as_deref(),
                     research_payload,
                 ),
                 bug_monitor_triage_node(
@@ -260,6 +282,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "artifacts/bug_monitor.validation.json",
                     "bug_monitor_validation",
                     true,
+                    workspace_root.as_deref(),
                     validation_payload,
                 ),
                 bug_monitor_triage_node(
@@ -271,6 +294,7 @@ pub(crate) fn bug_monitor_triage_spec(
                     "artifacts/bug_monitor.fix_proposal.json",
                     "bug_monitor_fix_proposal",
                     true,
+                    workspace_root.as_deref(),
                     fix_payload,
                 ),
             ],
@@ -758,6 +782,7 @@ mod bug_monitor_triage_spec_tests {
             inspect_enforcement.session_text_recovery.as_deref(),
             Some("require_prewrite_satisfied")
         );
+        assert_eq!(inspect_enforcement.repair_budget, Some(2));
         assert!(spec.flow.nodes.iter().all(|node| node
             .output_contract
             .as_ref()
@@ -770,13 +795,22 @@ mod bug_monitor_triage_spec_tests {
                     .required_evidence
                     .iter()
                     .any(|item| item == "local_source_reads"))));
+        assert!(spec.flow.nodes.iter().all(|node| {
+            node.metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("inputs"))
+                .and_then(|inputs| inputs.get("workspace_root"))
+                .and_then(serde_json::Value::as_str)
+                == Some("/tmp/workspace")
+        }));
         assert!(spec.flow.nodes.iter().all(|node| node
             .output_contract
             .as_ref()
             .and_then(|contract| contract.summary_guidance.as_deref())
             .is_some_and(|guidance| guidance.contains("search_queries_used")
                 && guidance.contains("file_references")
-                && guidance.contains("likely_files_to_edit"))));
+                && guidance.contains("likely_files_to_edit")
+                && guidance.contains("workspace_root"))));
     }
 
     fn record(
