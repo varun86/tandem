@@ -126,6 +126,14 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(disable_bug_monitor_intake_key),
         )
         .route(
+            "/bug-monitor/log-sources/{project_id}/{source_id}/reset-offset",
+            post(reset_bug_monitor_log_source_offset),
+        )
+        .route(
+            "/bug-monitor/log-sources/{project_id}/{source_id}/replay-latest",
+            post(replay_latest_bug_monitor_log_source_candidate),
+        )
+        .route(
             "/bug-monitor/drafts/{id}/triage-run",
             post(create_bug_monitor_triage_run),
         )

@@ -13,6 +13,12 @@ use crate::{
     BugMonitorSubmission,
 };
 
+#[derive(Debug, Clone)]
+pub struct BugMonitorLogReplayResult {
+    pub incident: BugMonitorIncidentRecord,
+    pub draft: Option<BugMonitorDraftRecord>,
+}
+
 pub async fn run_bug_monitor_log_watcher(state: AppState) {
     state
         .update_bug_monitor_log_watcher_status(|status| {
@@ -391,6 +397,115 @@ pub async fn submit_log_candidate(
     Ok(Some(draft))
 }
 
+pub async fn reset_log_source_offset(
+    state: &AppState,
+    project: &BugMonitorMonitoredProject,
+    source: &BugMonitorLogSource,
+    now_ms: u64,
+) -> anyhow::Result<BugMonitorLogSourceState> {
+    let absolute_path = resolve_log_source_path(project, source)?;
+    let metadata = fs::metadata(&absolute_path).await.ok();
+    let inode = metadata.as_ref().and_then(inode_for_metadata);
+    let mut source_state = state
+        .get_bug_monitor_log_source_state(&project.project_id, &source.source_id)
+        .await
+        .unwrap_or_else(|| BugMonitorLogSourceState {
+            project_id: project.project_id.clone(),
+            source_id: source.source_id.clone(),
+            ..BugMonitorLogSourceState::default()
+        });
+    source_state.path = absolute_path.display().to_string();
+    source_state.inode = inode;
+    source_state.offset = 0;
+    source_state.partial_line = None;
+    source_state.partial_line_offset_start = None;
+    source_state.last_line_hash = None;
+    source_state.recent_fingerprints.clear();
+    source_state.updated_at_ms = now_ms;
+    source_state.last_error = None;
+    source_state.consecutive_errors = 0;
+    let source_state = state
+        .put_bug_monitor_log_source_state(source_state.clone())
+        .await?;
+    let file_size = metadata.as_ref().map(|metadata| metadata.len());
+    state
+        .update_bug_monitor_log_watcher_status(|status| {
+            status.sources.retain(|row| {
+                !(row.project_id == source_state.project_id
+                    && row.source_id == source_state.source_id)
+            });
+            status.sources.push(status_from_state(
+                &source_state,
+                metadata.is_some(),
+                file_size,
+                None,
+                None,
+                None,
+            ));
+        })
+        .await;
+    Ok(source_state)
+}
+
+pub async fn replay_latest_log_source_candidate(
+    state: &AppState,
+    project: &BugMonitorMonitoredProject,
+    source: &BugMonitorLogSource,
+) -> anyhow::Result<Option<BugMonitorLogReplayResult>> {
+    let Some(incident) =
+        latest_bug_monitor_incident_by_log_source(state, &project.project_id, &source.source_id)
+            .await
+    else {
+        return Ok(None);
+    };
+    let payload = incident
+        .event_payload
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("latest log-source incident has no event payload"))?;
+    let offset_start = payload
+        .get("offset_start")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("latest log-source incident has no offset_start"))?;
+    let offset_end = payload
+        .get("offset_end")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("latest log-source incident has no offset_end"))?;
+    if offset_end <= offset_start {
+        anyhow::bail!("latest log-source incident has invalid offsets");
+    }
+
+    let absolute_path = resolve_log_source_path(project, source)?;
+    let metadata = fs::metadata(&absolute_path)
+        .await
+        .with_context(|| format!("failed to stat log file {}", absolute_path.display()))?;
+    if metadata.len() < offset_end {
+        anyhow::bail!("latest log-source incident offsets exceed current log file size");
+    }
+    let inode = inode_for_metadata(&metadata);
+    let mut file = fs::File::open(&absolute_path).await?;
+    file.seek(std::io::SeekFrom::Start(offset_start)).await?;
+    let read_len = offset_end.saturating_sub(offset_start);
+    let mut bytes = vec![0; read_len as usize];
+    file.read_exact(&mut bytes).await?;
+    let parse_result = crate::bug_monitor::log_parser::parse_log_candidates(
+        project,
+        source,
+        &absolute_path,
+        inode,
+        offset_start,
+        &bytes,
+        None,
+        None,
+    );
+    let Some(candidate) = parse_result.candidates.into_iter().find(|candidate| {
+        candidate.offset_start == offset_start && candidate.offset_end == offset_end
+    }) else {
+        anyhow::bail!("latest log-source incident offsets no longer parse to a candidate");
+    };
+    let draft = submit_log_candidate(state, project, source, candidate).await?;
+    Ok(Some(BugMonitorLogReplayResult { incident, draft }))
+}
+
 pub fn resolve_log_source_path(
     project: &BugMonitorMonitoredProject,
     source: &BugMonitorLogSource,
@@ -428,6 +543,37 @@ async fn latest_bug_monitor_incident_by_repo_fingerprint(
         .await
         .values()
         .filter(|row| row.repo == repo && row.fingerprint == fingerprint)
+        .max_by_key(|row| row.updated_at_ms)
+        .cloned()
+}
+
+async fn latest_bug_monitor_incident_by_log_source(
+    state: &AppState,
+    project_id: &str,
+    source_id: &str,
+) -> Option<BugMonitorIncidentRecord> {
+    state
+        .bug_monitor_incidents
+        .read()
+        .await
+        .values()
+        .filter(|row| {
+            row.event_payload.as_ref().is_some_and(|payload| {
+                payload
+                    .get("project_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value == project_id)
+                    && payload
+                        .get("source_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value == source_id)
+                    && payload
+                        .get("offset_start")
+                        .and_then(Value::as_u64)
+                        .is_some()
+                    && payload.get("offset_end").and_then(Value::as_u64).is_some()
+            })
+        })
         .max_by_key(|row| row.updated_at_ms)
         .cloned()
 }
@@ -627,5 +773,101 @@ mod tests {
             incidents[0].workspace_root,
             dir.path().display().to_string()
         );
+    }
+
+    #[tokio::test]
+    async fn reset_offset_replays_from_beginning_for_end_source() {
+        let dir = tempdir().unwrap();
+        let state_dir = tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(&logs).await.unwrap();
+        let log_path = logs.join("app.log");
+        fs::write(
+            &log_path,
+            "ERROR boot failed\n    at boot src/main.ts:1:1\n",
+        )
+        .await
+        .unwrap();
+
+        let state = test_state(state_dir.path());
+        let project = project(dir.path());
+        state
+            .put_bug_monitor_config(BugMonitorConfig {
+                enabled: true,
+                monitored_projects: vec![project.clone()],
+                ..BugMonitorConfig::default()
+            })
+            .await
+            .unwrap();
+
+        let first = poll_log_source_once(&state, &project, &source(), 1_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.offset,
+            "ERROR boot failed\n    at boot src/main.ts:1:1\n".len() as u64
+        );
+        assert_eq!(state.list_bug_monitor_incidents(10).await.len(), 0);
+
+        let reset = reset_log_source_offset(&state, &project, &source(), 2_000)
+            .await
+            .unwrap();
+        assert_eq!(reset.offset, 0);
+        assert!(reset.inode.is_some());
+
+        let second = poll_log_source_once(&state, &project, &source(), 3_000)
+            .await
+            .unwrap();
+        assert_eq!(second.total_submitted, 1);
+        assert_eq!(state.list_bug_monitor_drafts(10).await.len(), 1);
+        assert_eq!(state.list_bug_monitor_incidents(10).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn replay_latest_candidate_uses_stored_log_offsets() {
+        let dir = tempdir().unwrap();
+        let state_dir = tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(&logs).await.unwrap();
+        let log_path = logs.join("app.log");
+        fs::write(
+            &log_path,
+            "ERROR upload failed\n    at normalize src/uploads.ts:42:1\n",
+        )
+        .await
+        .unwrap();
+
+        let state = test_state(state_dir.path());
+        let project = project(dir.path());
+        let mut replay_source = source();
+        replay_source.start_position = BugMonitorLogStartPosition::Beginning;
+        state
+            .put_bug_monitor_config(BugMonitorConfig {
+                enabled: true,
+                monitored_projects: vec![BugMonitorMonitoredProject {
+                    log_sources: vec![replay_source.clone()],
+                    ..project.clone()
+                }],
+                ..BugMonitorConfig::default()
+            })
+            .await
+            .unwrap();
+
+        let first = poll_log_source_once(&state, &project, &replay_source, 1_000)
+            .await
+            .unwrap();
+        assert_eq!(first.total_submitted, 1);
+        let before = state.list_bug_monitor_incidents(10).await;
+        assert_eq!(before.len(), 1);
+
+        let replay = replay_latest_log_source_candidate(&state, &project, &replay_source)
+            .await
+            .unwrap()
+            .expect("replayable latest candidate");
+        assert_eq!(replay.incident.incident_id, before[0].incident_id);
+        assert!(replay.draft.is_some());
+        let after = state.list_bug_monitor_incidents(10).await;
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].occurrence_count, 2);
     }
 }

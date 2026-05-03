@@ -1,0 +1,449 @@
+import { Badge } from "../ui/index.tsx";
+import { EmptyState } from "../pages/ui";
+import { useMemo, useState } from "react";
+
+export type BugMonitorLogSourceDraft = {
+  source_id?: string;
+  path?: string;
+  format?: string;
+  minimum_level?: string;
+  watch_interval_seconds?: number;
+  enabled?: boolean;
+  paused?: boolean;
+  start_position?: string;
+  max_bytes_per_poll?: number;
+  max_candidates_per_poll?: number;
+  fingerprint_cooldown_ms?: number;
+};
+
+export type BugMonitorMonitoredProjectDraft = {
+  project_id?: string;
+  name?: string;
+  enabled?: boolean;
+  paused?: boolean;
+  repo?: string;
+  workspace_root?: string;
+  mcp_server?: string | null;
+  model_policy?: Record<string, unknown> | null;
+  auto_create_new_issues?: boolean;
+  require_approval_for_new_issues?: boolean;
+  auto_comment_on_matched_open_issues?: boolean;
+  log_sources?: BugMonitorLogSourceDraft[];
+};
+
+export type BugMonitorLogSourceRuntimeStatusDraft = {
+  project_id?: string;
+  source_id?: string;
+  path?: string;
+  healthy?: boolean;
+  offset?: number;
+  inode?: string | null;
+  file_size?: number | null;
+  last_poll_at_ms?: number | null;
+  last_candidate_at_ms?: number | null;
+  last_submitted_at_ms?: number | null;
+  last_error?: string | null;
+  consecutive_errors?: number;
+  total_bytes_read?: number;
+  total_candidates?: number;
+  total_submitted?: number;
+};
+
+export type BugMonitorLogWatcherStatusDraft = {
+  running?: boolean;
+  enabled_projects?: number;
+  enabled_sources?: number;
+  last_poll_at_ms?: number | null;
+  last_error?: string | null;
+  sources?: BugMonitorLogSourceRuntimeStatusDraft[];
+};
+
+export type BugMonitorProjectIntakeKeyDraft = {
+  key_id?: string;
+  project_id?: string;
+  name?: string;
+  key_hash?: string;
+  enabled?: boolean;
+  scopes?: string[];
+  created_at_ms?: number | null;
+  last_used_at_ms?: number | null;
+};
+
+function formatOptionalTime(value: unknown): string {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "never";
+  return new Date(numeric).toLocaleString();
+}
+
+function formatOptionalBytes(value: unknown): string {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "0 B";
+  if (numeric < 1024) return `${numeric} B`;
+  if (numeric < 1024 * 1024) return `${(numeric / 1024).toFixed(1)} KB`;
+  return `${(numeric / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sourceKey(projectId: string, sourceId: string): string {
+  return `${projectId || "project"}::${sourceId || "source"}`;
+}
+
+export function BugMonitorExternalProjectsPanel({
+  projects,
+  watcher,
+  projectsJson,
+  projectsJsonError,
+  intakeKeys,
+  createdRawKey,
+  isCreatingKey,
+  disablingKeyId,
+  resettingSourceKey,
+  replayingSourceKey,
+  onProjectsJsonChange,
+  onCreateKey,
+  onDisableKey,
+  onClearCreatedRawKey,
+  onResetSourceOffset,
+  onReplayLatestSourceCandidate,
+}: {
+  projects: BugMonitorMonitoredProjectDraft[];
+  watcher: BugMonitorLogWatcherStatusDraft;
+  projectsJson: string;
+  projectsJsonError: string;
+  intakeKeys: BugMonitorProjectIntakeKeyDraft[];
+  createdRawKey: string;
+  isCreatingKey: boolean;
+  disablingKeyId: string;
+  resettingSourceKey: string;
+  replayingSourceKey: string;
+  onProjectsJsonChange: (value: string) => void;
+  onCreateKey: (input: { project_id: string; name: string }) => void;
+  onDisableKey: (keyId: string) => void;
+  onClearCreatedRawKey: () => void;
+  onResetSourceOffset: (input: { project_id: string; source_id: string }) => void;
+  onReplayLatestSourceCandidate: (input: { project_id: string; source_id: string }) => void;
+}) {
+  const [newKeyProjectId, setNewKeyProjectId] = useState("");
+  const [newKeyName, setNewKeyName] = useState("external reporter");
+  const sources = Array.isArray(watcher.sources) ? watcher.sources : [];
+  const statusBySource = new Map(
+    sources.map((source) => [
+      sourceKey(String(source.project_id || ""), String(source.source_id || "")),
+      source,
+    ])
+  );
+  const enabledProjectCount = Number(watcher.enabled_projects || 0);
+  const enabledSourceCount = Number(watcher.enabled_sources || 0);
+  const projectOptions = useMemo(
+    () =>
+      projects
+        .map((project, index) => ({
+          id: String(project.project_id || `project-${index + 1}`).trim(),
+          label: String(project.name || project.project_id || `project-${index + 1}`).trim(),
+        }))
+        .filter((project) => project.id),
+    [projects]
+  );
+  const selectedNewKeyProjectId = newKeyProjectId || projectOptions[0]?.id || "";
+
+  return (
+    <div className="grid gap-3 rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-medium">External project log intake</div>
+          <div className="tcp-subtle text-xs">
+            Configure monitored projects as JSON, then watch source health here after saving.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={watcher.running ? "ok" : enabledSourceCount ? "warn" : "info"}>
+            {watcher.running ? "Watcher running" : "Watcher idle"}
+          </Badge>
+          <Badge tone={enabledProjectCount ? "info" : "warn"}>{enabledProjectCount} projects</Badge>
+          <Badge tone={enabledSourceCount ? "info" : "warn"}>{enabledSourceCount} sources</Badge>
+        </div>
+      </div>
+
+      {watcher.last_error ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+          {watcher.last_error}
+        </div>
+      ) : null}
+
+      <label className="grid gap-2">
+        <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Monitored projects</span>
+        <textarea
+          className="tcp-input min-h-48 font-mono text-xs"
+          value={projectsJson}
+          onChange={(event) => onProjectsJsonChange(event.currentTarget.value)}
+          spellCheck={false}
+          placeholder='[{"project_id":"aca","repo":"owner/repo","workspace_root":"/path/to/repo","log_sources":[{"source_id":"ci","path":"logs/ci.jsonl"}]}]'
+        />
+        <div className={projectsJsonError ? "text-xs text-amber-200" : "tcp-subtle text-xs"}>
+          {projectsJsonError ||
+            "This PATCH payload is validated by the engine. Paths must stay under each workspace root."}
+        </div>
+      </label>
+
+      {projects.length ? (
+        <div className="grid gap-2">
+          {projects.map((project, index) => {
+            const projectId = String(project.project_id || `project-${index + 1}`);
+            const logSources = Array.isArray(project.log_sources) ? project.log_sources : [];
+            return (
+              <div key={projectId} className="tcp-list-item">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{project.name || projectId}</div>
+                    <div className="tcp-subtle text-xs">
+                      {project.repo || "repo not set"} ·{" "}
+                      {project.workspace_root || "workspace not set"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone={project.enabled === false || project.paused ? "warn" : "ok"}>
+                      {project.enabled === false
+                        ? "Disabled"
+                        : project.paused
+                          ? "Paused"
+                          : "Enabled"}
+                    </Badge>
+                    <Badge tone="info">{logSources.length} log sources</Badge>
+                  </div>
+                </div>
+                <div className="tcp-subtle mt-2 text-xs">
+                  MCP: {project.mcp_server || "global default"} · Posting:{" "}
+                  {project.require_approval_for_new_issues
+                    ? "manual approval"
+                    : project.auto_create_new_issues === false
+                      ? "draft only"
+                      : "auto-create enabled"}
+                </div>
+                {logSources.length ? (
+                  <div className="mt-3 grid gap-2">
+                    {logSources.map((source, sourceIndex) => {
+                      const sourceId = String(source.source_id || `source-${sourceIndex + 1}`);
+                      const rowSourceKey = sourceKey(projectId, sourceId);
+                      const status = statusBySource.get(sourceKey(projectId, sourceId));
+                      return (
+                        <div
+                          key={`${projectId}-${sourceId}`}
+                          className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-medium">{sourceId}</div>
+                              <div className="tcp-subtle text-xs">
+                                {source.path || "path not set"}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge
+                                tone={
+                                  source.enabled === false || source.paused
+                                    ? "warn"
+                                    : status?.healthy === false
+                                      ? "warn"
+                                      : status
+                                        ? "ok"
+                                        : "info"
+                                }
+                              >
+                                {source.enabled === false
+                                  ? "Disabled"
+                                  : source.paused
+                                    ? "Paused"
+                                    : status?.healthy === false
+                                      ? "Unhealthy"
+                                      : status
+                                        ? "Healthy"
+                                        : "Waiting"}
+                              </Badge>
+                              <Badge tone="info">{source.format || "auto"}</Badge>
+                              <Badge tone="info">{source.minimum_level || "error"}+</Badge>
+                            </div>
+                          </div>
+                          <div className="tcp-subtle mt-2 grid gap-1 text-xs md:grid-cols-2">
+                            <div>Offset: {Number(status?.offset || 0).toLocaleString()} bytes</div>
+                            <div>File size: {formatOptionalBytes(status?.file_size)}</div>
+                            <div>Last poll: {formatOptionalTime(status?.last_poll_at_ms)}</div>
+                            <div>
+                              Last candidate: {formatOptionalTime(status?.last_candidate_at_ms)}
+                            </div>
+                            <div>Total candidates: {Number(status?.total_candidates || 0)}</div>
+                            <div>Total submitted: {Number(status?.total_submitted || 0)}</div>
+                          </div>
+                          {status?.last_error ? (
+                            <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-100">
+                              {status.last_error}
+                            </div>
+                          ) : null}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="tcp-btn"
+                              disabled={resettingSourceKey === rowSourceKey}
+                              onClick={() =>
+                                onResetSourceOffset({
+                                  project_id: projectId,
+                                  source_id: sourceId,
+                                })
+                              }
+                            >
+                              Reset offset
+                            </button>
+                            <button
+                              type="button"
+                              className="tcp-btn"
+                              disabled={replayingSourceKey === rowSourceKey}
+                              onClick={() =>
+                                onReplayLatestSourceCandidate({
+                                  project_id: projectId,
+                                  source_id: sourceId,
+                                })
+                              }
+                            >
+                              Replay latest
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="tcp-subtle mt-3 text-xs">No log sources configured.</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyState text="No external projects configured yet. Paste a monitored_projects JSON array above and save." />
+      )}
+
+      <div className="grid gap-3 rounded-xl border border-slate-700/60 bg-slate-950/30 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="font-medium">Scoped intake keys</div>
+            <div className="tcp-subtle text-xs">
+              Create project-limited keys for CI or external reporters. Raw keys are shown once.
+            </div>
+          </div>
+          <Badge tone={intakeKeys.length ? "info" : "warn"}>{intakeKeys.length} keys</Badge>
+        </div>
+
+        {createdRawKey ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <div className="text-sm font-medium text-emerald-100">New raw key</div>
+            <div className="tcp-subtle mt-1 text-xs">
+              Store this now. Tandem only keeps the hash after creation.
+            </div>
+            <pre className="tcp-code mt-2 overflow-auto whitespace-pre-wrap break-all text-xs">
+              {createdRawKey}
+            </pre>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="tcp-btn"
+                onClick={() => navigator.clipboard?.writeText(createdRawKey)}
+              >
+                Copy
+              </button>
+              <button type="button" className="tcp-btn" onClick={onClearCreatedRawKey}>
+                Hide
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+          <label className="grid gap-1">
+            <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Project</span>
+            <select
+              className="tcp-input"
+              value={selectedNewKeyProjectId}
+              onChange={(event) => setNewKeyProjectId(event.currentTarget.value)}
+              disabled={!projectOptions.length}
+            >
+              {projectOptions.length ? (
+                projectOptions.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.label}
+                  </option>
+                ))
+              ) : (
+                <option value="">Configure a project first</option>
+              )}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Key name</span>
+            <input
+              className="tcp-input"
+              value={newKeyName}
+              onChange={(event) => setNewKeyName(event.currentTarget.value)}
+              placeholder="ci reporter"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="tcp-btn-primary w-full"
+              disabled={!selectedNewKeyProjectId || !newKeyName.trim() || isCreatingKey}
+              onClick={() =>
+                onCreateKey({
+                  project_id: selectedNewKeyProjectId,
+                  name: newKeyName.trim(),
+                })
+              }
+            >
+              Create key
+            </button>
+          </div>
+        </div>
+
+        {intakeKeys.length ? (
+          <div className="grid gap-2">
+            {intakeKeys.map((key) => {
+              const keyId = String(key.key_id || "");
+              return (
+                <div key={keyId || `${key.project_id}-${key.name}`} className="tcp-list-item">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{key.name || keyId || "intake key"}</div>
+                      <div className="tcp-subtle text-xs">
+                        {key.project_id || "unknown project"} ·{" "}
+                        {(key.scopes || ["bug_monitor:report"]).join(", ")}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={key.enabled === false ? "warn" : "ok"}>
+                        {key.enabled === false ? "Disabled" : "Enabled"}
+                      </Badge>
+                      {key.enabled !== false && keyId ? (
+                        <button
+                          type="button"
+                          className="tcp-btn-danger"
+                          disabled={disablingKeyId === keyId}
+                          onClick={() => onDisableKey(keyId)}
+                        >
+                          Disable
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="tcp-subtle mt-2 grid gap-1 text-xs md:grid-cols-2">
+                    <div>Created: {formatOptionalTime(key.created_at_ms)}</div>
+                    <div>Last used: {formatOptionalTime(key.last_used_at_ms)}</div>
+                    <div className="md:col-span-2">Hash: {key.key_hash || "[redacted]"}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyState text="No scoped intake keys yet." />
+        )}
+      </div>
+    </div>
+  );
+}

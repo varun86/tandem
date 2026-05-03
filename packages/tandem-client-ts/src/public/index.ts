@@ -889,11 +889,38 @@ export interface BugMonitorConfigResponse {
   bug_monitor: BugMonitorConfigRow;
 }
 
+export interface BugMonitorLogSourceRuntimeStatus {
+  project_id?: string;
+  source_id?: string;
+  path?: string;
+  healthy?: boolean;
+  offset?: number;
+  inode?: string | null;
+  file_size?: number | null;
+  last_poll_at_ms?: number | null;
+  last_candidate_at_ms?: number | null;
+  last_submitted_at_ms?: number | null;
+  last_error?: string | null;
+  consecutive_errors?: number;
+  total_bytes_read?: number;
+  total_candidates?: number;
+  total_submitted?: number;
+}
+
+export interface BugMonitorLogWatcherStatus {
+  running?: boolean;
+  enabled_projects?: number;
+  enabled_sources?: number;
+  last_poll_at_ms?: number | null;
+  last_error?: string | null;
+  sources?: BugMonitorLogSourceRuntimeStatus[];
+}
+
 export interface BugMonitorStatusRow {
   config?: BugMonitorConfigRow;
   readiness?: Record<string, boolean>;
   runtime?: JsonObject;
-  log_watcher?: JsonObject;
+  log_watcher?: BugMonitorLogWatcherStatus;
   required_capabilities?: Record<string, boolean>;
   missing_required_capabilities?: string[];
   resolved_capabilities?: JsonObject[];
@@ -1012,6 +1039,37 @@ export interface BugMonitorPostRecord {
 export interface BugMonitorPostListResponse {
   posts: BugMonitorPostRecord[];
   count: number;
+}
+
+export interface BugMonitorIntakeKeyRecord {
+  key_id: string;
+  project_id: string;
+  name: string;
+  key_hash?: string;
+  enabled?: boolean;
+  scopes?: string[];
+  created_at_ms?: number | null;
+  last_used_at_ms?: number | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorIntakeKeyListResponse {
+  keys: BugMonitorIntakeKeyRecord[];
+}
+
+export interface BugMonitorIntakeKeyCreateInput {
+  project_id: string;
+  name: string;
+  scopes?: string[];
+}
+
+export interface BugMonitorIntakeKeyCreateResponse {
+  key: BugMonitorIntakeKeyRecord;
+  raw_key: string;
+}
+
+export interface BugMonitorIntakeKeyDisableResponse {
+  key: BugMonitorIntakeKeyRecord;
 }
 
 // ─── Packs + Capabilities ────────────────────────────────────────────────────

@@ -1576,6 +1576,118 @@ pub(super) async fn disable_bug_monitor_intake_key(
     }
 }
 
+pub(super) async fn reset_bug_monitor_log_source_offset(
+    State(state): State<AppState>,
+    Path((project_id, source_id)): Path<(String, String)>,
+) -> Response {
+    let Some((project, source)) =
+        configured_bug_monitor_log_source(&state, &project_id, &source_id).await
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Bug Monitor log source not found",
+                "code": "BUG_MONITOR_LOG_SOURCE_NOT_FOUND",
+            })),
+        )
+            .into_response();
+    };
+    match crate::bug_monitor::log_watcher::reset_log_source_offset(
+        &state,
+        &project,
+        &source,
+        crate::now_ms(),
+    )
+    .await
+    {
+        Ok(source_state) => Json(json!({
+            "project_id": project.project_id,
+            "source_id": source.source_id,
+            "state": source_state,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to reset Bug Monitor log source offset",
+                "code": "BUG_MONITOR_LOG_SOURCE_RESET_FAILED",
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+pub(super) async fn replay_latest_bug_monitor_log_source_candidate(
+    State(state): State<AppState>,
+    Path((project_id, source_id)): Path<(String, String)>,
+) -> Response {
+    let Some((project, source)) =
+        configured_bug_monitor_log_source(&state, &project_id, &source_id).await
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Bug Monitor log source not found",
+                "code": "BUG_MONITOR_LOG_SOURCE_NOT_FOUND",
+            })),
+        )
+            .into_response();
+    };
+    match crate::bug_monitor::log_watcher::replay_latest_log_source_candidate(
+        &state, &project, &source,
+    )
+    .await
+    {
+        Ok(Some(result)) => Json(json!({
+            "project_id": project.project_id,
+            "source_id": source.source_id,
+            "incident": result.incident,
+            "draft": result.draft,
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "No replayable Bug Monitor log candidate was found for this source",
+                "code": "BUG_MONITOR_LOG_SOURCE_REPLAY_NOT_FOUND",
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to replay latest Bug Monitor log source candidate",
+                "code": "BUG_MONITOR_LOG_SOURCE_REPLAY_FAILED",
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn configured_bug_monitor_log_source(
+    state: &AppState,
+    project_id: &str,
+    source_id: &str,
+) -> Option<(
+    crate::BugMonitorMonitoredProject,
+    crate::BugMonitorLogSource,
+)> {
+    let config = state.bug_monitor_config().await;
+    let project = config
+        .monitored_projects
+        .iter()
+        .find(|project| project.project_id == project_id)?
+        .clone();
+    let source = project
+        .log_sources
+        .iter()
+        .find(|source| source.source_id == source_id)?
+        .clone();
+    Some((project, source))
+}
+
 pub(super) async fn approve_bug_monitor_draft(
     State(state): State<AppState>,
     Path(id): Path<String>,

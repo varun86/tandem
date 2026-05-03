@@ -81,6 +81,10 @@ import type {
   BugMonitorDraftRecord,
   BugMonitorDraftListResponse,
   BugMonitorPostListResponse,
+  BugMonitorIntakeKeyCreateInput,
+  BugMonitorIntakeKeyCreateResponse,
+  BugMonitorIntakeKeyDisableResponse,
+  BugMonitorIntakeKeyListResponse,
   CoderGithubProjectInboxResponse,
   CoderGithubProjectIntakeResponse,
   CoderRunRecord,
@@ -798,6 +802,26 @@ class BugMonitor {
   async listPosts(options?: { limit?: number }): Promise<BugMonitorPostListResponse> {
     const qs = options?.limit !== undefined ? `?limit=${options.limit}` : "";
     return this.req<BugMonitorPostListResponse>(`/bug-monitor/posts${qs}`);
+  }
+
+  async listIntakeKeys(): Promise<BugMonitorIntakeKeyListResponse> {
+    return this.req<BugMonitorIntakeKeyListResponse>("/bug-monitor/intake/keys");
+  }
+
+  async createIntakeKey(
+    input: BugMonitorIntakeKeyCreateInput
+  ): Promise<BugMonitorIntakeKeyCreateResponse> {
+    return this.req<BugMonitorIntakeKeyCreateResponse>("/bug-monitor/intake/keys", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async disableIntakeKey(id: string): Promise<BugMonitorIntakeKeyDisableResponse> {
+    return this.req<BugMonitorIntakeKeyDisableResponse>(
+      `/bug-monitor/intake/keys/${encodeURIComponent(id)}/disable`,
+      { method: "POST" }
+    );
   }
 
   async getDraft(id: string): Promise<BugMonitorDraftRecord> {

@@ -6,6 +6,12 @@ import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { McpToolAllowlistEditor } from "../components/McpToolAllowlistEditor";
+import {
+  BugMonitorExternalProjectsPanel,
+  type BugMonitorLogWatcherStatusDraft,
+  type BugMonitorMonitoredProjectDraft,
+  type BugMonitorProjectIntakeKeyDraft,
+} from "../components/BugMonitorExternalProjectsPanel";
 import { normalizeMcpNamespaceSegment } from "../features/mcp/mcpTools";
 import {
   AnimatedPage,
@@ -249,32 +255,7 @@ type BugMonitorConfigRow = {
   require_approval_for_new_issues?: boolean;
   auto_comment_on_matched_open_issues?: boolean;
   label_mode?: string | null;
-  monitored_projects?: Array<{
-    project_id?: string;
-    name?: string;
-    enabled?: boolean;
-    paused?: boolean;
-    repo?: string;
-    workspace_root?: string;
-    mcp_server?: string | null;
-    model_policy?: Record<string, unknown> | null;
-    auto_create_new_issues?: boolean;
-    require_approval_for_new_issues?: boolean;
-    auto_comment_on_matched_open_issues?: boolean;
-    log_sources?: Array<{
-      source_id?: string;
-      path?: string;
-      format?: string;
-      minimum_level?: string;
-      watch_interval_seconds?: number;
-      enabled?: boolean;
-      paused?: boolean;
-      start_position?: string;
-      max_bytes_per_poll?: number;
-      max_candidates_per_poll?: number;
-      fingerprint_cooldown_ms?: number;
-    }>;
-  }>;
+  monitored_projects?: BugMonitorMonitoredProjectDraft[];
 };
 
 type BugMonitorStatusRow = {
@@ -289,7 +270,7 @@ type BugMonitorStatusRow = {
     last_incident_event_type?: string | null;
     last_runtime_error?: string | null;
   };
-  log_watcher?: Record<string, unknown>;
+  log_watcher?: BugMonitorLogWatcherStatusDraft;
   required_capabilities?: Record<string, boolean>;
   missing_required_capabilities?: string[];
   resolved_capabilities?: Array<{
@@ -1171,6 +1152,12 @@ export function SettingsPage({
   const [bugMonitorAutoCreateIssues, setBugMonitorAutoCreateIssues] = useState(true);
   const [bugMonitorRequireApproval, setBugMonitorRequireApproval] = useState(false);
   const [bugMonitorAutoComment, setBugMonitorAutoComment] = useState(true);
+  const [bugMonitorMonitoredProjectsJson, setBugMonitorMonitoredProjectsJson] = useState("[]");
+  const [bugMonitorMonitoredProjectsError, setBugMonitorMonitoredProjectsError] = useState("");
+  const [bugMonitorCreatedIntakeKey, setBugMonitorCreatedIntakeKey] = useState("");
+  const [bugMonitorDisablingIntakeKeyId, setBugMonitorDisablingIntakeKeyId] = useState("");
+  const [bugMonitorResettingSourceKey, setBugMonitorResettingSourceKey] = useState("");
+  const [bugMonitorReplayingSourceKey, setBugMonitorReplayingSourceKey] = useState("");
   const [worktreeCleanupRepoRoot, setWorktreeCleanupRepoRoot] = useState("");
   const [worktreeCleanupDryRun, setWorktreeCleanupDryRun] = useState(false);
   const [worktreeCleanupPulse, setWorktreeCleanupPulse] = useState(0);
@@ -1531,6 +1518,14 @@ export function SettingsPage({
       })),
     refetchInterval: 15_000,
   });
+  const bugMonitorIntakeKeysQuery = useQuery({
+    queryKey: ["settings", "bug-monitor", "intake-keys"],
+    queryFn: () =>
+      api("/api/engine/bug-monitor/intake/keys", { method: "GET" }).catch(() => ({
+        keys: [],
+      })),
+    refetchInterval: 30_000,
+  });
   const bugMonitorWorkspaceBrowserQuery = useQuery({
     queryKey: ["settings", "bug-monitor", "workspace-browser", bugMonitorWorkspaceBrowserDir],
     enabled: bugMonitorWorkspaceBrowserOpen && !!bugMonitorWorkspaceBrowserDir,
@@ -1656,8 +1651,22 @@ export function SettingsPage({
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
   const saveBugMonitorMutation = useMutation({
-    mutationFn: async () =>
-      api("/api/engine/config/bug-monitor", {
+    mutationFn: async () => {
+      let monitoredProjects: BugMonitorMonitoredProjectDraft[] = [];
+      try {
+        const parsed = JSON.parse(bugMonitorMonitoredProjectsJson || "[]");
+        if (!Array.isArray(parsed)) {
+          throw new Error("monitored_projects must be a JSON array");
+        }
+        monitoredProjects = parsed as BugMonitorMonitoredProjectDraft[];
+        setBugMonitorMonitoredProjectsError("");
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "monitored_projects JSON is invalid";
+        setBugMonitorMonitoredProjectsError(message);
+        throw new Error(message);
+      }
+      return api("/api/engine/config/bug-monitor", {
         method: "PATCH",
         body: JSON.stringify({
           bug_monitor: {
@@ -1680,9 +1689,11 @@ export function SettingsPage({
             require_approval_for_new_issues: bugMonitorRequireApproval,
             auto_comment_on_matched_open_issues: bugMonitorAutoComment,
             label_mode: "reporter_only",
+            monitored_projects: monitoredProjects,
           },
         }),
-      }),
+      });
+    },
     onSuccess: async () => {
       toast("ok", "Bug Monitor settings saved.");
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["settings", "bug-monitor"] })]);
@@ -1710,6 +1721,93 @@ export function SettingsPage({
         error instanceof Error ? error.message : String(error?.detail || error?.error || error);
       toast("err", detail);
     },
+  });
+  const createBugMonitorIntakeKeyMutation = useMutation({
+    mutationFn: async (input: { project_id: string; name: string }) =>
+      api("/api/engine/bug-monitor/intake/keys", {
+        method: "POST",
+        body: JSON.stringify({
+          project_id: input.project_id,
+          name: input.name,
+          scopes: ["bug_monitor:report"],
+        }),
+      }),
+    onSuccess: async (payload: any) => {
+      setBugMonitorCreatedIntakeKey(String(payload?.raw_key || ""));
+      toast("ok", "Bug Monitor intake key created.");
+      await queryClient.invalidateQueries({
+        queryKey: ["settings", "bug-monitor", "intake-keys"],
+      });
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const disableBugMonitorIntakeKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      setBugMonitorDisablingIntakeKeyId(keyId);
+      return api(`/api/engine/bug-monitor/intake/keys/${encodeURIComponent(keyId)}/disable`, {
+        method: "POST",
+      });
+    },
+    onSuccess: async () => {
+      toast("ok", "Bug Monitor intake key disabled.");
+      await queryClient.invalidateQueries({
+        queryKey: ["settings", "bug-monitor", "intake-keys"],
+      });
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+    onSettled: () => setBugMonitorDisablingIntakeKeyId(""),
+  });
+  const resetBugMonitorLogSourceMutation = useMutation({
+    mutationFn: async (input: { project_id: string; source_id: string }) => {
+      const rowKey = `${input.project_id || "project"}::${input.source_id || "source"}`;
+      setBugMonitorResettingSourceKey(rowKey);
+      return api(
+        `/api/engine/bug-monitor/log-sources/${encodeURIComponent(
+          input.project_id
+        )}/${encodeURIComponent(input.source_id)}/reset-offset`,
+        { method: "POST" }
+      );
+    },
+    onSuccess: async () => {
+      toast("ok", "Bug Monitor log source offset reset.");
+      await queryClient.invalidateQueries({ queryKey: ["settings", "bug-monitor"] });
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+    onSettled: () => setBugMonitorResettingSourceKey(""),
+  });
+  const replayBugMonitorLogSourceMutation = useMutation({
+    mutationFn: async (input: { project_id: string; source_id: string }) => {
+      const rowKey = `${input.project_id || "project"}::${input.source_id || "source"}`;
+      setBugMonitorReplayingSourceKey(rowKey);
+      return api(
+        `/api/engine/bug-monitor/log-sources/${encodeURIComponent(
+          input.project_id
+        )}/${encodeURIComponent(input.source_id)}/replay-latest`,
+        { method: "POST" }
+      );
+    },
+    onSuccess: async () => {
+      toast("ok", "Bug Monitor latest log candidate replayed.");
+      await queryClient.invalidateQueries({ queryKey: ["settings", "bug-monitor"] });
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+    onSettled: () => setBugMonitorReplayingSourceKey(""),
   });
   const bugMonitorDraftDecisionMutation = useMutation({
     mutationFn: async ({ draftId, decision }: { draftId: string; decision: "approve" | "deny" }) =>
@@ -2736,6 +2834,21 @@ export function SettingsPage({
     () => ((bugMonitorStatusQuery.data as any)?.status || {}) as BugMonitorStatusRow,
     [bugMonitorStatusQuery.data]
   );
+  const bugMonitorMonitoredProjects = useMemo(() => {
+    try {
+      const parsed = JSON.parse(bugMonitorMonitoredProjectsJson || "[]");
+      if (Array.isArray(parsed)) return parsed as BugMonitorMonitoredProjectDraft[];
+    } catch {
+      // The inline editor shows the parse error; keep rendering the last saved config.
+    }
+    return Array.isArray(bugMonitorStatus.config?.monitored_projects)
+      ? bugMonitorStatus.config.monitored_projects
+      : [];
+  }, [bugMonitorMonitoredProjectsJson, bugMonitorStatus.config?.monitored_projects]);
+  const bugMonitorLogWatcher = useMemo(
+    () => (bugMonitorStatus.log_watcher || {}) as BugMonitorLogWatcherStatusDraft,
+    [bugMonitorStatus.log_watcher]
+  );
   const bugMonitorDrafts = useMemo(
     () =>
       Array.isArray((bugMonitorDraftsQuery.data as any)?.drafts)
@@ -2756,6 +2869,13 @@ export function SettingsPage({
         ? ((bugMonitorPostsQuery.data as any).posts as BugMonitorPostRow[]) || []
         : [],
     [bugMonitorPostsQuery.data]
+  );
+  const bugMonitorIntakeKeys = useMemo(
+    () =>
+      Array.isArray((bugMonitorIntakeKeysQuery.data as any)?.keys)
+        ? ((bugMonitorIntakeKeysQuery.data as any).keys as BugMonitorProjectIntakeKeyDraft[]) || []
+        : [],
+    [bugMonitorIntakeKeysQuery.data]
   );
   const selectedBugMonitorServer = useMemo(
     () =>
@@ -2839,6 +2959,11 @@ export function SettingsPage({
     setBugMonitorAutoCreateIssues(config.auto_create_new_issues !== false);
     setBugMonitorRequireApproval(!!config.require_approval_for_new_issues);
     setBugMonitorAutoComment(config.auto_comment_on_matched_open_issues !== false);
+    const monitoredProjects = Array.isArray(config.monitored_projects)
+      ? config.monitored_projects
+      : [];
+    setBugMonitorMonitoredProjectsJson(JSON.stringify(monitoredProjects, null, 2));
+    setBugMonitorMonitoredProjectsError("");
   }, [bugMonitorConfigQuery.data]);
 
   useEffect(() => {
@@ -6292,6 +6417,41 @@ export function SettingsPage({
                         </div>
                       </div>
                     </div>
+
+                    <BugMonitorExternalProjectsPanel
+                      projects={bugMonitorMonitoredProjects}
+                      watcher={bugMonitorLogWatcher}
+                      projectsJson={bugMonitorMonitoredProjectsJson}
+                      projectsJsonError={bugMonitorMonitoredProjectsError}
+                      intakeKeys={bugMonitorIntakeKeys}
+                      createdRawKey={bugMonitorCreatedIntakeKey}
+                      isCreatingKey={createBugMonitorIntakeKeyMutation.isPending}
+                      disablingKeyId={bugMonitorDisablingIntakeKeyId}
+                      resettingSourceKey={bugMonitorResettingSourceKey}
+                      replayingSourceKey={bugMonitorReplayingSourceKey}
+                      onProjectsJsonChange={(value) => {
+                        setBugMonitorMonitoredProjectsJson(value);
+                        try {
+                          const parsed = JSON.parse(value || "[]");
+                          setBugMonitorMonitoredProjectsError(
+                            Array.isArray(parsed) ? "" : "monitored_projects must be a JSON array"
+                          );
+                        } catch (error) {
+                          setBugMonitorMonitoredProjectsError(
+                            error instanceof Error ? error.message : "Invalid JSON"
+                          );
+                        }
+                      }}
+                      onCreateKey={(input) => createBugMonitorIntakeKeyMutation.mutate(input)}
+                      onDisableKey={(keyId) => disableBugMonitorIntakeKeyMutation.mutate(keyId)}
+                      onClearCreatedRawKey={() => setBugMonitorCreatedIntakeKey("")}
+                      onResetSourceOffset={(input) =>
+                        resetBugMonitorLogSourceMutation.mutate(input)
+                      }
+                      onReplayLatestSourceCandidate={(input) =>
+                        replayBugMonitorLogSourceMutation.mutate(input)
+                      }
+                    />
 
                     <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
                       <div className="mb-2 font-medium">Recent incidents</div>
