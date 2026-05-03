@@ -975,6 +975,132 @@ fn report_markdown_accepts_structured_synthesis_without_inline_citations_when_up
 }
 
 #[test]
+fn research_synthesis_does_not_require_fresh_workspace_reads_for_mcp_artifact_brief() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-mcp-artifact-synthesis-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "draft_final_report".to_string(),
+        agent_id: "brief_writer".to_string(),
+        objective: "Draft a concise market brief from upstream Tandem MCP, Reddit MCP, and web research artifacts.".to_string(),
+        depends_on: vec![
+            "gather_tandem_context".to_string(),
+            "gather_reddit_signals".to_string(),
+            "gather_web_market_sources".to_string(),
+        ],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("research_synthesis".to_string()),
+                required_tools: Vec::new(),
+                required_tool_calls: Vec::new(),
+                required_evidence: vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                ],
+                required_sections: vec!["citations".to_string()],
+                prewrite_gates: Vec::new(),
+                retry_on_missing: vec![
+                    "local_source_reads".to_string(),
+                    "external_sources".to_string(),
+                    "citations".to_string(),
+                ],
+                terminal_on: Vec::new(),
+                repair_budget: Some(2),
+                session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+            }),
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "draft-final-report.md"
+            }
+        })),
+    };
+    let report = "# Market Brief\n\n## Summary\nCurrent AI-agent reliability practice is converging on bounded workflow design, connector-aware tool use, deterministic validation, and human review for high-risk steps. The upstream Tandem MCP notes, Reddit MCP observations, and web research artifacts all point to reliability as an operating model rather than a single model feature.\n\n## Key Findings\n- Teams scope agents to narrow business workflows with clear success criteria.\n- Production systems layer retries, observability, approval gates, and fallbacks around model calls.\n- Community discussions repeatedly emphasize tool permissions, audit trails, and reversible actions.\n\n## Market Notes\nVendor and analyst coverage highlights workflow orchestration, evaluation suites, and human-in-the-loop checkpoints as the practical controls that let businesses move from demos to durable operations.\n\n## Reddit Signals\nPractitioner threads are skeptical of unsupervised broad agents, but more receptive to agents that operate inside well-defined queues, ticket flows, and reviewable handoffs.\n\n## Sources\n- Tandem MCP gathered documentation notes.\n- Reddit MCP gathered community signals.\n- Web research source ledger: https://example.com/agent-reliability\n\n## Tandem Run details\nThis brief synthesizes upstream run artifacts from `gather_tandem_context`, `gather_reddit_signals`, and `gather_web_market_sources`; it does not cite repository source files.\n".to_string();
+    let mut session = Session::new(
+        Some("mcp-artifact-synthesis".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "draft-final-report.md",
+                "content": report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: Vec::new(),
+        discovered_relevant_paths: Vec::new(),
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 1,
+        citations: vec!["https://example.com/agent-reliability".to_string()],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["mcp_list", "codesearch", "write"],
+                "executed_tools": ["mcp_list", "codesearch", "write"],
+                "tool_call_counts": {
+                    "mcp_list": 1,
+                    "codesearch": 1,
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("draft-final-report.md".to_string(), report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some(), "{artifact_validation:?}");
+    assert!(rejected.is_none(), "{artifact_validation:?}");
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        None
+    );
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|value| matches!(
+            value.as_str(),
+            Some("no_concrete_reads")
+                | Some("concrete_read_required")
+                | Some("files_reviewed_not_backed_by_read")
+                | Some("required_source_paths_not_read")
+        ))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn report_markdown_legacy_metadata_is_forced_to_strict_without_emergency_rollback() {
     with_legacy_quality_rollback_enabled(false, || {
         let workspace_root = std::env::temp_dir().join(format!(

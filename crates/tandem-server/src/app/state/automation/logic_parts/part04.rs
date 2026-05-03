@@ -630,6 +630,11 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let selected_assessment = best_candidate.as_ref();
         let required_tools_for_node = enforcement.required_tools.clone();
         let has_required_tools = !required_tools_for_node.is_empty();
+        let validation_profile = enforcement
+            .validation_profile
+            .as_deref()
+            .unwrap_or("artifact_only");
+        let research_synthesis_contract = validation_profile == "research_synthesis";
         let requires_local_source_reads = enforcement
             .required_evidence
             .iter()
@@ -656,8 +661,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             .iter()
             .any(|item| item == "web_sources_reviewed")
             && !web_research_unavailable;
-        let requires_local_source_reads =
-            requires_local_source_reads && !mcp_grounded_citations_artifact;
+        let requires_local_source_reads = requires_local_source_reads
+            && !mcp_grounded_citations_artifact
+            && !research_synthesis_contract;
         let requires_external_sources =
             requires_external_sources && !mcp_grounded_citations_artifact;
         let requires_files_reviewed = requires_files_reviewed && !mcp_grounded_citations_artifact;
@@ -790,8 +796,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             }
         }
         if !has_research_contract && has_required_tools {
-            let missing_concrete_reads =
-                !optional_workspace_reads && requires_read && !executed_has_read;
+            let missing_concrete_reads = !optional_workspace_reads
+                && !research_synthesis_contract
+                && requires_read
+                && !executed_has_read;
             let missing_named_source_reads = !missing_required_source_read_paths.is_empty();
             let missing_web_research =
                 requires_websearch && requires_external_sources && !web_research_succeeded;
@@ -1120,7 +1128,13 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
                 &connector_discovery_text,
             );
-        let requires_read = enforcement.required_tools.iter().any(|tool| tool == "read");
+        let validation_profile = enforcement
+            .validation_profile
+            .as_deref()
+            .unwrap_or("artifact_only");
+        let research_synthesis_contract = validation_profile == "research_synthesis";
+        let requires_read = !research_synthesis_contract
+            && enforcement.required_tools.iter().any(|tool| tool == "read");
         let requires_websearch = enforcement
             .required_tools
             .iter()
@@ -1130,10 +1144,11 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             .prewrite_gates
             .iter()
             .any(|gate| gate == "workspace_inspection");
-        let requires_concrete_reads = enforcement
-            .prewrite_gates
-            .iter()
-            .any(|gate| gate == "concrete_reads");
+        let requires_concrete_reads = !research_synthesis_contract
+            && enforcement
+                .prewrite_gates
+                .iter()
+                .any(|gate| gate == "concrete_reads");
         let requires_successful_web_research = enforcement
             .prewrite_gates
             .iter()

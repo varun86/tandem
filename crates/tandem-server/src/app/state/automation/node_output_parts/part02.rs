@@ -382,6 +382,10 @@ pub(crate) fn detect_automation_node_status(
         automation_capability_resolution_mcp_tools(tool_telemetry, "registered_tools");
     let canonical_delivery_status = automation_attempt_evidence_delivery_status(tool_telemetry);
     let is_brief_contract = validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
+    let read_gate_is_advisory = artifact_validation
+        .and_then(|value| value.get("validation_profile"))
+        .and_then(Value::as_str)
+        .is_some_and(|profile| profile == "research_synthesis");
     let requires_read = automation_node_required_tools(node)
         .iter()
         .any(|value| value == "read");
@@ -466,6 +470,7 @@ pub(crate) fn detect_automation_node_status(
     let skip_read_gate_because_explicitly_completed =
         explicit_status_is_completed && artifact_materialized;
     if !skip_read_gate_because_explicitly_completed
+        && !read_gate_is_advisory
         && ((is_brief_contract && requested_has_read && !executed_has_read)
             || (requires_read && requested_has_read && !executed_has_read))
         && (artifact_semantic_block || verified_output.is_none())

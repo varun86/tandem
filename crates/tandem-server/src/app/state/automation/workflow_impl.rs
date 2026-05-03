@@ -1203,10 +1203,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
             validation_profile: Some("research_synthesis".to_string()),
             required_tools: Vec::new(),
             required_tool_calls: Vec::new(),
-            required_evidence: vec![
-                "local_source_reads".to_string(),
-                "external_sources".to_string(),
-            ],
+            required_evidence: vec!["external_sources".to_string()],
             required_sections: if final_is_brief_like {
                 vec!["citations".to_string()]
             } else {
@@ -1214,16 +1211,9 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
             },
             prewrite_gates: Vec::new(),
             retry_on_missing: if final_is_brief_like {
-                vec![
-                    "local_source_reads".to_string(),
-                    "external_sources".to_string(),
-                    "citations".to_string(),
-                ]
+                vec!["external_sources".to_string(), "citations".to_string()]
             } else {
-                vec![
-                    "local_source_reads".to_string(),
-                    "external_sources".to_string(),
-                ]
+                vec!["external_sources".to_string()]
             },
             terminal_on: vec![
                 "tool_unavailable".to_string(),

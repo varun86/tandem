@@ -196,13 +196,11 @@ pub fn research_output_contract_policy_seed(
         required_evidence: match validation_profile {
             "external_research" => vec!["external_sources".to_string()],
             "local_research" => vec!["local_source_reads".to_string()],
-            _ => {
-                let mut values = vec!["local_source_reads".to_string()];
-                if expects_web_research {
-                    values.push("external_sources".to_string());
-                }
-                values
-            }
+            // Synthesis/final-brief steps consume upstream artifacts and MCP/web evidence.
+            // They should not be forced to perform fresh workspace file reads unless a
+            // dedicated local-research step asked for that evidence earlier.
+            _ if expects_web_research => vec!["external_sources".to_string()],
+            _ => Vec::new(),
         },
         required_sections: match validation_profile {
             "external_research" => vec!["citations".to_string()],
@@ -228,14 +226,10 @@ pub fn research_output_contract_policy_seed(
                 "workspace_inspection".to_string(),
                 "concrete_reads".to_string(),
             ],
-            _ => {
-                let mut values = vec!["local_source_reads".to_string()];
-                if expects_web_research {
-                    values.push("external_sources".to_string());
-                    values.push("citations".to_string());
-                }
-                values
+            _ if expects_web_research => {
+                vec!["external_sources".to_string(), "citations".to_string()]
             }
+            _ => Vec::new(),
         },
         terminal_on: vec![
             "tool_unavailable".to_string(),
@@ -337,5 +331,24 @@ mod tests {
         assert!(seed
             .retry_on_missing
             .contains(&"successful_web_research".to_string()));
+    }
+
+    #[test]
+    fn research_synthesis_contract_does_not_require_fresh_local_reads() {
+        let seed = research_output_contract_policy_seed("brief", true, 3);
+        assert_eq!(seed.validation_profile, "research_synthesis");
+        assert!(!seed.required_tools.iter().any(|tool| tool == "read"));
+        assert!(!seed
+            .required_evidence
+            .iter()
+            .any(|evidence| evidence == "local_source_reads"));
+        assert!(!seed
+            .retry_on_missing
+            .iter()
+            .any(|requirement| requirement == "local_source_reads"));
+        assert!(seed
+            .required_evidence
+            .iter()
+            .any(|evidence| evidence == "external_sources"));
     }
 }
