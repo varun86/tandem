@@ -131,12 +131,17 @@ export function BugMonitorExternalProjectsPanel({
   const [starterWorkspaceRoot, setStarterWorkspaceRoot] = useState("/path/to/repo");
   const [starterSourceId, setStarterSourceId] = useState("app-log");
   const [starterLogPath, setStarterLogPath] = useState("logs/app.log");
+  const [projectFilter, setProjectFilter] = useState("all");
   const sources = Array.isArray(watcher.sources) ? watcher.sources : [];
-  const statusBySource = new Map(
-    sources.map((source) => [
-      sourceKey(String(source.project_id || ""), String(source.source_id || "")),
-      source,
-    ])
+  const statusBySource = useMemo(
+    () =>
+      new Map(
+        sources.map((source) => [
+          sourceKey(String(source.project_id || ""), String(source.source_id || "")),
+          source,
+        ])
+      ),
+    [sources]
   );
   const enabledProjectCount = Number(watcher.enabled_projects || 0);
   const enabledSourceCount = Number(watcher.enabled_sources || 0);
@@ -151,6 +156,46 @@ export function BugMonitorExternalProjectsPanel({
     [projects]
   );
   const selectedNewKeyProjectId = newKeyProjectId || projectOptions[0]?.id || "";
+  const projectHealthRows = useMemo(
+    () =>
+      projects.map((project, index) => {
+        const projectId = String(project.project_id || `project-${index + 1}`);
+        const logSources = Array.isArray(project.log_sources) ? project.log_sources : [];
+        const runtimeRows = logSources
+          .map((source, sourceIndex) => {
+            const sourceId = String(source.source_id || `source-${sourceIndex + 1}`);
+            return statusBySource.get(sourceKey(projectId, sourceId));
+          })
+          .filter(Boolean) as BugMonitorLogSourceRuntimeStatusDraft[];
+        const unhealthyCount = runtimeRows.filter((row) => row.healthy === false).length;
+        const candidateCount = runtimeRows.reduce(
+          (total, row) => total + Number(row.total_candidates || 0),
+          0
+        );
+        const submittedCount = runtimeRows.reduce(
+          (total, row) => total + Number(row.total_submitted || 0),
+          0
+        );
+        return {
+          project,
+          projectId,
+          logSourceCount: logSources.length,
+          observedSourceCount: runtimeRows.length,
+          unhealthyCount,
+          candidateCount,
+          submittedCount,
+          lastPollAtMs: Math.max(...runtimeRows.map((row) => Number(row.last_poll_at_ms || 0)), 0),
+        };
+      }),
+    [projects, statusBySource]
+  );
+  const filteredProjectRows = useMemo(
+    () =>
+      projectFilter === "all"
+        ? projectHealthRows
+        : projectHealthRows.filter((row) => row.projectId === projectFilter),
+    [projectFilter, projectHealthRows]
+  );
 
   return (
     <div className="grid gap-3 rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
@@ -169,6 +214,58 @@ export function BugMonitorExternalProjectsPanel({
           <Badge tone={enabledSourceCount ? "info" : "warn"}>{enabledSourceCount} sources</Badge>
         </div>
       </div>
+
+      {projectHealthRows.length ? (
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-2 md:grid-cols-3">
+            {projectHealthRows.slice(0, 6).map((row) => (
+              <button
+                key={row.projectId}
+                type="button"
+                className={`tcp-list-item text-left ${
+                  projectFilter === row.projectId ? "ring-1 ring-sky-400/50" : ""
+                }`}
+                onClick={() => {
+                  setProjectFilter((current) =>
+                    current === row.projectId ? "all" : row.projectId
+                  );
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="truncate font-medium">{row.project.name || row.projectId}</div>
+                  <Badge
+                    tone={row.unhealthyCount ? "warn" : row.observedSourceCount ? "ok" : "info"}
+                  >
+                    {row.unhealthyCount ? `${row.unhealthyCount} unhealthy` : "ok"}
+                  </Badge>
+                </div>
+                <div className="tcp-subtle mt-1 text-xs">
+                  {row.observedSourceCount}/{row.logSourceCount} observed · {row.candidateCount}{" "}
+                  candidates · {row.submittedCount} submitted
+                </div>
+                <div className="tcp-subtle mt-1 text-xs">
+                  Last poll: {formatOptionalTime(row.lastPollAtMs)}
+                </div>
+              </button>
+            ))}
+          </div>
+          <label className="grid min-w-48 gap-1">
+            <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">Project filter</span>
+            <select
+              className="tcp-input"
+              value={projectFilter}
+              onChange={(event) => setProjectFilter(event.currentTarget.value)}
+            >
+              <option value="all">All projects</option>
+              {projectHealthRows.map((row) => (
+                <option key={row.projectId} value={row.projectId}>
+                  {row.project.name || row.projectId}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
 
       {watcher.last_error ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
@@ -276,10 +373,9 @@ export function BugMonitorExternalProjectsPanel({
         </div>
       </label>
 
-      {projects.length ? (
+      {filteredProjectRows.length ? (
         <div className="grid gap-2">
-          {projects.map((project, index) => {
-            const projectId = String(project.project_id || `project-${index + 1}`);
+          {filteredProjectRows.map(({ project, projectId }) => {
             const logSources = Array.isArray(project.log_sources) ? project.log_sources : [];
             return (
               <div key={projectId} className="tcp-list-item">
@@ -408,6 +504,8 @@ export function BugMonitorExternalProjectsPanel({
             );
           })}
         </div>
+      ) : projects.length ? (
+        <EmptyState text="No projects match the current filter." />
       ) : (
         <EmptyState text="No external projects configured yet. Paste a monitored_projects JSON array above and save." />
       )}
