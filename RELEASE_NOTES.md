@@ -8,6 +8,8 @@ Automation V2 workflow definitions now use per-workflow storage shards. Instead 
 
 Generated workflow planning now has a deterministic 8-task budget for AI-created plans. If the model returns a large valid graph, Tandem compacts it into request-aware macro steps before preview or revision storage, preserving tool/source intent, Notion collection ids, required report sections, and delivery/verification details. Apply and planner-session boundaries reject uncompacted oversized generated plans with `WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED`, while manual Workflow Studio plans and explicit imports remain exempt. The control panel shows the compaction outcome directly in planner diagnostics.
 
+Connector-backed generated workflow nodes also route MCP tools more reliably. Natural objectives like “Use the connected Reddit MCP” now match hyphenated server ids such as `reddit-gmail`, so Reddit research nodes are offered `mcp.reddit_gmail.*` tools instead of only discovering them through `mcp_list`. Artifact guidance now treats connector gaps as limitation metadata while keeping completed JSON artifacts terminal, preventing `status: blocked` artifacts from tripping `artifact_status_not_terminal` and blocking Bug Monitor or downstream workflow reporting.
+
 ## v0.5.2 (Released 2026-05-03)
 
 This patch hardens the demo-critical workflow and Bug Monitor loop.

@@ -303,9 +303,12 @@ fn compare_results_prompt_prioritizes_mcp_discovery_and_artifact_delivery() {
     ));
     assert!(prompt.contains("Artifact Delivery Fallback:"));
     assert!(prompt.contains("finish the artifact from the local evidence you already have"));
-    assert!(prompt.contains(
-        "On retries, rewrite the file in the current attempt even if the content is identical."
-    ));
+    assert!(prompt.contains("set its top-level `status` to `completed`"));
+    assert!(prompt.contains("connector_limitations"));
+    assert!(
+        prompt.contains("On retries, rewrite the required files in the current attempt even if the content is identical.")
+            || prompt.contains("On every retry attempt, rewrite the required output in this attempt even if the content would be identical.")
+    );
 }
 
 #[test]
@@ -1444,4 +1447,3 @@ fn structured_json_prompt_surfaces_explicit_output_files_for_analyze_findings() 
         "In addition to the run artifact, create or update these required workspace files when needed: `reports/pain-points-analysis.md`."
     ));
 }
-

@@ -822,6 +822,53 @@ fn runnable_filter_serializes_nodes_targeting_same_mcp_tool() {
 }
 
 #[test]
+fn mcp_server_matching_handles_natural_hyphenated_server_mentions() {
+    assert!(automation_text_mentions_mcp_server(
+        "Use the connected Reddit MCP to gather community signals.",
+        "reddit-gmail"
+    ));
+    assert!(automation_text_mentions_mcp_server(
+        "Use the connected Tandem MCP docs as reference.",
+        "tandem-mcp"
+    ));
+    assert!(!automation_text_mentions_mcp_server(
+        "Use the connected Reddit MCP to gather community signals.",
+        "notion"
+    ));
+}
+
+#[test]
+fn connector_backed_reddit_objective_requests_reddit_mcp_wildcard() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "gather_reddit_signals".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Use the connected Reddit MCP to search across relevant subreddits.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: None,
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: None,
+    };
+
+    let requested = automation_requested_server_scoped_mcp_tools(
+        &node,
+        &[
+            "notion".to_string(),
+            "reddit-gmail".to_string(),
+            "tandem-mcp".to_string(),
+        ],
+    );
+
+    assert!(requested.contains(&"mcp.reddit_gmail.*".to_string()));
+    assert!(!requested.contains(&"mcp.notion.*".to_string()));
+}
+
+#[test]
 fn generic_required_tools_prewrite_requirements_enable_repair() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

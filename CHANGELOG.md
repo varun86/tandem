@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Connector-backed workflow nodes receive their actual MCP tools**: Natural node objectives such as “Use the connected Reddit MCP” now match hyphenated MCP server ids such as `reddit-gmail`, so generated research nodes request `mcp.reddit_gmail.*` instead of being offered only `mcp_list` and local file tools.
+- **Research artifacts no longer self-block on connector limitations**: Artifact prompts and repair guidance now tell agents to record unavailable connectors or partial evidence under limitation fields while keeping finished JSON artifacts terminal (`status: completed`), preventing `artifact_status_not_terminal` loops that stop downstream workflow and Bug Monitor reporting.
 - **Apply/session boundaries reject runaway generated plans**: `/workflow-plans/apply` and planner-session creation reject over-budget generated plans with `WORKFLOW_PLAN_TASK_BUDGET_EXCEEDED` if an uncompacted oversized plan reaches them.
 
 ## [0.5.2] - Released 2026-05-03

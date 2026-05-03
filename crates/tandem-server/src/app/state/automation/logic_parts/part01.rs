@@ -566,17 +566,25 @@ pub(crate) fn automation_text_mentions_mcp_server(text: &str, server_name: &str)
     let lowered = text.to_ascii_lowercase();
     let lowered_server = server_name.to_ascii_lowercase();
     let namespace = crate::http::mcp::mcp_namespace_segment(server_name);
-    [
+    let mut needles = vec![
         lowered_server.clone(),
         lowered_server.replace('-', "_"),
         lowered_server.replace('-', " "),
         namespace.clone(),
         namespace.replace('_', "-"),
         format!("mcp.{namespace}"),
-    ]
-    .iter()
-    .filter(|needle| !needle.trim().is_empty())
-    .any(|needle| lowered.contains(needle))
+    ];
+    for segment in lowered_server.split(['-', '_']) {
+        let segment = segment.trim();
+        if segment.len() >= 4 {
+            needles.push(segment.to_string());
+            needles.push(format!("{segment} mcp"));
+        }
+    }
+    needles
+        .iter()
+        .filter(|needle| !needle.trim().is_empty())
+        .any(|needle| lowered.contains(needle))
 }
 
 pub(crate) fn automation_requested_server_scoped_mcp_tools(

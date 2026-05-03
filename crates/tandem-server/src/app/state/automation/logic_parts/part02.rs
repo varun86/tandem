@@ -345,9 +345,17 @@ pub(crate) fn render_automation_repair_brief(
                 .join(", ")
         )
     };
+    let nonterminal_status_corrective_line = if unmet_requirements
+        .iter()
+        .any(|value| value == "artifact_status_not_terminal")
+    {
+        "\n\nCORRECTIVE — artifact status must be terminal:\n- The previous artifact used a non-terminal status such as `blocked`, `needs_repair`, `incomplete`, or `in_progress`, so the engine rejected it.\n- For this retry, rewrite the complete artifact with top-level `status: \"completed\"` when you have produced the best available deliverable.\n- Record unavailable connectors, missing evidence, or source caveats under `limitations`, `source_limitations`, or `connector_limitations`; do not encode those limitations as the artifact status.".to_string()
+    } else {
+        String::new()
+    };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}{}",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}{}{}",
         node.node_id,
         reason,
         validation_basis_line,
@@ -365,6 +373,7 @@ pub(crate) fn render_automation_repair_brief(
         code_workflow_line,
         final_attempt_line,
         declared_output_corrective_line,
+        nonterminal_status_corrective_line,
     ))
 }
 
