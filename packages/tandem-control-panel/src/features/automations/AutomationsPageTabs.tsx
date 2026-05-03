@@ -1,4 +1,3 @@
-import { AnimatePresence, motion } from "motion/react";
 import { useEffect } from "react";
 import { renderIcons } from "../../app/icons.js";
 
@@ -101,218 +100,209 @@ export function AutomationsPageTabs({
         ))}
       </div>
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={tab}
-          className="flex-1 flex flex-col min-h-0"
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.15 }}
-        >
-          {tab === "create" ? (
-            <PageCardComponent
-              title={<SectionTitle icon="sparkles" label="Create an Automation" />}
-              subtitle="Describe what you want, pick a schedule, and Tandem handles the rest"
-              fullHeight
-            >
-              <div className="flex flex-col flex-1 min-h-0 h-full gap-4">
-                {createMode === "composer" && composerEnabled ? (
-                  <AutomationComposerPanelComponent
-                    client={client}
-                    api={api}
-                    toast={toast}
-                    defaultProvider={providerStatus.defaultProvider}
-                    defaultModel={providerStatus.defaultModel}
-                    onNavigationLockChange={onNavigationLockChange}
-                    onShowAutomations={() => {
-                      setAdvancedEditAutomation(null);
-                      setTab("list");
-                    }}
-                    onShowRuns={() => {
-                      setAdvancedEditAutomation(null);
-                      setTab("running");
-                    }}
-                  />
-                ) : (
-                  <>
-                    <div className="rounded-xl border border-slate-700/50 bg-slate-950/50 p-4 shrink-0">
-                      <div className="mb-2 text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
-                        Builder Mode
-                      </div>
-                      <div className="tcp-subtle text-xs">
-                        Keep the simple wizard for quick automations, or switch to Mission Builder
-                        for generated multi-step missions you can tune before launch.
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="flex-1 flex flex-col min-h-0">
+        {tab === "create" ? (
+          <PageCardComponent
+            title={<SectionTitle icon="sparkles" label="Create an Automation" />}
+            subtitle="Describe what you want, pick a schedule, and Tandem handles the rest"
+            fullHeight
+          >
+            <div className="flex flex-col flex-1 min-h-0 h-full gap-4">
+              {createMode === "composer" && composerEnabled ? (
+                <AutomationComposerPanelComponent
+                  client={client}
+                  api={api}
+                  toast={toast}
+                  defaultProvider={providerStatus.defaultProvider}
+                  defaultModel={providerStatus.defaultModel}
+                  onNavigationLockChange={onNavigationLockChange}
+                  onShowAutomations={() => {
+                    setAdvancedEditAutomation(null);
+                    setTab("list");
+                  }}
+                  onShowRuns={() => {
+                    setAdvancedEditAutomation(null);
+                    setTab("running");
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="rounded-xl border border-slate-700/50 bg-slate-950/50 p-4 shrink-0">
+                    <div className="mb-2 text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
+                      Builder Mode
+                    </div>
+                    <div className="tcp-subtle text-xs">
+                      Keep the simple wizard for quick automations, or switch to Mission Builder for
+                      generated multi-step missions you can tune before launch.
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={navigationLocked}
+                        className={`tcp-btn h-9 px-3 text-sm ${
+                          createMode === "simple"
+                            ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
+                            : ""
+                        }`}
+                        onClick={() => {
+                          setCreateMode("simple");
+                          setAdvancedEditAutomation(null);
+                        }}
+                      >
+                        Simple Wizard
+                      </button>
+                      <button
+                        type="button"
+                        disabled={navigationLocked}
+                        className={`tcp-btn h-9 px-3 text-sm ${
+                          createMode === "advanced"
+                            ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
+                            : ""
+                        }`}
+                        onClick={() => setCreateMode("advanced")}
+                      >
+                        Mission Builder
+                      </button>
+                      {composerEnabled ? (
                         <button
                           type="button"
                           disabled={navigationLocked}
                           className={`tcp-btn h-9 px-3 text-sm ${
-                            createMode === "simple"
+                            createMode === "composer"
                               ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
                               : ""
                           }`}
                           onClick={() => {
-                            setCreateMode("simple");
+                            setCreateMode("composer");
                             setAdvancedEditAutomation(null);
                           }}
                         >
-                          Simple Wizard
+                          AI Composer
                         </button>
-                        <button
-                          type="button"
-                          disabled={navigationLocked}
-                          className={`tcp-btn h-9 px-3 text-sm ${
-                            createMode === "advanced"
-                              ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
-                              : ""
-                          }`}
-                          onClick={() => setCreateMode("advanced")}
-                        >
-                          Mission Builder
-                        </button>
-                        {composerEnabled ? (
-                          <button
-                            type="button"
-                            disabled={navigationLocked}
-                            className={`tcp-btn h-9 px-3 text-sm ${
-                              createMode === "composer"
-                                ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
-                                : ""
-                            }`}
-                            onClick={() => {
-                              setCreateMode("composer");
-                              setAdvancedEditAutomation(null);
-                            }}
-                          >
-                            AI Composer
-                          </button>
-                        ) : null}
-                      </div>
+                      ) : null}
                     </div>
+                  </div>
 
-                    {createMode === "advanced" ? (
-                      <AdvancedMissionBuilderPanelComponent
-                        client={client}
-                        api={api}
-                        toast={toast}
-                        defaultProvider={providerStatus.defaultProvider}
-                        defaultModel={providerStatus.defaultModel}
-                        editingAutomation={advancedEditAutomation}
-                        onShowAutomations={() => {
-                          setAdvancedEditAutomation(null);
-                          setTab("list");
-                        }}
-                        onShowRuns={() => {
-                          setAdvancedEditAutomation(null);
-                          setTab("running");
-                        }}
-                        onClearEditing={() => setAdvancedEditAutomation(null)}
-                        onNavigationLockChange={onNavigationLockChange}
-                      />
-                    ) : (
-                      <CreateWizardComponent
-                        client={client}
-                        api={api}
-                        toast={toast}
-                        navigate={navigate}
-                        defaultProvider={providerStatus.defaultProvider}
-                        defaultModel={providerStatus.defaultModel}
-                        onNavigationLockChange={onNavigationLockChange}
-                        onCreated={() => {
-                          setAdvancedEditAutomation(null);
-                          setTab("list");
-                        }}
-                      />
-                    )}
-                  </>
-                )}
-              </div>
-            </PageCardComponent>
-          ) : tab === "calendar" ? (
-            <PageCardComponent
-              title={<SectionTitle icon="calendar" label="Automation Calendar" />}
-              subtitle="Weekly schedule view for cron automations"
-            >
-              <MyAutomationsComponent
-                client={client}
-                toast={toast}
-                navigate={navigate}
-                viewMode="calendar"
-                selectedRunId={selectedRunId}
-                onSelectRunId={setSelectedRunId}
-                onOpenRunningView={() => setTab("running")}
-                onOpenAdvancedEdit={(automation: any) => {
-                  setAdvancedEditAutomation(automation);
-                  setCreateMode("advanced");
-                  setTab("create");
-                }}
-              />
-            </PageCardComponent>
-          ) : tab === "list" ? (
-            <PageCardComponent
-              title={<SectionTitle icon="book-open" label="Library" />}
-              subtitle="Installed packs, routines and run history"
-            >
-              <MyAutomationsComponent
-                client={client}
-                toast={toast}
-                navigate={navigate}
-                viewMode="list"
-                selectedRunId={selectedRunId}
-                onSelectRunId={setSelectedRunId}
-                onOpenRunningView={() => setTab("running")}
-                onOpenAdvancedEdit={(automation: any) => {
-                  setAdvancedEditAutomation(automation);
-                  setCreateMode("advanced");
-                  setTab("create");
-                }}
-              />
-            </PageCardComponent>
-          ) : tab === "running" ? (
-            <PageCardComponent
-              title={<SectionTitle icon="history" label="Run History" />}
-              subtitle="Inspect active runs and open detailed event logs for each run"
-            >
-              <MyAutomationsComponent
-                client={client}
-                toast={toast}
-                navigate={navigate}
-                viewMode="running"
-                selectedRunId={selectedRunId}
-                onSelectRunId={setSelectedRunId}
-                onOpenRunningView={() => setTab("running")}
-                onOpenAdvancedEdit={(automation: any) => {
-                  setAdvancedEditAutomation(automation);
-                  setCreateMode("advanced");
-                  setTab("create");
-                }}
-              />
-            </PageCardComponent>
-          ) : (
-            <PageCardComponent
-              title={<SectionTitle icon="book-open" label="Library" />}
-              subtitle="Saved automations, routines, and run history"
-            >
-              <MyAutomationsComponent
-                client={client}
-                toast={toast}
-                navigate={navigate}
-                viewMode="list"
-                selectedRunId={selectedRunId}
-                onSelectRunId={setSelectedRunId}
-                onOpenRunningView={() => setTab("running")}
-                onOpenAdvancedEdit={(automation: any) => {
-                  setAdvancedEditAutomation(automation);
-                  setCreateMode("advanced");
-                  setTab("create");
-                }}
-              />
-            </PageCardComponent>
-          )}
-        </motion.div>
-      </AnimatePresence>
+                  {createMode === "advanced" ? (
+                    <AdvancedMissionBuilderPanelComponent
+                      client={client}
+                      api={api}
+                      toast={toast}
+                      defaultProvider={providerStatus.defaultProvider}
+                      defaultModel={providerStatus.defaultModel}
+                      editingAutomation={advancedEditAutomation}
+                      onShowAutomations={() => {
+                        setAdvancedEditAutomation(null);
+                        setTab("list");
+                      }}
+                      onShowRuns={() => {
+                        setAdvancedEditAutomation(null);
+                        setTab("running");
+                      }}
+                      onClearEditing={() => setAdvancedEditAutomation(null)}
+                      onNavigationLockChange={onNavigationLockChange}
+                    />
+                  ) : (
+                    <CreateWizardComponent
+                      client={client}
+                      api={api}
+                      toast={toast}
+                      navigate={navigate}
+                      defaultProvider={providerStatus.defaultProvider}
+                      defaultModel={providerStatus.defaultModel}
+                      onNavigationLockChange={onNavigationLockChange}
+                      onCreated={() => {
+                        setAdvancedEditAutomation(null);
+                        setTab("list");
+                      }}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          </PageCardComponent>
+        ) : tab === "calendar" ? (
+          <PageCardComponent
+            title={<SectionTitle icon="calendar" label="Automation Calendar" />}
+            subtitle="Weekly schedule view for cron automations"
+          >
+            <MyAutomationsComponent
+              client={client}
+              toast={toast}
+              navigate={navigate}
+              viewMode="calendar"
+              selectedRunId={selectedRunId}
+              onSelectRunId={setSelectedRunId}
+              onOpenRunningView={() => setTab("running")}
+              onOpenAdvancedEdit={(automation: any) => {
+                setAdvancedEditAutomation(automation);
+                setCreateMode("advanced");
+                setTab("create");
+              }}
+            />
+          </PageCardComponent>
+        ) : tab === "list" ? (
+          <PageCardComponent
+            title={<SectionTitle icon="book-open" label="Library" />}
+            subtitle="Installed packs, routines and run history"
+          >
+            <MyAutomationsComponent
+              client={client}
+              toast={toast}
+              navigate={navigate}
+              viewMode="list"
+              selectedRunId={selectedRunId}
+              onSelectRunId={setSelectedRunId}
+              onOpenRunningView={() => setTab("running")}
+              onOpenAdvancedEdit={(automation: any) => {
+                setAdvancedEditAutomation(automation);
+                setCreateMode("advanced");
+                setTab("create");
+              }}
+            />
+          </PageCardComponent>
+        ) : tab === "running" ? (
+          <PageCardComponent
+            title={<SectionTitle icon="history" label="Run History" />}
+            subtitle="Inspect active runs and open detailed event logs for each run"
+          >
+            <MyAutomationsComponent
+              client={client}
+              toast={toast}
+              navigate={navigate}
+              viewMode="running"
+              selectedRunId={selectedRunId}
+              onSelectRunId={setSelectedRunId}
+              onOpenRunningView={() => setTab("running")}
+              onOpenAdvancedEdit={(automation: any) => {
+                setAdvancedEditAutomation(automation);
+                setCreateMode("advanced");
+                setTab("create");
+              }}
+            />
+          </PageCardComponent>
+        ) : (
+          <PageCardComponent
+            title={<SectionTitle icon="book-open" label="Library" />}
+            subtitle="Saved automations, routines, and run history"
+          >
+            <MyAutomationsComponent
+              client={client}
+              toast={toast}
+              navigate={navigate}
+              viewMode="list"
+              selectedRunId={selectedRunId}
+              onSelectRunId={setSelectedRunId}
+              onOpenRunningView={() => setTab("running")}
+              onOpenAdvancedEdit={(automation: any) => {
+                setAdvancedEditAutomation(automation);
+                setCreateMode("advanced");
+                setTab("create");
+              }}
+            />
+          </PageCardComponent>
+        )}
+      </div>
     </div>
   );
 }
