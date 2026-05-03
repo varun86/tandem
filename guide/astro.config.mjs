@@ -63,6 +63,8 @@ export default defineConfig({
             "automation-examples-for-teams",
             "sdk/typescript",
             "sdk/python",
+            "reference/bug-monitor",
+            "bug-monitor-external-log-intake",
             "mcp-automated-agents",
             "webmcp-for-agents",
           ],

@@ -10,6 +10,8 @@ Use it when a workflow failure, recurring runtime error, manual report, or opera
 ## What it covers
 
 - runtime failures from workflows, routines, sessions, and automations
+- external project log intake from configured local log files
+- scoped report intake from external systems without sharing the full engine token
 - manual reports for operator-found issues or missing context
 - triage runs that inspect, research, validate, and propose fixes
 - draft approval and publishing when the backend is configured for it
@@ -25,6 +27,14 @@ Use it when a workflow failure, recurring runtime error, manual report, or opera
 6. Recheck the match or review the resulting posts.
 
 Bug Monitor is intentionally not "report everything immediately to GitHub". It keeps intake, triage, and approval separate so the system can add evidence before anything leaves Tandem.
+
+## External Project Log Intake
+
+Bug Monitor can also watch local logs for projects outside a Tandem workflow. Configure `monitored_projects` in `Settings -> Bug Monitor`, then use the external-project panel to inspect source health, create scoped intake keys, reset offsets, and replay the latest log candidate.
+
+Use this path when CI, ACA, or another local service writes failures to JSON-lines or plaintext logs and should produce governed Bug Monitor incidents.
+
+For setup steps, examples, and agent-facing guidance, see [Bug Monitor External Log Intake](../bug-monitor-external-log-intake/).
 
 ## TypeScript
 
@@ -99,11 +109,18 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
 - `publishDraft()` / `publish_draft()`
 - `recheckMatch()` / `recheck_match()`
 - `listPosts()` / `list_posts()`
+- `listIntakeKeys()`
+- `createIntakeKey()`
+- `disableIntakeKey()`
+- `resetLogSourceOffset()`
+- `replayLatestLogSourceCandidate()`
 
 ## Safety notes
 
 - A report creates intake, not an automatic GitHub mutation.
 - Drafts remain reviewable until approval or publish is explicitly requested.
+- Scoped intake keys can report only for their configured project/scope.
+- Reset/replay log-source actions require the full engine API token.
 - Status can be blocked by missing config, missing repo access, or missing runtime capabilities.
 - Missing fields should be handled defensively; Bug Monitor records are intentionally flexible.
 
