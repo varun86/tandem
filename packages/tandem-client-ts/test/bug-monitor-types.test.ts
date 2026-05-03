@@ -6,6 +6,8 @@ import type {
   BugMonitorIntakeKeyCreateResponse,
   BugMonitorIntakeKeyDisableResponse,
   BugMonitorIntakeKeyListResponse,
+  BugMonitorLogSourceReplayResponse,
+  BugMonitorLogSourceResetResponse,
   BugMonitorStatusResponse,
 } from "../src/public/index.js";
 
@@ -137,6 +139,8 @@ describe("Bug Monitor external project public types", () => {
         scopes: ["bug_monitor:report"],
       });
       await client.bugMonitor.disableIntakeKey("intake/key 1");
+      await client.bugMonitor.resetLogSourceOffset("aca/project", "worker/source");
+      await client.bugMonitor.replayLatestLogSourceCandidate("aca/project", "worker/source");
 
       expect(calls[0]).toMatchObject({
         url: "http://localhost:39731/bug-monitor/intake/keys",
@@ -157,8 +161,50 @@ describe("Bug Monitor external project public types", () => {
         url: "http://localhost:39731/bug-monitor/intake/keys/intake%2Fkey%201/disable",
         method: "POST",
       });
+      expect(calls[3]).toMatchObject({
+        url: "http://localhost:39731/bug-monitor/log-sources/aca%2Fproject/worker%2Fsource/reset-offset",
+        method: "POST",
+      });
+      expect(calls[4]).toMatchObject({
+        url: "http://localhost:39731/bug-monitor/log-sources/aca%2Fproject/worker%2Fsource/replay-latest",
+        method: "POST",
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("accepts log-source debug action responses", () => {
+    const reset: BugMonitorLogSourceResetResponse = {
+      project_id: "aca",
+      source_id: "worker",
+      state: {
+        project_id: "aca",
+        source_id: "worker",
+        path: "/tmp/worker.log",
+        offset: 0,
+        total_candidates: 3,
+      },
+    };
+    const replay: BugMonitorLogSourceReplayResponse = {
+      project_id: "aca",
+      source_id: "worker",
+      incident: {
+        incident_id: "failure-incident-1",
+        fingerprint: "fp",
+        event_type: "external_service_crash",
+        status: "draft_created",
+        repo: "frumu-ai/aca",
+        workspace_root: "/home/evan/aca",
+        title: "External service crashed",
+        occurrence_count: 2,
+        created_at_ms: 1,
+        updated_at_ms: 2,
+      },
+      draft: null,
+    };
+
+    expect(reset.state.offset).toBe(0);
+    expect(replay.incident.occurrence_count).toBe(2);
   });
 });

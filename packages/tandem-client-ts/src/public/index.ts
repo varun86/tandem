@@ -1072,6 +1072,37 @@ export interface BugMonitorIntakeKeyDisableResponse {
   key: BugMonitorIntakeKeyRecord;
 }
 
+export interface BugMonitorLogSourceStateRecord {
+  project_id?: string;
+  source_id?: string;
+  path?: string;
+  inode?: string | null;
+  offset?: number;
+  partial_line?: string | null;
+  partial_line_offset_start?: number | null;
+  last_line_hash?: string | null;
+  updated_at_ms?: number | null;
+  last_error?: string | null;
+  consecutive_errors?: number;
+  total_bytes_read?: number;
+  total_candidates?: number;
+  total_submitted?: number;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorLogSourceResetResponse {
+  project_id: string;
+  source_id: string;
+  state: BugMonitorLogSourceStateRecord;
+}
+
+export interface BugMonitorLogSourceReplayResponse {
+  project_id: string;
+  source_id: string;
+  incident: BugMonitorIncidentRecord;
+  draft?: BugMonitorDraftRecord | null;
+}
+
 // ─── Packs + Capabilities ────────────────────────────────────────────────────
 
 export interface PackInstallRecord {

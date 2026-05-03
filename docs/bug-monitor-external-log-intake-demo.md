@@ -49,3 +49,15 @@ Use a workspace-local copy of this repository when testing path validation.
 5. Confirm Bug Monitor incidents include the fixture failure with a `tandem://bug-monitor/...` evidence ref.
 
 For live testing, append a new JSON line with a distinct `fingerprint` or error message so dedupe cooldown does not suppress the candidate.
+
+## Smoke Script
+
+After saving the example config, this script appends a unique fixture error, resets the demo source offset, and polls Bug Monitor incidents until the matching fingerprint appears:
+
+```bash
+TANDEM_BASE_URL=http://localhost:3000/api/engine \
+TANDEM_TOKEN="$TANDEM_TOKEN" \
+node scripts/bug-monitor-external-log-intake-smoke.mjs
+```
+
+Set `BUG_MONITOR_DEMO_PROJECT_ID` or `BUG_MONITOR_DEMO_SOURCE_ID` if your saved config uses different ids.

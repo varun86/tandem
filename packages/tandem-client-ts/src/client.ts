@@ -85,6 +85,8 @@ import type {
   BugMonitorIntakeKeyCreateResponse,
   BugMonitorIntakeKeyDisableResponse,
   BugMonitorIntakeKeyListResponse,
+  BugMonitorLogSourceReplayResponse,
+  BugMonitorLogSourceResetResponse,
   CoderGithubProjectInboxResponse,
   CoderGithubProjectIntakeResponse,
   CoderRunRecord,
@@ -820,6 +822,30 @@ class BugMonitor {
   async disableIntakeKey(id: string): Promise<BugMonitorIntakeKeyDisableResponse> {
     return this.req<BugMonitorIntakeKeyDisableResponse>(
       `/bug-monitor/intake/keys/${encodeURIComponent(id)}/disable`,
+      { method: "POST" }
+    );
+  }
+
+  async resetLogSourceOffset(
+    projectId: string,
+    sourceId: string
+  ): Promise<BugMonitorLogSourceResetResponse> {
+    return this.req<BugMonitorLogSourceResetResponse>(
+      `/bug-monitor/log-sources/${encodeURIComponent(projectId)}/${encodeURIComponent(
+        sourceId
+      )}/reset-offset`,
+      { method: "POST" }
+    );
+  }
+
+  async replayLatestLogSourceCandidate(
+    projectId: string,
+    sourceId: string
+  ): Promise<BugMonitorLogSourceReplayResponse> {
+    return this.req<BugMonitorLogSourceReplayResponse>(
+      `/bug-monitor/log-sources/${encodeURIComponent(projectId)}/${encodeURIComponent(
+        sourceId
+      )}/replay-latest`,
       { method: "POST" }
     );
   }

@@ -98,6 +98,7 @@ export function BugMonitorExternalProjectsPanel({
   disablingKeyId,
   resettingSourceKey,
   replayingSourceKey,
+  actionResult,
   onProjectsJsonChange,
   onCreateKey,
   onDisableKey,
@@ -115,6 +116,7 @@ export function BugMonitorExternalProjectsPanel({
   disablingKeyId: string;
   resettingSourceKey: string;
   replayingSourceKey: string;
+  actionResult: Record<string, unknown> | null;
   onProjectsJsonChange: (value: string) => void;
   onCreateKey: (input: { project_id: string; name: string }) => void;
   onDisableKey: (keyId: string) => void;
@@ -166,6 +168,21 @@ export function BugMonitorExternalProjectsPanel({
       {watcher.last_error ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
           {watcher.last_error}
+        </div>
+      ) : null}
+
+      {actionResult ? (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3">
+          <div className="text-sm font-medium text-sky-100">
+            {String(actionResult.action || "Log source action")} completed
+          </div>
+          <div className="tcp-subtle mt-1 text-xs">
+            {String(actionResult.project_id || "unknown project")} /{" "}
+            {String(actionResult.source_id || "unknown source")}
+          </div>
+          <pre className="tcp-code mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
+            {JSON.stringify(actionResult, null, 2)}
+          </pre>
         </div>
       ) : null}
 

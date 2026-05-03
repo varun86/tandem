@@ -1158,6 +1158,10 @@ export function SettingsPage({
   const [bugMonitorDisablingIntakeKeyId, setBugMonitorDisablingIntakeKeyId] = useState("");
   const [bugMonitorResettingSourceKey, setBugMonitorResettingSourceKey] = useState("");
   const [bugMonitorReplayingSourceKey, setBugMonitorReplayingSourceKey] = useState("");
+  const [bugMonitorLogSourceActionResult, setBugMonitorLogSourceActionResult] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [worktreeCleanupRepoRoot, setWorktreeCleanupRepoRoot] = useState("");
   const [worktreeCleanupDryRun, setWorktreeCleanupDryRun] = useState(false);
   const [worktreeCleanupPulse, setWorktreeCleanupPulse] = useState(0);
@@ -1776,7 +1780,15 @@ export function SettingsPage({
         { method: "POST" }
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (payload: any) => {
+      setBugMonitorLogSourceActionResult({
+        action: "reset-offset",
+        project_id: payload?.project_id,
+        source_id: payload?.source_id,
+        offset: payload?.state?.offset,
+        path: payload?.state?.path,
+        updated_at_ms: payload?.state?.updated_at_ms,
+      });
       toast("ok", "Bug Monitor log source offset reset.");
       await queryClient.invalidateQueries({ queryKey: ["settings", "bug-monitor"] });
     },
@@ -1798,7 +1810,16 @@ export function SettingsPage({
         { method: "POST" }
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (payload: any) => {
+      setBugMonitorLogSourceActionResult({
+        action: "replay-latest",
+        project_id: payload?.project_id,
+        source_id: payload?.source_id,
+        incident_id: payload?.incident?.incident_id,
+        occurrence_count: payload?.incident?.occurrence_count,
+        draft_id: payload?.draft?.draft_id,
+        draft_status: payload?.draft?.status,
+      });
       toast("ok", "Bug Monitor latest log candidate replayed.");
       await queryClient.invalidateQueries({ queryKey: ["settings", "bug-monitor"] });
     },
@@ -6429,6 +6450,7 @@ export function SettingsPage({
                       disablingKeyId={bugMonitorDisablingIntakeKeyId}
                       resettingSourceKey={bugMonitorResettingSourceKey}
                       replayingSourceKey={bugMonitorReplayingSourceKey}
+                      actionResult={bugMonitorLogSourceActionResult}
                       onProjectsJsonChange={(value) => {
                         setBugMonitorMonitoredProjectsJson(value);
                         try {
