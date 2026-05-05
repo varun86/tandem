@@ -4,13 +4,17 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.5.4 (Future Release)
 
-This patch fixes automation schedule timezone handling and tightens the distinction between local source-code research and final research synthesis.
+This patch fixes automation schedule timezone handling, tightens the distinction between local source-code research and final research synthesis, and introduces marketplace-ready workflow pack import/export.
 
 Automation cron schedules now preserve the selected local wall-clock time end to end. The server accepts the 5-field cron expressions emitted by the control panel, normalizes them for the Rust cron parser, and evaluates them in the saved IANA timezone when computing `next_fire_at_ms`. The control panel now carries that timezone through guided schedule summaries, creation review, workflow editing, calendar labels, and standup scheduling, with `Europe/Budapest` available in the common timezone picker. A regression test covers weekday 9:00 AM in Budapest resolving correctly through DST-aware UTC storage.
 
 Final report/brief nodes that synthesize already-collected Tandem MCP notes, Reddit MCP signals, web findings, and run artifacts no longer require fresh workspace `read` calls. The planner stops adding `local_source_reads` to new `research_synthesis` contracts, and the runtime validator waives stale local-read enforcement on existing saved synthesis nodes. Code-change, local-research, and Bug Monitor source-inspection nodes still retain their strict repo-read gates.
 
 This prevents research-to-destination workflows from blocking with messages such as `research brief cited workspace sources without using read` when the workflow only cites MCP/web/upstream artifact evidence and does not need repository source files.
+
+Workflow packs are now the preferred portable format for created workflows. The Workflows page can upload a `.zip` pack, preview its manifest, cover image, workflow entries, capabilities, and validation results, then install it and open the resulting planner session. Raw JSON workflow bundle import remains available under Advanced for debugging and internal handoffs.
+
+Planner sessions can also be exported as marketplace-ready workflow pack ZIPs containing `tandempack.yaml`, `README.md`, the embedded workflow plan bundle, and an optional PNG/JPEG/WebP cover image. New workflow-pack APIs and TypeScript client helpers support export, preview, and import, while imported sessions keep pack provenance (`source_pack_id`, version, and source bundle digest) for later inspection.
 
 ## v0.5.3 (Released 2026-05-03)
 

@@ -143,6 +143,9 @@ import type {
   WorkflowPlanGetResponse,
   WorkflowPlanImportPreviewResponse,
   WorkflowPlanImportResponse,
+  WorkflowPlanPackExportResponse,
+  WorkflowPlanPackImportPreviewResponse,
+  WorkflowPlanPackImportResponse,
   WorkflowPlanPackBuilderExportRequest,
   WorkflowPlanPackBuilderExportResult,
   WorkflowPlanDraftRecord,
@@ -2765,6 +2768,79 @@ class WorkflowPlans {
       method: "POST",
       body: JSON.stringify({
         bundle: options.bundle,
+        creator_id: options.creator_id ?? options.creatorId,
+        project_slug: options.project_slug ?? options.projectSlug,
+        title: options.title,
+      }),
+    });
+  }
+
+  async exportPack(options: {
+    sessionId?: string;
+    session_id?: string;
+    planId?: string;
+    plan_id?: string;
+    name?: string;
+    title?: string;
+    version?: string;
+    description?: string;
+    creatorId?: string;
+    creator_id?: string;
+    coverImagePath?: string;
+    cover_image_path?: string;
+  }): Promise<WorkflowPlanPackExportResponse> {
+    return this.req<WorkflowPlanPackExportResponse>("/workflow-plans/export/pack", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: options.session_id ?? options.sessionId,
+        plan_id: options.plan_id ?? options.planId,
+        name: options.name,
+        title: options.title,
+        version: options.version,
+        description: options.description,
+        creator_id: options.creator_id ?? options.creatorId,
+        cover_image_path: options.cover_image_path ?? options.coverImagePath,
+      }),
+    });
+  }
+
+  async importPackPreview(options: {
+    path: string;
+    selectedWorkflowIds?: string[];
+    selected_workflow_ids?: string[];
+    creatorId?: string;
+    creator_id?: string;
+    projectSlug?: string;
+    project_slug?: string;
+    title?: string;
+  }): Promise<WorkflowPlanPackImportPreviewResponse> {
+    return this.req<WorkflowPlanPackImportPreviewResponse>("/workflow-plans/import/pack/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        path: options.path,
+        selected_workflow_ids: options.selected_workflow_ids ?? options.selectedWorkflowIds ?? [],
+        creator_id: options.creator_id ?? options.creatorId,
+        project_slug: options.project_slug ?? options.projectSlug,
+        title: options.title,
+      }),
+    });
+  }
+
+  async importPack(options: {
+    path: string;
+    selectedWorkflowIds?: string[];
+    selected_workflow_ids?: string[];
+    creatorId?: string;
+    creator_id?: string;
+    projectSlug?: string;
+    project_slug?: string;
+    title?: string;
+  }): Promise<WorkflowPlanPackImportResponse> {
+    return this.req<WorkflowPlanPackImportResponse>("/workflow-plans/import/pack", {
+      method: "POST",
+      body: JSON.stringify({
+        path: options.path,
+        selected_workflow_ids: options.selected_workflow_ids ?? options.selectedWorkflowIds ?? [],
         creator_id: options.creator_id ?? options.creatorId,
         project_slug: options.project_slug ?? options.projectSlug,
         title: options.title,

@@ -574,7 +574,7 @@ fn validate_manifest_references(manifest_value: &Value, install_root: &Path) -> 
         collect_manifest_paths(contents, &mut references);
     }
     if let Some(listing) = manifest_value.pointer("/marketplace/listing") {
-        for field in ["icon", "changelog"] {
+        for field in ["icon", "cover_image", "changelog"] {
             if let Some(path) = listing.get(field).and_then(|value| value.as_str()) {
                 let trimmed = path.trim();
                 if !trimmed.is_empty() {

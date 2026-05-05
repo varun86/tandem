@@ -1978,6 +1978,192 @@ async fn workflow_plan_import_accepts_exported_bundle() {
 }
 
 #[tokio::test]
+async fn workflow_plan_pack_import_preview_and_commit_installs_pack_session() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": llm_plan_json(
+                "Pack Import Workflow",
+                "Create a workflow pack import bundle.",
+                manual_schedule_json(),
+                "/tmp/importable-workspace",
+                vec![step_json(
+                    "draft_bundle",
+                    "draft",
+                    "Draft the bundle.",
+                    &[],
+                    "writer",
+                    json!([]),
+                    "report_markdown",
+                )],
+                Some(planner_preferences())
+            )
+        })
+        .to_string(),
+    );
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Create a shareable workflow bundle",
+            "workspace_root": "/tmp/importable-workspace",
+            "operator_preferences": planner_preferences()
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+    let bundle = serde_json::to_string_pretty(
+        preview_payload
+            .get("plan_package_bundle")
+            .expect("plan package bundle"),
+    )
+    .expect("bundle json");
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pack_path = temp.path().join("workflow-pack.zip");
+    write_pack_zip_with_entries(
+        &pack_path,
+        r#"
+name: workflow-pack-test
+version: 0.1.0
+type: workflow
+pack_id: workflow-pack-test
+marketplace:
+  publisher:
+    publisher_id: test
+    display_name: Test
+    verification_tier: unverified
+  listing:
+    display_name: Workflow Pack Test
+    description: Workflow pack import regression
+    license_spdx: Proprietary
+    categories: [workflow]
+    tags: [workflow, tandem]
+    cover_image: assets/cover.png
+capabilities:
+  required: []
+entrypoints:
+  workflows: [pack-import-workflow]
+contents:
+  workflows:
+    - id: pack-import-workflow
+      path: workflows/pack-import-workflow/plan-package.json
+      format: workflow_plan_bundle
+"#,
+        &[
+            ("workflows/pack-import-workflow/plan-package.json", &bundle),
+            ("assets/cover.png", "fake image bytes"),
+        ],
+    );
+
+    let import_preview_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/import/pack/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "path": pack_path.to_string_lossy() }).to_string(),
+                ))
+                .expect("pack preview request"),
+        )
+        .await
+        .expect("pack preview response");
+    assert_eq!(import_preview_resp.status(), StatusCode::OK);
+    let import_preview_body = to_bytes(import_preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("pack preview body");
+    let import_preview_payload: Value =
+        serde_json::from_slice(&import_preview_body).expect("pack preview json");
+    assert_eq!(
+        import_preview_payload
+            .get("persisted")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        import_preview_payload
+            .get("pack")
+            .and_then(|value| value.get("pack_type"))
+            .and_then(Value::as_str),
+        Some("workflow")
+    );
+    assert!(import_preview_payload
+        .get("cover_image_data_url")
+        .and_then(Value::as_str)
+        .map(|value| value.starts_with("data:image/png;base64,"))
+        .unwrap_or(false));
+    assert_eq!(
+        import_preview_payload
+            .get("workflows")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let import_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/import/pack")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "path": pack_path.to_string_lossy() }).to_string(),
+                ))
+                .expect("pack import request"),
+        )
+        .await
+        .expect("pack import response");
+    assert_eq!(import_resp.status(), StatusCode::OK);
+    let import_body = to_bytes(import_resp.into_body(), usize::MAX)
+        .await
+        .expect("pack import body");
+    let import_payload: Value = serde_json::from_slice(&import_body).expect("pack import json");
+    assert_eq!(
+        import_payload.get("persisted").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        import_payload
+            .get("installed")
+            .and_then(|value| value.get("pack_id"))
+            .and_then(Value::as_str),
+        Some("workflow-pack-test")
+    );
+    let session_id = import_payload
+        .get("sessions")
+        .and_then(Value::as_array)
+        .and_then(|sessions| sessions.first())
+        .and_then(|session| session.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id")
+        .to_string();
+    let stored_session = state
+        .get_workflow_planner_session(&session_id)
+        .await
+        .expect("stored pack session");
+    assert_eq!(stored_session.source_kind, "workflow_pack");
+    assert_eq!(
+        stored_session.source_pack_id.as_deref(),
+        Some("workflow-pack-test")
+    );
+}
+
+#[tokio::test]
 async fn workflow_plan_import_preview_returns_scope_snapshot_and_summary() {
     let state = test_state().await;
     configure_openai_provider(&state).await;

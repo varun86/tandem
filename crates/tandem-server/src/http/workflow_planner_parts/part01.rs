@@ -1,10 +1,17 @@
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path as FsPath, PathBuf};
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tandem_plan_compiler::api as compiler_api;
 use uuid::Uuid;
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use super::*;
 
@@ -43,6 +50,39 @@ pub(super) struct WorkflowPlanApplyRequest {
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkflowPlanImportRequest {
     pub bundle: compiler_api::PlanPackageImportBundle,
+    #[serde(default)]
+    pub creator_id: Option<String>,
+    #[serde(default)]
+    pub project_slug: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct WorkflowPlanPackExportRequest {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub creator_id: Option<String>,
+    #[serde(default)]
+    pub cover_image_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct WorkflowPlanPackImportRequest {
+    pub path: String,
+    #[serde(default)]
+    pub selected_workflow_ids: Vec<String>,
     #[serde(default)]
     pub creator_id: Option<String>,
     #[serde(default)]
@@ -153,6 +193,10 @@ pub struct WorkflowPlannerSessionRecord {
     pub source_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_bundle_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pack_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pack_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_plan_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +342,10 @@ pub(super) struct WorkflowPlannerSessionListItem {
     pub source_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_bundle_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pack_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pack_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_plan_id: Option<String>,
     pub created_at_ms: u64,
@@ -723,6 +771,8 @@ fn workflow_planner_session_list_item(
         workspace_root: session.workspace_root.clone(),
         source_kind: session.source_kind.clone(),
         source_bundle_digest: session.source_bundle_digest.clone(),
+        source_pack_id: session.source_pack_id.clone(),
+        source_pack_version: session.source_pack_version.clone(),
         current_plan_id: session.current_plan_id.clone(),
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,

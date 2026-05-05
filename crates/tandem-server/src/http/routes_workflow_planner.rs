@@ -59,6 +59,18 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         )
         .route("/workflow-plans/chat/reset", post(workflow_plan_chat_reset))
         .route(
+            "/workflow-plans/export/pack",
+            post(workflow_plan_export_pack),
+        )
+        .route(
+            "/workflow-plans/import/pack/preview",
+            post(workflow_plan_import_pack_preview),
+        )
+        .route(
+            "/workflow-plans/import/pack",
+            post(workflow_plan_import_pack),
+        )
+        .route(
             "/workflow-plans/import/preview",
             post(workflow_plan_import_preview),
         )

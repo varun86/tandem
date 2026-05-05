@@ -223,6 +223,8 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
         workspace_root: workspace_root.clone(),
         source_kind: "workflow_learning_revision".to_string(),
         source_bundle_digest: Some(preview.source_bundle_digest.clone()),
+        source_pack_id: None,
+        source_pack_version: None,
         current_plan_id: Some(draft.current_plan.plan_id.clone()),
         draft: Some(draft),
         goal: format!(

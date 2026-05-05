@@ -1404,6 +1404,10 @@ export interface WorkflowPlannerSessionRecord {
   project_slug: string;
   title: string;
   workspace_root: string;
+  source_kind?: string;
+  source_bundle_digest?: string | null;
+  source_pack_id?: string | null;
+  source_pack_version?: string | null;
   current_plan_id?: string;
   draft?: WorkflowPlanDraftRecord;
   goal?: string;

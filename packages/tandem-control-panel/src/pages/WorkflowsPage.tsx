@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatedPage, Badge, PageHeader, PanelCard, SplitView } from "../ui/index";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
@@ -30,6 +30,35 @@ function parseBundle(text: string) {
   return value;
 }
 
+function payloadPath(payload: any, fallback = "") {
+  const direct = safeString(payload?.absPath || payload?.abs_path || payload?.url);
+  if (direct) return direct;
+  const root = safeString(payload?.root);
+  const path = safeString(payload?.path);
+  if (root && path) return `${root.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return safeString(path || fallback);
+}
+
+function uploadWorkflowAsset(file: File, dir: string) {
+  return new Promise<any>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/files/upload?dir=${encodeURIComponent(dir)}`);
+    xhr.withCredentials = true;
+    xhr.responseType = "json";
+    xhr.setRequestHeader("x-file-name", encodeURIComponent(file.name));
+    xhr.onerror = () => reject(new Error(`Upload failed: ${file.name}`));
+    xhr.onload = () => {
+      const payload = xhr.response || {};
+      if (xhr.status < 200 || xhr.status >= 300 || payload?.ok === false) {
+        reject(new Error(String(payload?.error || `Upload failed (${xhr.status})`)));
+        return;
+      }
+      resolve(payload);
+    };
+    xhr.send(file);
+  });
+}
+
 export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProps) {
   const queryClient = useQueryClient();
   const [bundleText, setBundleText] = useState("");
@@ -39,6 +68,16 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [importError, setImportError] = useState("");
+  const [packPath, setPackPath] = useState("");
+  const [packFileName, setPackFileName] = useState("");
+  const [packPreviewResult, setPackPreviewResult] = useState<any>(null);
+  const [coverImagePath, setCoverImagePath] = useState("");
+  const [coverImagePreview, setCoverImagePreview] = useState("");
+  const [exportTitle, setExportTitle] = useState("");
+  const [exportName, setExportName] = useState("");
+  const [exportVersion, setExportVersion] = useState("0.1.0");
+  const [exportDescription, setExportDescription] = useState("");
+  const [exportResult, setExportResult] = useState<any>(null);
 
   const sessionsQuery = useQuery({
     queryKey: ["workflow-center", "sessions"],
@@ -68,6 +107,148 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
   });
 
   const selectedSession = selectedSessionQuery.data?.session || null;
+
+  useEffect(() => {
+    if (!selectedSession) return;
+    setExportTitle((value) => value || safeString(selectedSession.title));
+    setExportName(
+      (value) =>
+        value ||
+        safeString(selectedSession.title)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+    );
+    setExportDescription((value) => value || safeString(selectedSession.goal));
+  }, [selectedSession]);
+
+  const handlePackFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      setImportError("");
+      try {
+        const payload = await uploadWorkflowAsset(file, "workflow-pack-imports");
+        const path = payloadPath(payload, file.name);
+        setPackPath(path);
+        setPackFileName(file.name);
+        setPackPreviewResult(null);
+        toast("ok", "Workflow pack uploaded. Preview it before installing.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setImportError(message);
+        toast("err", message);
+      }
+    },
+    [toast]
+  );
+
+  const handleCoverFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      try {
+        const payload = await uploadWorkflowAsset(file, "workflow-pack-covers");
+        setCoverImagePath(payloadPath(payload, file.name));
+        setCoverImagePreview(URL.createObjectURL(file));
+        toast("ok", "Cover image added to export.");
+      } catch (error) {
+        toast("err", error instanceof Error ? error.message : String(error));
+      }
+    },
+    [toast]
+  );
+
+  const packPreviewMutation = useMutation({
+    mutationFn: async () => {
+      setImportError("");
+      return client.workflowPlans.importPackPreview({
+        path: packPath,
+        creatorId,
+        creator_id: creatorId,
+        projectSlug,
+        project_slug: projectSlug,
+        title: safeString(title) || undefined,
+      });
+    },
+    onSuccess: (payload) => {
+      setPackPreviewResult(payload);
+      toast("ok", "Workflow pack preview generated.");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setImportError(message);
+      toast("err", message);
+    },
+  });
+
+  const packImportMutation = useMutation({
+    mutationFn: async () => {
+      setImportError("");
+      return client.workflowPlans.importPack({
+        path: packPath,
+        creatorId,
+        creator_id: creatorId,
+        projectSlug,
+        project_slug: projectSlug,
+        title: safeString(title) || undefined,
+      });
+    },
+    onSuccess: async (payload) => {
+      const session = payload?.sessions?.[0] || payload?.session;
+      if (session?.session_id) {
+        try {
+          localStorage.setItem(
+            WORKFLOW_IMPORT_HANDOFF_KEY,
+            JSON.stringify({
+              session_id: session.session_id,
+              title: session.title,
+              project_slug: session.project_slug,
+              source_kind: session.source_kind || "workflow_pack",
+              source_bundle_digest: session.source_bundle_digest || null,
+              current_plan_id: session.current_plan_id || null,
+            })
+          );
+        } catch {
+          // Ignore storage failures.
+        }
+        setSelectedSessionId(session.session_id);
+      }
+      setPackPreviewResult(payload);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["workflow-center"] }),
+        queryClient.invalidateQueries({ queryKey: ["intent-planner"] }),
+      ]);
+      toast("ok", "Workflow pack installed.");
+      navigate("planner");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setImportError(message);
+      toast("err", message);
+    },
+  });
+
+  const exportPackMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedSessionId) throw new Error("Select a workflow session to export.");
+      return client.workflowPlans.exportPack({
+        sessionId: selectedSessionId,
+        session_id: selectedSessionId,
+        name: safeString(exportName) || undefined,
+        title: safeString(exportTitle || selectedSession?.title) || undefined,
+        version: safeString(exportVersion) || undefined,
+        description: safeString(exportDescription) || undefined,
+        creatorId,
+        creator_id: creatorId,
+        coverImagePath: safeString(coverImagePath) || undefined,
+        cover_image_path: safeString(coverImagePath) || undefined,
+      });
+    },
+    onSuccess: (payload) => {
+      setExportResult(payload);
+      toast("ok", "Workflow pack exported.");
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
 
   const previewMutation = useMutation({
     mutationFn: async () => {
@@ -179,13 +360,17 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
     <AnimatedPage className="grid gap-4">
       <PageHeader
         eyebrow="Workflow center"
-        title="Workflow sessions, imports, and provenance"
-        subtitle="Import a bundle durably, inspect the stored session, and jump back to the planner when you need to revise or apply it."
+        title="Workflow packs, sessions, and provenance"
+        subtitle="Import marketplace-ready workflow packs, export your planner sessions, and keep JSON bundles available for advanced debugging."
         badges={
           <>
             <Badge tone="info">{sessions.length} sessions</Badge>
             <Badge tone="warn">
-              {sessions.filter((session: any) => session?.source_kind === "imported_bundle").length}{" "}
+              {
+                sessions.filter((session: any) =>
+                  ["imported_bundle", "workflow_pack"].includes(session?.source_kind)
+                ).length
+              }{" "}
               imports
             </Badge>
           </>
@@ -193,20 +378,25 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
       />
 
       <PanelCard
-        title="Import workflow bundle"
-        subtitle="Paste a workflow bundle JSON export, preview it, then save it as a durable planner session."
+        title="Import workflow pack"
+        subtitle="Upload a .zip pack, preview its manifest and workflow contents, then install it into your local workflow library."
       >
         <div className="grid gap-3">
-          <label className="grid gap-2 text-sm">
-            <span className="tcp-subtle">Bundle JSON</span>
-            <textarea
-              className="min-h-56 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-white outline-none"
-              placeholder='{"plan_id":"...","mission":{...},"routine_graph":[...]}'
-              value={bundleText}
-              onChange={(event) => setBundleText(event.target.value)}
-            />
-          </label>
           <div className="grid gap-3 md:grid-cols-3">
+            <label className="grid gap-2 text-sm md:col-span-3">
+              <span className="tcp-subtle">Workflow pack ZIP</span>
+              <input
+                className="tcp-input"
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(event) => handlePackFile(event.currentTarget.files?.[0] || null)}
+              />
+              {packPath ? (
+                <span className="text-xs text-white/70">
+                  {packFileName || "Uploaded pack"} · {packPath}
+                </span>
+              ) : null}
+            </label>
             <label className="grid gap-2 text-sm">
               <span className="tcp-subtle">Creator id</span>
               <input
@@ -237,45 +427,213 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
             <button
               type="button"
               className="tcp-btn-secondary"
-              onClick={() => previewMutation.mutate()}
+              disabled={!packPath || packPreviewMutation.isPending}
+              onClick={() => packPreviewMutation.mutate()}
             >
-              Preview import
+              Preview pack
             </button>
             <button
               type="button"
               className="tcp-btn-primary"
-              onClick={() => importMutation.mutate()}
+              disabled={!packPath || packImportMutation.isPending}
+              onClick={() => packImportMutation.mutate()}
             >
-              Import and open planner
+              Install and open planner
             </button>
           </div>
           {importError ? <div className="text-sm text-red-300">{importError}</div> : null}
-          {previewResult ? (
+          {packPreviewResult ? (
             <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={previewResult?.persisted ? "ok" : "info"}>
-                  {previewResult?.persisted ? "persisted" : "preview only"}
-                </Badge>
-                <Badge tone="ghost">
-                  {safeString(
-                    previewResult?.summary?.plan_id ||
-                      previewResult?.plan_package_preview?.plan_id ||
-                      "unknown"
-                  )}
-                </Badge>
+              <div className="flex flex-wrap items-start gap-4">
+                {packPreviewResult?.cover_image_data_url ? (
+                  <img
+                    alt=""
+                    className="h-24 w-40 border border-white/10 object-cover"
+                    src={packPreviewResult.cover_image_data_url}
+                  />
+                ) : null}
+                <div className="grid gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={packPreviewResult?.persisted ? "ok" : "info"}>
+                      {packPreviewResult?.persisted ? "installed" : "preview only"}
+                    </Badge>
+                    <Badge tone="ghost">
+                      {safeString(packPreviewResult?.pack?.name || "workflow pack")}
+                    </Badge>
+                    <Badge tone="ghost">
+                      {safeString(packPreviewResult?.pack?.version || "version")}
+                    </Badge>
+                    <Badge tone="info">
+                      {toArray(packPreviewResult?.workflows, "workflows").length} workflows
+                    </Badge>
+                  </div>
+                  <div className="text-sm text-white/75">
+                    {safeString(
+                      packPreviewResult?.manifest?.marketplace?.listing?.display_name ||
+                        packPreviewResult?.manifest?.name
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {toArray(packPreviewResult?.manifest?.capabilities?.required, "required").map(
+                      (capability: any) => (
+                        <span
+                          key={String(capability)}
+                          className="rounded border border-white/10 px-2 py-1 text-white/70"
+                        >
+                          {String(capability)}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
               </div>
               <LazyJson
                 value={
-                  previewResult?.plan_package_validation ||
-                  previewResult?.import_validation ||
-                  previewResult
+                  packPreviewResult?.workflows?.[0]?.plan_package_validation ||
+                  packPreviewResult?.workflows?.[0]?.import_validation ||
+                  packPreviewResult
                 }
                 label="Show validation details"
                 preClassName="max-h-64 overflow-auto rounded-xl bg-black/30 p-3 text-xs text-white/80"
               />
             </div>
           ) : null}
+          <details className="rounded-2xl border border-white/10 bg-black/10 p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-white">
+              Advanced JSON bundle import
+            </summary>
+            <div className="mt-3 grid gap-3">
+              <label className="grid gap-2 text-sm">
+                <span className="tcp-subtle">Bundle JSON</span>
+                <textarea
+                  className="min-h-40 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-white outline-none"
+                  placeholder='{"plan_id":"...","mission":{...},"routine_graph":[...]}'
+                  value={bundleText}
+                  onChange={(event) => setBundleText(event.target.value)}
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="tcp-btn-secondary"
+                  onClick={() => previewMutation.mutate()}
+                >
+                  Preview JSON
+                </button>
+                <button
+                  type="button"
+                  className="tcp-btn-secondary"
+                  onClick={() => importMutation.mutate()}
+                >
+                  Import JSON
+                </button>
+              </div>
+              {previewResult ? (
+                <LazyJson
+                  value={
+                    previewResult?.plan_package_validation ||
+                    previewResult?.import_validation ||
+                    previewResult
+                  }
+                  label="Show JSON import validation"
+                  preClassName="max-h-64 overflow-auto rounded-xl bg-black/30 p-3 text-xs text-white/80"
+                />
+              ) : null}
+            </div>
+          </details>
         </div>
+      </PanelCard>
+
+      <PanelCard
+        title="Export workflow pack"
+        subtitle="Turn the selected planner session into a marketplace-ready .zip pack with an optional cover image."
+      >
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="grid gap-2 text-sm md:col-span-2">
+            <span className="tcp-subtle">Pack title</span>
+            <input
+              className="tcp-input"
+              value={exportTitle}
+              onChange={(event) => setExportTitle(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm">
+            <span className="tcp-subtle">Pack slug</span>
+            <input
+              className="tcp-input"
+              value={exportName}
+              onChange={(event) => setExportName(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm">
+            <span className="tcp-subtle">Version</span>
+            <input
+              className="tcp-input"
+              value={exportVersion}
+              onChange={(event) => setExportVersion(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm md:col-span-3">
+            <span className="tcp-subtle">Description</span>
+            <input
+              className="tcp-input"
+              value={exportDescription}
+              onChange={(event) => setExportDescription(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm">
+            <span className="tcp-subtle">Cover image</span>
+            <input
+              className="tcp-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(event) => handleCoverFile(event.currentTarget.files?.[0] || null)}
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          {coverImagePreview ? (
+            <img
+              alt=""
+              className="h-20 w-32 border border-white/10 object-cover"
+              src={coverImagePreview}
+            />
+          ) : null}
+          <button
+            type="button"
+            className="tcp-btn-primary"
+            disabled={!selectedSessionId || exportPackMutation.isPending}
+            onClick={() => exportPackMutation.mutate()}
+          >
+            Export workflow pack
+          </button>
+        </div>
+        {exportResult ? (
+          <div className="mt-3 grid gap-2 rounded-2xl border border-emerald-400/30 bg-emerald-950/20 p-3 text-sm">
+            <div className="font-semibold">Marketplace-ready workflow pack</div>
+            <div className="break-all text-white/75">
+              {safeString(exportResult?.exported?.path)}
+            </div>
+            <div className="text-xs text-white/60">
+              SHA-256 {safeString(exportResult?.exported?.sha256)}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone="ok">tandempack.yaml</Badge>
+              <Badge tone="ok">workflow plan bundle</Badge>
+              {exportResult?.pack?.cover_image ? (
+                <Badge tone="ok">cover image</Badge>
+              ) : (
+                <Badge tone="ghost">no cover image</Badge>
+              )}
+              <Badge tone="info">Upload as Workflow in marketplace</Badge>
+            </div>
+            <LazyJson
+              value={exportResult?.manifest || exportResult}
+              label="Show manifest"
+              preClassName="max-h-64 overflow-auto rounded-xl bg-black/30 p-3 text-xs text-white/80"
+            />
+          </div>
+        ) : null}
       </PanelCard>
 
       <SplitView

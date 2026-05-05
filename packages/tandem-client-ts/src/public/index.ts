@@ -2029,6 +2029,37 @@ export interface WorkflowPlanImportPreviewResponse {
 
 export type WorkflowPlanImportResponse = WorkflowPlanImportPreviewResponse;
 
+export interface WorkflowPlanPackExportResponse {
+  ok?: boolean;
+  pack?: JsonObject;
+  exported?: {
+    path?: string;
+    sha256?: string;
+    bytes?: number;
+    [key: string]: unknown;
+  };
+  manifest?: JsonObject;
+  bundle?: JsonObject;
+  marketplace_ready?: boolean;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanPackImportPreviewResponse {
+  ok?: boolean;
+  persisted?: boolean;
+  is_pack?: boolean;
+  manifest?: JsonObject;
+  cover_image?: string | null;
+  cover_image_data_url?: string | null;
+  workflows?: JsonObject[];
+  pack?: JsonObject;
+  installed?: JsonObject;
+  sessions?: WorkflowPlannerSessionRecord[];
+  [key: string]: unknown;
+}
+
+export type WorkflowPlanPackImportResponse = WorkflowPlanPackImportPreviewResponse;
+
 export interface WorkflowPlannerSessionRecord {
   session_id: string;
   project_slug: string;
@@ -2036,6 +2067,8 @@ export interface WorkflowPlannerSessionRecord {
   workspace_root: string;
   source_kind?: string;
   source_bundle_digest?: string | null;
+  source_pack_id?: string | null;
+  source_pack_version?: string | null;
   current_plan_id?: string;
   draft?: WorkflowPlanDraftRecord;
   goal?: string;

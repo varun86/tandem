@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.4] - Future Release
 
+### Added
+
+- **Workflow packs are now the default workflow sharing format**: Planner sessions can be exported as marketplace-ready `.zip` packs containing `tandempack.yaml`, `README.md`, an embedded workflow plan bundle, and an optional cover image. The Workflows page now prioritizes pack upload/preview/install and keeps raw JSON bundle import available as an advanced fallback.
+- **Workflow pack import/export APIs and SDK helpers**: Added `/workflow-plans/export/pack`, `/workflow-plans/import/pack/preview`, and `/workflow-plans/import/pack`, plus TypeScript client helpers for exporting workflow packs and previewing/importing workflow pack ZIPs.
+- **Workflow pack provenance**: Imported workflow-pack sessions now retain pack identity and version metadata alongside the source bundle digest, making installed workflow origins inspectable after import.
+
+### Changed
+
+- **Pack manifest reference validation understands cover images**: Pack marketplace metadata can now reference `marketplace.listing.cover_image`, and workflow pack import previews render supported PNG, JPEG, and WebP covers with size/path validation.
+
 ### Fixed
 
 - **Automation cron schedules preserve local wall-clock time**: Runtime scheduling now accepts the 5-field cron expressions emitted by the control panel and normalizes them for the server cron parser before computing `next_fire_at_ms`. Cron schedules are evaluated in the saved IANA timezone, with a Budapest weekday 9:00 AM regression test covering DST-aware wall-clock behavior.

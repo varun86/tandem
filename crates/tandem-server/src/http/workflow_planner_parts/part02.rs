@@ -549,6 +549,8 @@ pub(super) async fn workflow_planner_session_create(
             .to_string(),
         source_kind: default_workflow_planner_source_kind(),
         source_bundle_digest: None,
+        source_pack_id: None,
+        source_pack_version: None,
         current_plan_id: None,
         draft: None,
         goal: input.goal.unwrap_or_default(),
@@ -1416,6 +1418,8 @@ async fn workflow_plan_import_inner(
         workspace_root,
         source_kind: "imported_bundle".to_string(),
         source_bundle_digest: Some(source_bundle_digest.clone()),
+        source_pack_id: None,
+        source_pack_version: None,
         current_plan_id: Some(draft.current_plan.plan_id.clone()),
         draft: Some(draft),
         goal: imported_goal.clone(),
@@ -1464,6 +1468,742 @@ async fn workflow_plan_import_inner(
         "import_source_bundle_digest": source_bundle_digest,
         "session": stored,
     })))
+}
+
+const WORKFLOW_PACK_MARKER: &str = "tandempack.yaml";
+const WORKFLOW_PACK_MAX_COVER_BYTES: u64 = 5 * 1024 * 1024;
+const WORKFLOW_PACK_MAX_ENTRY_BYTES: u64 = 32 * 1024 * 1024;
+
+fn workflow_pack_slug(input: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if matches!(ch, '-' | '_' | ' ' | '.' | '/') && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.chars().take(64).collect()
+    }
+}
+
+fn workflow_pack_read_manifest(path: &FsPath) -> anyhow::Result<crate::pack_manager::PackManifest> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut manifest_file = archive.by_name(WORKFLOW_PACK_MARKER)?;
+    let mut text = String::new();
+    manifest_file.read_to_string(&mut text)?;
+    Ok(serde_yaml::from_str(&text)?)
+}
+
+fn workflow_pack_validate_entry_path(path: &str) -> anyhow::Result<()> {
+    if path.starts_with('/') || path.starts_with('\\') || path.contains('\0') {
+        return Err(anyhow::anyhow!("invalid pack path: {path}"));
+    }
+    let mut depth = 0usize;
+    for component in FsPath::new(path).components() {
+        match component {
+            std::path::Component::Normal(_) => {
+                depth = depth.saturating_add(1);
+                if depth > 24 {
+                    return Err(anyhow::anyhow!("pack path too deep: {path}"));
+                }
+            }
+            std::path::Component::CurDir => {}
+            _ => return Err(anyhow::anyhow!("unsafe pack path: {path}")),
+        }
+    }
+    Ok(())
+}
+
+fn workflow_pack_validate_zip(path: &FsPath) -> anyhow::Result<()> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut has_marker = false;
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i)?;
+        let name = entry.name().to_string();
+        if name.ends_with('/') {
+            continue;
+        }
+        if name == WORKFLOW_PACK_MARKER {
+            has_marker = true;
+        }
+        workflow_pack_validate_entry_path(&name)?;
+        if entry.size() > WORKFLOW_PACK_MAX_ENTRY_BYTES {
+            return Err(anyhow::anyhow!("pack entry too large: {name}"));
+        }
+    }
+    if !has_marker {
+        return Err(anyhow::anyhow!(
+            "zip does not contain root marker tandempack.yaml"
+        ));
+    }
+    Ok(())
+}
+
+fn workflow_pack_entries(manifest: &crate::pack_manager::PackManifest) -> Vec<(String, String)> {
+    let mut entries = Vec::new();
+    if let Some(rows) = manifest
+        .contents
+        .get("workflows")
+        .and_then(|value| value.as_array())
+    {
+        for (index, row) in rows.iter().enumerate() {
+            if let Some(path) = row
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                entries.push((format!("workflow-{}", index + 1), path.to_string()));
+                continue;
+            }
+            let id = row
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("workflow-{}", index + 1));
+            if let Some(path) = row
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                entries.push((id, path.to_string()));
+            }
+        }
+    }
+    entries
+}
+
+fn workflow_pack_cover_path(manifest_value: &Value) -> Option<String> {
+    manifest_value
+        .pointer("/marketplace/listing/cover_image")
+        .or_else(|| manifest_value.pointer("/marketplace/listing/icon"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn workflow_pack_image_mime(path: &str) -> Option<&'static str> {
+    match FsPath::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn workflow_pack_read_zip_text(path: &FsPath, entry_path: &str) -> anyhow::Result<String> {
+    workflow_pack_validate_entry_path(entry_path)?;
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut entry = archive.by_name(entry_path)?;
+    if entry.size() > WORKFLOW_PACK_MAX_ENTRY_BYTES {
+        return Err(anyhow::anyhow!("pack entry too large: {entry_path}"));
+    }
+    let mut text = String::new();
+    entry.read_to_string(&mut text)?;
+    Ok(text)
+}
+
+fn workflow_pack_cover_data_url(path: &FsPath, cover_path: &str) -> anyhow::Result<Option<String>> {
+    workflow_pack_validate_entry_path(cover_path)?;
+    let Some(mime) = workflow_pack_image_mime(cover_path) else {
+        return Err(anyhow::anyhow!(
+            "cover image must be PNG, JPEG, or WebP: {cover_path}"
+        ));
+    };
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut entry = archive.by_name(cover_path)?;
+    if entry.size() > WORKFLOW_PACK_MAX_COVER_BYTES {
+        return Err(anyhow::anyhow!("cover image exceeds 5MB: {cover_path}"));
+    }
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(format!("data:{mime};base64,{encoded}")))
+}
+
+async fn workflow_pack_preview_from_bundle(
+    state: &AppState,
+    bundle: &compiler_api::PlanPackageImportBundle,
+    creator_id: &str,
+) -> (
+    compiler_api::PlanReplayReport,
+    Value,
+    Value,
+    Value,
+    Vec<String>,
+    String,
+) {
+    let report = compiler_api::validate_plan_package_bundle(bundle);
+    if !report.compatible {
+        return (
+            report,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Vec::new(),
+            String::new(),
+        );
+    }
+    let workspace_root = state.workspace_index.snapshot().await.root;
+    let import_preview =
+        compiler_api::preview_plan_package_import_bundle(bundle, &workspace_root, creator_id);
+    let plan_package_validation = compiler_api::validate_plan_package(&import_preview.plan_package);
+    (
+        report,
+        serde_json::to_value(&import_preview.plan_package).unwrap_or(Value::Null),
+        serde_json::to_value(plan_package_validation).unwrap_or(Value::Null),
+        workflow_plan_import_summary(&import_preview.plan_package),
+        import_preview.import_transform_log,
+        import_preview.source_bundle_digest,
+    )
+}
+
+fn workflow_pack_sha256_file(path: &FsPath) -> anyhow::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn workflow_pack_add_file(
+    zip: &mut ZipWriter<File>,
+    path: &str,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file(path, options)?;
+    zip.write_all(bytes)?;
+    Ok(())
+}
+
+fn workflow_pack_validate_cover_file(path: &FsPath) -> anyhow::Result<&'static str> {
+    let display = path.to_string_lossy();
+    let Some(mime) = workflow_pack_image_mime(&display) else {
+        return Err(anyhow::anyhow!("cover image must be PNG, JPEG, or WebP"));
+    };
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > WORKFLOW_PACK_MAX_COVER_BYTES {
+        return Err(anyhow::anyhow!("cover image exceeds 5MB"));
+    }
+    Ok(mime)
+}
+
+async fn workflow_plan_pack_export_bundle(
+    state: &AppState,
+    input: &WorkflowPlanPackExportRequest,
+) -> Result<(crate::WorkflowPlan, u32), (StatusCode, Json<Value>)> {
+    if let Some(session_id) = input
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        let Some(session) = state.get_workflow_planner_session(session_id).await else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "workflow planner session not found"})),
+            ));
+        };
+        if let Some(draft) = session.draft {
+            return Ok((draft.current_plan, draft.plan_revision));
+        }
+        if let Some(plan_id) = session.current_plan_id.as_deref() {
+            if let Some(plan) = state.get_workflow_plan(plan_id).await {
+                return Ok((plan, 1));
+            }
+        }
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "workflow session does not contain an exportable plan"})),
+        ));
+    }
+    if let Some(plan_id) = input
+        .plan_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        if let Some(draft) = state.get_workflow_plan_draft(plan_id).await {
+            return Ok((draft.current_plan, draft.plan_revision));
+        }
+        if let Some(plan) = state.get_workflow_plan(plan_id).await {
+            return Ok((plan, 1));
+        }
+    }
+    Err((
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": "export requires session_id or plan_id"})),
+    ))
+}
+
+pub(super) async fn workflow_plan_export_pack(
+    State(state): State<AppState>,
+    Json(input): Json<WorkflowPlanPackExportRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (plan, revision) = workflow_plan_pack_export_bundle(&state, &input).await?;
+    let plan_json = compiler_api::workflow_plan_to_json(&plan).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": error, "code": "WORKFLOW_PLAN_INVALID"})),
+        )
+    })?;
+    let plan_package = compiler_api::compile_workflow_plan_preview_package_with_revision(
+        &plan_json,
+        Some("workflow_planner"),
+        revision,
+    );
+    let validation = compiler_api::validate_plan_package(&plan_package);
+    if validation.blocker_count > 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "plan package validation failed",
+                "code": "WORKFLOW_PLAN_INVALID",
+                "plan_package_validation": validation,
+            })),
+        ));
+    }
+    let bundle = compiler_api::export_plan_package_bundle(&plan_package);
+    let title = input
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| plan.title.trim())
+        .to_string();
+    let name = workflow_pack_slug(
+        input
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&title),
+        "workflow-pack",
+    );
+    let version = input
+        .version
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("0.1.0")
+        .to_string();
+    let workflow_id = workflow_pack_slug(&plan.plan_id, "workflow");
+    let workflow_path = format!("workflows/{workflow_id}/plan-package.json");
+    let cover_source = input
+        .cover_image_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let cover_ext = cover_source
+        .as_ref()
+        .and_then(|path| path.extension().and_then(|value| value.to_str()))
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_else(|| "png".to_string());
+    let cover_path = cover_source
+        .as_ref()
+        .map(|_| format!("assets/cover.{cover_ext}"));
+    if let Some(path) = cover_source.as_ref() {
+        workflow_pack_validate_cover_file(path).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID_COVER"})),
+            )
+        })?;
+    }
+    let creator_id = input
+        .creator_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tandem");
+    let description = input
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            plan.description
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("")
+        .to_string();
+    let manifest = json!({
+        "manifest_schema_version": "1",
+        "name": name,
+        "version": version,
+        "type": "workflow",
+        "pack_id": name,
+        "marketplace": {
+            "publisher": {
+                "publisher_id": creator_id,
+                "display_name": creator_id,
+                "verification_tier": "unverified"
+            },
+            "listing": {
+                "display_name": title,
+                "description": if description.is_empty() { plan.original_prompt.clone() } else { description.clone() },
+                "license_spdx": "Proprietary",
+                "categories": ["workflow"],
+                "tags": ["workflow", "tandem"],
+                "cover_image": cover_path.clone()
+            }
+        },
+        "capabilities": {
+            "required": plan.requires_integrations,
+            "optional": [],
+            "provider_specific": []
+        },
+        "entrypoints": {
+            "workflows": [workflow_id]
+        },
+        "contents": {
+            "workflows": [{
+                "id": workflow_id,
+                "path": workflow_path,
+                "format": "workflow_plan_bundle"
+            }]
+        }
+    });
+    let manifest_yaml = serde_yaml::to_string(&manifest).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    let bundle_json = serde_json::to_vec_pretty(&bundle).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    let exports_dir = crate::pack_manager::PackManager::default_root()
+        .join("exports")
+        .join("workflow-packs");
+    fs::create_dir_all(&exports_dir).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    let output = exports_dir.join(format!("{}-{}.zip", name, version));
+    let file = File::create(&output).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    let mut zip = ZipWriter::new(file);
+    workflow_pack_add_file(&mut zip, WORKFLOW_PACK_MARKER, manifest_yaml.as_bytes())
+        .and_then(|_| {
+            let readme = format!(
+                "# {title}\n\n{}\n",
+                if description.is_empty() {
+                    &plan.original_prompt
+                } else {
+                    &description
+                }
+            );
+            workflow_pack_add_file(&mut zip, "README.md", readme.as_bytes())
+        })
+        .and_then(|_| workflow_pack_add_file(&mut zip, &workflow_path, &bundle_json))
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": error.to_string()})),
+            )
+        })?;
+    if let (Some(source), Some(path)) = (cover_source.as_ref(), cover_path.as_ref()) {
+        let bytes = fs::read(source).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID_COVER"})),
+            )
+        })?;
+        workflow_pack_add_file(&mut zip, path, &bytes).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": error.to_string()})),
+            )
+        })?;
+    }
+    zip.finish().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    let bytes = fs::metadata(&output)
+        .map(|meta| meta.len())
+        .unwrap_or_default();
+    let sha256 = workflow_pack_sha256_file(&output).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+    Ok(Json(json!({
+        "ok": true,
+        "pack": {
+            "name": manifest.get("name"),
+            "version": manifest.get("version"),
+            "pack_id": manifest.get("pack_id"),
+            "pack_type": "workflow",
+            "cover_image": cover_path,
+        },
+        "exported": {
+            "path": output.to_string_lossy(),
+            "sha256": sha256,
+            "bytes": bytes,
+        },
+        "manifest": manifest,
+        "bundle": bundle,
+        "marketplace_ready": true,
+    })))
+}
+
+async fn workflow_plan_import_pack_inner(
+    State(state): State<AppState>,
+    Json(input): Json<WorkflowPlanPackImportRequest>,
+    persist: bool,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let pack_path = PathBuf::from(input.path.trim());
+    workflow_pack_validate_zip(&pack_path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID"})),
+        )
+    })?;
+    let manifest = workflow_pack_read_manifest(&pack_path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID"})),
+        )
+    })?;
+    let manifest_value = serde_json::to_value(&manifest).unwrap_or(Value::Null);
+    let cover_path = workflow_pack_cover_path(&manifest_value);
+    let cover_data_url = match cover_path.as_deref() {
+        Some(path) => workflow_pack_cover_data_url(&pack_path, path).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID_COVER"})),
+            )
+        })?,
+        None => None,
+    };
+    let entries = workflow_pack_entries(&manifest);
+    if entries.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({"error": "workflow pack does not declare workflow contents", "code": "WORKFLOW_PACK_EMPTY"}),
+            ),
+        ));
+    }
+    let selected = input
+        .selected_workflow_ids
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    let creator_id = input.creator_id.as_deref().unwrap_or("workflow_planner");
+    let mut workflow_previews = Vec::new();
+    let mut import_requests = Vec::new();
+    for (workflow_id, workflow_path) in entries {
+        if !selected.is_empty() && !selected.contains(&workflow_id) {
+            continue;
+        }
+        let text = workflow_pack_read_zip_text(&pack_path, &workflow_path).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID"})),
+            )
+        })?;
+        let bundle: compiler_api::PlanPackageImportBundle =
+            serde_json::from_str(&text).map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(
+                        json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INVALID_BUNDLE"}),
+                    ),
+                )
+            })?;
+        let (
+            validation,
+            plan_package_preview,
+            plan_package_validation,
+            summary,
+            transform_log,
+            digest,
+        ) = workflow_pack_preview_from_bundle(&state, &bundle, creator_id).await;
+        if !validation.compatible {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "plan bundle import validation failed",
+                    "code": "WORKFLOW_PLAN_INVALID",
+                    "workflow_id": workflow_id,
+                    "import_validation": validation,
+                })),
+            ));
+        }
+        workflow_previews.push(json!({
+            "workflow_id": workflow_id,
+            "path": workflow_path,
+            "bundle": bundle,
+            "import_validation": validation,
+            "plan_package_preview": plan_package_preview,
+            "plan_package_validation": plan_package_validation,
+            "summary": summary,
+            "import_transform_log": transform_log,
+            "import_source_bundle_digest": digest,
+        }));
+        import_requests.push(WorkflowPlanImportRequest {
+            bundle,
+            creator_id: input.creator_id.clone(),
+            project_slug: input
+                .project_slug
+                .clone()
+                .or_else(|| Some("workflow-imports".to_string())),
+            title: input.title.clone(),
+        });
+    }
+    if workflow_previews.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({"error": "no selected workflows found in pack", "code": "WORKFLOW_PACK_EMPTY"}),
+            ),
+        ));
+    }
+    if !persist {
+        return Ok(Json(json!({
+            "ok": true,
+            "persisted": false,
+            "is_pack": true,
+            "manifest": manifest_value,
+            "cover_image": cover_path,
+            "cover_image_data_url": cover_data_url,
+            "workflows": workflow_previews,
+            "pack": {
+                "name": manifest.name,
+                "version": manifest.version,
+                "pack_id": manifest.pack_id,
+                "pack_type": manifest.pack_type,
+            },
+        })));
+    }
+    let installed = match state
+        .pack_manager
+        .install(crate::pack_manager::PackInstallRequest {
+            path: Some(pack_path.to_string_lossy().to_string()),
+            url: None,
+            source: json!({"kind": "workflow_pack_import", "path": pack_path.to_string_lossy()}),
+        })
+        .await
+    {
+        Ok(record) => record,
+        Err(error) if error.to_string().contains("pack already installed") => {
+            let packs = state.pack_manager.list().await.map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": err.to_string(), "code": "WORKFLOW_PACK_INSTALL_FAILED"})),
+                )
+            })?;
+            packs.into_iter()
+                .find(|record| record.name == manifest.name && record.version == manifest.version)
+                .ok_or_else(|| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INSTALL_FAILED"})),
+                    )
+                })?
+        }
+        Err(error) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string(), "code": "WORKFLOW_PACK_INSTALL_FAILED"})),
+            ));
+        }
+    };
+    let mut sessions = Vec::new();
+    for request in import_requests {
+        let response =
+            workflow_plan_import_inner(State(state.clone()), Json(request), true).await?;
+        let mut payload = response.0;
+        if let Some(session_value) = payload.get_mut("session") {
+            if let Ok(mut session) =
+                serde_json::from_value::<WorkflowPlannerSessionRecord>(session_value.clone())
+            {
+                session.source_kind = "workflow_pack".to_string();
+                session.source_pack_id = Some(installed.pack_id.clone());
+                session.source_pack_version = Some(installed.version.clone());
+                let source_bundle_digest = session.source_bundle_digest.clone();
+                session.operator_preferences = Some(json!({
+                    "source_kind": "workflow_pack",
+                    "source_pack_id": installed.pack_id.clone(),
+                    "source_pack_version": installed.version.clone(),
+                    "source_bundle_digest": source_bundle_digest,
+                }));
+                if let Ok(stored) = state.put_workflow_planner_session(session).await {
+                    *session_value = serde_json::to_value(&stored).unwrap_or(Value::Null);
+                    sessions.push(stored);
+                }
+            }
+        }
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "persisted": true,
+        "is_pack": true,
+        "manifest": manifest_value,
+        "cover_image": cover_path,
+        "cover_image_data_url": cover_data_url,
+        "workflows": workflow_previews,
+        "installed": installed,
+        "sessions": sessions,
+    })))
+}
+
+pub(super) async fn workflow_plan_import_pack(
+    State(state): State<AppState>,
+    Json(input): Json<WorkflowPlanPackImportRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    workflow_plan_import_pack_inner(State(state), Json(input), true).await
+}
+
+pub(super) async fn workflow_plan_import_pack_preview(
+    State(state): State<AppState>,
+    Json(input): Json<WorkflowPlanPackImportRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    workflow_plan_import_pack_inner(State(state), Json(input), false).await
 }
 
 pub(super) async fn workflow_plan_import(
