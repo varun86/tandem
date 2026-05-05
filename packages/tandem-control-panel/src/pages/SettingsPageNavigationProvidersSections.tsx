@@ -5,6 +5,7 @@ import { EmptyState } from "./ui";
 import { Badge, PanelCard, Toolbar } from "../ui/index.tsx";
 import { providerHints } from "../app/store.js";
 import {
+  OPENAI_CODEX_PROVIDER_ID,
   providerCatalogBadge,
   providerCatalogSubtitle,
   useSettingsPageController,
