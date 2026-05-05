@@ -13,7 +13,7 @@ import {
 } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import { LazyJson } from "../features/automations/LazyJson";
-import { formatCompactNumber, formatUsd } from "../lib/format";
+import { formatCompactNumber } from "../lib/format";
 import type { AppPageProps } from "./pageTypes";
 
 function toArray(input: any, key: string) {
@@ -125,17 +125,15 @@ export function DashboardPage(props: AppPageProps) {
   );
   const trackedAutomationRunRows = automationRunRows.filter((run: any) => {
     const totalTokens = Number(run?.total_tokens || 0);
-    const estimatedCostUsd = Number(run?.estimated_cost_usd || 0);
-    return totalTokens > 0 || estimatedCostUsd > 0;
+    return totalTokens > 0;
   });
   const automationTokenTotals = automationRunRows.reduce(
-    (acc: { prompt: number; completion: number; total: number; cost: number }, run: any) => ({
+    (acc: { prompt: number; completion: number; total: number }, run: any) => ({
       prompt: acc.prompt + Number(run?.prompt_tokens || 0),
       completion: acc.completion + Number(run?.completion_tokens || 0),
       total: acc.total + Number(run?.total_tokens || 0),
-      cost: acc.cost + Number(run?.estimated_cost_usd || 0),
     }),
-    { prompt: 0, completion: 0, total: 0, cost: 0 }
+    { prompt: 0, completion: 0, total: 0 }
   );
   const activeWorkflowContexts = workflowContextRows.filter((run: any) =>
     ["queued", "planning", "running", "awaiting_approval"].includes(
@@ -147,7 +145,7 @@ export function DashboardPage(props: AppPageProps) {
   const providerAuthDetail = providerAuthSummary(providerStatus);
 
   const tokenUsageBuckets = useMemo(() => {
-    type Bucket = { label: string; runs: number; tokens: number; cost: number };
+    type Bucket = { label: string; runs: number; tokens: number };
     const map = new Map<string, Bucket>();
     const now = Date.now();
 
@@ -191,10 +189,9 @@ export function DashboardPage(props: AppPageProps) {
       if (!ts || ts < cutoff) continue;
       const d = new Date(ts);
       const key = keyFn(d);
-      const existing = map.get(key) ?? { label: labelFn(key), runs: 0, tokens: 0, cost: 0 };
+      const existing = map.get(key) ?? { label: labelFn(key), runs: 0, tokens: 0 };
       existing.runs += 1;
       existing.tokens += Number(run?.total_tokens || 0);
-      existing.cost += Number(run?.estimated_cost_usd || 0);
       map.set(key, existing);
     }
 
@@ -230,13 +227,6 @@ export function DashboardPage(props: AppPageProps) {
         helper: `${trackedAutomationRunRows.length} runs with usage`,
       },
       {
-        label: "Estimated spend",
-        value: automationTokenTotals.cost,
-        tone: automationTokenTotals.cost ? ("ok" as const) : ("ghost" as const),
-        helper: "Summed from stored run records",
-        format: formatUsd,
-      },
-      {
         label: "Context runs",
         value: workflowContextRows.length,
         tone: activeWorkflowContexts.length ? ("warn" as const) : ("info" as const),
@@ -248,7 +238,6 @@ export function DashboardPage(props: AppPageProps) {
     [
       activeWorkflowContexts.length,
       automationRunRows.length,
-      automationTokenTotals.cost,
       automationTokenTotals.total,
       liveAutomationRunRows.length,
       sessionRows.length,
@@ -388,7 +377,6 @@ export function DashboardPage(props: AppPageProps) {
                   <span className="font-mono text-xs">{bucket.label}</span>
                   <span className="dashboard-bar-count">
                     {formatCompactNumber(bucket.tokens)} tok
-                    {bucket.cost > 0 ? ` · ${formatUsd(bucket.cost)}` : ""}
                     {" · "}
                     <span className="tcp-subtle">
                       {bucket.runs} run{bucket.runs !== 1 ? "s" : ""}

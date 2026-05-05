@@ -12,7 +12,7 @@ import { WorkflowRunTelemetryPanel } from "./WorkflowRunTelemetryPanel";
 import { WorkflowRunSummaryPanel } from "./WorkflowRunSummaryPanel";
 import { WorkflowTaskSignalsPanel } from "./WorkflowTaskSignalsPanel";
 import { LazyJson, DeferredJson } from "./LazyJson";
-import { formatCompactNumber, formatUsd } from "../../lib/format";
+import { formatCompactNumber } from "../../lib/format";
 import { normalizeManagedFilesExplorerPath, openFilesExplorer } from "../files/explorerHandoff";
 
 function RunHistoryEventDetails({
@@ -238,7 +238,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
               tokens: {formatCompactNumber(Number(selectedRun?.total_tokens || 0))}
               {" ("}prompt {formatCompactNumber(Number(selectedRun?.prompt_tokens || 0))}
               {" · "}completion {formatCompactNumber(Number(selectedRun?.completion_tokens || 0))}
-              {") · "}cost: {formatUsd(Number(selectedRun?.estimated_cost_usd || 0))}
+              {")"}
             </div>
           </div>
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
@@ -528,17 +528,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                           {formatCompactNumber(
                             Number(selectedBoardTaskOutput.cost_provenance.tokens_out || 0)
                           )}
-                          {") · node cost: "}
-                          {formatUsd(
-                            Number(selectedBoardTaskOutput.cost_provenance.computed_cost_usd || 0)
-                          )}
-                          {" · cumulative: "}
-                          {formatUsd(
-                            Number(
-                              selectedBoardTaskOutput.cost_provenance
-                                .cumulative_run_cost_usd_at_step_end || 0
-                            )
-                          )}
+                          {")"}
                         </div>
                       ) : null}
                       {!selectedBoardTaskIsWorkflowNode ? (
