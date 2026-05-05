@@ -1706,10 +1706,19 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     background: color-mix(in srgb, var(--color-surface-elevated) 90%, #000 10%);
     color: var(--color-text-muted);
     font-family: var(--font-mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
   }
 
   .chat-tool-pill:hover {
     border-color: color-mix(in srgb, var(--color-primary) 42%, transparent);
+    color: var(--color-text);
+  }
+
+  .chat-tool-pill.selected {
+    border-color: color-mix(in srgb, var(--color-primary) 72%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface-elevated));
     color: var(--color-text);
   }
 
@@ -1722,6 +1731,34 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   .chat-tool-chip {
     @apply rounded-sm border px-1.5 py-1 text-[10px];
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .chat-tool-event {
+    @apply rounded-sm border px-1.5 py-1 text-[10px];
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .chat-tool-event summary {
+    @apply cursor-pointer;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    list-style: none;
+  }
+
+  .chat-tool-event summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .chat-tool-event-body {
+    @apply mt-1 space-y-1;
+    color: var(--color-text-subtle);
+  }
+
+  .chat-tool-event-body pre {
+    @apply max-h-24 overflow-auto whitespace-pre-wrap break-words border p-1;
+    border-color: color-mix(in srgb, var(--color-border-subtle) 84%, transparent);
+    background: color-mix(in srgb, var(--color-surface) 78%, #000 22%);
   }
 
   .chat-tool-chip-running {
@@ -2014,6 +2051,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   .chat-rail-count,
   .chat-tool-pill,
   .chat-tool-chip,
+  .chat-tool-event,
   .chat-icon-btn,
   .chat-send-btn,
   .chat-file-pill,

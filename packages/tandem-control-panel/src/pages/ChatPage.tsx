@@ -20,9 +20,11 @@ import {
   isPendingPermissionStatus,
   normalizePackEvent,
   normalizePermissionRequest,
+  summarizeToolPayload,
   TERMINAL_FAILURE_EVENTS,
   TERMINAL_SUCCESS_EVENTS,
   TOOL_END_EVENTS,
+  TOOL_PROGRESS_EVENTS,
   TOOL_START_EVENTS,
   type PackEventItem,
   type PermissionRequest,
@@ -33,6 +35,7 @@ import { subscribeSse } from "../services/sse.js";
 
 const CHAT_UPLOAD_DIR = "uploads";
 const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
+const CHAT_TOOL_ALLOWLIST_KEY = "tandem_control_panel_chat_tool_allowlist";
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 const WORKFLOW_PLANNER_SEED_KEY = "tandem.workflow.plannerSeed";
 const EXT_MIME: Record<string, string> = {
@@ -149,6 +152,28 @@ function saveAutoApprovePreference(enabled: boolean) {
   }
 }
 
+function loadToolAllowlistPreference() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_TOOL_ALLOWLIST_KEY) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.map((tool) => String(tool || "").trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveToolAllowlistPreference(tools: string[]) {
+  try {
+    localStorage.setItem(
+      CHAT_TOOL_ALLOWLIST_KEY,
+      JSON.stringify([...new Set(tools.map((tool) => tool.trim()).filter(Boolean))].sort())
+    );
+  } catch {
+    // ignore
+  }
+}
+
 function seedAutomationPlanner(payload: Record<string, unknown>) {
   try {
     const prompt = String(payload?.prompt || payload?.goal || "").trim();
@@ -249,6 +274,85 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
   };
 }
 
+function normalizePartType(part: any) {
+  return String(part?.type || part?.kind || part?.role || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+}
+
+function toolStatusFromPayload(part: any): ToolActivityStatus {
+  const state = part?.state;
+  const status = String(
+    (state && typeof state === "object" ? state.status : state) || part?.status || part?.phase || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    part?.error ||
+    (state && typeof state === "object" && state.error) ||
+    status.includes("fail") ||
+    status.includes("error") ||
+    status.includes("deny") ||
+    status.includes("reject") ||
+    status.includes("cancel")
+  ) {
+    return "failed";
+  }
+  if (
+    part?.result ||
+    part?.output ||
+    (state && typeof state === "object" && (state.output || state.result)) ||
+    status.includes("done") ||
+    status.includes("complete") ||
+    status.includes("success")
+  ) {
+    return "completed";
+  }
+  return "started";
+}
+
+function collectToolActivityFromMessages(raw: any): ToolActivityItem[] {
+  const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.messages) ? raw.messages : [];
+  const items: ToolActivityItem[] = [];
+  rows.forEach((row: any, rowIndex: number) => {
+    const parts = [
+      ...(Array.isArray(row?.parts) ? row.parts : []),
+      ...(Array.isArray(row?.content) ? row.content : []),
+      ...(Array.isArray(row?.message?.parts) ? row.message.parts : []),
+    ];
+    parts.forEach((part: any, partIndex: number) => {
+      const partType = normalizePartType(part);
+      const tool = extractToolName(part);
+      const looksLikeTool =
+        !!tool &&
+        (partType.includes("tool") ||
+          part?.tool ||
+          part?.toolName ||
+          part?.tool_name ||
+          part?.toolCall ||
+          part?.call);
+      if (!looksLikeTool) return;
+      const callId = extractToolCallId(part);
+      const runId = String(row?.runID || row?.runId || row?.run_id || "").trim();
+      const at =
+        Number(row?.created_at_ms || row?.createdAtMs || row?.timestamp_ms || 0) || Date.now();
+      items.push({
+        id: `history:${row?.id || rowIndex}:${callId || partIndex}:${tool}:${toolStatusFromPayload(part)}`,
+        tool,
+        status: toolStatusFromPayload(part),
+        at,
+        callId,
+        runId,
+        source: "history",
+        summary: summarizeToolPayload(part),
+        detail: summarizeToolPayload(part),
+      });
+    });
+  });
+  return items.slice(-80).reverse();
+}
+
 export function ChatPage({ client, api, toast, providerStatus, identity, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const reducedMotion = !!useReducedMotion();
@@ -281,6 +385,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   const [autoApprove, setAutoApprove] = useState(loadAutoApprovePreference());
   const [autoApproveInFlight, setAutoApproveInFlight] = useState(false);
   const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>(loadToolAllowlistPreference());
   const [deleteConfirm, setDeleteConfirm] = useState<ConfirmDeleteState>(null);
   const [setupCard, setSetupCard] = useState<SetupCard | null>(null);
 
@@ -288,6 +393,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     const hit = sessions.find((x) => x.id === selectedSessionId);
     return hit?.title || "Chat";
   }, [selectedSessionId, sessions]);
+  const selectedToolSet = useMemo(() => new Set(selectedTools), [selectedTools]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -309,6 +415,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     permissions,
     toolActivity,
     packEvents,
+    selectedTools,
     messages,
     sessionsOpen,
     showThinking,
@@ -396,6 +503,14 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         .catch(() => ({ messages: [] }));
       if (!mountedRef.current) return;
       normalizeAndSetMessages(rows);
+      const history = collectToolActivityFromMessages(rows);
+      if (history.length) {
+        setToolActivity((prev) => {
+          const seen = new Set(prev.map((item) => item.id));
+          const merged = [...history.filter((item) => !seen.has(item.id)), ...prev];
+          return merged.sort((a, b) => b.at - a.at).slice(0, 80);
+        });
+      }
     } finally {
       if (mountedRef.current) setMessagesLoading(false);
     }
@@ -412,7 +527,12 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   }, []);
 
   const recordToolActivity = useCallback(
-    (toolName: string, status: ToolActivityStatus, eventKey = "") => {
+    (
+      toolName: string,
+      status: ToolActivityStatus,
+      eventKey = "",
+      meta: Partial<ToolActivityItem> = {}
+    ) => {
       const tool = String(toolName || "").trim();
       if (!tool) return;
 
@@ -438,6 +558,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             tool,
             status,
             at: Date.now(),
+            ...meta,
           },
           ...prev,
         ];
@@ -467,6 +588,38 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
     setPackEvents((prev) => [normalized, ...prev].slice(0, 80));
   }, []);
+
+  const recordToolEvent = useCallback(
+    (eventType: string, props: any, fallbackRunId = "") => {
+      const tool = extractToolName(props);
+      if (!tool) return;
+      const callId = extractToolCallId(props);
+      const runId = String(extractRunId({ properties: props }, fallbackRunId) || fallbackRunId);
+      const lowerType = String(eventType || "").toLowerCase();
+      const status =
+        lowerType.includes("fail") || lowerType.includes("error")
+          ? "failed"
+          : lowerType.includes("complete") ||
+              lowerType.includes("succeed") ||
+              lowerType.includes("result") ||
+              lowerType.includes("end")
+            ? "completed"
+            : toolStatusFromPayload(props);
+      recordToolActivity(
+        tool,
+        status,
+        `${callId || runId || Date.now()}:${tool}:${eventType}:${status}`,
+        {
+          callId,
+          runId,
+          source: eventType,
+          summary: summarizeToolPayload(props),
+          detail: summarizeToolPayload(props),
+        }
+      );
+    },
+    [recordToolActivity]
+  );
 
   const upsertPermissionRequest = useCallback((req: PermissionRequest) => {
     if (!isPendingPermissionStatus(req?.status || "")) return;
@@ -808,6 +961,12 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
               providerID: modelRoute.providerID,
               modelID: modelRoute.modelID,
             },
+            ...(selectedTools.length
+              ? {
+                  toolMode: "auto",
+                  toolAllowlist: selectedTools,
+                }
+              : {}),
           }),
         });
 
@@ -921,6 +1080,14 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
           const evRunId = extractRunId(event);
           if (evRunId && evRunId !== runId) continue;
+          const eventTypeLower = String(event.type || "").toLowerCase();
+          const isKnownToolEvent =
+            TOOL_START_EVENTS.has(event.type) ||
+            TOOL_PROGRESS_EVENTS.has(event.type) ||
+            TOOL_END_EVENTS.has(event.type);
+          if (!isKnownToolEvent && eventTypeLower.includes("tool")) {
+            recordToolEvent(event.type, event.properties || {}, evRunId || runId);
+          }
 
           if (event.type === "session.response") {
             const delta = String(event.properties?.delta || "");
@@ -931,27 +1098,15 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           }
 
           if (TOOL_START_EVENTS.has(event.type)) {
-            const tool = extractToolName(event.properties) || "tool";
-            const callId = extractToolCallId(event.properties);
-            recordToolActivity(tool, "started", `${callId || evRunId || runId}:${tool}:started`);
+            recordToolEvent(event.type, event.properties || {}, evRunId || runId);
+          }
+
+          if (TOOL_PROGRESS_EVENTS.has(event.type)) {
+            recordToolEvent(event.type, event.properties || {}, evRunId || runId);
           }
 
           if (TOOL_END_EVENTS.has(event.type)) {
-            const tool = extractToolName(event.properties) || "tool";
-            const callId = extractToolCallId(event.properties);
-            const statusHint = String(
-              event.properties?.status || event.properties?.state || ""
-            ).toLowerCase();
-            const failed =
-              event.type === "tool_call.failed" ||
-              statusHint.includes("fail") ||
-              statusHint.includes("error") ||
-              !!event.properties?.error;
-            recordToolActivity(
-              tool,
-              failed ? "failed" : "completed",
-              `${callId || evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
-            );
+            recordToolEvent(event.type, event.properties || {}, evRunId || runId);
           }
 
           if (event.type === "message.part.updated") {
@@ -996,13 +1151,26 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                 : hasOutput
                   ? "completed"
                   : "started";
-              recordToolActivity(tool, status, `${partId || evRunId || runId}:${tool}:${status}`);
+              recordToolActivity(tool, status, `${partId || evRunId || runId}:${tool}:${status}`, {
+                callId: partId,
+                runId: evRunId || runId,
+                source: "message.part.updated",
+                summary: summarizeToolPayload(part),
+                detail: summarizeToolPayload(part),
+              });
             }
             if (tool && partType === "tool-result") {
               recordToolActivity(
                 tool,
                 hasError ? "failed" : "completed",
-                `${partId || evRunId || runId}:${tool}:${hasError ? "failed" : "completed"}`
+                `${partId || evRunId || runId}:${tool}:${hasError ? "failed" : "completed"}`,
+                {
+                  callId: partId,
+                  runId: evRunId || runId,
+                  source: "message.part.updated",
+                  summary: summarizeToolPayload(part),
+                  detail: summarizeToolPayload(part),
+                }
               );
             }
           }
@@ -1096,12 +1264,14 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     queryClient,
     recordPackEvent,
     recordToolActivity,
+    recordToolEvent,
     refreshMessages,
     refreshPermissionRequests,
     refreshSessions,
     removePermissionRequest,
     resolveModelRoute,
     selectedSessionId,
+    selectedTools,
     sending,
     toast,
     uploads,
@@ -1163,6 +1333,10 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   }, [autoApprove, autoApprovePendingRequests]);
 
   useEffect(() => {
+    saveToolAllowlistPreference(selectedTools);
+  }, [selectedTools]);
+
+  useEffect(() => {
     const poll = window.setInterval(() => {
       if (!selectedSessionId) return;
       void refreshPermissionRequests();
@@ -1207,25 +1381,28 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           recordPackEvent(type, props);
         }
 
-        if (TOOL_START_EVENTS.has(type)) {
-          const tool = extractToolName(props) || "tool";
-          const callId = extractToolCallId(props);
+        const isKnownToolEvent =
+          TOOL_START_EVENTS.has(type) ||
+          TOOL_PROGRESS_EVENTS.has(type) ||
+          TOOL_END_EVENTS.has(type);
+        if (!isKnownToolEvent && type.toLowerCase().includes("tool")) {
           const runId = extractRunId(payload, "global");
-          recordToolActivity(tool, "started", `${callId || runId}:${tool}:started`);
+          recordToolEvent(type, props, runId);
+        }
+
+        if (TOOL_START_EVENTS.has(type)) {
+          const runId = extractRunId(payload, "global");
+          recordToolEvent(type, props, runId);
+        }
+
+        if (TOOL_PROGRESS_EVENTS.has(type)) {
+          const runId = extractRunId(payload, "global");
+          recordToolEvent(type, props, runId);
         }
 
         if (TOOL_END_EVENTS.has(type)) {
-          const tool = extractToolName(props) || "tool";
-          const callId = extractToolCallId(props);
           const runId = extractRunId(payload, "global");
-          const statusHint = String(props?.status || props?.state || "").toLowerCase();
-          const failed =
-            type === "tool_call.failed" || statusHint.includes("fail") || !!props?.error;
-          recordToolActivity(
-            tool,
-            failed ? "failed" : "completed",
-            `${callId || runId}:${tool}:${failed ? "failed" : "completed"}`
-          );
+          recordToolEvent(type, props, runId);
         }
       },
       {
@@ -1236,7 +1413,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     return () => unsubscribe();
   }, [
     recordPackEvent,
-    recordToolActivity,
+    recordToolEvent,
     removePermissionRequest,
     selectedSessionId,
     upsertPermissionRequest,
@@ -1351,7 +1528,11 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             <div className="chat-main-dot"></div>
             <h3 className="tcp-title chat-main-title">{sessionTitle}</h3>
             {availableTools.length ? (
-              <span className="chat-main-tools">{availableTools.length} tools</span>
+              <span className="chat-main-tools">
+                {selectedTools.length
+                  ? `${selectedTools.length} enabled`
+                  : `${availableTools.length} tools`}
+              </span>
             ) : null}
           </header>
 
@@ -1489,28 +1670,61 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           <section className="min-h-0">
             <div className="mb-2 flex items-center justify-between">
               <p className="chat-rail-label">Tools</p>
-              <span className="chat-rail-count">{availableTools.length}</span>
+              <div className="flex items-center gap-2">
+                <span className="chat-rail-count">
+                  {selectedTools.length
+                    ? `${selectedTools.length}/${availableTools.length}`
+                    : "all"}
+                </span>
+                {selectedTools.length ? (
+                  <button
+                    type="button"
+                    className="tcp-btn h-7 px-2 text-[11px]"
+                    onClick={() => setSelectedTools([])}
+                  >
+                    All
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="chat-tools-list">
               {availableTools.length ? (
-                availableTools.slice(0, 32).map((tool) => (
-                  <button
-                    key={tool}
-                    type="button"
-                    className="chat-tool-pill"
-                    title={`Insert ${tool}`}
-                    onClick={() => {
-                      setPrompt((prev) => (prev.trim() ? `${prev} ${tool}` : tool));
-                      inputRef.current?.focus();
-                    }}
-                  >
-                    {tool}
-                  </button>
-                ))
+                availableTools.slice(0, 48).map((tool) => {
+                  const selected = selectedToolSet.has(tool);
+                  return (
+                    <button
+                      key={tool}
+                      type="button"
+                      className={`chat-tool-pill ${selected ? "selected" : ""}`}
+                      title={
+                        selected
+                          ? `Remove ${tool} from the next-run allowlist`
+                          : `Allow only selected tools; add ${tool}`
+                      }
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setSelectedTools((prev) => {
+                          const current = new Set(prev);
+                          if (current.has(tool)) current.delete(tool);
+                          else current.add(tool);
+                          return [...current].sort((a, b) => a.localeCompare(b));
+                        });
+                      }}
+                    >
+                      {selected ? <i data-lucide="check"></i> : null}
+                      {tool}
+                    </button>
+                  );
+                })
               ) : (
                 <p className="chat-rail-empty">No tools loaded.</p>
               )}
             </div>
+            <p className="chat-rail-empty mt-2">
+              {selectedTools.length
+                ? "Selected tools are sent as the next run's allowlist."
+                : "No allowlist selected; the run can use the default tool set."}
+            </p>
           </section>
 
           <section className="min-h-0">
@@ -1730,9 +1944,22 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             <div className="chat-tools-activity">
               {toolActivity.length ? (
                 toolActivity.slice(0, 24).map((entry) => (
-                  <div key={entry.id} className={`chat-tool-chip ${toolStatusClass(entry.status)}`}>
-                    {entry.tool}: {entry.status}
-                  </div>
+                  <details
+                    key={entry.id}
+                    className={`chat-tool-event ${toolStatusClass(entry.status)}`}
+                  >
+                    <summary>
+                      <span className="truncate">{entry.tool}</span>
+                      <span>{entry.status}</span>
+                    </summary>
+                    <div className="chat-tool-event-body">
+                      <div>{new Date(entry.at).toLocaleTimeString()}</div>
+                      {entry.source ? <div>source: {entry.source}</div> : null}
+                      {entry.callId ? <div>call: {entry.callId}</div> : null}
+                      {entry.runId ? <div>run: {entry.runId}</div> : null}
+                      {entry.summary ? <pre>{entry.summary}</pre> : null}
+                    </div>
+                  </details>
                 ))
               ) : (
                 <p className="chat-rail-empty">No tool events yet.</p>

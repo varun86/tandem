@@ -5,6 +5,12 @@ export type ToolActivityItem = {
   tool: string;
   status: ToolActivityStatus;
   at: number;
+  title?: string;
+  summary?: string;
+  detail?: string;
+  callId?: string;
+  runId?: string;
+  source?: string;
 };
 
 export type PackEventItem = {
@@ -29,12 +35,30 @@ export type PermissionRequest = {
   status: string;
 };
 
-export const TOOL_START_EVENTS = new Set(["tool.called", "tool_call.started", "session.tool_call"]);
+export const TOOL_START_EVENTS = new Set([
+  "tool.called",
+  "tool.call",
+  "tool.started",
+  "tool_call.started",
+  "tool_call.created",
+  "tool_call.delta",
+  "session.tool_call",
+  "session.tool.call",
+]);
 export const TOOL_END_EVENTS = new Set([
   "tool.result",
+  "tool.completed",
+  "tool.failed",
   "tool_call.completed",
+  "tool_call.succeeded",
   "tool_call.failed",
   "session.tool_result",
+  "session.tool.result",
+]);
+export const TOOL_PROGRESS_EVENTS = new Set([
+  "tool.progress",
+  "tool_call.progress",
+  "session.tool_progress",
 ]);
 export const TERMINAL_SUCCESS_EVENTS = new Set([
   "run.complete",
@@ -60,18 +84,22 @@ function normalizeToolName(name: string): string {
 
 export function extractToolName(payload: any): string {
   const source = payload || {};
-  const nested = source.call || source.toolCall || source.part || {};
-  return normalizeToolName(
-    source.tool ||
-      source.name ||
-      source.toolName ||
-      source.tool_id ||
-      source.toolID ||
-      nested.tool ||
-      nested.name ||
-      nested.toolName ||
-      ""
-  );
+  const nested = source.call || source.toolCall || source.part || source.function || {};
+  const tool = source.tool || nested.tool || {};
+  const candidate =
+    source.toolName ||
+    source.tool_name ||
+    source.name ||
+    source.tool_id ||
+    source.toolID ||
+    (typeof tool === "string" ? tool : tool.name || tool.id) ||
+    nested.toolName ||
+    nested.tool_name ||
+    nested.name ||
+    nested.tool_id ||
+    nested.toolID ||
+    "";
+  return normalizeToolName(candidate);
 }
 
 export function extractToolCallId(payload: any): string {
@@ -82,10 +110,14 @@ export function extractToolCallId(payload: any): string {
       source.toolCallID ||
       source.tool_call_id ||
       source.id ||
+      source.call_id ||
+      source.callId ||
       nested.callID ||
       nested.toolCallID ||
       nested.tool_call_id ||
       nested.id ||
+      nested.call_id ||
+      nested.callId ||
       ""
   ).trim();
 }
@@ -102,6 +134,23 @@ export function extractRunId(event: any, fallback = ""): string {
       props.run?.id ||
       fallback
   ).trim();
+}
+
+export function summarizeToolPayload(payload: any): string {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const nested = source.call || source.toolCall || source.part || {};
+  const input = source.input || source.args || source.arguments || nested.input || nested.args;
+  const output = source.output || source.result || nested.output || nested.result;
+  const error = source.error || nested.error;
+  const message = source.message || source.summary || source.status || nested.message || "";
+  const value = error || output || input || message;
+  if (!value) return "";
+  if (typeof value === "string") return value.trim().slice(0, 240);
+  try {
+    return JSON.stringify(value).slice(0, 240);
+  } catch {
+    return String(value).slice(0, 240);
+  }
 }
 
 export function normalizePermissionRequest(raw: any): PermissionRequest | null {
