@@ -4,7 +4,9 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.5.4 (Future Release)
 
-This patch tightens the distinction between local source-code research and final research synthesis.
+This patch fixes automation schedule timezone handling and tightens the distinction between local source-code research and final research synthesis.
+
+Automation cron schedules now preserve the selected local wall-clock time end to end. The server accepts the 5-field cron expressions emitted by the control panel, normalizes them for the Rust cron parser, and evaluates them in the saved IANA timezone when computing `next_fire_at_ms`. The control panel now carries that timezone through guided schedule summaries, creation review, workflow editing, calendar labels, and standup scheduling, with `Europe/Budapest` available in the common timezone picker. A regression test covers weekday 9:00 AM in Budapest resolving correctly through DST-aware UTC storage.
 
 Final report/brief nodes that synthesize already-collected Tandem MCP notes, Reddit MCP signals, web findings, and run artifacts no longer require fresh workspace `read` calls. The planner stops adding `local_source_reads` to new `research_synthesis` contracts, and the runtime validator waives stale local-read enforcement on existing saved synthesis nodes. Code-change, local-research, and Bug Monitor source-inspection nodes still retain their strict repo-read gates.
 

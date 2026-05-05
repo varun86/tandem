@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Automation cron schedules preserve local wall-clock time**: Runtime scheduling now accepts the 5-field cron expressions emitted by the control panel and normalizes them for the server cron parser before computing `next_fire_at_ms`. Cron schedules are evaluated in the saved IANA timezone, with a Budapest weekday 9:00 AM regression test covering DST-aware wall-clock behavior.
+- **Automation schedule UI carries timezone context**: Guided schedule summaries, creation review, workflow editing, automation calendar labels, and standup scheduling now display and save against the selected timezone instead of implying UTC. `Europe/Budapest` is now included in the common timezone picker.
 - **Research-synthesis workflows no longer require unrelated workspace reads**: Final report/brief nodes that synthesize upstream MCP, Reddit, web, and run-artifact evidence no longer inherit `local_source_reads` as a hard requirement. This prevents concise research-to-Notion workflows from blocking with `research brief cited workspace sources without using read` when the workflow never needed repository source files.
 - **Existing saved synthesis nodes tolerate stale read enforcement**: Runtime validation now treats stale `local_source_reads`/`read` requirements as advisory for `research_synthesis` nodes, while preserving strict `read` enforcement for code workflows, local research, and Bug Monitor/source-inspection tasks that genuinely require repo evidence.
 

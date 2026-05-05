@@ -175,12 +175,16 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
 
 function formatScheduleLabel(schedule: any) {
   const cronExpr = String(schedule?.cron?.expression || schedule?.cron_expression || "").trim();
+  const timezone = String(schedule?.timezone || "UTC").trim() || "UTC";
   if (cronExpr) {
-    return describeScheduleValue({
-      scheduleKind: "cron",
-      cronExpression: cronExpr,
-      intervalSeconds: "3600",
-    });
+    return describeScheduleValue(
+      {
+        scheduleKind: "cron",
+        cronExpression: cronExpr,
+        intervalSeconds: "3600",
+      },
+      { timezone }
+    );
   }
   const seconds = Number(schedule?.interval_seconds?.seconds);
   if (Number.isFinite(seconds) && seconds > 0) {
@@ -197,12 +201,16 @@ function formatAutomationV2ScheduleLabel(schedule: any) {
   const type = String(schedule?.type || "")
     .trim()
     .toLowerCase();
+  const timezone = String(schedule?.timezone || "UTC").trim() || "UTC";
   if (type === "cron") {
-    return describeScheduleValue({
-      scheduleKind: "cron",
-      cronExpression: String(schedule?.cron_expression || schedule?.cronExpression || ""),
-      intervalSeconds: "3600",
-    });
+    return describeScheduleValue(
+      {
+        scheduleKind: "cron",
+        cronExpression: String(schedule?.cron_expression || schedule?.cronExpression || ""),
+        intervalSeconds: "3600",
+      },
+      { timezone }
+    );
   }
   if (type === "interval") {
     const seconds = Number(schedule?.interval_seconds || schedule?.intervalSeconds || 0);

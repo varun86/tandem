@@ -11,6 +11,7 @@ import {
 type ScheduleBuilderProps = {
   value: ScheduleValue;
   onChange: (value: ScheduleValue) => void;
+  timezone?: string;
 };
 
 const SCHEDULE_MODE_OPTIONS: Array<{
@@ -27,9 +28,9 @@ const SCHEDULE_MODE_OPTIONS: Array<{
   { id: "advanced", label: "Advanced cron", desc: "Edit the raw cron expression directly." },
 ];
 
-export function ScheduleBuilder({ value, onChange }: ScheduleBuilderProps) {
+export function ScheduleBuilder({ value, onChange, timezone }: ScheduleBuilderProps) {
   const friendly = scheduleValueToFriendly(value);
-  const summary = describeScheduleValue(value);
+  const summary = describeScheduleValue(value, { timezone });
 
   const commit = (nextFriendly: ReturnType<typeof scheduleValueToFriendly>) => {
     onChange(friendlyScheduleToValue(nextFriendly));

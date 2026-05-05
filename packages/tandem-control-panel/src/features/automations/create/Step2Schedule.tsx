@@ -61,7 +61,7 @@ export function Step2Schedule({
           </button>
         ))}
       </div>
-      <ScheduleBuilder value={scheduleValue} onChange={onScheduleChange} />
+      <ScheduleBuilder value={scheduleValue} onChange={onScheduleChange} timezone={timezone} />
       <TimezoneField
         value={timezone}
         onChange={onTimezoneChange}

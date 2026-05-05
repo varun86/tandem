@@ -350,6 +350,18 @@ function toSchedulePayload(wizard: WizardState) {
   return { type: "manual", timezone };
 }
 
+function planWithWizardTimezone(plan: any, wizard: WizardState) {
+  const timezone = String(wizard.timezone || "").trim();
+  if (!timezone || !plan?.schedule || typeof plan.schedule !== "object") return plan;
+  return {
+    ...plan,
+    schedule: {
+      ...plan.schedule,
+      timezone,
+    },
+  };
+}
+
 function validateWorkspaceRootInput(raw: string) {
   const value = String(raw || "").trim();
   if (!value) return "Workspace root is required.";
@@ -850,7 +862,7 @@ export function CreateWizard({
         (await compileMutation.mutateAsync().catch((error: unknown) => {
           throw error instanceof Error ? error : new Error(String(error));
         }));
-      const nextPlan = preview?.plan || preview;
+      const nextPlan = planWithWizardTimezone(preview?.plan || preview, wizard);
       if (!nextPlan) throw new Error("Workflow plan preview failed.");
       if (
         (overlapAnalysis?.requires_user_confirmation ||

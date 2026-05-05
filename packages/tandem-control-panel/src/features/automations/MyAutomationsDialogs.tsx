@@ -4,6 +4,7 @@ import { McpToolAllowlistEditor } from "../../components/McpToolAllowlistEditor"
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
 import { renderIcons } from "../../app/icons.js";
 import { ScheduleBuilder } from "./ScheduleBuilder";
+import { TimezoneField } from "./TimezoneField";
 import { ScopeInspector } from "./ScopeInspector";
 import { WatchConditionEditor } from "./WatchConditionEditor";
 import { ScopePolicyEditor } from "./ScopePolicyEditor";
@@ -410,6 +411,7 @@ export function WorkflowAutomationEditDialog({
                       cronExpression: workflowEditDraft.cronExpression,
                       intervalSeconds: workflowEditDraft.intervalSeconds,
                     }}
+                    timezone={workflowEditDraft.timezone}
                     onChange={(value) =>
                       setWorkflowEditDraft((current: any) =>
                         current
@@ -424,6 +426,15 @@ export function WorkflowAutomationEditDialog({
                     }
                   />
                 </div>
+                <TimezoneField
+                  value={workflowEditDraft.timezone}
+                  onChange={(value) =>
+                    setWorkflowEditDraft((current: any) =>
+                      current ? { ...current, timezone: value } : current
+                    )
+                  }
+                  hint="Use the timezone that matches when this workflow should fire."
+                />
               </div>
               <div className="grid gap-2">
                 <label className="text-xs text-slate-400">Agent type</label>

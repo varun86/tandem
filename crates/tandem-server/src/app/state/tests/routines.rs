@@ -27,6 +27,25 @@ fn misfire_catch_up_caps_trigger_count() {
     assert_eq!(next_fire, 26_000);
 }
 
+#[test]
+fn cron_next_fire_uses_schedule_timezone_wall_clock() {
+    let schedule = RoutineSchedule::Cron {
+        expression: "0 9 * * 1-5".to_string(),
+    };
+    let from_ms = Utc
+        .with_ymd_and_hms(2026, 5, 4, 12, 0, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+    let next_fire = compute_next_schedule_fire_at_ms(&schedule, "Europe/Budapest", from_ms)
+        .expect("compute next Budapest weekday fire");
+    let expected = Utc
+        .with_ymd_and_hms(2026, 5, 5, 7, 0, 0)
+        .unwrap()
+        .timestamp_millis() as u64;
+
+    assert_eq!(next_fire, expected);
+}
+
 #[tokio::test]
 async fn routine_put_persists_and_loads() {
     let routines_path = tmp_routines_file("persist-load");

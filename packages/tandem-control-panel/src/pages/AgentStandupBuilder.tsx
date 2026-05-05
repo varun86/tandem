@@ -361,7 +361,7 @@ export function AgentStandupBuilder({
           />
         </div>
         <div className="md:col-span-2">
-          <ScheduleBuilder value={scheduleValue} onChange={setScheduleValue} />
+          <ScheduleBuilder value={scheduleValue} onChange={setScheduleValue} timezone={timezone} />
         </div>
       </div>
 

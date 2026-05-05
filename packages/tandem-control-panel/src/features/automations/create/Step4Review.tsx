@@ -103,13 +103,16 @@ export function Step4Review({
   const [goalExpanded, setGoalExpanded] = useState(false);
   const [expandedStepIds, setExpandedStepIds] = useState<Record<string, boolean>>({});
 
-  const wizardSchedule = describeScheduleValue({
-    scheduleKind: wizard.scheduleKind,
-    cronExpression: wizard.cron,
-    intervalSeconds: wizard.intervalSeconds,
-  });
+  const wizardSchedule = describeScheduleValue(
+    {
+      scheduleKind: wizard.scheduleKind,
+      cronExpression: wizard.cron,
+      intervalSeconds: wizard.intervalSeconds,
+    },
+    { timezone: wizard.timezone }
+  );
   const effectiveTimezone = String(
-    planPreview?.schedule?.timezone || planPreview?.timezone || wizard.timezone || "UTC"
+    wizard.timezone || planPreview?.schedule?.timezone || planPreview?.timezone || "UTC"
   ).trim();
   const planOperatorPreferences =
     planPreview && typeof planPreview === "object"
@@ -179,19 +182,22 @@ export function Step4Review({
       )
     : parseCustomToolText(wizard.customToolsText);
   const effectiveSchedule = planPreview?.schedule
-    ? describeScheduleValue({
-        scheduleKind:
-          planPreview.schedule.type === "cron"
-            ? "cron"
-            : planPreview.schedule.type === "interval"
-              ? "interval"
-              : "manual",
-        cronExpression:
-          planPreview.schedule.cron_expression || planPreview.schedule.cronExpression || "",
-        intervalSeconds: String(
-          planPreview.schedule.interval_seconds || planPreview.schedule.intervalSeconds || "3600"
-        ),
-      })
+    ? describeScheduleValue(
+        {
+          scheduleKind:
+            planPreview.schedule.type === "cron"
+              ? "cron"
+              : planPreview.schedule.type === "interval"
+                ? "interval"
+                : "manual",
+          cronExpression:
+            planPreview.schedule.cron_expression || planPreview.schedule.cronExpression || "",
+          intervalSeconds: String(
+            planPreview.schedule.interval_seconds || planPreview.schedule.intervalSeconds || "3600"
+          ),
+        },
+        { timezone: effectiveTimezone }
+      )
     : wizardSchedule;
   const effectivePlanTitle = String(planPreview?.title || "").trim();
   const plannerFallbackReason = String(

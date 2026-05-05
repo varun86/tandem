@@ -814,9 +814,19 @@ fn parse_timezone(timezone: &str) -> Option<Tz> {
     timezone.trim().parse::<Tz>().ok()
 }
 
+fn cron_expression_for_schedule_parser(expression: &str) -> String {
+    let fields: Vec<&str> = expression.split_whitespace().collect();
+    if fields.len() == 5 {
+        format!("0 {}", fields.join(" "))
+    } else {
+        expression.to_string()
+    }
+}
+
 fn next_cron_fire_at_ms(expression: &str, timezone: &str, from_ms: u64) -> Option<u64> {
     let tz = parse_timezone(timezone)?;
-    let schedule = Schedule::from_str(expression).ok()?;
+    let parser_expression = cron_expression_for_schedule_parser(expression);
+    let schedule = Schedule::from_str(&parser_expression).ok()?;
     let from_dt = Utc.timestamp_millis_opt(from_ms as i64).single()?;
     let local_from = from_dt.with_timezone(&tz);
     let next = schedule.after(&local_from).next()?;

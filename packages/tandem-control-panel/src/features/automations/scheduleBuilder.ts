@@ -6,6 +6,10 @@ export type ScheduleValue = {
   intervalSeconds: string;
 };
 
+export type ScheduleDescriptionOptions = {
+  timezone?: string;
+};
+
 export type FriendlyScheduleMode =
   | "manual"
   | "daily"
@@ -339,20 +343,29 @@ export function setFriendlyScheduleMode(
   return { ...current, mode };
 }
 
-export function describeScheduleValue(value: ScheduleValue) {
+function scheduleTimezoneLabel(timezone: string | undefined) {
+  return String(timezone || "").trim() || "local time";
+}
+
+export function describeScheduleValue(
+  value: ScheduleValue,
+  options: ScheduleDescriptionOptions = {}
+) {
   const friendly = scheduleValueToFriendly(value);
+  const timezone = scheduleTimezoneLabel(options.timezone);
   if (friendly.mode === "manual") return "Manual only";
   if (friendly.mode === "interval") {
     const amount = Math.max(1, Number.parseInt(String(friendly.intervalValue || "1"), 10) || 1);
     return `Every ${amount} ${friendly.intervalUnit === "hours" ? (amount === 1 ? "hour" : "hours") : amount === 1 ? "minute" : "minutes"}`;
   }
-  if (friendly.mode === "daily") return `Every day at ${format12Hour(friendly.time)} UTC`;
-  if (friendly.mode === "weekdays") return `Every weekday at ${format12Hour(friendly.time)} UTC`;
+  if (friendly.mode === "daily") return `Every day at ${format12Hour(friendly.time)} ${timezone}`;
+  if (friendly.mode === "weekdays")
+    return `Every weekday at ${format12Hour(friendly.time)} ${timezone}`;
   if (friendly.mode === "selected_days") {
-    return `${listWeekdays(friendly.weekdays)} at ${format12Hour(friendly.time)} UTC`;
+    return `${listWeekdays(friendly.weekdays)} at ${format12Hour(friendly.time)} ${timezone}`;
   }
   if (friendly.mode === "monthly") {
-    return `Day ${friendly.monthlyDay} of every month at ${format12Hour(friendly.time)} UTC`;
+    return `Day ${friendly.monthlyDay} of every month at ${format12Hour(friendly.time)} ${timezone}`;
   }
   return friendly.rawCron || "Custom cron";
 }
