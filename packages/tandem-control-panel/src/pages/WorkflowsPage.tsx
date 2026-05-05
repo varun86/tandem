@@ -93,12 +93,6 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
     });
   }, [sessionsQuery.data]);
 
-  useEffect(() => {
-    if (!selectedSessionId && sessions.length) {
-      setSelectedSessionId(sessions[0].session_id);
-    }
-  }, [selectedSessionId, sessions]);
-
   const selectedSessionQuery = useQuery({
     queryKey: ["workflow-center", "session", selectedSessionId],
     enabled: !!selectedSessionId,
@@ -109,18 +103,27 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
   const selectedSession = selectedSessionQuery.data?.session || null;
 
   useEffect(() => {
-    if (!selectedSession) return;
-    setExportTitle((value) => value || safeString(selectedSession.title));
+    if (!selectedSession) {
+      setExportTitle("");
+      setExportName("");
+      setExportDescription("");
+      setCoverImagePath("");
+      setCoverImagePreview("");
+      setExportResult(null);
+      return;
+    }
+    setExportTitle(safeString(selectedSession.title));
     setExportName(
-      (value) =>
-        value ||
-        safeString(selectedSession.title)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "")
+      safeString(selectedSession.title)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
     );
-    setExportDescription((value) => value || safeString(selectedSession.goal));
-  }, [selectedSession]);
+    setExportDescription(safeString(selectedSession.goal));
+    setCoverImagePath("");
+    setCoverImagePreview("");
+    setExportResult(null);
+  }, [selectedSession?.session_id]);
 
   const handlePackFile = useCallback(
     async (file: File | null) => {
@@ -546,13 +549,19 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
 
       <PanelCard
         title="Export workflow pack"
-        subtitle="Turn the selected planner session into a marketplace-ready .zip pack with an optional cover image."
+        subtitle={
+          selectedSession
+            ? "Turn this planner session into a marketplace-ready .zip pack with an optional cover image."
+            : "Select a planner session below before exporting a workflow pack."
+        }
       >
         <div className="grid gap-3 md:grid-cols-4">
           <label className="grid gap-2 text-sm md:col-span-2">
             <span className="tcp-subtle">Pack title</span>
             <input
               className="tcp-input"
+              disabled={!selectedSession}
+              placeholder="Select a workflow session"
               value={exportTitle}
               onChange={(event) => setExportTitle(event.target.value)}
             />
@@ -561,6 +570,8 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
             <span className="tcp-subtle">Pack slug</span>
             <input
               className="tcp-input"
+              disabled={!selectedSession}
+              placeholder="workflow-pack-slug"
               value={exportName}
               onChange={(event) => setExportName(event.target.value)}
             />
@@ -569,6 +580,7 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
             <span className="tcp-subtle">Version</span>
             <input
               className="tcp-input"
+              disabled={!selectedSession}
               value={exportVersion}
               onChange={(event) => setExportVersion(event.target.value)}
             />
@@ -577,6 +589,8 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
             <span className="tcp-subtle">Description</span>
             <input
               className="tcp-input"
+              disabled={!selectedSession}
+              placeholder="Short marketplace description"
               value={exportDescription}
               onChange={(event) => setExportDescription(event.target.value)}
             />
@@ -586,6 +600,7 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
             <input
               className="tcp-input"
               type="file"
+              disabled={!selectedSession}
               accept="image/png,image/jpeg,image/webp"
               onChange={(event) => handleCoverFile(event.currentTarget.files?.[0] || null)}
             />
@@ -602,7 +617,7 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
           <button
             type="button"
             className="tcp-btn-primary"
-            disabled={!selectedSessionId || exportPackMutation.isPending}
+            disabled={!selectedSession || exportPackMutation.isPending}
             onClick={() => exportPackMutation.mutate()}
           >
             Export workflow pack
