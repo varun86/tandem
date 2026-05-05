@@ -3,7 +3,8 @@ use std::io::{Read, Write};
 use std::path::{Path as FsPath, PathBuf};
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::Response;
 use axum::Json;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -89,6 +90,11 @@ pub(super) struct WorkflowPlanPackImportRequest {
     pub project_slug: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct WorkflowPlanPackDownloadQuery {
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]

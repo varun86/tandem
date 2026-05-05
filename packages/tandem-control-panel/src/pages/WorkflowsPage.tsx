@@ -59,6 +59,14 @@ function uploadWorkflowAsset(file: File, dir: string) {
   });
 }
 
+function engineDownloadUrl(path: unknown) {
+  const value = safeString(path);
+  if (!value) return "";
+  if (value.startsWith("/api/engine/")) return value;
+  if (value.startsWith("/")) return `/api/engine${value}`;
+  return value;
+}
+
 export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProps) {
   const queryClient = useQueryClient();
   const [bundleText, setBundleText] = useState("");
@@ -633,6 +641,14 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
               SHA-256 {safeString(exportResult?.exported?.sha256)}
             </div>
             <div className="flex flex-wrap gap-2">
+              {exportResult?.exported?.download_url ? (
+                <a
+                  className="tcp-btn-primary"
+                  href={engineDownloadUrl(exportResult.exported.download_url)}
+                >
+                  Download ZIP
+                </a>
+              ) : null}
               <Badge tone="ok">tandempack.yaml</Badge>
               <Badge tone="ok">workflow plan bundle</Badge>
               {exportResult?.pack?.cover_image ? (

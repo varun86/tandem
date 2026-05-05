@@ -63,6 +63,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(workflow_plan_export_pack),
         )
         .route(
+            "/workflow-plans/export/pack/download",
+            get(workflow_plan_export_pack_download),
+        )
+        .route(
             "/workflow-plans/import/pack/preview",
             post(workflow_plan_import_pack_preview),
         )

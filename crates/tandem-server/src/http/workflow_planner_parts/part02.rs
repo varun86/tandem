@@ -1980,6 +1980,10 @@ pub(super) async fn workflow_plan_export_pack(
         },
         "exported": {
             "path": output.to_string_lossy(),
+            "download_url": format!(
+                "/workflow-plans/export/pack/download?path={}",
+                urlencoding::encode(&output.to_string_lossy())
+            ),
             "sha256": sha256,
             "bytes": bytes,
         },
@@ -1987,6 +1991,44 @@ pub(super) async fn workflow_plan_export_pack(
         "bundle": bundle,
         "marketplace_ready": true,
     })))
+}
+
+pub(super) async fn workflow_plan_export_pack_download(
+    Query(query): Query<WorkflowPlanPackDownloadQuery>,
+) -> Result<Response, StatusCode> {
+    let requested = PathBuf::from(query.path.trim());
+    let root = crate::pack_manager::PackManager::default_root()
+        .join("exports")
+        .join("workflow-packs");
+    let root = root.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
+    let path = requested
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if path != root && !path.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if path.extension().and_then(|value| value.to_str()) != Some("zip") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("workflow-pack.zip")
+        .replace('"', "");
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    );
+    Ok(response)
 }
 
 async fn workflow_plan_import_pack_inner(

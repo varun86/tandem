@@ -2034,6 +2034,7 @@ export interface WorkflowPlanPackExportResponse {
   pack?: JsonObject;
   exported?: {
     path?: string;
+    download_url?: string;
     sha256?: string;
     bytes?: number;
     [key: string]: unknown;
