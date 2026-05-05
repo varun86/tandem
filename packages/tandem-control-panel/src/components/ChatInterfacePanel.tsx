@@ -182,7 +182,7 @@ export function ChatInterfacePanel({
                           <img
                             src={botIdentity.botAvatarUrl}
                             alt={assistantLabel}
-                            className="chat-avatar-ring h-5 w-5 rounded-full object-cover"
+                            className="chat-avatar-ring h-5 w-5 object-cover"
                           />
                         ) : null}
                         <span>{message.displayRole || assistantLabel}</span>
@@ -217,7 +217,7 @@ export function ChatInterfacePanel({
                   <img
                     src={botIdentity.botAvatarUrl}
                     alt={assistantLabel}
-                    className="chat-avatar-ring h-5 w-5 rounded-full object-cover"
+                    className="chat-avatar-ring h-5 w-5 object-cover"
                   />
                 ) : null}
                 <span>{assistantLabel}</span>

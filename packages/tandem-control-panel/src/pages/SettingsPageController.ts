@@ -3504,6 +3504,7 @@ export function useSettingsPageController({
     searchTestQuery: searchTestQuery,
     searchTestResult: searchTestResult,
     searchTimeoutMs: searchTimeoutMs,
+    sectionTabs: sectionTabs,
     selectedBugMonitorProvider: selectedBugMonitorProvider,
     selectedBugMonitorServer: selectedBugMonitorServer,
     setActiveSection: setActiveSection,

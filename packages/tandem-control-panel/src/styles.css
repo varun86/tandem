@@ -1055,7 +1055,7 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 0.95rem;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
   background: color-mix(in srgb, var(--color-surface-elevated) 84%, #000 16%);
   color: var(--color-text);

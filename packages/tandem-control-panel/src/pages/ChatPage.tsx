@@ -1470,7 +1470,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             onRemoveAttachment={(index) => setUploads((prev) => prev.filter((_, i) => i !== index))}
             onAttach={() => fileInputRef.current?.click()}
             attachDisabled={sending}
-            statusTitle={sending ? "Sending…" : ""}
+            statusTitle={sending && !showThinking && !streamingText ? "Sending…" : ""}
           />
 
           <input
