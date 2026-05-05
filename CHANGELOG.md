@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow packs are now the default workflow sharing format**: Planner sessions can be exported as marketplace-ready `.zip` packs containing `tandempack.yaml`, `README.md`, an embedded workflow plan bundle, and an optional cover image. The Workflows page now prioritizes pack upload/preview/install and keeps raw JSON bundle import available as an advanced fallback.
 - **Workflow pack import/export APIs and SDK helpers**: Added `/workflow-plans/export/pack`, `/workflow-plans/import/pack/preview`, and `/workflow-plans/import/pack`, plus TypeScript client helpers for exporting workflow packs and previewing/importing workflow pack ZIPs.
+- **Hosted-safe workflow pack downloads**: Workflow pack exports now include a download URL, and the Workflows page renders a browser Download ZIP action so hosted users do not need filesystem access to retrieve generated packs.
 - **Workflow pack provenance**: Imported workflow-pack sessions now retain pack identity and version metadata alongside the source bundle digest, making installed workflow origins inspectable after import.
 
 ### Changed
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automation schedule UI carries timezone context**: Guided schedule summaries, creation review, workflow editing, automation calendar labels, and standup scheduling now display and save against the selected timezone instead of implying UTC. `Europe/Budapest` is now included in the common timezone picker.
 - **Research-synthesis workflows no longer require unrelated workspace reads**: Final report/brief nodes that synthesize upstream MCP, Reddit, web, and run-artifact evidence no longer inherit `local_source_reads` as a hard requirement. This prevents concise research-to-Notion workflows from blocking with `research brief cited workspace sources without using read` when the workflow never needed repository source files.
 - **Existing saved synthesis nodes tolerate stale read enforcement**: Runtime validation now treats stale `local_source_reads`/`read` requirements as advisory for `research_synthesis` nodes, while preserving strict `read` enforcement for code workflows, local research, and Bug Monitor/source-inspection tasks that genuinely require repo evidence.
+- **Control-panel uploads use the global Tandem data directory**: Panel-managed uploads now prefer `$TANDEM_HOME/data/channel_uploads`, expand `~`, `$HOME`, `${HOME}`, and `%HOME%`, and normalize Windows-style separators on Linux/macOS so uploaded workflow pack images do not create stray literal `%HOME%\...` directories in the repo.
 
 ## [0.5.3] - Released 2026-05-03
 

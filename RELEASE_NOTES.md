@@ -16,6 +16,8 @@ Workflow packs are now the preferred portable format for created workflows. The 
 
 Planner sessions can also be exported as marketplace-ready workflow pack ZIPs containing `tandempack.yaml`, `README.md`, the embedded workflow plan bundle, and an optional PNG/JPEG/WebP cover image. New workflow-pack APIs and TypeScript client helpers support export, preview, and import, while imported sessions keep pack provenance (`source_pack_id`, version, and source bundle digest) for later inspection.
 
+Exported workflow packs now include a hosted-safe download URL, and the Workflows page shows a browser Download ZIP action after export so operators can retrieve generated packs without access to the server filesystem path. Control-panel uploads also now prefer `$TANDEM_HOME/data/channel_uploads` and expand home-directory placeholders such as `~`, `$HOME`, `${HOME}`, and `%HOME%`, avoiding stray literal upload directories when hosted or Windows-style environment values are used on Linux/macOS.
+
 ## v0.5.3 (Released 2026-05-03)
 
 Automation V2 workflow definitions now use per-workflow storage shards. Instead of rewriting every saved workflow into one large `automations_v2.json` file, Tandem writes each definition to `data/automations-v2/<automation-id>.json` and keeps a small `index.json` alongside the shards. On startup, existing aggregate installs are migrated automatically and the old aggregate is preserved as `automations_v2.legacy-aggregate.json` for rollback/debugging.
