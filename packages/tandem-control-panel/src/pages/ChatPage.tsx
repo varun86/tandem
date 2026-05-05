@@ -1450,8 +1450,8 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           />
         </section>
 
-        <aside className="chat-right-rail hidden min-h-0 flex-col gap-3 overflow-hidden xl:flex">
-          <section className="min-h-0">
+        <aside className="chat-right-rail hidden min-h-0 flex-col overflow-hidden xl:flex">
+          <section className="chat-rail-section chat-rail-tools-section">
             <div className="mb-2 flex items-center justify-between">
               <p className="chat-rail-label">Tools</p>
               <div className="flex items-center gap-2">
@@ -1511,7 +1511,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             </p>
           </section>
 
-          <section className="min-h-0">
+          <section className="chat-rail-section chat-rail-approvals-section">
             <div className="mb-2 flex items-center justify-between">
               <p className="chat-rail-label">Approvals</p>
               <span className="chat-rail-count">{permissions.length}</span>
@@ -1599,7 +1599,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             </div>
           </section>
 
-          <section className="min-h-0 flex-1">
+          <section className="chat-rail-section chat-rail-scroll-section">
             <div className="mb-2 flex items-center justify-between">
               <p className="chat-rail-label">Run Timeline</p>
               <div className="flex items-center gap-2">
@@ -1645,7 +1645,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             </div>
           </section>
 
-          <section className="min-h-0 flex-1">
+          <section className="chat-rail-section chat-rail-scroll-section">
             <div className="mb-2 flex items-center justify-between">
               <p className="chat-rail-label">Tool Activity</p>
               <button

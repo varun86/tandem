@@ -1563,7 +1563,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   }
 
   .chat-workspace {
-    @apply grid h-full min-h-0 min-w-0;
+    @apply grid h-full min-h-0 min-w-0 overflow-hidden;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1680,6 +1680,28 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     background: color-mix(in srgb, var(--color-surface) 92%, #000 8%);
   }
 
+  .chat-rail-section {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .chat-rail-tools-section {
+    flex: 0 1 auto;
+    max-height: clamp(6.75rem, 24vh, 13rem);
+  }
+
+  .chat-rail-approvals-section {
+    flex: 0 0 auto;
+    max-height: clamp(5.75rem, 18vh, 10rem);
+  }
+
+  .chat-rail-scroll-section {
+    display: flex;
+    min-height: 5.5rem;
+    flex: 1 1 0;
+    flex-direction: column;
+  }
+
   .chat-rail-label {
     @apply text-[10px] uppercase tracking-[0.18em];
     color: var(--color-text-subtle);
@@ -1694,7 +1716,8 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   }
 
   .chat-tools-list {
-    @apply max-h-40 overflow-auto pr-1;
+    @apply overflow-auto pr-1;
+    max-height: min(8.5rem, 100%);
     display: flex;
     flex-wrap: wrap;
     gap: 0.3rem;
@@ -1746,9 +1769,10 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   }
 
   .chat-tools-activity {
-    @apply max-h-[18rem] overflow-auto pr-1;
+    @apply min-h-0 flex-1 overflow-auto pr-1;
     display: grid;
     gap: 0.3rem;
+    align-content: start;
   }
 
   .chat-tool-chip {
