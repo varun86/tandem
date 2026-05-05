@@ -12,7 +12,6 @@ import { AppShell } from "./AppShell";
 import { deriveProviderState } from "./providerStatus";
 import { providerHints } from "./store.js";
 import {
-  ACA_CORE_NAV_ROUTE_IDS,
   getDefaultNavigationVisibility,
   loadNavigationVisibility,
   saveNavigationVisibility,
@@ -450,16 +449,12 @@ function AppBody() {
     await queryClient.invalidateQueries({ queryKey: ["identity"] });
   }, [queryClient]);
 
-  const setRouteVisibility = useCallback(
-    (routeId: RouteId, visible: boolean) => {
-      setNavVisibility((current) => {
-        const locked = acaMode && ACA_CORE_NAV_ROUTE_IDS.has(routeId);
-        const next = { ...current, [routeId]: locked ? true : visible };
-        return next[routeId] === current[routeId] ? current : next;
-      });
-    },
-    [acaMode]
-  );
+  const setRouteVisibility = useCallback((routeId: RouteId, visible: boolean) => {
+    setNavVisibility((current) => {
+      const next = { ...current, [routeId]: visible };
+      return next[routeId] === current[routeId] ? current : next;
+    });
+  }, []);
 
   const showAllSections = useCallback(() => {
     setNavVisibility((current) => {

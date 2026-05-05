@@ -51,11 +51,6 @@ export function normalizeNavigationVisibility(
       next[routeId as RouteId] = candidate[routeId] as boolean;
     }
   }
-  if (acaMode) {
-    for (const routeId of ACA_CORE_NAV_ROUTE_IDS) {
-      next[routeId] = true;
-    }
-  }
   return next;
 }
 

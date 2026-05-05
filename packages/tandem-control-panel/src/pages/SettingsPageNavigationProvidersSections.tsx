@@ -144,6 +144,8 @@ export function SettingsPageNavigationProvidersSections({
                   <button
                     key={row.routeId}
                     type="button"
+                    aria-pressed={row.enabled}
+                    title={`${row.enabled ? "Hide" : "Show"} ${row.label} in the sidebar`}
                     className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
                       row.enabled
                         ? "border-lime-500/40 bg-lime-500/10 hover:border-lime-400/70"
@@ -169,9 +171,9 @@ export function SettingsPageNavigationProvidersSections({
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {row.pinned ? <Badge tone="ok">Pinned</Badge> : null}
-                      <Badge tone={row.enabled ? "ok" : "ghost"}>
-                        {row.enabled ? "Shown" : "Hidden"}
+                      {row.defaultVisible ? <Badge tone="info">Default</Badge> : null}
+                      <Badge tone={row.enabled ? "warn" : "ok"}>
+                        {row.enabled ? "Hide" : "Show"}
                       </Badge>
                     </div>
                   </button>
@@ -196,6 +198,8 @@ export function SettingsPageNavigationProvidersSections({
                   <button
                     key={row.routeId}
                     type="button"
+                    aria-pressed={row.enabled}
+                    title={`${row.enabled ? "Hide" : "Show"} ${row.label} in the sidebar`}
                     className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
                       row.enabled
                         ? "border-lime-500/40 bg-lime-500/10 hover:border-lime-400/70"
@@ -220,8 +224,8 @@ export function SettingsPageNavigationProvidersSections({
                         <div className="tcp-subtle truncate text-xs">{row.description}</div>
                       </div>
                     </div>
-                    <Badge tone={row.enabled ? "ok" : "ghost"}>
-                      {row.enabled ? "Shown" : "Hidden"}
+                    <Badge tone={row.enabled ? "warn" : "ok"}>
+                      {row.enabled ? "Hide" : "Show"}
                     </Badge>
                   </button>
                 ))}

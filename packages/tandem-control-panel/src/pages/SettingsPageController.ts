@@ -26,7 +26,7 @@ import {
 import { ThemePicker } from "../ui/ThemePicker.tsx";
 import { APP_NAV_ROUTES } from "../app/routes";
 import { providerHints } from "../app/store.js";
-import { ACA_CORE_NAV_ROUTE_IDS, getDefaultNavigationVisibility } from "../app/navigation";
+import { getDefaultNavigationVisibility } from "../app/navigation";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 import type { RouteId } from "../app/routes";
@@ -3278,14 +3278,12 @@ export function useSettingsPageController({
   const navigationRows = APP_NAV_ROUTES.map(([routeId, label, icon]) => {
     const typedRouteId = routeId as RouteId;
     const enabled = navigationVisibility[typedRouteId] !== false;
-    const pinned = !!navigation?.acaMode && ACA_CORE_NAV_ROUTE_IDS.has(typedRouteId);
     const defaultVisible = defaultNavigationVisibility[typedRouteId] !== false;
     return {
       routeId,
       label,
       icon,
       enabled,
-      pinned,
       defaultVisible,
       description:
         NAV_ROUTE_DESCRIPTIONS[routeId] ||
