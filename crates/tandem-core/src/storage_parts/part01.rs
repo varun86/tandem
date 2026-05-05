@@ -153,6 +153,20 @@ struct SessionMetaCompactionStats {
     snapshots_removed: u64,
 }
 
+fn automation_v2_source_metadata_from_title(title: &str) -> Option<(String, serde_json::Value)> {
+    let title = title.trim_start();
+    let rest = title.strip_prefix("Automation ")?;
+    let (automation_id, node_id) = rest.split_once(" / ")?;
+    let node_id = node_id.trim().trim_end_matches(" (Reused)");
+    Some((
+        "automation_v2".to_string(),
+        serde_json::json!({
+            "automation_id": automation_id.trim(),
+            "node_id": node_id,
+        }),
+    ))
+}
+
 fn compact_session_metadata(
     sessions: &HashMap<String, Session>,
     metadata: &mut HashMap<String, SessionMeta>,
@@ -304,6 +318,14 @@ impl Storage {
     pub async fn save_session(&self, mut session: Session) -> anyhow::Result<()> {
         if session.workspace_root.is_none() {
             session.workspace_root = normalize_workspace_path(&session.directory);
+        }
+        if session.source_kind.is_none() {
+            if let Some((source_kind, source_metadata)) =
+                automation_v2_source_metadata_from_title(&session.title)
+            {
+                session.source_kind = Some(source_kind);
+                session.source_metadata = Some(source_metadata);
+            }
         }
         let session_id = session.id.clone();
         self.sessions
@@ -1134,6 +1156,8 @@ fn load_legacy_opencode_sessions(base: &Path) -> anyhow::Result<HashMap<String, 
                     time: tandem_types::SessionTime { created, updated },
                     model: None,
                     provider: None,
+                    source_kind: None,
+                    source_metadata: None,
                     environment: None,
                     messages: load_legacy_session_messages(base, &session_id),
                 },

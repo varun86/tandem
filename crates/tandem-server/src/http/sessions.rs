@@ -241,6 +241,7 @@ pub(super) async fn create_session(
     session.environment = Some(state.host_runtime_context());
     session.model = req.model;
     session.provider = req.provider;
+    apply_created_session_source(&mut session, req.source_kind, req.source_metadata);
     state
         .storage
         .save_session(session.clone())
@@ -560,6 +561,7 @@ pub(super) async fn list_sessions(
                 || session.directory.to_lowercase().contains(&q_lower)
         });
     }
+    retain_sessions_for_source(&mut sessions, query.source.as_deref());
 
     let page_size = query.page_size.unwrap_or(20).max(1);
     let page = query.page.unwrap_or(1).max(1);
@@ -568,6 +570,7 @@ pub(super) async fn list_sessions(
         .into_iter()
         .skip(start)
         .take(page_size)
+        .map(session_with_effective_source_kind)
         .map(Into::into)
         .collect::<Vec<WireSession>>();
     let elapsed_ms = started.elapsed().as_millis();
@@ -665,6 +668,7 @@ pub(super) async fn get_session(
         .storage
         .get_session(&id)
         .await
+        .map(session_with_effective_source_kind)
         .map(|session| Json(session.into()))
         .ok_or(StatusCode::NOT_FOUND);
     let elapsed_ms = started.elapsed().as_millis();

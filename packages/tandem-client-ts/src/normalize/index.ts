@@ -88,6 +88,10 @@ export const SessionRecordSchema = z
     directory: z.string().optional(),
     workspace_root: z.string().optional(),
     workspaceRoot: z.string().optional(),
+    source_kind: z.string().optional(),
+    sourceKind: z.string().optional(),
+    source_metadata: z.record(z.string(), z.unknown()).optional(),
+    sourceMetadata: z.record(z.string(), z.unknown()).optional(),
     archived: z.boolean().optional(),
   })
   .passthrough()
@@ -96,15 +100,23 @@ export const SessionRecordSchema = z
       ...val,
       createdAtMs: val.created_at_ms ?? val.createdAtMs ?? 0,
       workspaceRoot: val.workspace_root ?? val.workspaceRoot,
+      sourceKind: val.source_kind ?? val.sourceKind,
+      sourceMetadata: (val.source_metadata ?? val.sourceMetadata) as Public.JsonObject | undefined,
     })
   );
 
-export const SessionListResponseSchema = z
-  .object({
-    sessions: z.array(SessionRecordSchema).optional().default([]),
-    count: z.number().optional().default(0),
-  })
-  .passthrough();
+export const SessionListResponseSchema = z.union([
+  z.array(SessionRecordSchema).transform((sessions) => ({
+    sessions,
+    count: sessions.length,
+  })),
+  z
+    .object({
+      sessions: z.array(SessionRecordSchema).optional().default([]),
+      count: z.number().optional().default(0),
+    })
+    .passthrough(),
+]);
 
 export const SessionRunStateResponseSchema = z
   .object({

@@ -31,9 +31,18 @@ function isInternalProviderTestSession(session: any): boolean {
     .startsWith("__provider_test__");
 }
 
+function isChatSession(session: any): boolean {
+  const sourceKind = String(session?.sourceKind || session?.source_kind || "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  return !sourceKind || sourceKind === "chat";
+}
+
 export function normalizeSessions(input: any): ChatSession[] {
   return toRows(input)
     .filter((row) => !isInternalProviderTestSession(row))
+    .filter(isChatSession)
     .map((row) => {
       const id = sessionIdOf(row);
       return {
@@ -50,7 +59,7 @@ export async function loadSessions(
   api: (path: string, init?: RequestInit) => Promise<any>
 ): Promise<ChatSession[]> {
   try {
-    const direct = await client.sessions.list({ pageSize: 50 });
+    const direct = await client.sessions.list({ pageSize: 50, source: "chat" });
     const normalized = normalizeSessions(direct);
     if (normalized.length > 0) return normalized;
   } catch {
@@ -58,7 +67,7 @@ export async function loadSessions(
   }
 
   try {
-    const raw = await api("/api/engine/session?page_size=50", { method: "GET" });
+    const raw = await api("/api/engine/session?page_size=50&source=chat", { method: "GET" });
     return normalizeSessions(raw);
   } catch {
     return [];

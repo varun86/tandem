@@ -1130,6 +1130,48 @@ async fn session_listing_honors_workspace_scope_query() {
 }
 
 #[tokio::test]
+async fn session_listing_filters_chat_source_from_automation_source() {
+    let state = test_state().await;
+    let mut chat = Session::new(Some("Operator chat".to_string()), Some(".".to_string()));
+    chat.source_kind = Some("chat".to_string());
+    state.storage.save_session(chat).await.expect("save chat");
+
+    let automation = Session::new(
+        Some(
+            "Automation automation-v2-bug-monitor-triage-failure-draft-1 / inspect_failure_report"
+                .to_string(),
+        ),
+        Some(".".to_string()),
+    );
+    state
+        .storage
+        .save_session(automation)
+        .await
+        .expect("save automation");
+
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/session?scope=global&source=chat")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let rows = payload.as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("title").and_then(Value::as_str),
+        Some("Operator chat")
+    );
+    assert_eq!(
+        rows[0].get("sourceKind").and_then(Value::as_str),
+        Some("chat")
+    );
+}
+
+#[tokio::test]
 async fn attach_session_route_updates_workspace_metadata() {
     let state = test_state().await;
     let ws_a = std::env::temp_dir()

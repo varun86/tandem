@@ -121,6 +121,8 @@ export interface CreateSessionOptions {
   permissions?: PermissionRule[];
   provider?: string;
   model?: string;
+  sourceKind?: string;
+  sourceMetadata?: JsonObject;
 }
 
 export interface UpdateSessionOptions {
@@ -134,6 +136,8 @@ export interface SessionRecord {
   created_at_ms: number;
   directory?: string;
   workspace_root?: string;
+  sourceKind?: string;
+  sourceMetadata?: JsonObject;
   archived?: boolean;
   [key: string]: unknown;
 }
@@ -150,6 +154,7 @@ export interface ListSessionsOptions {
   archived?: boolean;
   scope?: "workspace" | "global";
   workspace?: string;
+  source?: string;
 }
 
 export interface SessionRunStateResponse {

@@ -51,6 +51,10 @@ pub struct WireSession {
     pub model: Option<WireModelSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(rename = "sourceKind", skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    #[serde(rename = "sourceMetadata", skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<HostRuntimeContext>,
     #[serde(default)]

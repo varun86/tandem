@@ -937,6 +937,8 @@ class Sessions {
       directory: options.directory ?? ".",
     };
     if (options.permissions) payload.permission = options.permissions as unknown as JsonValue;
+    if (options.sourceKind) payload.sourceKind = options.sourceKind;
+    if (options.sourceMetadata) payload.sourceMetadata = options.sourceMetadata;
     if (options.model && options.provider) {
       payload.model = { providerID: options.provider, modelID: options.model };
       payload.provider = options.provider;
@@ -957,6 +959,7 @@ class Sessions {
     if (options.archived !== undefined) params.set("archived", String(options.archived));
     if (options.scope) params.set("scope", options.scope);
     if (options.workspace) params.set("workspace", options.workspace);
+    if (options.source) params.set("source", options.source);
     const qs = params.toString() ? `?${params.toString()}` : "";
     const raw = await this.req<unknown>(`/session${qs}`);
     return parseResponse(SessionListResponseSchema, raw, "/session", 200);

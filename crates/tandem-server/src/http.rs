@@ -112,6 +112,7 @@ mod routes_workflow_planner;
 mod routes_workflows;
 pub(crate) mod routines_automations;
 mod session_kb_grounding;
+mod session_source;
 mod sessions;
 mod setup_understanding;
 mod skills_memory;
@@ -136,6 +137,7 @@ use packs::*;
 use permissions_questions::*;
 use presets::*;
 use resources::*;
+use session_source::*;
 use sessions::*;
 use setup_understanding::*;
 use skills_memory::*;
@@ -156,6 +158,7 @@ struct ListSessionsQuery {
     archived: Option<bool>,
     scope: Option<SessionScope>,
     workspace: Option<String>,
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

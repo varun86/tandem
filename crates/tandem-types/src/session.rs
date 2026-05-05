@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{HostRuntimeContext, LocalImplicitTenant, Message, ModelSpec, TenantContext};
@@ -36,6 +37,10 @@ pub struct Session {
     pub model: Option<ModelSpec>,
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<HostRuntimeContext>,
     #[serde(default)]
     pub messages: Vec<Message>,
@@ -64,6 +69,8 @@ impl Session {
             },
             model: None,
             provider: None,
+            source_kind: None,
+            source_metadata: None,
             environment: None,
             messages: Vec::new(),
         }
@@ -94,6 +101,10 @@ pub struct CreateSessionRequest {
     pub project_id: Option<String>,
     pub model: Option<ModelSpec>,
     pub provider: Option<String>,
+    #[serde(default, alias = "sourceKind")]
+    pub source_kind: Option<String>,
+    #[serde(default, alias = "sourceMetadata")]
+    pub source_metadata: Option<Value>,
     pub permission: Option<Vec<serde_json::Value>>,
 }
 

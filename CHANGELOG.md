@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - Released 2026-05-05
+
+### Added
+
+- **Session records now carry explicit source metadata**: Engine sessions can now record `source_kind` and `source_metadata`, with wire responses and TypeScript client types exposing the same data. New user-created sessions default to `chat`, while automation-owned runtime sessions can be classified separately.
+
+### Fixed
+
+- **Automation worker sessions no longer appear as Chat conversations**: Chat and Dashboard recent-session lists now request `source=chat`, and the server filters session listings by source. Existing legacy records titled like `Automation ... / ...` are classified as `automation_v2` at the storage/wire boundary, keeping Bug Monitor and Automation V2 audit sessions inspectable through automation/run surfaces without polluting the Chat session picker.
+
 ## [0.5.4] - Released 2026-05-05
 
 ### Added

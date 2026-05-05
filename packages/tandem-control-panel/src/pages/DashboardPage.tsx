@@ -63,7 +63,7 @@ export function DashboardPage(props: AppPageProps) {
   });
   const sessions = useQuery({
     queryKey: ["dashboard", "sessions"],
-    queryFn: () => client.sessions.list({ pageSize: 8 }).catch(() => []),
+    queryFn: () => client.sessions.list({ pageSize: 8, source: "chat" }).catch(() => []),
     refetchInterval: 15000,
   });
   const routines = useQuery({

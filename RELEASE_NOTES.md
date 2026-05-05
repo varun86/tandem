@@ -2,6 +2,14 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.5.5 (Released 2026-05-05)
+
+This patch keeps automation-owned runtime sessions out of the user Chat session list without hiding their audit trail from the rest of Tandem.
+
+Sessions now carry explicit source metadata. New interactive sessions default to `sourceKind: chat`, Automation V2/Bug Monitor worker sessions are classified as `automation_v2`, and session listing supports filtering by source. The TypeScript client and wire model expose the same fields so control-panel views can ask for the session class they actually need.
+
+The Chat sidebar and Dashboard recent-session list now request only `source=chat`, so Bug Monitor submissions such as `Automation automation-v2-bug-monitor-triage-failure-draft-... / inspect_failure_report` no longer appear as conversations. Legacy automation records with the existing title format are classified at the storage/wire boundary, preserving backward compatibility for already-written sessions.
+
 ## v0.5.4 (Released 2026-05-05)
 
 This patch fixes automation schedule timezone handling, tightens the distinction between local source-code research and final research synthesis, and introduces marketplace-ready workflow pack import/export.
