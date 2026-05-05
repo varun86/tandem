@@ -127,7 +127,7 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
       if (!file) return;
       setImportError("");
       try {
-        const payload = await uploadWorkflowAsset(file, "workflow-pack-imports");
+        const payload = await uploadWorkflowAsset(file, "uploads/workflow-pack-imports");
         const path = payloadPath(payload, file.name);
         setPackPath(path);
         setPackFileName(file.name);
@@ -146,7 +146,7 @@ export function WorkflowsPage({ client, toast, navigate, identity }: AppPageProp
     async (file: File | null) => {
       if (!file) return;
       try {
-        const payload = await uploadWorkflowAsset(file, "workflow-pack-covers");
+        const payload = await uploadWorkflowAsset(file, "uploads/workflow-pack-covers");
         setCoverImagePath(payloadPath(payload, file.name));
         setCoverImagePreview(URL.createObjectURL(file));
         toast("ok", "Cover image added to export.");
