@@ -26,9 +26,10 @@ import {
 import { ThemePicker } from "../ui/ThemePicker.tsx";
 import { APP_NAV_ROUTES } from "../app/routes";
 import { providerHints } from "../app/store.js";
-import { getDefaultNavigationVisibility } from "../app/navigation";
+import { getDefaultNavigationVisibility, saveNavigationVisibility } from "../app/navigation";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
+import type { NavigationVisibility } from "../app/navigation";
 import type { RouteId } from "../app/routes";
 import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 
@@ -1138,6 +1139,9 @@ export function useSettingsPageController({
   const [botControlPanelAlias, setBotControlPanelAlias] = useState("Control Center");
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     providerStatus?.needsOnboarding ? "providers" : navigation?.acaMode ? "navigation" : "install"
+  );
+  const [navigationVisibilityDraft, setNavigationVisibilityDraft] = useState<NavigationVisibility>(
+    () => navigation?.routeVisibility || getDefaultNavigationVisibility(!!navigation?.acaMode)
   );
   const [installConfigText, setInstallConfigText] = useState("");
   const [installConfigError, setInstallConfigError] = useState("");
@@ -3273,7 +3277,34 @@ export function useSettingsPageController({
     () => isGithubCopilotMcpTransport(mcpTransport),
     [mcpTransport]
   );
-  const navigationVisibility = navigation?.routeVisibility || {};
+  useEffect(() => {
+    if (!navigation?.routeVisibility) return;
+    setNavigationVisibilityDraft(navigation.routeVisibility);
+  }, [navigation?.routeVisibility]);
+  const setNavigationRouteVisibility = useCallback(
+    (routeId: RouteId, visible: boolean) => {
+      setNavigationVisibilityDraft((current) => {
+        const next = { ...current, [routeId]: visible };
+        saveNavigationVisibility(next);
+        return next;
+      });
+      navigation?.setRouteVisibility(routeId, visible);
+    },
+    [navigation]
+  );
+  const showAllNavigationSections = useCallback(() => {
+    const next = Object.fromEntries(APP_NAV_ROUTES.map(([routeId]) => [routeId, true]));
+    setNavigationVisibilityDraft(next as NavigationVisibility);
+    saveNavigationVisibility(next as NavigationVisibility);
+    navigation?.showAllSections();
+  }, [navigation]);
+  const resetNavigationSections = useCallback(() => {
+    const next = getDefaultNavigationVisibility(!!navigation?.acaMode);
+    setNavigationVisibilityDraft(next);
+    saveNavigationVisibility(next);
+    navigation?.resetNavigation();
+  }, [navigation]);
+  const navigationVisibility = navigationVisibilityDraft;
   const defaultNavigationVisibility = getDefaultNavigationVisibility(!!navigation?.acaMode);
   const navigationRows = APP_NAV_ROUTES.map(([routeId, label, icon]) => {
     const typedRouteId = routeId as RouteId;
@@ -3480,6 +3511,7 @@ export function useSettingsPageController({
     queryClient: queryClient,
     refreshBugMonitorBindingsMutation: refreshBugMonitorBindingsMutation,
     replayBugMonitorLogSourceMutation: replayBugMonitorLogSourceMutation,
+    resetNavigationSections: resetNavigationSections,
     resetBugMonitorLogSourceMutation: resetBugMonitorLogSourceMutation,
     rootRef: rootRef,
     saveBugMonitorMutation: saveBugMonitorMutation,
@@ -3562,6 +3594,7 @@ export function useSettingsPageController({
     setMcpToken: setMcpToken,
     setMcpTransport: setMcpTransport,
     setModelSearchByProvider: setModelSearchByProvider,
+    setNavigationRouteVisibility: setNavigationRouteVisibility,
     setOauthSessionByProvider: setOauthSessionByProvider,
     setProviderDefaultsOpen: setProviderDefaultsOpen,
     setSchedulerMaxConcurrent: setSchedulerMaxConcurrent,
@@ -3578,6 +3611,7 @@ export function useSettingsPageController({
     setWorktreeCleanupPulse: setWorktreeCleanupPulse,
     setWorktreeCleanupRepoRoot: setWorktreeCleanupRepoRoot,
     setWorktreeCleanupResult: setWorktreeCleanupResult,
+    showAllNavigationSections: showAllNavigationSections,
     smokeTestBrowserMutation: smokeTestBrowserMutation,
     systemHealthQuery: systemHealthQuery,
     testSearchMutation: testSearchMutation,

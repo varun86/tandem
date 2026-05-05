@@ -72,11 +72,14 @@ export function SettingsPageNavigationProvidersSections({
     setDefaultsMutation,
     setInstallConfigText,
     setModelSearchByProvider,
+    setNavigationRouteVisibility,
     setOauthSessionByProvider,
     setProviderDefaultsOpen,
+    resetNavigationSections,
     toast,
     useLocalCodexSessionMutation,
     visibleNavigationCount,
+    showAllNavigationSections,
   } = controller;
   const safeNavigationRows = Array.isArray(navigationRows) ? navigationRows : [];
   const safeDefaultNavigationRows = Array.isArray(defaultNavigationRows)
@@ -108,17 +111,13 @@ export function SettingsPageNavigationProvidersSections({
               <Badge tone="ghost">
                 {visibleNavigationCount}/{safeNavigationRows.length} visible
               </Badge>
-              <button
-                className="tcp-btn"
-                type="button"
-                onClick={() => navigation?.showAllSections()}
-              >
+              <button className="tcp-btn" type="button" onClick={() => showAllNavigationSections()}>
                 Show all sections
               </button>
               <button
                 className="tcp-btn-primary"
                 type="button"
-                onClick={() => navigation?.resetNavigation()}
+                onClick={() => resetNavigationSections()}
               >
                 Reset {navigation?.acaMode ? "ACA compact" : "default"}
               </button>
@@ -152,7 +151,7 @@ export function SettingsPageNavigationProvidersSections({
                         : "border-slate-700/60 bg-slate-900/20 hover:border-slate-500/70"
                     }`}
                     onClick={() =>
-                      navigation?.setRouteVisibility(row.routeId as RouteId, !row.enabled)
+                      setNavigationRouteVisibility(row.routeId as RouteId, !row.enabled)
                     }
                   >
                     <div className="flex min-w-0 items-center gap-3">
@@ -206,7 +205,7 @@ export function SettingsPageNavigationProvidersSections({
                         : "border-slate-700/60 bg-slate-900/20 hover:border-slate-500/70"
                     }`}
                     onClick={() =>
-                      navigation?.setRouteVisibility(row.routeId as RouteId, !row.enabled)
+                      setNavigationRouteVisibility(row.routeId as RouteId, !row.enabled)
                     }
                   >
                     <div className="flex min-w-0 items-center gap-3">
