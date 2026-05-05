@@ -1,8 +1,8 @@
-import interactionPlugin, { type DateClickArg } from "@fullcalendar/interaction";
-import FullCalendar from "@fullcalendar/react";
-import timeGridPlugin from "@fullcalendar/timegrid";
+import type { DateClickArg } from "@fullcalendar/interaction";
+import type FullCalendar from "@fullcalendar/react";
 import type { DatesSetArg, EventClickArg, EventContentArg, MoreLinkArg } from "@fullcalendar/core";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { prepareFullCalendarStyleSheet } from "./fullCalendarTauriCompat";
 import { detectBrowserTimezone } from "./timezone";
 
 type CalendarRange = {
@@ -14,6 +14,12 @@ type AutomationCalendarProps = {
   events: any[];
   onRangeChange: (range: CalendarRange) => void;
   onOpenAutomation: (automation: any) => void;
+};
+
+type FullCalendarRuntime = {
+  FullCalendar: typeof import("@fullcalendar/react").default;
+  interactionPlugin: typeof import("@fullcalendar/interaction").default;
+  timeGridPlugin: typeof import("@fullcalendar/timegrid").default;
 };
 
 const DEFAULT_DAY_SCROLL_TIME = "09:00:00";
@@ -198,6 +204,41 @@ export function AutomationCalendar({
   const pendingFocusDateRef = useRef<Date | null>(null);
   const [currentView, setCurrentView] = useState("timeGridWeek");
   const [focusedSlot, setFocusedSlot] = useState<Date | null>(null);
+  const [fullCalendarRuntime, setFullCalendarRuntime] = useState<FullCalendarRuntime | null>(null);
+  const [fullCalendarLoadError, setFullCalendarLoadError] = useState("");
+  const FullCalendarView = fullCalendarRuntime?.FullCalendar;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFullCalendar() {
+      try {
+        await prepareFullCalendarStyleSheet();
+        if (cancelled) return;
+        const [reactModule, interactionModule, timeGridModule] = await Promise.all([
+          import("@fullcalendar/react"),
+          import("@fullcalendar/interaction"),
+          import("@fullcalendar/timegrid"),
+        ]);
+        if (cancelled) return;
+        setFullCalendarRuntime({
+          FullCalendar: reactModule.default,
+          interactionPlugin: interactionModule.default,
+          timeGridPlugin: timeGridModule.default,
+        });
+        setFullCalendarLoadError("");
+      } catch (error) {
+        if (cancelled) return;
+        setFullCalendarLoadError(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    void loadFullCalendar();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const focusedBlockLabel = useMemo(() => formatFocusedBlock(focusedSlot), [focusedSlot]);
   const focusedBlockHeading = useMemo(() => formatFocusedBlockHeading(focusedSlot), [focusedSlot]);
@@ -522,76 +563,88 @@ export function AutomationCalendar({
         </div>
       </div>
       <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2">
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          timeZone="local"
-          firstDay={0}
-          height="auto"
-          expandRows
-          nowIndicator
-          editable={false}
-          eventStartEditable={false}
-          eventDurationEditable={false}
-          eventOverlap
-          slotEventOverlap
-          allDaySlot={false}
-          slotMinTime="00:00:00"
-          slotMaxTime="24:00:00"
-          scrollTimeReset={false}
-          stickyHeaderDates
-          navLinks
-          headerToolbar={{
-            left: "prev,next today",
-            center: "title",
-            right: "timeGridWeek,timeGridDay",
-          }}
-          buttonText={{
-            timeGridWeek: "week",
-            timeGridDay: "day",
-            today: "today",
-          }}
-          views={{
-            timeGridWeek: {
-              eventMaxStack: 1,
-            },
-            timeGridDay: {
-              slotDuration: "00:30:00",
-              slotLabelInterval: "00:30:00",
-            },
-          }}
-          events={groupedBlockEvents}
-          datesSet={handleDatesSet}
-          navLinkDayClick={(date) => {
-            const fallbackTime = focusedSlot ? toScrollTime(focusedSlot) : DEFAULT_DAY_SCROLL_TIME;
-            const { hour, minute } = timeParts(fallbackTime);
-            openDayViewAtTime(
-              new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0)
-            );
-          }}
-          dateClick={handleDateClick}
-          moreLinkClick={handleMoreLinkClick}
-          moreLinkClassNames={() => ["tcp-calendar-more-link"]}
-          moreLinkContent={(arg) => <span>+{arg.num} more</span>}
-          eventClick={handleEventClick}
-          eventContent={renderEventContent}
-          eventDidMount={(arg) => {
-            const hint = String(arg?.event?.extendedProps?.hint || "").trim();
-            if (hint) {
-              arg.el.title = hint;
-              arg.el.setAttribute("aria-label", hint);
-            }
-          }}
-          slotLaneClassNames={(arg) => {
-            if (currentView !== "timeGridDay" || !focusedSlot || !arg.date) return [];
-            const slotTime = arg.date.getTime();
-            const blockStart = focusedSlot.getTime();
-            const blockEnd = blockStart + CALENDAR_BLOCK_MS;
-            return slotTime >= blockStart && slotTime < blockEnd ? ["tcp-calendar-slot-focus"] : [];
-          }}
-          eventClassNames={() => ["tcp-calendar-event"]}
-        />
+        {FullCalendarView && fullCalendarRuntime ? (
+          <FullCalendarView
+            ref={calendarRef}
+            plugins={[fullCalendarRuntime.timeGridPlugin, fullCalendarRuntime.interactionPlugin]}
+            initialView="timeGridWeek"
+            timeZone="local"
+            firstDay={0}
+            height="auto"
+            expandRows
+            nowIndicator
+            editable={false}
+            eventStartEditable={false}
+            eventDurationEditable={false}
+            eventOverlap
+            slotEventOverlap
+            allDaySlot={false}
+            slotMinTime="00:00:00"
+            slotMaxTime="24:00:00"
+            scrollTimeReset={false}
+            stickyHeaderDates
+            navLinks
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: "timeGridWeek,timeGridDay",
+            }}
+            buttonText={{
+              timeGridWeek: "week",
+              timeGridDay: "day",
+              today: "today",
+            }}
+            views={{
+              timeGridWeek: {
+                eventMaxStack: 1,
+              },
+              timeGridDay: {
+                slotDuration: "00:30:00",
+                slotLabelInterval: "00:30:00",
+              },
+            }}
+            events={groupedBlockEvents}
+            datesSet={handleDatesSet}
+            navLinkDayClick={(date) => {
+              const fallbackTime = focusedSlot
+                ? toScrollTime(focusedSlot)
+                : DEFAULT_DAY_SCROLL_TIME;
+              const { hour, minute } = timeParts(fallbackTime);
+              openDayViewAtTime(
+                new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0)
+              );
+            }}
+            dateClick={handleDateClick}
+            moreLinkClick={handleMoreLinkClick}
+            moreLinkClassNames={() => ["tcp-calendar-more-link"]}
+            moreLinkContent={(arg) => <span>+{arg.num} more</span>}
+            eventClick={handleEventClick}
+            eventContent={renderEventContent}
+            eventDidMount={(arg) => {
+              const hint = String(arg?.event?.extendedProps?.hint || "").trim();
+              if (hint) {
+                arg.el.title = hint;
+                arg.el.setAttribute("aria-label", hint);
+              }
+            }}
+            slotLaneClassNames={(arg) => {
+              if (currentView !== "timeGridDay" || !focusedSlot || !arg.date) return [];
+              const slotTime = arg.date.getTime();
+              const blockStart = focusedSlot.getTime();
+              const blockEnd = blockStart + CALENDAR_BLOCK_MS;
+              return slotTime >= blockStart && slotTime < blockEnd
+                ? ["tcp-calendar-slot-focus"]
+                : [];
+            }}
+            eventClassNames={() => ["tcp-calendar-event"]}
+          />
+        ) : (
+          <div className="grid min-h-[24rem] place-items-center px-4 text-center text-sm text-slate-400">
+            {fullCalendarLoadError
+              ? `Calendar failed to load: ${fullCalendarLoadError}`
+              : "Loading calendar..."}
+          </div>
+        )}
       </div>
       <div
         ref={detailPanelRef}

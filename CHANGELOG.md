@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Automation worker sessions no longer appear as Chat conversations**: Chat and Dashboard recent-session lists now request `source=chat`, and the server filters session listings by source. Existing legacy records titled like `Automation ... / ...` are classified as `automation_v2` at the storage/wire boundary, keeping Bug Monitor and Automation V2 audit sessions inspectable through automation/run surfaces without polluting the Chat session picker.
+- **Tauri calendar view no longer crashes during startup**: The Automation Calendar now loads FullCalendar after the Tauri/WebKit stylesheet host is ready and keeps FullCalendar in a lazy chunk, avoiding a WebKit timing crash where FullCalendar accessed `style.sheet.cssRules` while the stylesheet was still `null`.
 
 ## [0.5.4] - Released 2026-05-05
 

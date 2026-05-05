@@ -21,6 +21,7 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
           if (id.includes("@frumu/tandem-client")) return "tandem-client";
+          if (id.includes("@fullcalendar")) return "fullcalendar";
           if (id.includes("@tanstack/react-query")) return "react-query";
           if (id.includes("motion")) return "motion";
           if (id.includes("marked") || id.includes("dompurify")) return "markdown";
