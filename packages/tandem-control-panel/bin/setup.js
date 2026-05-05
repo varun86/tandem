@@ -192,14 +192,30 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = join(__dirname, "..", "dist");
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 
+function expandHomePath(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const home = homedir();
+  if (value === "~") return home;
+  if (value.startsWith("~/") || value.startsWith("~\\")) return resolve(home, value.slice(2));
+  const expanded = value
+    .replace(/^%HOME%(?=\/|\\|$)/i, home)
+    .replace(/^\$HOME(?=\/|\\|$)/, home)
+    .replace(/^\$\{HOME\}(?=\/|\\|$)/, home);
+  return process.platform === "win32" ? expanded : expanded.replace(/\\/g, "/");
+}
+
 function resolveDefaultChannelUploadsRoot() {
-  const explicitStateDir = String(process.env.TANDEM_STATE_DIR || "").trim();
+  const tandemHome = expandHomePath(process.env.TANDEM_HOME);
+  if (tandemHome) return resolve(tandemHome, "data", "channel_uploads");
+
+  const explicitStateDir = expandHomePath(process.env.TANDEM_STATE_DIR);
   if (explicitStateDir) return resolve(explicitStateDir, "channel_uploads");
 
-  const xdgDataHome = String(process.env.XDG_DATA_HOME || "").trim();
+  const xdgDataHome = expandHomePath(process.env.XDG_DATA_HOME);
   if (xdgDataHome) return resolve(xdgDataHome, "tandem", "data", "channel_uploads");
 
-  const appData = String(process.env.APPDATA || "").trim();
+  const appData = expandHomePath(process.env.APPDATA);
   if (appData) return resolve(appData, "tandem", "data", "channel_uploads");
 
   return resolve(homedir(), ".tandem", "data", "channel_uploads");
@@ -260,7 +276,7 @@ const ACA_TOKEN_FILE = String(process.env.ACA_API_TOKEN_FILE || "").trim();
 const SESSION_TTL_MS =
   Number.parseInt(process.env.TANDEM_CONTROL_PANEL_SESSION_TTL_MINUTES || "1440", 10) * 60 * 1000;
 const FILES_ROOT = resolve(
-  process.env.TANDEM_CONTROL_PANEL_FILES_ROOT || resolveDefaultChannelUploadsRoot()
+  expandHomePath(process.env.TANDEM_CONTROL_PANEL_FILES_ROOT) || resolveDefaultChannelUploadsRoot()
 );
 const WORKSPACE_FILES_ROOT_ENV = String(process.env.TANDEM_CONTROL_PANEL_WORKSPACE_ROOT || "").trim();
 const MAX_UPLOAD_BYTES = Math.max(
