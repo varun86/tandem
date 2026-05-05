@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 
@@ -48,6 +49,7 @@ type ChatInterfacePanelProps = {
   onRemoveAttachment?: (index: number) => void;
   onAttach?: () => void;
   attachDisabled?: boolean;
+  composerAccessory?: ReactNode;
   className?: string;
 };
 
@@ -78,6 +80,7 @@ export function ChatInterfacePanel({
   onRemoveAttachment,
   onAttach,
   attachDisabled = false,
+  composerAccessory,
   className = "",
 }: ChatInterfacePanelProps) {
   const reducedMotion = !!useReducedMotion();
@@ -250,6 +253,8 @@ export function ChatInterfacePanel({
       ) : null}
 
       <div className="chat-composer shrink-0">
+        {composerAccessory ? <div className="mb-2">{composerAccessory}</div> : null}
+
         {attachments.length ? (
           <div className="chat-attach-row mb-2 flex flex-wrap items-center gap-2">
             <span className="tcp-subtle text-xs">{attachments.length} attached</span>

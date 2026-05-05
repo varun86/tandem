@@ -18,7 +18,6 @@ import {
   extractToolCallId,
   extractToolName,
   isPendingPermissionStatus,
-  normalizePackEvent,
   normalizePermissionRequest,
   summarizeToolPayload,
   TERMINAL_FAILURE_EVENTS,
@@ -26,7 +25,6 @@ import {
   TOOL_END_EVENTS,
   TOOL_PROGRESS_EVENTS,
   TOOL_START_EVENTS,
-  type PackEventItem,
   type PermissionRequest,
   type ToolActivityItem,
   type ToolActivityStatus,
@@ -67,6 +65,17 @@ type UploadProgressRow = {
 };
 
 type ConfirmDeleteState = { id: string; title: string } | null;
+type RunTimelineTone = "running" | "ok" | "failed" | "info";
+
+type RunTimelineItem = {
+  id: string;
+  type: string;
+  title: string;
+  summary: string;
+  tone: RunTimelineTone;
+  at: number;
+  runId: string;
+};
 
 type SetupDecision = "pass_through" | "intercept" | "clarify";
 type SetupIntentKind =
@@ -353,6 +362,81 @@ function collectToolActivityFromMessages(raw: any): ToolActivityItem[] {
   return items.slice(-80).reverse();
 }
 
+function shouldShowSetupCard(prompt: string, setup: SetupUnderstandResponse) {
+  if (setup.decision === "pass_through") return false;
+  if (setup.intent_kind !== "workflow_planner_create") return true;
+  const text = String(prompt || "")
+    .trim()
+    .toLowerCase();
+  const explicitWorkflowAction =
+    /\b(create|build|make|draft|design|plan|schedule|automate|orchestrate)\b/.test(text) &&
+    /\b(workflow|workflows|pipeline|handoff|automation|automations)\b/.test(text);
+  const explicitPlannerPhrase =
+    /\b(workflow plan|workflow draft|plan this workflow|draft a plan|turn this into a plan|open planner)\b/.test(
+      text
+    );
+  return explicitWorkflowAction || explicitPlannerPhrase;
+}
+
+function timelineToneForEvent(type: string, props: any): RunTimelineTone {
+  const lower = String(type || "").toLowerCase();
+  const status = String(props?.status || props?.state || "").toLowerCase();
+  if (lower.includes("fail") || lower.includes("error") || status.includes("fail")) return "failed";
+  if (lower.includes("finished") || lower.includes("complete") || status.includes("complete")) {
+    return props?.error ? "failed" : "ok";
+  }
+  if (lower.includes("started") || lower.includes("running") || status.includes("running")) {
+    return "running";
+  }
+  return "info";
+}
+
+function timelineTitleForEvent(type: string) {
+  const lower = String(type || "").toLowerCase();
+  if (lower.includes("permission") || lower.includes("approval")) return "Approval";
+  if (lower.includes("tool")) return "Tool activity";
+  if (lower.includes("response")) return "Response";
+  if (lower.includes("status")) return "Status";
+  if (lower.includes("finished") || lower.includes("complete")) return "Run finished";
+  if (lower.includes("started")) return "Run started";
+  return type || "Session event";
+}
+
+function timelineSummaryForEvent(type: string, props: any) {
+  const bits = [
+    extractToolName(props),
+    String(props?.status || props?.state || "").trim(),
+    String(props?.error || props?.message || "").trim(),
+  ].filter(Boolean);
+  if (bits.length) return bits.join(" · ");
+  return String(type || "event");
+}
+
+function collectRunTimelineFromMessages(raw: any): RunTimelineItem[] {
+  const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.messages) ? raw.messages : [];
+  return rows
+    .map((row: any, index: number) => {
+      const role = String(row?.info?.role || row?.role || row?.message_role || "assistant")
+        .trim()
+        .toLowerCase();
+      const text = String(row?.text || row?.content || row?.message || "").trim();
+      const at =
+        Number(row?.created_at_ms || row?.createdAtMs || row?.timestamp_ms || row?.at) ||
+        Date.now() - (rows.length - index) * 1000;
+      return {
+        id: `message:${row?.id || index}:${role}`,
+        type: "message",
+        title: role === "user" ? "User message" : "Assistant message",
+        summary: text ? text.slice(0, 140) : role,
+        tone: role === "user" ? "info" : ("ok" as RunTimelineTone),
+        at,
+        runId: String(row?.runID || row?.runId || row?.run_id || "").trim(),
+      };
+    })
+    .reverse()
+    .slice(0, 40);
+}
+
 export function ChatPage({ client, api, toast, providerStatus, identity, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const reducedMotion = !!useReducedMotion();
@@ -378,8 +462,8 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   const [showThinking, setShowThinking] = useState(false);
   const [toolActivity, setToolActivity] = useState<ToolActivityItem[]>([]);
   const [toolEventSeen, setToolEventSeen] = useState<Set<string>>(new Set());
-  const [packEvents, setPackEvents] = useState<PackEventItem[]>([]);
-  const [packEventSeen, setPackEventSeen] = useState<Set<string>>(new Set());
+  const [runTimeline, setRunTimeline] = useState<RunTimelineItem[]>([]);
+  const [runTimelineSeen, setRunTimelineSeen] = useState<Set<string>>(new Set());
   const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
   const [permissionBusy, setPermissionBusy] = useState<Set<string>>(new Set());
   const [autoApprove, setAutoApprove] = useState(loadAutoApprovePreference());
@@ -388,6 +472,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
   const [selectedTools, setSelectedTools] = useState<string[]>(loadToolAllowlistPreference());
   const [deleteConfirm, setDeleteConfirm] = useState<ConfirmDeleteState>(null);
   const [setupCard, setSetupCard] = useState<SetupCard | null>(null);
+  const [workflowNudgeDismissedFor, setWorkflowNudgeDismissedFor] = useState("");
 
   const sessionTitle = useMemo(() => {
     const hit = sessions.find((x) => x.id === selectedSessionId);
@@ -414,7 +499,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     uploadRows,
     permissions,
     toolActivity,
-    packEvents,
+    runTimeline,
     selectedTools,
     messages,
     sessionsOpen,
@@ -511,6 +596,14 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           return merged.sort((a, b) => b.at - a.at).slice(0, 80);
         });
       }
+      const messageTimeline = collectRunTimelineFromMessages(rows);
+      if (messageTimeline.length) {
+        setRunTimeline((prev) => {
+          const seen = new Set(prev.map((item) => item.id));
+          const merged = [...messageTimeline.filter((item) => !seen.has(item.id)), ...prev];
+          return merged.sort((a, b) => b.at - a.at).slice(0, 80);
+        });
+      }
     } finally {
       if (mountedRef.current) setMessagesLoading(false);
     }
@@ -521,9 +614,9 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     setToolEventSeen(new Set());
   }, []);
 
-  const resetPackTracking = useCallback(() => {
-    setPackEvents([]);
-    setPackEventSeen(new Set());
+  const resetRunTimeline = useCallback(() => {
+    setRunTimeline([]);
+    setRunTimelineSeen(new Set());
   }, []);
 
   const recordToolActivity = useCallback(
@@ -568,25 +661,49 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     []
   );
 
-  const recordPackEvent = useCallback((rawType: string, rawProps: any) => {
-    const normalized = normalizePackEvent(rawType, rawProps);
-    const lower = String(normalized.type).toLowerCase();
-    if (!lower.startsWith("pack.")) return;
-
+  const recordRunTimeline = useCallback((rawType: string, rawProps: any, fallbackRunId = "") => {
+    const type = String(rawType || "").trim();
+    if (!type || type === "server.connected" || type === "engine.lifecycle.ready") return;
+    const props = rawProps && typeof rawProps === "object" ? rawProps : {};
+    const runId = String(extractRunId({ properties: props }, fallbackRunId) || fallbackRunId);
+    const eventKey = [
+      type,
+      runId,
+      extractToolCallId(props),
+      String(props?.status || props?.state || "").trim(),
+      String(props?.error || "").trim(),
+    ]
+      .filter(Boolean)
+      .join(":");
     let accepted = true;
-    setPackEventSeen((prev) => {
-      if (prev.has(normalized.id)) {
+    setRunTimelineSeen((prev) => {
+      if (prev.has(eventKey)) {
         accepted = false;
         return prev;
       }
       const next = new Set(prev);
-      next.add(normalized.id);
-      if (next.size > 400) return new Set([normalized.id]);
+      next.add(eventKey);
+      if (next.size > 400) return new Set([eventKey]);
       return next;
     });
     if (!accepted) return;
 
-    setPackEvents((prev) => [normalized, ...prev].slice(0, 80));
+    setRunTimeline((prev) =>
+      [
+        {
+          id: `${eventKey}:${Date.now()}`,
+          type,
+          title: timelineTitleForEvent(type),
+          summary: timelineSummaryForEvent(type, props),
+          tone: timelineToneForEvent(type, props),
+          at:
+            Number(props?.at || props?.createdAtMs || props?.startedAtMs || props?.finishedAtMs) ||
+            Date.now(),
+          runId,
+        },
+        ...prev,
+      ].slice(0, 80)
+    );
   }, []);
 
   const recordToolEvent = useCallback(
@@ -872,7 +989,10 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           },
         }),
       })) as SetupUnderstandResponse;
-      if (setup.decision !== "pass_through") {
+      if (
+        setup.intent_kind !== "workflow_planner_create" &&
+        shouldShowSetupCard(resolvedPrompt, setup)
+      ) {
         const card = setupCardFromResponse(setup);
         if (card) {
           setSetupCard(card);
@@ -997,6 +1117,17 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
       if (!runId) throw new Error("No run ID returned from engine.");
       if (attached.length) setUploads([]);
+      recordRunTimeline(
+        "session.run.started",
+        {
+          runID: runId,
+          sessionID: sessionId,
+          status: "started",
+          message: "Prompt accepted",
+          startedAtMs: Date.now(),
+        },
+        runId
+      );
 
       setStreamingText("");
       setShowThinking(true);
@@ -1045,6 +1176,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         })) {
           const event: any = rawEvent;
           if (isRunSignalEvent(event.type)) resetNoEventTimer();
+          recordRunTimeline(event.type, event.properties || {}, runId);
 
           if (
             event.type === "approval.requested" ||
@@ -1068,14 +1200,6 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             const req = normalizePermissionRequest(event.properties || {});
             if (req?.id) removePermissionRequest(req.id);
             void refreshPermissionRequests();
-          }
-
-          if (
-            String(event.type || "")
-              .toLowerCase()
-              .startsWith("pack.")
-          ) {
-            recordPackEvent(event.type, event.properties || {});
           }
 
           const evRunId = extractRunId(event);
@@ -1262,7 +1386,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     createSession,
     prompt,
     queryClient,
-    recordPackEvent,
+    recordRunTimeline,
     recordToolActivity,
     recordToolEvent,
     refreshMessages,
@@ -1305,13 +1429,13 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     runAbortRef.current?.abort();
     setSessionsOpen(false);
     resetToolTracking();
-    resetPackTracking();
+    resetRunTimeline();
     void refreshPermissionRequests();
     void refreshMessages();
   }, [
     refreshMessages,
     refreshPermissionRequests,
-    resetPackTracking,
+    resetRunTimeline,
     resetToolTracking,
     selectedSessionId,
   ]);
@@ -1377,9 +1501,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           }
         }
 
-        if (type.toLowerCase().startsWith("pack.")) {
-          recordPackEvent(type, props);
-        }
+        recordRunTimeline(type, props, extractRunId(payload, "global"));
 
         const isKnownToolEvent =
           TOOL_START_EVENTS.has(type) ||
@@ -1412,7 +1534,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
     return () => unsubscribe();
   }, [
-    recordPackEvent,
+    recordRunTimeline,
     recordToolEvent,
     removePermissionRequest,
     selectedSessionId,
@@ -1421,6 +1543,21 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
   const attachedCount = uploads.length;
   const messagePaneEmpty = !messagesLoading && !messages.length && !showThinking && !streamingText;
+  const workflowNudgePrompt = prompt.trim();
+  const showWorkflowNudge =
+    !sending &&
+    workflowNudgePrompt.length > 0 &&
+    workflowNudgePrompt !== workflowNudgeDismissedFor &&
+    /\b(workflow|workflows)\b/i.test(workflowNudgePrompt);
+  const openWorkflowPlannerFromPrompt = () => {
+    seedWorkflowPlanner({
+      prompt: workflowNudgePrompt,
+      plan_source: "control_panel_chat",
+      session_id: selectedSessionId || "",
+    });
+    setWorkflowNudgeDismissedFor(workflowNudgePrompt);
+    navigate("planner");
+  };
 
   return (
     <div
@@ -1652,6 +1789,29 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             onAttach={() => fileInputRef.current?.click()}
             attachDisabled={sending}
             statusTitle={sending && !showThinking && !streamingText ? "Sending…" : ""}
+            composerAccessory={
+              showWorkflowNudge ? (
+                <div className="chat-planner-nudge" role="status">
+                  <button
+                    type="button"
+                    className="chat-planner-nudge-action"
+                    onClick={openWorkflowPlannerFromPrompt}
+                  >
+                    <i data-lucide="workflow"></i>
+                    Open workflow planner
+                  </button>
+                  <span className="chat-planner-nudge-hint">for this message</span>
+                  <button
+                    type="button"
+                    className="chat-planner-nudge-dismiss"
+                    title="Dismiss"
+                    onClick={() => setWorkflowNudgeDismissedFor(workflowNudgePrompt)}
+                  >
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              ) : null
+            }
           />
 
           <input
@@ -1817,15 +1977,13 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
           <section className="min-h-0 flex-1">
             <div className="mb-2 flex items-center justify-between">
-              <p className="chat-rail-label">Pack Events</p>
+              <p className="chat-rail-label">Run Timeline</p>
               <div className="flex items-center gap-2">
-                <span className="chat-rail-count">{packEvents.length}</span>
+                <span className="chat-rail-count">{runTimeline.length}</span>
                 <button
                   type="button"
                   className="tcp-btn h-7 px-2 text-[11px]"
-                  onClick={() => {
-                    resetPackTracking();
-                  }}
+                  onClick={resetRunTimeline}
                 >
                   <i data-lucide="trash-2"></i>
                   Clear
@@ -1833,98 +1991,32 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
               </div>
             </div>
             <div className="chat-tools-activity">
-              {packEvents.length ? (
-                packEvents.slice(0, 20).map((event) => (
+              {runTimeline.length ? (
+                runTimeline.slice(0, 24).map((event) => (
                   <motion.article
                     key={`${event.id}-${event.at}`}
-                    className="chat-pack-event-card"
+                    className={`chat-timeline-card chat-timeline-${event.tone}`}
                     initial={reducedMotion ? false : { opacity: 0, y: 6 }}
                     animate={reducedMotion ? undefined : { opacity: 1, y: 0 }}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="chat-pack-event-title truncate" title={event.type}>
-                        {event.type}
+                        {event.title}
                       </div>
                       <span className="chat-pack-event-time">
                         {new Date(event.at).toLocaleTimeString()}
                       </span>
                     </div>
                     <div className="chat-pack-event-summary mt-0.5">{event.summary}</div>
-                    {event.error ? (
-                      <div className="chat-pack-event-error mt-1">{event.error}</div>
+                    {event.runId ? (
+                      <div className="chat-pack-event-summary mt-1 truncate" title={event.runId}>
+                        run: {event.runId}
+                      </div>
                     ) : null}
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        className="tcp-btn h-6 px-1.5 text-[10px]"
-                        onClick={() => navigate("packs-detail")}
-                      >
-                        <i data-lucide="package"></i>
-                        Packs
-                      </button>
-                      {event.path ? (
-                        <button
-                          type="button"
-                          className="tcp-btn h-6 px-1.5 text-[10px]"
-                          onClick={async () => {
-                            try {
-                              const payload = await api("/api/engine/packs/install", {
-                                method: "POST",
-                                body: JSON.stringify({
-                                  path: event.path,
-                                  source: { kind: "control_panel_chat", event: "pack.detected" },
-                                }),
-                              });
-                              toast(
-                                "ok",
-                                `Installed ${payload?.installed?.name || "pack"} ${payload?.installed?.version || ""}`.trim()
-                              );
-                            } catch (error) {
-                              toast("err", `Install failed: ${toTextError(error)}`);
-                            }
-                          }}
-                        >
-                          <i data-lucide="download"></i>
-                          Install path
-                        </button>
-                      ) : null}
-                      {event.path && event.attachmentId ? (
-                        <button
-                          type="button"
-                          className="tcp-btn h-6 px-1.5 text-[10px]"
-                          onClick={async () => {
-                            try {
-                              const payload = await api(
-                                "/api/engine/packs/install-from-attachment",
-                                {
-                                  method: "POST",
-                                  body: JSON.stringify({
-                                    attachment_id: event.attachmentId,
-                                    path: event.path,
-                                    connector: event.connector || undefined,
-                                    channel_id: event.channelId || undefined,
-                                    sender_id: event.senderId || undefined,
-                                  }),
-                                }
-                              );
-                              toast(
-                                "ok",
-                                `Installed ${payload?.installed?.name || "pack"} ${payload?.installed?.version || ""}`.trim()
-                              );
-                            } catch (error) {
-                              toast("err", `Install failed: ${toTextError(error)}`);
-                            }
-                          }}
-                        >
-                          <i data-lucide="paperclip"></i>
-                          Install attach
-                        </button>
-                      ) : null}
-                    </div>
                   </motion.article>
                 ))
               ) : (
-                <p className="chat-rail-empty">No pack events yet.</p>
+                <p className="chat-rail-empty">No run events yet.</p>
               )}
             </div>
           </section>

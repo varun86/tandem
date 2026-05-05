@@ -1722,6 +1722,29 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     color: var(--color-text);
   }
 
+  .chat-planner-nudge {
+    @apply inline-flex max-w-full items-center gap-2 border px-2 py-1 text-xs;
+    border-color: color-mix(in srgb, var(--color-primary) 34%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%);
+    color: var(--color-text-muted);
+  }
+
+  .chat-planner-nudge-action,
+  .chat-planner-nudge-dismiss {
+    @apply inline-flex items-center gap-1 transition;
+    color: var(--color-text);
+  }
+
+  .chat-planner-nudge-action:hover,
+  .chat-planner-nudge-dismiss:hover {
+    color: var(--color-primary);
+  }
+
+  .chat-planner-nudge-hint {
+    @apply truncate;
+    color: var(--color-text-subtle);
+  }
+
   .chat-tools-activity {
     @apply max-h-[18rem] overflow-auto pr-1;
     display: grid;
@@ -1937,6 +1960,25 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     padding: 0.375rem 0.5rem;
   }
 
+  .chat-timeline-card {
+    border-radius: 0.125rem;
+    border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+    background: color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%);
+    padding: 0.375rem 0.5rem;
+  }
+
+  .chat-timeline-running {
+    border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
+  }
+
+  .chat-timeline-ok {
+    border-color: color-mix(in srgb, #34d399 34%, transparent);
+  }
+
+  .chat-timeline-failed {
+    border-color: color-mix(in srgb, #fb7185 42%, transparent);
+  }
+
   .chat-pack-event-title {
     font-size: 11px;
     color: var(--color-text);
@@ -2052,6 +2094,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   .chat-tool-pill,
   .chat-tool-chip,
   .chat-tool-event,
+  .chat-planner-nudge,
   .chat-icon-btn,
   .chat-send-btn,
   .chat-file-pill,
