@@ -770,46 +770,68 @@ pub(crate) fn normalize_automation_requested_tools(
     let handoff_only_structured_json = automation_output_validator_kind(node)
         == crate::AutomationOutputValidatorKind::StructuredJson
         && automation_node_required_output_path(node).is_none();
-    let mut normalized = config::channels::normalize_allowed_tools(raw);
+    let node_tool_allowlist = node_runtime_impl::automation_node_metadata_tool_allowlist(node);
+    let connector_hint_mentions =
+        tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
+            &automation_connector_hint_text(node),
+        );
+    let explicit_connector_tool_allowlist = !automation_node_is_code_workflow(node)
+        && !node_tool_allowlist.is_empty()
+        && (connector_hint_mentions
+            || node_tool_allowlist
+                .iter()
+                .any(|tool| tool.starts_with("mcp.")));
+    let mut normalized = if explicit_connector_tool_allowlist {
+        node_tool_allowlist
+    } else {
+        config::channels::normalize_allowed_tools(raw)
+    };
+    if explicit_connector_tool_allowlist && normalized.iter().any(|tool| tool.starts_with("mcp.")) {
+        normalized.push("mcp_list".to_string());
+    }
     let had_wildcard = normalized.iter().any(|tool| tool == "*");
     if had_wildcard {
         normalized.retain(|tool| tool != "*");
     }
     normalized.extend(automation_node_required_tools(node));
-    match automation_node_execution_mode(node, workspace_root) {
-        "git_patch" => {
-            normalized.extend([
-                "glob".to_string(),
-                "read".to_string(),
-                "edit".to_string(),
-                "apply_patch".to_string(),
-                "write".to_string(),
-                "bash".to_string(),
-            ]);
+    if explicit_connector_tool_allowlist {
+        if node_runtime_impl::automation_node_requires_artifact_write_tool(node) {
+            normalized.push("write".to_string());
         }
-        "filesystem_patch" => {
-            normalized.extend([
-                "glob".to_string(),
-                "read".to_string(),
-                "edit".to_string(),
-                "write".to_string(),
-                "bash".to_string(),
-            ]);
-        }
-        _ => {
-            if automation_node_required_output_path(node).is_some() {
-                normalized.push("write".to_string());
+    } else {
+        match automation_node_execution_mode(node, workspace_root) {
+            "git_patch" => {
+                normalized.extend([
+                    "glob".to_string(),
+                    "read".to_string(),
+                    "edit".to_string(),
+                    "apply_patch".to_string(),
+                    "write".to_string(),
+                    "bash".to_string(),
+                ]);
+            }
+            "filesystem_patch" => {
+                normalized.extend([
+                    "glob".to_string(),
+                    "read".to_string(),
+                    "edit".to_string(),
+                    "write".to_string(),
+                    "bash".to_string(),
+                ]);
+            }
+            _ => {
+                if automation_node_required_output_path(node).is_some() {
+                    normalized.push("write".to_string());
+                }
             }
         }
     }
     let connector_source_node = !automation_node_is_code_workflow(node)
-        && (tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
-            &automation_connector_hint_text(node),
-        ) || normalized.iter().any(|tool| tool.starts_with("mcp.")));
+        && (connector_hint_mentions || normalized.iter().any(|tool| tool.starts_with("mcp.")));
     if connector_source_node {
         normalized.retain(|tool| !matches!(tool.as_str(), "edit" | "apply_patch" | "bash"));
     }
-    if !node.input_refs.is_empty() {
+    if !explicit_connector_tool_allowlist && !node.input_refs.is_empty() {
         normalized.push("read".to_string());
     }
     let has_read = normalized.iter().any(|tool| tool == "read");

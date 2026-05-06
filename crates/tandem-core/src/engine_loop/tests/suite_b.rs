@@ -280,10 +280,22 @@ fn concrete_mcp_preflight_blocks_workspace_write_until_attempted() {
 
     let mut counts = HashMap::new();
     assert!(has_unattempted_required_mcp_tool(&required, &counts));
+    assert_eq!(
+        unattempted_required_mcp_tools(&required, &counts),
+        HashSet::from([
+            "mcp.githubcopilot.get_me".to_string(),
+            "mcp.githubcopilot.search_repositories".to_string()
+        ])
+    );
     counts.insert("mcp.githubcopilot.get_me".to_string(), 1);
     assert!(has_unattempted_required_mcp_tool(&required, &counts));
+    assert_eq!(
+        unattempted_required_mcp_tools(&required, &counts),
+        HashSet::from(["mcp.githubcopilot.search_repositories".to_string()])
+    );
     counts.insert("mcp.githubcopilot.search_repositories".to_string(), 1);
     assert!(!has_unattempted_required_mcp_tool(&required, &counts));
+    assert!(unattempted_required_mcp_tools(&required, &counts).is_empty());
 }
 
 #[test]

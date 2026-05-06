@@ -26,6 +26,8 @@ Connector-backed source research now has to use the selected connector, not mere
 
 The prompt and tool surface now reinforce that rule before validation has to catch it. Connector source prompts list concrete `mcp.*` tools and state that `mcp_list`, `glob`, `grep`, `edit`, and `apply_patch` are not source evidence, while non-code connector source nodes no longer offer edit/patch/bash tools that can distract agents from calling the connector.
 
+Connector-backed delivery nodes now keep their destination MCP tools focused all the way through artifact creation. Notion save/report nodes with explicit `mcp.notion.*` tool allowlists no longer inherit generic workspace `read`/`glob` or mutation tools from upstream input refs, but they still retain the required `write` tool for the run artifact receipt. The engine loop also narrows prewrite MCP gating to the specific concrete connector tools that have not yet run, steering a Notion publisher from `notion_fetch` to `notion_create_pages` instead of letting it loop on already-completed discovery or local inspection.
+
 The control-panel Chat view now waits for the completed assistant message to materialize in the exact active session before clearing the live thinking/streaming state. This closes the blank-response gap where an answer was saved on the server and appeared after refresh, but the live UI had already removed `Thinking...` without rendering the final assistant message.
 
 Hosted Files now distinguishes workspace-root configuration from workspace-files API availability. The Files page only enables workspace browsing when capabilities explicitly advertise the API route, so managed-file deployments no longer spam `/api/workspace/files/list?dir=` 404s.

@@ -415,10 +415,11 @@ impl EngineLoop {
                 let prewrite_gate_write = prewrite_gate.gate_write;
                 let force_write_only_retry = prewrite_gate.force_write_only_retry;
                 let allow_repair_tools = prewrite_gate.allow_repair_tools;
-                let required_mcp_tool_pending = has_unattempted_required_mcp_tool(
+                let pending_required_mcp_tools = unattempted_required_mcp_tools(
                     &required_mcp_tools_before_write,
                     &tool_call_counts,
                 );
+                let required_mcp_tool_pending = !pending_required_mcp_tools.is_empty();
                 if prewrite_gate_write {
                     tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
                 }
@@ -473,7 +474,11 @@ impl EngineLoop {
                     }
                 }
                 if required_mcp_tool_pending {
-                    tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
+                    tool_schemas.retain(|schema| {
+                        let normalized = normalize_tool_name(&schema.name);
+                        pending_required_mcp_tools.contains(&normalized)
+                            || (!is_workspace_write_tool(&schema.name) && normalized == "mcp_list")
+                    });
                 }
                 if let Err(validation_err) = validate_tool_schemas(&tool_schemas) {
                     let detail = validation_err.to_string();

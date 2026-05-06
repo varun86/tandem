@@ -178,9 +178,18 @@ pub(super) fn has_unattempted_required_mcp_tool(
     required_tools: &[String],
     tool_call_counts: &HashMap<String, usize>,
 ) -> bool {
+    !unattempted_required_mcp_tools(required_tools, tool_call_counts).is_empty()
+}
+
+pub(super) fn unattempted_required_mcp_tools(
+    required_tools: &[String],
+    tool_call_counts: &HashMap<String, usize>,
+) -> HashSet<String> {
     required_tools
         .iter()
-        .any(|tool| tool_call_counts.get(tool).copied().unwrap_or(0) == 0)
+        .filter(|tool| tool_call_counts.get(*tool).copied().unwrap_or(0) == 0)
+        .cloned()
+        .collect()
 }
 
 pub(super) fn requires_web_research_prompt(input: &str) -> bool {

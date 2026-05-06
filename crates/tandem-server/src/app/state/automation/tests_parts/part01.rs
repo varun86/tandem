@@ -768,6 +768,121 @@ fn connector_source_nodes_do_not_offer_source_mutation_tools() {
 }
 
 #[test]
+fn connector_source_metadata_tool_allowlist_is_hard_scoped() {
+    let mut node = bare_node();
+    node.objective =
+        "Use Reddit MCP to cheaply check fresh AI productivity discussions.".to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "task_kind": "validation",
+            "task_class": "triage"
+        },
+        "tool_allowlist": [
+            "mcp.reddit_gmail.reddit_search_across_subreddits",
+            "mcp.reddit_gmail.reddit_get_r_top",
+            "mcp.reddit_gmail.reddit_get_subreddits_search"
+        ],
+        "triage_gate": true
+    }));
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        "/tmp/tandem-connector-source-metadata-tools",
+        vec![
+            "*".to_string(),
+            "glob".to_string(),
+            "write".to_string(),
+            "edit".to_string(),
+            "apply_patch".to_string(),
+            "bash".to_string(),
+        ],
+    );
+
+    assert!(requested.contains(&"mcp_list".to_string()));
+    assert!(requested.contains(&"mcp.reddit_gmail.reddit_search_across_subreddits".to_string()));
+    assert!(requested.contains(&"mcp.reddit_gmail.reddit_get_r_top".to_string()));
+    assert!(requested.contains(&"mcp.reddit_gmail.reddit_get_subreddits_search".to_string()));
+    assert!(requested.contains(&"write".to_string()));
+    assert!(!requested.contains(&"glob".to_string()));
+    assert!(!requested.contains(&"edit".to_string()));
+    assert!(!requested.contains(&"apply_patch".to_string()));
+    assert!(!requested.contains(&"bash".to_string()));
+}
+
+#[test]
+fn connector_delivery_tool_allowlist_keeps_destination_and_artifact_write() {
+    let mut node = report_markdown_node();
+    node.node_id = "save_notion_report".to_string();
+    node.objective =
+        "Save the completed productivity signals brief to the connected Notion workspace."
+            .to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "task_kind": "research",
+            "phase": "deliver",
+            "task_class": "connector_write"
+        },
+        "tool_allowlist": [
+            "mcp.notion.notion_fetch",
+            "mcp.notion.notion_create_pages"
+        ]
+    }));
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        "/home/evan/marketing-tandem",
+        vec![
+            "*".to_string(),
+            "glob".to_string(),
+            "read".to_string(),
+            "write".to_string(),
+            "edit".to_string(),
+            "apply_patch".to_string(),
+            "bash".to_string(),
+        ],
+    );
+
+    assert!(requested.contains(&"mcp_list".to_string()));
+    assert!(requested.contains(&"mcp.notion.notion_fetch".to_string()));
+    assert!(requested.contains(&"mcp.notion.notion_create_pages".to_string()));
+    assert!(requested.contains(&"write".to_string()));
+    assert!(!requested.contains(&"glob".to_string()));
+    assert!(!requested.contains(&"read".to_string()));
+    assert!(!requested.contains(&"edit".to_string()));
+    assert!(!requested.contains(&"apply_patch".to_string()));
+    assert!(!requested.contains(&"bash".to_string()));
+}
+
+#[test]
+fn code_workflow_with_connector_tool_allowlist_keeps_patch_tools() {
+    let mut node = code_workflow_node();
+    node.objective = "Use GitHub MCP context if needed, then patch the repository bug.".to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "task_kind": "code_change",
+            "write_scope": "crates/tandem-server"
+        },
+        "tool_allowlist": [
+            "mcp.githubcopilot.search_code"
+        ]
+    }));
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        "/home/evan/tandem",
+        vec!["mcp.githubcopilot.search_code".to_string()],
+    );
+
+    assert!(requested.contains(&"mcp.githubcopilot.search_code".to_string()));
+    assert!(requested.contains(&"glob".to_string()));
+    assert!(requested.contains(&"read".to_string()));
+    assert!(requested.contains(&"edit".to_string()));
+    assert!(requested.contains(&"apply_patch".to_string()));
+    assert!(requested.contains(&"write".to_string()));
+    assert!(requested.contains(&"bash".to_string()));
+}
+
+#[test]
 fn server_scoped_mcp_patterns_expand_into_concrete_tools() {
     let available_tool_names = std::collections::HashSet::from([
         "mcp.blog_mcp.create_blog_draft".to_string(),
