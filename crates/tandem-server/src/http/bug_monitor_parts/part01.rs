@@ -822,7 +822,13 @@ fn bug_monitor_completed_phase_artifact_exists(
     let Ok(payload) = serde_json::from_str::<Value>(&raw) else {
         return false;
     };
-    if bug_monitor_artifact_is_task_spec_placeholder(&payload) {
+    bug_monitor_phase_artifact_payload_candidates(&payload, artifact_type)
+        .into_iter()
+        .any(|candidate| bug_monitor_completed_phase_payload_exists(candidate, artifact_type))
+}
+
+fn bug_monitor_completed_phase_payload_exists(payload: &Value, artifact_type: &str) -> bool {
+    if bug_monitor_artifact_is_task_spec_placeholder(payload) {
         return false;
     }
     match artifact_type {
@@ -838,6 +844,8 @@ fn bug_monitor_completed_phase_artifact_exists(
                     .get("summary")
                     .and_then(Value::as_str)
                     .is_some_and(|value| !value.trim().is_empty())
+                || !bug_monitor_value_array(payload.get("search_queries_used")).is_empty()
+                || payload.get("tool_evidence").is_some()
         }
         "bug_monitor_validation" => {
             !bug_monitor_value_array(payload.get("evidence")).is_empty()
@@ -845,18 +853,19 @@ fn bug_monitor_completed_phase_artifact_exists(
                 || !bug_monitor_value_array(payload.get("steps_to_reproduce")).is_empty()
                 || payload
                     .get("failure_scope")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
+                    .is_some_and(bug_monitor_non_empty_value)
                 || payload
                     .get("summary")
                     .and_then(Value::as_str)
                     .is_some_and(|value| !value.trim().is_empty())
+                || payload.get("validation_decision").is_some()
+                || !bug_monitor_value_array(payload.get("file_references")).is_empty()
+                || payload.get("tool_evidence").is_some()
         }
         "bug_monitor_fix_proposal" => {
             payload
                 .get("recommended_fix")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
+                .is_some_and(bug_monitor_non_empty_value)
                 && (!bug_monitor_value_array(payload.get("acceptance_criteria")).is_empty()
                     || !bug_monitor_value_array(payload.get("verification_steps")).is_empty()
                     || !bug_monitor_value_array(payload.get("smoke_test_steps")).is_empty())
@@ -865,8 +874,71 @@ fn bug_monitor_completed_phase_artifact_exists(
             payload.get("detail").is_some()
                 || payload.get("incident").is_some()
                 || payload.get("incident_payload").is_some()
+                || payload.get("original_failure").is_some()
+                || !bug_monitor_value_array(payload.get("search_queries_used")).is_empty()
+                || payload.get("tool_evidence").is_some()
         }
         _ => true,
+    }
+}
+
+fn bug_monitor_non_empty_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(rows) => !rows.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    }
+}
+
+fn bug_monitor_phase_artifact_payload_candidates<'a>(
+    payload: &'a Value,
+    artifact_type: &str,
+) -> Vec<&'a Value> {
+    let mut candidates = Vec::new();
+    bug_monitor_collect_phase_artifact_payload_candidates(payload, artifact_type, &mut candidates);
+    candidates
+}
+
+fn bug_monitor_collect_phase_artifact_payload_candidates<'a>(
+    payload: &'a Value,
+    artifact_type: &str,
+    candidates: &mut Vec<&'a Value>,
+) {
+    match payload {
+        Value::Array(rows) => {
+            for row in rows {
+                bug_monitor_collect_phase_artifact_payload_candidates(
+                    row,
+                    artifact_type,
+                    candidates,
+                );
+            }
+        }
+        Value::Object(map) => {
+            if !bug_monitor_artifact_is_task_spec_placeholder(payload) {
+                candidates.push(payload);
+            }
+            for key in [
+                artifact_type,
+                "bug_monitor_inspection",
+                "bug_monitor_research",
+                "bug_monitor_validation",
+                "bug_monitor_fix_proposal",
+                "structured_handoff",
+                "content",
+            ] {
+                if let Some(child) = map.get(key) {
+                    bug_monitor_collect_phase_artifact_payload_candidates(
+                        child,
+                        artifact_type,
+                        candidates,
+                    );
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1678,4 +1750,81 @@ async fn persist_bug_monitor_regression_signal_memory(
             "tier": partition.tier,
         },
     }))
+}
+
+#[cfg(test)]
+mod bug_monitor_phase_artifact_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn completed_phase_payload_accepts_wrapped_inspection_handoff() {
+        let payload = json!({
+            "bug_monitor_inspection": {
+                "status": "completed",
+                "search_queries_used": [{"tool": "grep", "query": "stale_no_provider_activity"}],
+                "tool_evidence": {"grep": "no exact match"}
+            },
+            "status": "completed"
+        });
+
+        assert!(
+            bug_monitor_phase_artifact_payload_candidates(&payload, "bug_monitor_inspection")
+                .into_iter()
+                .any(|candidate| bug_monitor_completed_phase_payload_exists(
+                    candidate,
+                    "bug_monitor_inspection"
+                ))
+        );
+    }
+
+    #[test]
+    fn completed_phase_payload_accepts_array_validation_handoff() {
+        let payload = json!([
+            {
+                "artifact_kind": "bug_monitor_validation",
+                "status": "completed",
+                "failure_scope": {
+                    "confirmed": true,
+                    "summary": "structured handoff was missing"
+                },
+                "validation_decision": {
+                    "scope_confirmed": true
+                }
+            },
+            {
+                "status": "completed",
+                "approved": true
+            }
+        ]);
+
+        assert!(
+            bug_monitor_phase_artifact_payload_candidates(&payload, "bug_monitor_validation")
+                .into_iter()
+                .any(|candidate| bug_monitor_completed_phase_payload_exists(
+                    candidate,
+                    "bug_monitor_validation"
+                ))
+        );
+    }
+
+    #[test]
+    fn completed_phase_payload_rejects_task_spec_placeholder() {
+        let payload = json!({
+            "expected_artifact": "bug_monitor_fix_proposal",
+            "proposal_requirements": {
+                "recommended_fix": true
+            }
+        });
+
+        assert!(!bug_monitor_phase_artifact_payload_candidates(
+            &payload,
+            "bug_monitor_fix_proposal"
+        )
+        .into_iter()
+        .any(|candidate| bug_monitor_completed_phase_payload_exists(
+            candidate,
+            "bug_monitor_fix_proposal"
+        )));
+    }
 }

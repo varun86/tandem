@@ -61,6 +61,32 @@ import {
 
 const CHAT_UPLOAD_DIR = "uploads";
 
+function countAssistantReplies(rows: ChatMessage[]): number {
+  return rows.filter((row) => row.role === "assistant" && row.text.trim().length > 0).length;
+}
+
+function appendUniqueAssistantMessage(
+  rows: ChatMessage[],
+  runId: string,
+  assistantName: string,
+  text: string
+): ChatMessage[] {
+  const content = text.trim();
+  if (!content) return rows;
+  const last = rows[rows.length - 1];
+  if (last?.role === "assistant" && last.text.trim() === content) return rows;
+  return [
+    ...rows,
+    {
+      id: `local-assistant-${runId || Date.now()}`,
+      role: "assistant",
+      displayRole: assistantName || "Assistant",
+      text: content,
+      markdown: true,
+    },
+  ];
+}
+
 export function ChatPage({ client, api, toast, providerStatus, identity, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const reducedMotion = !!useReducedMotion();
@@ -196,22 +222,21 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     (payload: any) => {
       const rows = normalizeMessages(payload, identity.botName || "Assistant");
       setMessages(rows);
+      return rows;
     },
     [identity.botName]
   );
 
-  const refreshMessages = useCallback(async () => {
-    if (!selectedSessionId) {
-      setMessages([]);
-      return;
-    }
-    setMessagesLoading(true);
-    try {
-      const rows = await client.sessions
-        .messages(selectedSessionId)
-        .catch(() => ({ messages: [] }));
-      if (!mountedRef.current) return;
-      normalizeAndSetMessages(rows);
+  const loadMessagesForSession = useCallback(
+    async (sessionId: string) => {
+      const targetSessionId = String(sessionId || "").trim();
+      if (!targetSessionId) {
+        setMessages([]);
+        return [];
+      }
+      const rows = await client.sessions.messages(targetSessionId).catch(() => ({ messages: [] }));
+      if (!mountedRef.current) return [];
+      const normalized = normalizeAndSetMessages(rows);
       const history = collectToolActivityFromMessages(rows);
       if (history.length) {
         setToolActivity((prev) => {
@@ -228,10 +253,23 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           return merged.sort((a, b) => b.at - a.at).slice(0, 80);
         });
       }
+      return normalized;
+    },
+    [client.sessions, normalizeAndSetMessages]
+  );
+
+  const refreshMessages = useCallback(async () => {
+    if (!selectedSessionId) {
+      setMessages([]);
+      return;
+    }
+    setMessagesLoading(true);
+    try {
+      await loadMessagesForSession(selectedSessionId);
     } finally {
       if (mountedRef.current) setMessagesLoading(false);
     }
-  }, [client.sessions, normalizeAndSetMessages, selectedSessionId]);
+  }, [loadMessagesForSession, selectedSessionId]);
 
   const resetToolTracking = useCallback(() => {
     setToolActivity([]);
@@ -630,6 +668,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
     setPrompt("");
     setSending(true);
+    const assistantRepliesBeforeSend = countAssistantReplies(messages);
     appendTransientUserMessage(resolvedPrompt, attached.length);
 
     try {
@@ -763,6 +802,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
       let gotDelta = false;
       let streamTimedOut = false;
       let streamAbortReason = "";
+      let streamBuffer = "";
       const NO_EVENT_TIMEOUT_MS = 30000;
       const MAX_STREAM_WINDOW_MS = 180000;
 
@@ -770,11 +810,22 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         const startedAt = Date.now();
         while (Date.now() - startedAt < timeoutMs) {
           const active = await getActiveRunId().catch(() => targetRunId);
-          await refreshMessages();
+          await loadMessagesForSession(sessionId);
           if (!active || active !== targetRunId) return true;
           await new Promise((resolve) => window.setTimeout(resolve, 350));
         }
         return false;
+      };
+
+      const waitForAssistantReply = async (timeoutMs: number) => {
+        const startedAt = Date.now();
+        let latest: ChatMessage[] = [];
+        while (Date.now() - startedAt < timeoutMs) {
+          latest = await loadMessagesForSession(sessionId);
+          if (countAssistantReplies(latest) > assistantRepliesBeforeSend) return true;
+          await new Promise((resolve) => window.setTimeout(resolve, 300));
+        }
+        return countAssistantReplies(latest) > assistantRepliesBeforeSend;
       };
 
       const resetNoEventTimer = () => {
@@ -841,6 +892,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             const delta = String(event.properties?.delta || "");
             if (!delta) continue;
             gotDelta = true;
+            streamBuffer += delta;
             setShowThinking(false);
             setStreamingText((prev) => `${prev}${delta}`);
           }
@@ -949,7 +1001,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
 
       if (streamTimedOut) {
         const settled = await waitForRunToSettle(runId, 45000);
-        await refreshMessages();
+        await loadMessagesForSession(sessionId);
         if (!settled) {
           throw new Error(
             "Run stream timed out and the run is still active. Check logs and retry."
@@ -961,24 +1013,26 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         setShowThinking(true);
       }
 
-      await refreshMessages();
-      await new Promise((resolve) => window.setTimeout(resolve, 180));
-      await refreshMessages();
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
-      await refreshMessages();
+      let assistantReplyLoaded = await waitForAssistantReply(gotDelta ? 3500 : 9000);
 
       if (!gotDelta) {
         const activeAfter = await getActiveRunId().catch(() => "");
         if (activeAfter === runId) {
           const settled = await waitForRunToSettle(runId, 30000);
           if (settled) {
-            await refreshMessages();
+            assistantReplyLoaded = await waitForAssistantReply(5000);
           } else {
             throw new Error(
               `Run ${runId} is still active without a final response (${streamAbortReason || "stream-ended"}).`
             );
           }
         }
+      }
+
+      if (!assistantReplyLoaded && streamBuffer.trim()) {
+        setMessages((prev) =>
+          appendUniqueAssistantMessage(prev, runId, identity.botName || "Assistant", streamBuffer)
+        );
       }
 
       setStreamingText("");
@@ -1008,6 +1062,9 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
     autoApprovePendingRequests,
     client,
     createSession,
+    identity.botName,
+    loadMessagesForSession,
+    messages,
     prompt,
     queryClient,
     recordRunTimeline,

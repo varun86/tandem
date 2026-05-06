@@ -851,7 +851,7 @@ async fn stale_running_automation_runs_ignore_recent_session_activity() {
 }
 
 #[tokio::test]
-async fn stale_running_automation_runs_ignore_internal_run_registry_heartbeat() {
+async fn stale_running_automation_runs_honor_internal_run_registry_heartbeat() {
     let automation = AutomationV2Spec {
         automation_id: "auto-stale-run-registry-heartbeat-test".to_string(),
         name: "Stale Run Registry Heartbeat Test".to_string(),
@@ -928,21 +928,19 @@ async fn stale_running_automation_runs_ignore_internal_run_registry_heartbeat() 
         );
     }
 
+    state.run_registry.touch(session_id, &run_id).await;
+
     let reaped = state.reap_stale_running_automation_runs(120_000).await;
-    assert_eq!(reaped, 1);
+    assert_eq!(reaped, 0);
 
     let persisted = state
         .get_automation_v2_run(&run_id)
         .await
         .expect("persisted run");
-    assert_eq!(persisted.status, AutomationRunStatus::Paused);
-    assert_eq!(
-        persisted.pause_reason.as_deref(),
-        Some("stale_no_provider_activity")
-    );
-    assert!(persisted.active_session_ids.is_empty());
-    assert!(cancellation.is_cancelled());
-    assert!(state.run_registry.get(session_id).await.is_none());
+    assert_eq!(persisted.status, AutomationRunStatus::Running);
+    assert_eq!(persisted.active_session_ids, vec![session_id.to_string()]);
+    assert!(!cancellation.is_cancelled());
+    assert!(state.run_registry.get(session_id).await.is_some());
 }
 
 #[tokio::test]

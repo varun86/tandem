@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.5] - Released 2026-05-05
+## [0.5.5] - Unreleased
 
 ### Added
 
@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Automation worker sessions no longer appear as Chat conversations**: Chat and Dashboard recent-session lists now request `source=chat`, and the server filters session listings by source. Existing legacy records titled like `Automation ... / ...` are classified as `automation_v2` at the storage/wire boundary, keeping Bug Monitor and Automation V2 audit sessions inspectable through automation/run surfaces without polluting the Chat session picker.
 - **Tauri calendar view no longer crashes during startup**: The Automation Calendar now loads FullCalendar after the Tauri/WebKit stylesheet host is ready and keeps FullCalendar in a lazy chunk, avoiding a WebKit timing crash where FullCalendar accessed `style.sheet.cssRules` while the stylesheet was still `null`.
+- **Bug Monitor GitHub publishing is idempotent under recovery races**: GitHub issue creation now claims a persisted pending post record before calling GitHub, keyed by the same create-issue idempotency digest used for successful posts. If completion, timeout recovery, and stale-provider recovery all try to publish the same draft at once, only one caller can create the issue; the others return `publish_in_progress` or reuse the completed post instead of creating duplicate GitHub issues.
+- **Bug Monitor triage artifact gates accept real structured handoffs**: Proposal quality checks now understand wrapped and array-shaped Bug Monitor node outputs, including completed inspection, validation, and evidence handoffs returned directly in the final response. Placeholder task specs are still rejected, but valid completed handoffs no longer get mistaken for missing artifacts and replaced with low-signal fallback evidence.
+- **Automation V2 stale reaping no longer races active node timeouts**: The stale-run reaper now honors the active node heartbeat maintained by the run registry. Long-running nodes with a 600-second budget can reach their own timeout/repair path instead of being globally paused as `stale_no_provider_activity` at the same 600-second boundary.
+- **Chat live responses no longer disappear before refresh**: The control-panel Chat view now reloads the exact active session until the final assistant message is persisted before clearing the live thinking/streaming block. Streamed deltas are kept as a local fallback, so a completed answer does not leave an empty assistant slot until the operator manually refreshes.
 
 ## [0.5.4] - Released 2026-05-05
 

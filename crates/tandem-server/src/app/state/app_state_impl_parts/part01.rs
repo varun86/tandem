@@ -2133,6 +2133,36 @@ impl AppState {
         Ok(post)
     }
 
+    pub async fn try_claim_bug_monitor_post_idempotency(
+        &self,
+        post: BugMonitorPostRecord,
+    ) -> anyhow::Result<(bool, BugMonitorPostRecord)> {
+        let now = crate::now_ms();
+        let pending_claim_ttl_ms = 10 * 60 * 1000;
+        let result = {
+            let mut guard = self.bug_monitor_posts.write().await;
+            if let Some(existing) = guard
+                .values()
+                .find(|row| {
+                    row.idempotency_key == post.idempotency_key
+                        && (row.status == "posted"
+                            || (row.status == "pending"
+                                && now.saturating_sub(row.updated_at_ms) < pending_claim_ttl_ms))
+                })
+                .cloned()
+            {
+                (false, existing)
+            } else {
+                guard.insert(post.post_id.clone(), post.clone());
+                (true, post)
+            }
+        };
+        if result.0 {
+            self.persist_bug_monitor_posts().await?;
+        }
+        Ok(result)
+    }
+
     pub async fn delete_bug_monitor_posts(&self, ids: &[String]) -> anyhow::Result<usize> {
         let mut removed = 0usize;
         {

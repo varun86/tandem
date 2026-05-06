@@ -18,6 +18,53 @@ fn age_bug_monitor_triage_run_state(
 
 #[tokio::test]
 #[serial_test::serial(bug_monitor_http)]
+async fn bug_monitor_post_idempotency_claim_allows_one_pending_create() {
+    let state = test_state().await;
+    let now = crate::now_ms();
+    let post = crate::BugMonitorPostRecord {
+        post_id: "failure-post-claim-1".to_string(),
+        draft_id: "failure-draft-claim".to_string(),
+        incident_id: Some("failure-incident-claim".to_string()),
+        fingerprint: "fingerprint-claim".to_string(),
+        repo: "acme/platform".to_string(),
+        operation: "create_issue".to_string(),
+        status: "pending".to_string(),
+        issue_number: None,
+        issue_url: None,
+        comment_id: None,
+        comment_url: None,
+        evidence_digest: Some("digest-claim".to_string()),
+        confidence: None,
+        risk_level: None,
+        expected_destination: None,
+        evidence_refs: Vec::new(),
+        quality_gate: None,
+        idempotency_key: "acme/platform:fingerprint-claim:create_issue:digest-claim".to_string(),
+        response_excerpt: None,
+        error: None,
+        created_at_ms: now,
+        updated_at_ms: now,
+    };
+    let (claimed_first, first) = state
+        .try_claim_bug_monitor_post_idempotency(post.clone())
+        .await
+        .expect("first claim");
+    assert!(claimed_first);
+    assert_eq!(first.post_id, "failure-post-claim-1");
+
+    let mut competing = post;
+    competing.post_id = "failure-post-claim-2".to_string();
+    let (claimed_second, existing) = state
+        .try_claim_bug_monitor_post_idempotency(competing)
+        .await
+        .expect("second claim");
+    assert!(!claimed_second);
+    assert_eq!(existing.post_id, "failure-post-claim-1");
+    assert_eq!(state.list_bug_monitor_posts(10).await.len(), 1);
+}
+
+#[tokio::test]
+#[serial_test::serial(bug_monitor_http)]
 async fn bug_monitor_publish_reuses_existing_post_on_duplicate_submit() {
     let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server().await;
 

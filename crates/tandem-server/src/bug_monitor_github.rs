@@ -520,6 +520,60 @@ async fn create_issue_from_draft(
             post: Some(previous),
         });
     }
+    let claim = BugMonitorPostRecord {
+        post_id: format!("failure-post-{}", uuid::Uuid::new_v4().simple()),
+        draft_id: draft.draft_id.clone(),
+        incident_id: incident.map(|row| row.incident_id.clone()),
+        fingerprint: draft.fingerprint.clone(),
+        repo: draft.repo.clone(),
+        operation: "create_issue".to_string(),
+        status: "pending".to_string(),
+        issue_number: None,
+        issue_url: None,
+        comment_id: None,
+        comment_url: None,
+        evidence_digest: Some(evidence_digest.to_string()),
+        confidence: draft.confidence.clone(),
+        risk_level: draft.risk_level.clone(),
+        expected_destination: draft.expected_destination.clone(),
+        evidence_refs: draft.evidence_refs.clone(),
+        quality_gate: draft.quality_gate.clone(),
+        idempotency_key: idempotency_key.clone(),
+        response_excerpt: None,
+        error: None,
+        created_at_ms: now_ms(),
+        updated_at_ms: now_ms(),
+    };
+    let (claimed, existing_claim) = state.try_claim_bug_monitor_post_idempotency(claim).await?;
+    if !claimed {
+        if existing_claim.status == "posted" {
+            draft.status = "github_issue_created".to_string();
+            draft.github_status = Some("github_issue_created".to_string());
+            draft.issue_number = existing_claim.issue_number;
+            draft.github_issue_url = existing_claim.issue_url.clone();
+            draft.github_posted_at_ms = Some(existing_claim.updated_at_ms);
+            draft.last_post_error = None;
+            mirror_bug_monitor_post_as_external_action(state, &draft, &existing_claim).await;
+            let draft = state.put_bug_monitor_draft(draft).await?;
+            return Ok(PublishOutcome {
+                action: "skip_duplicate".to_string(),
+                draft,
+                post: Some(existing_claim),
+            });
+        }
+        draft.github_status = Some("github_posting".to_string());
+        draft.last_post_error = Some(
+            "another Bug Monitor publisher already claimed this GitHub create_issue idempotency key"
+                .to_string(),
+        );
+        // Do not persist this stale draft snapshot: the winning publisher
+        // may already be writing the issue number back.
+        return Ok(PublishOutcome {
+            action: "publish_in_progress".to_string(),
+            draft,
+            post: Some(existing_claim),
+        });
+    }
 
     let owner_repo = split_owner_repo(&draft.repo)?;
     let title = issue_draft
@@ -539,16 +593,11 @@ async fn create_issue_from_draft(
     let created = match call_create_issue(state, tools, &owner_repo, title, &body).await {
         Ok(created) => created,
         Err(error) => {
-            if let Err(record_err) = record_post_failure(
-                state,
-                &draft,
-                incident.map(|row| row.incident_id.as_str()),
-                "create_issue",
-                Some(evidence_digest),
-                &error.to_string(),
-            )
-            .await
-            {
+            let mut failed_claim = existing_claim.clone();
+            failed_claim.status = "failed".to_string();
+            failed_claim.error = Some(truncate_text(&error.to_string(), 500));
+            failed_claim.updated_at_ms = now_ms();
+            if let Err(record_err) = state.put_bug_monitor_post(failed_claim).await {
                 tracing::warn!(
                     draft_id = %draft.draft_id,
                     error = %record_err,
@@ -559,28 +608,13 @@ async fn create_issue_from_draft(
         }
     };
     let post = BugMonitorPostRecord {
-        post_id: format!("failure-post-{}", uuid::Uuid::new_v4().simple()),
-        draft_id: draft.draft_id.clone(),
-        incident_id: incident.map(|row| row.incident_id.clone()),
-        fingerprint: draft.fingerprint.clone(),
-        repo: draft.repo.clone(),
-        operation: "create_issue".to_string(),
         status: "posted".to_string(),
         issue_number: Some(created.number),
         issue_url: created.html_url.clone(),
-        comment_id: None,
-        comment_url: None,
-        evidence_digest: Some(evidence_digest.to_string()),
-        confidence: draft.confidence.clone(),
-        risk_level: draft.risk_level.clone(),
-        expected_destination: draft.expected_destination.clone(),
-        evidence_refs: draft.evidence_refs.clone(),
-        quality_gate: draft.quality_gate.clone(),
-        idempotency_key,
         response_excerpt: Some(truncate_text(&body, 400)),
         error: None,
-        created_at_ms: now_ms(),
         updated_at_ms: now_ms(),
+        ..existing_claim
     };
     let post = state.put_bug_monitor_post(post).await?;
     mirror_bug_monitor_post_as_external_action(state, &draft, &post).await;
