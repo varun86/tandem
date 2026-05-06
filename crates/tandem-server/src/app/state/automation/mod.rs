@@ -38,7 +38,10 @@ pub(crate) use legacy_defaults::{
     automation_node_requires_email_delivery, automation_node_uses_upstream_validation_evidence,
 };
 use lifecycle::*;
-pub use lifecycle::{record_automation_lifecycle_event, record_automation_workflow_state_events};
+pub use lifecycle::{
+    record_automation_lifecycle_event, record_automation_lifecycle_event_with_metadata,
+    record_automation_workflow_state_events,
+};
 pub(crate) use node_output::enrich_automation_node_output_for_contract;
 pub(crate) use node_output::research_required_next_tool_actions;
 use node_output::*;

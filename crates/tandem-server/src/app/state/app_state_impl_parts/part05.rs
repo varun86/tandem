@@ -1,3 +1,52 @@
+const DEFAULT_STALE_AUTO_RESUME_WINDOW_MS: u64 = 20 * 60 * 1000;
+
+fn stale_auto_resume_window_ms() -> u64 {
+    std::env::var("TANDEM_STALE_AUTO_RESUME_WINDOW_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_STALE_AUTO_RESUME_WINDOW_MS)
+}
+
+fn latest_stale_reap_recorded_at_ms(run: &AutomationV2RunRecord) -> Option<u64> {
+    run.checkpoint
+        .lifecycle_history
+        .iter()
+        .rev()
+        .find(|record| {
+            record.event == "run_paused_stale_no_provider_activity"
+                || record.stop_kind == Some(AutomationStopKind::StaleReaped)
+        })
+        .map(|record| record.recorded_at_ms)
+}
+
+fn stale_reap_is_within_auto_resume_window(
+    now: u64,
+    stale_reaped_at_ms: u64,
+    auto_resume_window_ms: u64,
+) -> bool {
+    now.saturating_sub(stale_reaped_at_ms) <= auto_resume_window_ms
+}
+
+#[cfg(test)]
+mod stale_auto_resume_window_tests {
+    use super::stale_reap_is_within_auto_resume_window;
+
+    #[test]
+    fn stale_auto_resume_window_allows_fresh_reaped_runs() {
+        assert!(stale_reap_is_within_auto_resume_window(
+            10_000, 9_500, 1_000,
+        ));
+    }
+
+    #[test]
+    fn stale_auto_resume_window_rejects_old_reaped_runs() {
+        assert!(!stale_reap_is_within_auto_resume_window(
+            10_000, 7_000, 1_000,
+        ));
+    }
+}
+
 impl AppState {
     pub async fn recover_in_flight_runs(&self) -> usize {
         let runs = self
@@ -111,7 +160,19 @@ impl AppState {
             .cloned()
             .collect::<Vec<_>>();
         let mut resumed = 0usize;
+        let now = now_ms();
+        let auto_resume_window_ms = stale_auto_resume_window_ms();
         for run in candidate_runs {
+            let Some(stale_reaped_at_ms) = latest_stale_reap_recorded_at_ms(&run) else {
+                continue;
+            };
+            if !stale_reap_is_within_auto_resume_window(
+                now,
+                stale_reaped_at_ms,
+                auto_resume_window_ms,
+            ) {
+                continue;
+            }
             let auto_resume_count = run
                 .checkpoint
                 .lifecycle_history
@@ -161,11 +222,15 @@ impl AppState {
                     row.detail = None;
                     row.stop_kind = None;
                     row.stop_reason = None;
-                    automation::record_automation_lifecycle_event(
+                    automation::record_automation_lifecycle_event_with_metadata(
                         row,
                         "run_auto_resumed",
                         Some("auto_resume_after_stale_reap".to_string()),
                         None,
+                        Some(json!({
+                            "auto_resume_window_ms": auto_resume_window_ms,
+                            "stale_reaped_at_ms": stale_reaped_at_ms,
+                        })),
                     );
                 })
                 .await
