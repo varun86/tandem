@@ -3,15 +3,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderIcons } from "../../app/icons.js";
 import { api } from "../../lib/api";
 import {
+  DEFAULT_WORKFLOW_LIBRARY_FILTERS,
   DEFAULT_WORKFLOW_SORT_MODE,
-  WORKFLOW_SORT_MODES,
+  classifyAutomationSource,
+  filterWorkflowAutomations,
   getAutomationCreatedAtMs,
   getAutomationId,
   getAutomationName,
   normalizeFavoriteAutomationIds,
+  normalizeWorkflowLibraryFilters,
   normalizeWorkflowSortMode,
   sortWorkflowAutomations,
   toggleFavoriteAutomationId,
+  workflowLibraryFiltersEqual,
 } from "../../../lib/automations/workflow-list.js";
 import { formatJson } from "../../pages/ui";
 import { projectOrchestrationRun } from "../orchestrator/blackboardProjection";
@@ -1018,6 +1022,7 @@ export function MyAutomationsContainer({
       api("/api/control-panel/preferences", { method: "GET" }).catch(() => ({
         preferences: {
           favorite_automation_ids: [],
+          workflow_library_filters: DEFAULT_WORKFLOW_LIBRARY_FILTERS,
           workflow_sort_mode: DEFAULT_WORKFLOW_SORT_MODE,
         },
       })),
@@ -1028,6 +1033,19 @@ export function MyAutomationsContainer({
   const workflowPreferences = (workflowPreferencesQuery.data as any)?.preferences || {};
   const workflowSortMode = normalizeWorkflowSortMode(
     workflowPreferences.workflow_sort_mode || DEFAULT_WORKFLOW_SORT_MODE
+  );
+  const workflowLibraryFilters = useMemo(
+    () =>
+      normalizeWorkflowLibraryFilters(
+        workflowPreferences.workflow_library_filters ||
+          workflowPreferences.workflowLibraryFilters ||
+          {}
+      ),
+    [workflowPreferences.workflow_library_filters, workflowPreferences.workflowLibraryFilters]
+  );
+  const workflowLibraryFilteringActive = useMemo(
+    () => !workflowLibraryFiltersEqual(workflowLibraryFilters, DEFAULT_WORKFLOW_LIBRARY_FILTERS),
+    [workflowLibraryFilters]
   );
   const favoriteAutomationIds = useMemo(
     () => normalizeFavoriteAutomationIds(workflowPreferences.favorite_automation_ids || []),
@@ -1040,6 +1058,7 @@ export function MyAutomationsContainer({
   const updateWorkflowPreferencesMutation = useMutation({
     mutationFn: async (patch: {
       favorite_automation_ids?: string[];
+      workflow_library_filters?: any;
       workflow_sort_mode?: string;
     }) =>
       api("/api/control-panel/preferences", {
@@ -1072,13 +1091,47 @@ export function MyAutomationsContainer({
     updateWorkflowPreferencesMutation.mutate({
       workflow_sort_mode: normalizeWorkflowSortMode(nextSortMode),
       favorite_automation_ids: favoriteAutomationIds,
+      workflow_library_filters: workflowLibraryFilters,
     });
+  };
+  const setWorkflowLibraryFilters = (nextFilters: any) => {
+    updateWorkflowPreferencesMutation.mutate({
+      workflow_library_filters: normalizeWorkflowLibraryFilters(nextFilters),
+      workflow_sort_mode: workflowSortMode,
+      favorite_automation_ids: favoriteAutomationIds,
+    });
+  };
+  const toggleWorkflowLibrarySourceFilter = (sourceKey: string) => {
+    const key = String(sourceKey || "").trim();
+    if (!key) return;
+    setWorkflowLibraryFilters({
+      ...workflowLibraryFilters,
+      sources: {
+        ...workflowLibraryFilters.sources,
+        [key]: !workflowLibraryFilters.sources?.[key],
+      },
+    });
+  };
+  const toggleWorkflowLibraryStatusFilter = (statusKey: string) => {
+    const key = String(statusKey || "").trim();
+    if (!key) return;
+    setWorkflowLibraryFilters({
+      ...workflowLibraryFilters,
+      statuses: {
+        ...workflowLibraryFilters.statuses,
+        [key]: !workflowLibraryFilters.statuses?.[key],
+      },
+    });
+  };
+  const resetWorkflowLibraryFilters = () => {
+    setWorkflowLibraryFilters(DEFAULT_WORKFLOW_LIBRARY_FILTERS);
   };
   const toggleWorkflowFavorite = (automationId: string) => {
     const nextFavoriteIds = toggleFavoriteAutomationId(favoriteAutomationIds, automationId);
     updateWorkflowPreferencesMutation.mutate({
       favorite_automation_ids: nextFavoriteIds,
       workflow_sort_mode: workflowSortMode,
+      workflow_library_filters: workflowLibraryFilters,
     });
   };
   const classifyWorkflowAutomation = useMemo(
@@ -1104,12 +1157,14 @@ export function MyAutomationsContainer({
     [isMissionBlueprintAutomation, isStandupAutomation]
   );
   const workflowAutomationRows = useMemo(() => {
-    return sortWorkflowAutomations(automationsV2, {
+    const visibleAutomations = filterWorkflowAutomations(automationsV2, workflowLibraryFilters);
+    return sortWorkflowAutomations(visibleAutomations, {
       sortMode: workflowSortMode,
       favoriteAutomationIds: favoriteAutomationIdSet,
     }).map((automation: any) => {
       const id = getAutomationId(automation);
       const category = classifyWorkflowAutomation(automation);
+      const source = classifyAutomationSource(automation);
       return {
         automation,
         id,
@@ -1123,9 +1178,17 @@ export function MyAutomationsContainer({
             .toLowerCase() === "paused",
         categoryKey: category.key,
         categoryLabel: category.label,
+        sourceKey: source.key,
+        sourceLabel: source.label,
       };
     });
-  }, [automationsV2, classifyWorkflowAutomation, favoriteAutomationIdSet, workflowSortMode]);
+  }, [
+    automationsV2,
+    classifyWorkflowAutomation,
+    favoriteAutomationIdSet,
+    workflowLibraryFilters,
+    workflowSortMode,
+  ]);
   const workflowAutomationSections = useMemo(() => {
     const categoryOrder = [
       { key: "standup", label: "Standup" },
@@ -2263,6 +2326,7 @@ export function MyAutomationsContainer({
   };
   const legacyAutomationCount = automations.length;
   const workflowAutomationCount = automationsV2.length;
+  const workflowAutomationVisibleCount = workflowAutomationRows.length;
   const totalSavedAutomations = legacyAutomationCount + workflowAutomationCount;
   const blockers = useMemo(
     () => buildRunBlockers(selectedRun, sessionEvents, runEvents),
@@ -2316,12 +2380,15 @@ export function MyAutomationsContainer({
         defaultRunningSectionsOpen,
         calendarEvents,
         workflowAutomationCount,
+        workflowAutomationVisibleCount,
         automationsV2,
         workflowAutomationSections,
         legacyAutomationRows,
         totalSavedAutomations,
         legacyAutomationCount,
         automations,
+        workflowLibraryFilters,
+        workflowLibraryFilteringActive,
         workflowSortMode,
         workflowPreferencesLoading,
         packs,
@@ -2549,6 +2616,9 @@ export function MyAutomationsContainer({
         runActionMutation,
         taskResetPreviewQuery,
         toggleWorkflowFavorite,
+        toggleWorkflowLibrarySourceFilter,
+        toggleWorkflowLibraryStatusFilter,
+        resetWorkflowLibraryFilters,
         setWorkflowSortMode,
       }}
       helpers={{

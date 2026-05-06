@@ -658,11 +658,31 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
     body: {
       preferences: {
         favorite_automation_ids: ["workflow-a", "workflow-b", "workflow-a"],
+        workflow_library_filters: {
+          sources: {
+            user_created: true,
+            agent_created: true,
+            bug_monitor: false,
+            system: false,
+          },
+          statuses: {
+            active: true,
+            paused: false,
+            draft: true,
+          },
+        },
         workflow_sort_mode: "name_asc",
       },
     },
   });
   assert.equal(prefsUpdate.status, 200);
+  const prefsUpdateJson = await prefsUpdate.json();
+  assert.deepEqual(prefsUpdateJson.preferences.favorite_automation_ids, [
+    "workflow-a",
+    "workflow-b",
+  ]);
+  assert.equal(prefsUpdateJson.preferences.workflow_library_filters.sources.bug_monitor, false);
+  assert.equal(prefsUpdateJson.preferences.workflow_library_filters.statuses.paused, false);
 
   const relogin = await request(baseUrl, "/api/auth/login", {
     method: "POST",

@@ -4,6 +4,7 @@ import { dirname, resolve } from "path";
 import {
   DEFAULT_WORKFLOW_SORT_MODE,
   normalizeFavoriteAutomationIds,
+  normalizeWorkflowLibraryFilters,
   normalizeWorkflowSortMode,
 } from "../automations/workflow-list.js";
 
@@ -31,6 +32,9 @@ function normalizePrincipalPreferences(raw = {}, principalId = "") {
     ),
     workflow_sort_mode: normalizeWorkflowSortMode(
       input.workflow_sort_mode || input.workflowSortMode || DEFAULT_WORKFLOW_SORT_MODE
+    ),
+    workflow_library_filters: normalizeWorkflowLibraryFilters(
+      input.workflow_library_filters || input.workflowLibraryFilters || {}
     ),
   };
 }

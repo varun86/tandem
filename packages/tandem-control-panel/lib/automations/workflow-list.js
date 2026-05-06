@@ -7,6 +7,33 @@ const WORKFLOW_SORT_MODES = [
 
 const DEFAULT_WORKFLOW_SORT_MODE = WORKFLOW_SORT_MODES[0].value;
 
+const WORKFLOW_LIBRARY_SOURCE_FILTERS = [
+  { value: "user_created", label: "User" },
+  { value: "agent_created", label: "Agent" },
+  { value: "bug_monitor", label: "Bug Monitor" },
+  { value: "system", label: "System" },
+];
+
+const WORKFLOW_LIBRARY_STATUS_FILTERS = [
+  { value: "active", label: "Active" },
+  { value: "paused", label: "Paused" },
+  { value: "draft", label: "Draft" },
+];
+
+const DEFAULT_WORKFLOW_LIBRARY_FILTERS = {
+  sources: {
+    user_created: true,
+    agent_created: true,
+    bug_monitor: false,
+    system: false,
+  },
+  statuses: {
+    active: true,
+    paused: true,
+    draft: true,
+  },
+};
+
 function normalizeWorkflowSortMode(raw) {
   const value = String(raw || "").trim().toLowerCase();
   if (WORKFLOW_SORT_MODES.some((mode) => mode.value === value)) return value;
@@ -56,6 +83,119 @@ function getAutomationCreatedAtMs(row) {
     if (parsed > 0) return parsed;
   }
   return 0;
+}
+
+function normalizeFilterValue(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function normalizeVisibilityMap(raw, options, defaults) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const out = {};
+  for (const option of options) {
+    const key = option.value;
+    const value = input[key];
+    out[key] = typeof value === "boolean" ? value : !!defaults[key];
+  }
+  return out;
+}
+
+function normalizeWorkflowLibraryFilters(raw = {}) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const rawSources = input.sources || input.source_filters || input.sourceFilters || {};
+  const rawStatuses = input.statuses || input.status_filters || input.statusFilters || {};
+  return {
+    sources: normalizeVisibilityMap(
+      rawSources,
+      WORKFLOW_LIBRARY_SOURCE_FILTERS,
+      DEFAULT_WORKFLOW_LIBRARY_FILTERS.sources
+    ),
+    statuses: normalizeVisibilityMap(
+      rawStatuses,
+      WORKFLOW_LIBRARY_STATUS_FILTERS,
+      DEFAULT_WORKFLOW_LIBRARY_FILTERS.statuses
+    ),
+  };
+}
+
+function workflowLibraryFiltersEqual(left, right) {
+  const a = normalizeWorkflowLibraryFilters(left);
+  const b = normalizeWorkflowLibraryFilters(right);
+  for (const option of WORKFLOW_LIBRARY_SOURCE_FILTERS) {
+    if (a.sources[option.value] !== b.sources[option.value]) return false;
+  }
+  for (const option of WORKFLOW_LIBRARY_STATUS_FILTERS) {
+    if (a.statuses[option.value] !== b.statuses[option.value]) return false;
+  }
+  return true;
+}
+
+function automationMetadataSource(row) {
+  return normalizeFilterValue(
+    row?.metadata?.source ||
+      row?.metadata?.origin ||
+      row?.metadata?.plan_source ||
+      row?.metadata?.planSource ||
+      row?.source ||
+      row?.origin
+  );
+}
+
+function classifyAutomationSource(row) {
+  const metadataSource = automationMetadataSource(row);
+  const creatorId = normalizeFilterValue(row?.creator_id || row?.creatorId || row?.created_by || row?.createdBy);
+  const name = getAutomationName(row).toLowerCase();
+
+  if (
+    metadataSource === "bug_monitor" ||
+    metadataSource === "bug_monitor_approval" ||
+    creatorId === "bug_monitor" ||
+    name.startsWith("bug monitor triage:")
+  ) {
+    return { key: "bug_monitor", label: "Bug Monitor" };
+  }
+
+  if (
+    metadataSource.includes("workflow_planner") ||
+    metadataSource.includes("planner") ||
+    metadataSource.includes("agent") ||
+    creatorId.includes("workflow_planner") ||
+    creatorId.includes("agent")
+  ) {
+    return { key: "agent_created", label: "Agent" };
+  }
+
+  if (
+    metadataSource === "system" ||
+    metadataSource.startsWith("system_") ||
+    creatorId === "system" ||
+    creatorId === "tandem"
+  ) {
+    return { key: "system", label: "System" };
+  }
+
+  return { key: "user_created", label: "User" };
+}
+
+function normalizeAutomationStatusFilter(row) {
+  const status = normalizeFilterValue(row?.status || "draft");
+  if (status === "paused" || status === "disabled") return "paused";
+  if (status === "active" || status === "enabled" || status === "running") return "active";
+  return "draft";
+}
+
+function filterWorkflowAutomations(rows, filters = DEFAULT_WORKFLOW_LIBRARY_FILTERS) {
+  const normalized = normalizeWorkflowLibraryFilters(filters);
+  return Array.isArray(rows)
+    ? rows.filter((row) => {
+        const source = classifyAutomationSource(row).key;
+        const status = normalizeAutomationStatusFilter(row);
+        return normalized.sources[source] !== false && normalized.statuses[status] !== false;
+      })
+    : [];
 }
 
 function formatAutomationCreatedAtLabel(row) {
@@ -133,15 +273,22 @@ function sortWorkflowAutomations(rows, options = {}) {
 }
 
 export {
+  DEFAULT_WORKFLOW_LIBRARY_FILTERS,
   DEFAULT_WORKFLOW_SORT_MODE,
+  WORKFLOW_LIBRARY_SOURCE_FILTERS,
+  WORKFLOW_LIBRARY_STATUS_FILTERS,
   WORKFLOW_SORT_MODES,
+  classifyAutomationSource,
   compareAutomationRows,
+  filterWorkflowAutomations,
   getAutomationCreatedAtMs,
   getAutomationId,
   getAutomationName,
   formatAutomationCreatedAtLabel,
   normalizeFavoriteAutomationIds,
+  normalizeWorkflowLibraryFilters,
   normalizeWorkflowSortMode,
   sortWorkflowAutomations,
   toggleFavoriteAutomationId,
+  workflowLibraryFiltersEqual,
 };

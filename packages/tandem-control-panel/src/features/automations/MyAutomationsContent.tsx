@@ -9,6 +9,8 @@ import {
 import { RunDebuggerDialog } from "./RunDebuggerDialog";
 import { EmptyState } from "../../pages/ui";
 import {
+  WORKFLOW_LIBRARY_SOURCE_FILTERS,
+  WORKFLOW_LIBRARY_STATUS_FILTERS,
   WORKFLOW_SORT_MODES,
   formatAutomationCreatedAtLabel,
 } from "../../../lib/automations/workflow-list.js";
@@ -24,10 +26,13 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     viewMode,
     calendarEvents,
     workflowAutomationCount,
+    workflowAutomationVisibleCount,
     workflowAutomationSections,
     legacyAutomationRows,
     totalSavedAutomations,
     legacyAutomationCount,
+    workflowLibraryFilters,
+    workflowLibraryFilteringActive,
     workflowSortMode,
     workflowPreferencesLoading,
     packs,
@@ -130,6 +135,9 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     beginEdit,
     toggleWorkflowFavorite,
     setWorkflowSortMode,
+    toggleWorkflowLibrarySourceFilter,
+    toggleWorkflowLibraryStatusFilter,
+    resetWorkflowLibraryFilters,
     runNowMutation,
     isPausedAutomation,
     onSelectRunId,
@@ -226,6 +234,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     const paused = !!row?.paused || status.toLowerCase() === "paused";
     const favorite = !!row?.isFavorite;
     const categoryLabel = String(row?.categoryLabel || "").trim();
+    const sourceLabel = String(row?.sourceLabel || "").trim();
     const createdAtMs = Number(row?.createdAtMs || 0) || 0;
     return (
       <div key={id} className="tcp-card flex flex-col gap-3 group">
@@ -239,6 +248,9 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
               <div className="flex flex-wrap items-center gap-1.5">
                 {categoryLabel ? (
                   <span className="tcp-badge-ok text-[10px] py-0 px-1.5">{categoryLabel}</span>
+                ) : null}
+                {sourceLabel ? (
+                  <span className="tcp-badge-ghost text-[10px] py-0 px-1.5">{sourceLabel}</span>
                 ) : null}
                 {String(automation?.description || "").trim() ? null : (
                   <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">
@@ -478,7 +490,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
               </p>
             </div>
             <span className="tcp-badge-ghost text-xs tracking-wide">
-              {workflowAutomationCount} items
+              {workflowAutomationVisibleCount} of {workflowAutomationCount} items
             </span>
           </div>
 
@@ -486,11 +498,11 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
-                  Sort & Favorites
+                  Filters & Sort
                 </p>
                 <p className="tcp-subtle text-xs">
-                  Current sort: {workflowSortLabel}. Profile-backed preferences only affect this
-                  list, not workflow execution.
+                  Showing {workflowAutomationVisibleCount} of {workflowAutomationCount}. Current
+                  sort: {workflowSortLabel}.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -508,6 +520,69 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                   ))}
                 </select>
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-t border-white/5 pt-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="tcp-subtle text-xs uppercase tracking-[0.2em]">Source</span>
+                {WORKFLOW_LIBRARY_SOURCE_FILTERS.map((option) => {
+                  const checked = workflowLibraryFilters?.sources?.[option.value] !== false;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded border px-2 text-xs ${
+                        checked
+                          ? "border-blue-400/40 bg-blue-500/10 text-blue-100"
+                          : "border-white/10 bg-white/[0.02] text-slate-500"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-950 text-blue-500"
+                        checked={checked}
+                        onChange={() => toggleWorkflowLibrarySourceFilter(option.value)}
+                        disabled={workflowPreferencesLoading}
+                      />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="tcp-subtle text-xs uppercase tracking-[0.2em]">Status</span>
+                {WORKFLOW_LIBRARY_STATUS_FILTERS.map((option) => {
+                  const checked = workflowLibraryFilters?.statuses?.[option.value] !== false;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded border px-2 text-xs ${
+                        checked
+                          ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
+                          : "border-white/10 bg-white/[0.02] text-slate-500"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-950 text-emerald-500"
+                        checked={checked}
+                        onChange={() => toggleWorkflowLibraryStatusFilter(option.value)}
+                        disabled={workflowPreferencesLoading}
+                      />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                className="tcp-btn h-8 px-2 text-xs"
+                onClick={resetWorkflowLibraryFilters}
+                disabled={workflowPreferencesLoading || !workflowLibraryFilteringActive}
+                title="Reset library filters"
+                aria-label="Reset library filters"
+              >
+                <i data-lucide="rotate-ccw" className="w-3 h-3"></i>
+                Reset
+              </button>
             </div>
           </div>
 
@@ -534,9 +609,15 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             </div>
           ) : (
             <div className="tcp-list-item">
-              <div className="font-medium">No library items saved yet</div>
+              <div className="font-medium">
+                {workflowAutomationCount > 0
+                  ? "No library items match these filters"
+                  : "No library items saved yet"}
+              </div>
               <div className="tcp-subtle mt-1 text-xs">
-                This section is separate from run history and only shows saved workflow definitions.
+                {workflowAutomationCount > 0
+                  ? "Adjust the source or status filters to bring hidden workflow definitions back."
+                  : "This section is separate from run history and only shows saved workflow definitions."}
               </div>
             </div>
           )}
