@@ -19,6 +19,25 @@ fn automation_status_scan_window(text: &str) -> String {
     }
 }
 
+fn automation_node_is_bug_monitor_triage_handoff(node: &AutomationFlowNode) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("bug_monitor"))
+        .and_then(Value::as_object)
+        .and_then(|bug_monitor| bug_monitor.get("artifact_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|artifact_type| {
+            matches!(
+                artifact_type,
+                "bug_monitor_inspection"
+                    | "bug_monitor_research"
+                    | "bug_monitor_validation"
+                    | "bug_monitor_fix_proposal"
+            )
+        })
+}
+
 pub(crate) fn detect_automation_node_status(
     node: &AutomationFlowNode,
     session_text: &str,
@@ -106,6 +125,12 @@ pub(crate) fn detect_automation_node_status(
     let handoff_only_structured_json = validator_kind
         == crate::AutomationOutputValidatorKind::StructuredJson
         && automation_node_required_output_path(node).is_none();
+    let structured_handoff_present = validator_kind
+        == crate::AutomationOutputValidatorKind::StructuredJson
+        && extract_structured_handoff_json(session_text).is_some();
+    let bug_monitor_triage_handoff_present = handoff_only_structured_json
+        && structured_handoff_present
+        && automation_node_is_bug_monitor_triage_handoff(node);
     let has_required_tools = !automation_node_required_tools(node).is_empty();
     let validation_repairable = (validator_kind
         == crate::AutomationOutputValidatorKind::ResearchBrief
@@ -184,6 +209,9 @@ pub(crate) fn detect_automation_node_status(
         .and_then(Value::as_str)
         .is_some_and(|status| status.eq_ignore_ascii_case("blocked"))
     {
+        if bug_monitor_triage_handoff_present {
+            return ("completed".to_string(), explicit_reason, approved);
+        }
         let has_actionable_validation = artifact_validation
             .and_then(|value| {
                 value
@@ -260,9 +288,6 @@ pub(crate) fn detect_automation_node_status(
         .map(|(_, text)| text.as_str())
         .unwrap_or_else(|| session_text.trim());
     let lowered = automation_status_scan_window(output_text).to_ascii_lowercase();
-    let structured_handoff_present = validator_kind
-        == crate::AutomationOutputValidatorKind::StructuredJson
-        && extract_structured_handoff_json(session_text).is_some();
     let explicit_status_present = parsed
         .as_ref()
         .and_then(|value| value.get("status"))
@@ -321,6 +346,7 @@ pub(crate) fn detect_automation_node_status(
         );
     }
     if !explicit_status_is_completed
+        && !bug_monitor_triage_handoff_present
         && blocked_markers
             .iter()
             .any(|marker| lowered.contains(marker))

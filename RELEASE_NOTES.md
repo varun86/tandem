@@ -16,6 +16,8 @@ Bug Monitor GitHub issue creation now uses a persisted pending idempotency claim
 
 Bug Monitor proposal quality gates also recognize the structured handoff shapes that triage nodes actually return, including wrapped objects such as `{ "bug_monitor_inspection": ... }` and array responses containing the artifact followed by a compact status object. Placeholder task specs still fail the gate, but valid completed inspection, research, validation, and fix-proposal artifacts no longer get treated as missing and replaced with broad fallback evidence.
 
+Bug Monitor triage status detection now treats nested `status: blocked` fields inside structured Bug Monitor handoffs as evidence/limitation data, not as the node's own runtime status. This prevents `propose_fix_and_verification` from recursively blocking the debugger when it has produced a useful partial fix proposal with acceptance criteria and bounded next steps.
+
 Automation V2 long-running nodes now get to own their timeout path. The stale-run reaper honors the run-registry heartbeat that active node execution already emits every few seconds, so a first task with a 600-second budget is not globally paused as `stale_no_provider_activity` at the exact timeout boundary before the node can fail or repair normally.
 
 Automation V2 research validation now preserves source URLs from successful `websearch` and `webfetch` tool results. If a generated JSON artifact is too sparse and omits raw links, the validator can still see the current web evidence that was actually gathered instead of blocking the node as `citations_missing`. The prompt and repair guidance also now explicitly tell research agents to include raw URLs in `citations` or `web_sources_reviewed` fields.

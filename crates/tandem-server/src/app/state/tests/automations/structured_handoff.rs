@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn bug_monitor_structured_handoff_with_blocked_inner_status_completes_node() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "propose_fix_and_verification".to_string(),
+        agent_id: "bug_monitor_triage_agent".to_string(),
+        objective: "Propose a bounded fix and verification plan".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("artifact_only".to_string()),
+                required_tools: Vec::new(),
+                required_tool_calls: Vec::new(),
+                required_evidence: Vec::new(),
+                required_sections: Vec::new(),
+                prewrite_gates: Vec::new(),
+                retry_on_missing: Vec::new(),
+                terminal_on: Vec::new(),
+                repair_budget: Some(2),
+                session_text_recovery: Some("allow".to_string()),
+            }),
+            schema: None,
+            summary_guidance: Some("Return Bug Monitor fix proposal JSON.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "bug_monitor": {
+                "artifact_type": "bug_monitor_fix_proposal",
+                "context_artifact_path": "artifacts/bug_monitor.fix_proposal.json"
+            }
+        })),
+    };
+    let session_text = serde_json::to_string(&json!([
+        {
+            "artifact_kind": "bug_monitor_fix_proposal",
+            "status": "blocked",
+            "summary": "Tool evidence was limited, but the original workflow failure is preserved.",
+            "acceptance_criteria": [
+                "A retry preserves the original workflow failure instead of recursively blocking Bug Monitor."
+            ],
+            "bounded_next_steps": [
+                "Inspect the workflow validation path if this recurs."
+            ]
+        },
+        {
+            "status": "completed"
+        }
+    ]))
+    .expect("serialize handoff");
+    let telemetry = json!({
+        "requested_tools": ["codesearch", "glob"],
+        "executed_tools": ["mcp_list", "codesearch"],
+        "tool_call_counts": {"mcp_list": 1, "codesearch": 1}
+    });
+
+    let (status, reason, approved) =
+        detect_automation_node_status(&node, &session_text, None, &telemetry, None);
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, None);
+}
+
+#[test]
 fn structured_handoff_nodes_fail_when_only_fallback_tool_summary_is_returned() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-structured-handoff-fallback-{}",
