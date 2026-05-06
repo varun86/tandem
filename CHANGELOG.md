@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Chat live responses no longer disappear before refresh**: The control-panel Chat view now reloads the exact active session until the final assistant message is persisted before clearing the live thinking/streaming block. Streamed deltas are kept as a local fallback, so a completed answer does not leave an empty assistant slot until the operator manually refreshes.
 - **Hosted Files no longer probes missing workspace routes**: Workspace file browsing now requires an explicit `workspace_files_api_available` capability before the Files page calls `/api/workspace/files/*`, preventing repeated 404s on deployments that expose managed files but not workspace browsing.
 - **Chat prompt sends avoid visible active-run conflicts**: Before posting a new prompt, the Chat view now preflights and settles any active run for the session, and still uses the 409 conflict body as a fallback source for the exact run id to cancel. This avoids noisy `prompt_async` conflict requests when the session still has a stale active run.
+- **Coder GitHub Project intake follows ACA launch lanes**: The control-panel Coder board now treats `Todo` / `TODOS` GitHub Project statuses as launchable, matching ACA's current intake rules. Planned GitHub tasks are published into the detected launch lane instead of assuming a `Ready` column, so agents can accept board jobs on projects whose actionable lane is named `TODOS`.
 
 ## [0.5.4] - Released 2026-05-05
 

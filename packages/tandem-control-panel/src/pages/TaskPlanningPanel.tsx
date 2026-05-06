@@ -20,6 +20,7 @@ import {
   type PlannerSessionSummary,
 } from "../features/planner/plannerShared";
 import { TaskPlanningPanelView } from "./TaskPlanningPanelView";
+import { resolveGithubProjectLaunchStatus } from "./CodingWorkflowsHelpers";
 
 type TaskPlanningPanelProps = {
   client: any;
@@ -1680,21 +1681,16 @@ export function TaskPlanningPanel({
         const repo = safeString(source.repo);
         const projectNumber = Number(source.project);
         let projectBoardSnapshot = githubProjectBoardSnapshot;
-        const readyStatusFieldId = Number(
-          projectBoardSnapshot?.status_field_id || projectBoardSnapshot?.statusFieldId || 0
-        );
-        const readyOptionId = safeString(
-          projectBoardSnapshot?.status_option_map?.ready ||
-            projectBoardSnapshot?.statusOptionMap?.ready ||
-            projectBoardSnapshot?.status_option_map?.Ready ||
-            projectBoardSnapshot?.statusOptionMap?.Ready ||
-            ""
-        );
-        if ((!readyStatusFieldId || !readyOptionId) && safeString(selectedProjectSlug)) {
+        let launchStatus = resolveGithubProjectLaunchStatus(projectBoardSnapshot);
+        if (
+          (!launchStatus.statusFieldId || !launchStatus.optionId) &&
+          safeString(selectedProjectSlug)
+        ) {
           try {
             projectBoardSnapshot = await api(
               `/api/aca/projects/${encodeURIComponent(selectedProjectSlug)}/board?refresh=true`
             );
+            launchStatus = resolveGithubProjectLaunchStatus(projectBoardSnapshot);
           } catch {
             // Fall back to the cached snapshot if a live refresh fails.
           }
@@ -1718,7 +1714,7 @@ export function TaskPlanningPanel({
             repo,
             title: task.title,
             body,
-            labels: ["tandem", "planned-task", "ready"],
+            labels: ["tandem", "planned-task", "todo"],
           });
           const issueNumber = findIssueNumber(issueResult);
           if (!issueNumber) {
@@ -1736,15 +1732,15 @@ export function TaskPlanningPanel({
             issue_number: issueNumber,
           });
           const projectItemId = findProjectItemId(addProjectItemResult);
-          if (projectItemId && readyStatusFieldId && readyOptionId) {
+          if (projectItemId && launchStatus.statusFieldId && launchStatus.optionId) {
             await client.executeTool("mcp.github.projects_write", {
               method: "update_project_item",
               owner,
               project_number: projectNumber,
               item_id: projectItemId,
               updated_field: {
-                id: readyStatusFieldId,
-                value: readyOptionId,
+                id: launchStatus.statusFieldId,
+                value: launchStatus.optionId,
               },
             });
           }
@@ -1757,7 +1753,11 @@ export function TaskPlanningPanel({
         }
         const publishedAt = Date.now();
         setPublishedTasks(publishedTasks);
-        setPublishStatus(`Published ${publishedTasks.length} GitHub tasks into Ready.`);
+        setPublishStatus(
+          `Published ${publishedTasks.length} GitHub tasks${
+            launchStatus.label ? ` into ${launchStatus.label}` : ""
+          }.`
+        );
         setPublishedAtMs(publishedAt);
         setLastSavedAtMs(publishedAt);
         updateActivePlannerSessionCache({

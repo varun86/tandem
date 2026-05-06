@@ -32,6 +32,8 @@ Hosted Files now distinguishes workspace-root configuration from workspace-files
 
 Chat also preflights active-run cleanup before sending a new prompt. If a stale session run is still registered, the UI cancels and waits for idle before posting `prompt_async`, with the 409 conflict payload still used as a fallback if a race appears between the preflight and send.
 
+The Coder board now matches ACA's updated GitHub Project intake rules for launchable work. `Todo` and `TODOS` lanes are recognized as runnable in the control panel, and planned GitHub tasks are moved into the detected launch lane rather than assuming the project has a `Ready` status. This fixes projects where the coding agent should accept cards from `TODOS` but the board UI left them looking unlaunchable or published new tasks into the wrong lane.
+
 ## v0.5.4 (Released 2026-05-05)
 
 This patch fixes automation schedule timezone handling, tightens the distinction between local source-code research and final research synthesis, and introduces marketplace-ready workflow pack import/export.

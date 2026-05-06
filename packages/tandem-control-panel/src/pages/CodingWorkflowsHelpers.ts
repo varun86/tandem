@@ -233,13 +233,76 @@ export function githubBoardItemIdentity(item: any) {
   return String(item?.issueUrl || item?.projectItemId || item?.id || "").trim();
 }
 
-export function githubBoardItemCanRun(item: any) {
-  const statusKey = String(item?.statusKey || "")
+function normalizeGithubStatusKey(value: unknown) {
+  return String(value || "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function formatGithubStatusLabel(value: string) {
+  const key = normalizeGithubStatusKey(value);
+  if (key === "todos") return "TODOS";
+  if (key === "todo") return "Todo";
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function githubBoardItemCanRun(item: any) {
+  const rawStatusKey = normalizeGithubStatusKey(item?.statusKey);
+  const statusNameKey = normalizeGithubStatusKey(item?.statusName);
+  const statusKey = rawStatusKey && rawStatusKey !== "unknown" ? rawStatusKey : statusNameKey;
   if (!item?.selector) return false;
-  if (statusKey === "in_review" || statusKey === "done") return false;
-  return item?.actionable === true || ["ready", "backlog", "todo"].includes(statusKey);
+  if (
+    [
+      "blocked",
+      "cancelled",
+      "closed",
+      "complete",
+      "completed",
+      "done",
+      "failed",
+      "in_progress",
+      "in_review",
+      "on_hold",
+      "stalled",
+    ].includes(statusKey)
+  ) {
+    return false;
+  }
+  return item?.actionable === true || ["ready", "backlog", "todo", "todos"].includes(statusKey);
+}
+
+export function resolveGithubProjectLaunchStatus(snapshot: any | null) {
+  const statusFieldId = Number(snapshot?.status_field_id || snapshot?.statusFieldId || 0);
+  const optionMap = snapshot?.status_option_map || snapshot?.statusOptionMap || {};
+  const normalizedOptions = new Map<string, string>();
+  Object.entries(optionMap || {}).forEach(([key, value]) => {
+    const normalizedKey = normalizeGithubStatusKey(key);
+    const optionId = String(value || "").trim();
+    if (normalizedKey && optionId) {
+      normalizedOptions.set(normalizedKey, optionId);
+    }
+  });
+  const columns = Array.isArray(snapshot?.columns) ? snapshot.columns : [];
+  for (const key of ["todos", "todo", "to_do", "ready", "backlog"]) {
+    const optionId = normalizedOptions.get(key);
+    if (!optionId) continue;
+    const column = columns.find(
+      (row: any) =>
+        normalizeGithubStatusKey(row?.key) === key || normalizeGithubStatusKey(row?.name) === key
+    );
+    return {
+      statusFieldId,
+      optionId,
+      label: String(column?.name || "").trim() || formatGithubStatusLabel(key),
+    };
+  }
+  return { statusFieldId, optionId: "", label: "" };
 }
 
 export function dedupeRuns(runs: any[]) {
