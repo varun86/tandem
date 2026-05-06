@@ -46,7 +46,7 @@ export default defineConfig({
       sidebar: [
         {
           label: "Introduction",
-          items: ["start-here", "install-cli-binaries", "control-panel"],
+          items: ["start-here", "agent-runtime-contracts", "install-cli-binaries", "control-panel"],
         },
         {
           label: "Desktop & TUI Guide",
@@ -72,6 +72,11 @@ export default defineConfig({
         {
           label: "Reference Architecture",
           items: [
+            "how-tandem-works",
+            "memory-internals",
+            "creating-and-running-workflows-and-missions",
+            "agent-workflow-operating-manual",
+            "mcp-capability-discovery-and-request-flow",
             "protocol-matrix",
             "reference/engine-commands",
             "reference/tui-commands",

@@ -24,13 +24,13 @@ For coding tasks, agents usually read first, use `edit` for narrow replacements,
 - **`websearch`**: Search the web (powered by Exa.ai).
   - Input: `query` (string), `limit` (integer)
 - **`codesearch`**: Semantic code search (if configured).
-- **`memory_list`**: List stored memory chunks from the current session, project, or global scope.
+- **`memory_list`**: List stored memory records/chunks from the current session, project, or global scope.
   - Input: optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, `allow_global`
 - **`memory_search`**: Search memory by query across the current session, project, or global scope.
   - Input: `query` plus optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, `allow_global`
 - **`memory_store`**: Persist content into session, project, or global memory.
   - Input: `content` plus optional scope and metadata such as `tier`, `session_id`, `project_id`, `source`, `metadata`, `allow_global`
-- **`memory_delete`**: Delete a stored memory chunk within the current allowed scope.
+- **`memory_delete`**: Delete a stored memory record/chunk within the current allowed scope.
   - Input: `chunk_id` (or `id`) plus optional scope controls such as `tier`, `session_id`, `project_id`, `allow_global`
 
 ## Web

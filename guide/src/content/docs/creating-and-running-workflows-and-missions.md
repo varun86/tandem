@@ -15,6 +15,18 @@ For a concrete showcase pattern that agents can copy when building demo payloads
 
 ## The short decision map
 
+Tandem separates drafting, execution, scheduling, and repair. Pick the abstraction based on the durable object you need:
+
+| Need                                   | Use                      | Durable object created                        |
+| -------------------------------------- | ------------------------ | --------------------------------------------- |
+| Turn vague intent into a draft         | Workflow plan            | Planner session / plan draft                  |
+| Run a known DAG now or on a schedule   | V2 automation            | Automation definition and automation runs     |
+| Compile a larger staged operating loop | Mission builder          | Mission blueprint / runnable staged artifact  |
+| Move existing work state forward       | Missions runtime         | Mission and work-item events                  |
+| Inspect or repair execution state      | Run/context-run surfaces | Run state, checkpoints, artifacts, blackboard |
+
+Do not skip from "the user has an idea" directly to "create a scheduled automation" unless the workflow shape, tools, outputs, and failure policy are already clear.
+
 ### Use a workflow plan when
 
 - the user has natural-language intent
@@ -94,6 +106,8 @@ For most agent-authored systems, use this sequence:
 5. schedule it if it should recur
 6. inspect runs and repair only the failing stage instead of rebuilding everything
 7. if the workflow came from an import, reopen the stored planner session first and revise that session instead of starting from scratch
+
+Each step has a different persistence effect. Preview validates shape without arming durable recurring work. Apply creates or updates the durable engine object. Run-now creates a run. Schedule configuration controls future runs. Repair changes a failed run or node state; it should not be confused with editing the automation definition.
 
 ## What to choose for common situations
 
@@ -311,6 +325,9 @@ Avoid these common mistakes:
 - relying on global memory instead of project-scoped promoted reuse
 - skipping preview and applying a weak generated plan directly
 - recreating automations when a targeted repair or retry would do
+- treating imported workflow bundles as already armed scheduled automations
+- treating a run artifact as promoted knowledge before review/promotion
+- treating an MCP catalog entry as proof the runtime can execute that connector
 
 ## If you are an MCP-driven agent
 

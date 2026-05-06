@@ -24,15 +24,16 @@ The engine uses these layers so it can stay bounded in context without pretendin
 
 ## Storage surfaces
 
-| Surface                | Backing store            | What it holds                                                                | Scope                 |
-| ---------------------- | ------------------------ | ---------------------------------------------------------------------------- | --------------------- |
-| Working memory         | Prompt context only      | The current turn, bounded memory context, and runtime state                  | Per turn              |
-| Session history        | Session storage          | Messages, turns, and the source-of-truth conversation record                 | Per session           |
-| Retrieval memory       | `memory.sqlite`          | Session/project/global memory chunks, retrieval state, and knowledge records | Cross-session, scoped |
-| Knowledge reuse        | `memory.sqlite`          | Reusable project or global knowledge that workflows can preflight            | Project / global      |
-| Artifact memory        | Files and uploads        | Output files, handoffs, attachments, blackboard artifacts                    | Per run or workspace  |
-| Execution memory       | `context_runs/<run_id>/` | Run state, events, patches, and checkpoints                                  | Per run               |
-| Cache / derived memory | Cache files              | Response caches, embedding caches, and other acceleration layers             | Derived               |
+| Surface                 | Backing store              | What it holds                                                                | Scope                    |
+| ----------------------- | -------------------------- | ---------------------------------------------------------------------------- | ------------------------ |
+| Working memory          | Prompt context only        | The current turn, bounded memory context, and runtime state                  | Per turn                 |
+| Session history         | Session storage            | Messages, turns, and the source-of-truth conversation record                 | Per session              |
+| Retrieval memory        | `memory.sqlite`            | Session/project/global memory chunks, retrieval state, and knowledge records | Cross-session, scoped    |
+| Governed memory records | `memory.sqlite` FTS tables | User-keyed notes, facts, and solution capsules written through memory tools  | User / project partition |
+| Knowledge reuse         | `memory.sqlite`            | Reusable project or global knowledge that workflows can preflight            | Project / global         |
+| Artifact memory         | Files and uploads          | Output files, handoffs, attachments, blackboard artifacts                    | Per run or workspace     |
+| Execution memory        | `context_runs/<run_id>/`   | Run state, events, patches, and checkpoints                                  | Per run                  |
+| Cache / derived memory  | Cache files                | Response caches, embedding caches, and other acceleration layers             | Derived                  |
 
 ## Memory layers
 
@@ -72,6 +73,43 @@ It is tiered:
 - `global` memory is cross-session and cross-project
 
 This is the memory that gets searched when Tandem wants reusable facts without replaying the whole transcript.
+
+Under the hood, imported/session/project/global retrieval memory is stored as chunks plus vectors:
+
+- `session_memory_chunks` + `session_memory_vectors`
+- `project_memory_chunks` + `project_memory_vectors`
+- `global_memory_chunks` + `global_memory_vectors`
+
+The vector tables use sqlite-vec. Tandem embeds each chunk, then retrieves nearest chunks for the current query. This path is for semantic recall across the `session`, `project`, and `global` tiers.
+
+### Governed memory records
+
+Tandem also stores governed memory records in `memory.sqlite`.
+
+These are different from the vector chunk tables. They are written by governed memory APIs such as `memory.put`, `memory.promote`, and automatic event ingestion. They live in `memory_records` and are indexed by `memory_records_fts`.
+
+The FTS index exists for the tool-facing memory path:
+
+- it keys records by user identity and run provenance
+- it supports fast keyword/BM25 search for notes, facts, and solution capsules
+- it can filter by project, channel, host, visibility, expiration, and demotion state
+- it gives governed memory tools a deterministic retrieval path even when semantic embeddings are disabled or inappropriate for a policy surface
+
+The search flow is:
+
+1. Tandem normalizes the query into quoted FTS tokens joined with `OR`. For example, `rust workspace bug` becomes `"rust" OR "workspace" OR "bug"`.
+2. SQLite FTS5 searches `memory_records_fts.content`.
+3. Matching FTS rows are joined back to `memory_records` so Tandem can enforce metadata filters.
+4. The query only returns records for the current `user_id`.
+5. Demoted records and expired records are skipped.
+6. Optional `project_tag`, `channel_tag`, and `host_tag` filters narrow the search.
+7. Results are ordered by `bm25(memory_records_fts)` ascending, where lower BM25 rank is more relevant.
+8. Tandem converts the BM25 rank into a simple tool-facing score with `1.0 / (1.0 + rank.max(0.0))`.
+9. If FTS returns no hits, Tandem falls back to a substring `LIKE` search over `memory_records.content`, ordered by newest record first, with a low fixed score.
+
+The BM25 path is intentionally lexical rather than semantic. That makes it useful for governed memory because exact task names, customer names, error strings, ticket IDs, project tags, and source terms matter. It also means `memory_search` can be predictable: the agent can search for the words it expects to find in a prior note or solution capsule.
+
+In short: vector tables power semantic chunk recall; FTS powers governed, user-keyed memory record search.
 
 ### Knowledge reuse
 
@@ -144,9 +182,37 @@ Typical write paths include:
 - `memory.demote` to reduce visibility or scope
 - `contextDistill` to extract durable memories from a session conversation
 
+### Agent memory tools
+
+Agents do not need direct database access to use memory. Give them memory tools in their `allowed_tools` list.
+
+Common agent-facing tools:
+
+- `memory_search`: search stored memory for prior notes, facts, solution capsules, or relevant context.
+- `memory_store`: persist useful content into memory with scope and metadata.
+- `memory_list`: inspect stored memory records in the allowed scope.
+- `memory_delete`: delete a memory record or chunk in the allowed scope.
+
+Recommended default:
+
+```json
+["memory_search", "memory_store", "memory_list"]
+```
+
+Only give `memory_delete` to trusted agents or admin/operator flows. Deletion changes the durable memory store and should normally be a narrower capability than read/search/store.
+
+Typical tool arguments:
+
+- `memory_search`: `query`, plus optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, and `allow_global`.
+- `memory_store`: `content`, plus optional `tier`, `session_id`, `project_id`, `source`, `metadata`, and `allow_global`.
+- `memory_list`: optional scope controls such as `tier`, `session_id`, `project_id`, `limit`, and `allow_global`.
+- `memory_delete`: `chunk_id` or `id`, plus optional scope controls such as `tier`, `session_id`, `project_id`, and `allow_global`.
+
+For normal recall, let the agent call `memory_search` without explicit IDs so Tandem can use the current session/project context. Pass explicit IDs only when narrowing the scope deliberately.
+
 ### File and OpenClaw imports
 
-Path-based imports are the first-class way to seed governed retrieval memory from existing docs.
+Path-based imports are the first-class way to seed retrieval memory from existing docs.
 
 Use this when you want Tandem agents to retrieve existing project docs, support policies, SOPs, handoffs, run artifacts, or OpenClaw exports without pasting them into a chat session.
 
@@ -170,6 +236,17 @@ Supported tiers:
 - `global`: cross-project memory
 - `project`: project-scoped memory, requires `project_id`
 - `session`: session-scoped memory, requires `session_id`
+
+CLI examples:
+
+```bash
+tandem-engine memory import --path ./notes --format directory --tier global
+tandem-engine memory import --path ./docs --format directory --tier project --project-id repo-123 --sync-deletes
+tandem-engine memory import --path ./handoff --format directory --tier session --session-id sess-123
+tandem-engine memory import --path ~/.openclaw --format openclaw --tier global
+```
+
+The CLI import command does not currently accept a `--user-id` or `--subject` flag. `--tier global` means "store these imported chunks in the global retrieval tier", not "write governed user-scoped `memory_records` rows". User-scoped governed memory is created through the memory APIs/tools, where the capability subject becomes the record `user_id`.
 
 HTTP request:
 
