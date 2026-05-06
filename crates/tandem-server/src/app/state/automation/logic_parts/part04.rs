@@ -358,6 +358,13 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         {
             unmet_requirements.push("mcp_connector_action_missing".to_string());
         }
+        if connector_discovery_required
+            && !automation_node_is_outbound_action(node)
+            && !connector_action_patterns.is_empty()
+            && !executed_concrete_mcp_tool
+        {
+            unmet_requirements.push("mcp_connector_source_missing".to_string());
+        }
         let mut required_concrete_mcp_tools = automation_node_required_concrete_mcp_tools(node);
         required_concrete_mcp_tools.extend(
             automation_node_required_tool_calls(node)
@@ -1253,7 +1260,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     if unmet_requirements.iter().any(|requirement| {
         matches!(
             requirement.as_str(),
-            "placeholder_artifact" | "mcp_required_tool_missing"
+            "placeholder_artifact" | "mcp_required_tool_missing" | "mcp_connector_source_missing"
         )
     }) {
         accepted_output = None;
@@ -1344,6 +1351,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 value.as_str(),
                 "current_attempt_output_missing"
                     | "mcp_required_tool_missing"
+                    | "mcp_connector_source_missing"
                     | "mcp_discovery_missing"
                     | "no_concrete_reads"
                     | "concrete_read_required"

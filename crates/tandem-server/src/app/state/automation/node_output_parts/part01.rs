@@ -648,6 +648,12 @@ pub(crate) fn research_required_next_tool_actions(
                 .to_string(),
         );
     }
+    if has_unmet("mcp_connector_source_missing") {
+        actions.push(
+            "Call at least one concrete connector-backed MCP source tool before finalizing. `mcp_list` only proves the connector exists; source evidence requires a tool such as `mcp.reddit_gmail.reddit_search_across_subreddits` or `mcp.reddit_gmail.reddit_retrieve_reddit_post`, then preserving the returned links/results in the artifact."
+                .to_string(),
+        );
+    }
     if requested_has_read
         && (!executed_has_read
             || has_unmet("no_concrete_reads")

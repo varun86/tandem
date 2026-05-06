@@ -609,6 +609,11 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
         )
     } else if has_unmet("missing_successful_web_research") {
         Some("research completed without required current web research".to_string())
+    } else if has_unmet("mcp_connector_source_missing") {
+        Some(
+            "connector-backed source research completed without using a concrete connector tool"
+                .to_string(),
+        )
     } else if has_unmet("relevant_files_not_reviewed_or_skipped") {
         Some(
             "research completed without covering or explicitly skipping relevant discovered files"

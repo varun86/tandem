@@ -1252,3 +1252,104 @@ fn mcp_grounded_citations_artifact_passes_without_local_reads_or_websearch() {
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
+
+#[test]
+fn connector_backed_source_nodes_require_concrete_mcp_source_calls() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-reddit-source-test-{}", now_ms()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let output_path = ".tandem/runs/run-reddit-source/artifacts/collect-reddit-signals.json";
+    let node = AutomationNodeBuilder::new("collect_reddit_signals")
+        .agent_id("researcher")
+        .objective(
+            "Use the connected Reddit MCP to search current discussions about AI productivity workflows.",
+        )
+        .output_contract(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Return completed JSON with Reddit evidence.".to_string()),
+        })
+        .metadata(json!({
+            "builder": {
+                "output_path": output_path,
+                "preferred_mcp_servers": ["reddit-gmail"]
+            }
+        }))
+        .build();
+    let session = Session::new(
+        Some("reddit source research".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    let artifact_text = serde_json::to_string_pretty(&json!({
+        "status": "completed",
+        "summary": "Reddit connector was available, but no preserved post payloads were retained.",
+        "citations": ["https://www.reddit.com/r/artificial/"],
+        "reddit_signals": []
+    }))
+    .expect("serialize artifact");
+    let tool_telemetry = json!({
+        "requested_tools": [
+            "mcp_list",
+            "mcp.reddit_gmail.reddit_search_across_subreddits",
+            "mcp.reddit_gmail.reddit_retrieve_reddit_post",
+            "write"
+        ],
+        "executed_tools": ["mcp_list", "write"],
+        "tool_call_counts": {
+            "mcp_list": 1,
+            "write": 1
+        },
+        "capability_resolution": {
+            "mcp_tool_diagnostics": {
+                "selected_servers": ["reddit-gmail"]
+            }
+        },
+        "verified_output_materialized_by_current_attempt": true
+    });
+    let (accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some((output_path.to_string(), artifact_text)),
+        &std::collections::BTreeSet::new(),
+    );
+
+    assert!(accepted_output.is_none());
+    assert_eq!(
+        rejected.as_deref(),
+        Some("connector-backed source research completed without using a concrete connector tool")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("needs_repair")
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str() == Some("mcp_connector_source_missing"))));
+    assert!(artifact_validation
+        .get("required_next_tool_actions")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str().is_some_and(
+                |action| action.contains("mcp.reddit_gmail.reddit_search_across_subreddits")
+            ))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}

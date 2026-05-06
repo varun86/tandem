@@ -757,6 +757,9 @@ pub(crate) fn detect_automation_node_failure_kind(
         if handoff_only_structured_json && has_unmet("structured_handoff_missing") {
             return Some("structured_handoff_missing".to_string());
         }
+        if has_unmet("mcp_connector_source_missing") {
+            return Some("required_tool_unused_mcp_connector".to_string());
+        }
         if has_unmet("no_concrete_reads")
             || has_unmet("concrete_read_required")
             || has_unmet("required_source_paths_not_read")

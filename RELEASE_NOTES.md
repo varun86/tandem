@@ -22,6 +22,8 @@ Automation V2 long-running nodes now get to own their timeout path. The stale-ru
 
 Automation V2 research validation now preserves source URLs from successful `websearch` and `webfetch` tool results. If a generated JSON artifact is too sparse and omits raw links, the validator can still see the current web evidence that was actually gathered instead of blocking the node as `citations_missing`. The prompt and repair guidance also now explicitly tell research agents to include raw URLs in `citations` or `web_sources_reviewed` fields.
 
+Connector-backed source research now has to use the selected connector, not merely discover it. A node that says to use Reddit MCP and resolves `reddit-gmail` can no longer complete after only `mcp_list` plus a JSON write; it must call a concrete source tool such as `mcp.reddit_gmail.reddit_search_across_subreddits` or `mcp.reddit_gmail.reddit_retrieve_reddit_post`, preserving real returned evidence or an actual connector/tool limitation.
+
 The control-panel Chat view now waits for the completed assistant message to materialize in the exact active session before clearing the live thinking/streaming state. This closes the blank-response gap where an answer was saved on the server and appeared after refresh, but the live UI had already removed `Thinking...` without rendering the final assistant message.
 
 Hosted Files now distinguishes workspace-root configuration from workspace-files API availability. The Files page only enables workspace browsing when capabilities explicitly advertise the API route, so managed-file deployments no longer spam `/api/workspace/files/list?dir=` 404s.
