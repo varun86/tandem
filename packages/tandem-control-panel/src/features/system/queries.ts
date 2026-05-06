@@ -53,6 +53,7 @@ export interface Capabilities {
   hosted_update_policy?: string;
   workspace_files_root?: string;
   workspace_files_available?: boolean;
+  workspace_files_api_available?: boolean;
 }
 
 export function useCapabilities(enabled = true) {

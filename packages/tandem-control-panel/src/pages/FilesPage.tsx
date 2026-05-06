@@ -133,8 +133,11 @@ export function FilesPage({ api, client, toast }: AppPageProps) {
     setSelectedPath(handoff.path || handoff.dir || "");
   }, []);
 
+  const workspaceFilesRouteAvailable = capabilities.data?.workspace_files_api_available === true;
   const workspaceFilesAvailable =
-    capabilities.data?.workspace_files_available === true && !workspaceFilesRejected;
+    workspaceFilesRouteAvailable &&
+    capabilities.data?.workspace_files_available === true &&
+    !workspaceFilesRejected;
 
   useEffect(() => {
     if (!workspaceFilesAvailable) return;
@@ -659,7 +662,9 @@ export function FilesPage({ api, client, toast }: AppPageProps) {
                   title={
                     workspaceFilesAvailable
                       ? "Browse the workspace"
-                      : "Workspace root is not configured"
+                      : workspaceFilesRouteAvailable
+                        ? "Workspace root is not configured"
+                        : "Workspace file browsing is not available on this deployment"
                   }
                 >
                   <i data-lucide="folder-code"></i>

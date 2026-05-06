@@ -704,8 +704,21 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         return payload?.active?.runID || payload?.active?.runId || payload?.active?.run_id || "";
       };
 
-      const cancelAndWaitForIdle = async () => {
-        const activeRunId = await getActiveRunId().catch(() => "");
+      const activeRunIdFromPayload = (payload: any) =>
+        String(
+          payload?.activeRun?.runID ||
+            payload?.activeRun?.runId ||
+            payload?.activeRun?.run_id ||
+            payload?.active?.runID ||
+            payload?.active?.runId ||
+            payload?.active?.run_id ||
+            ""
+        ).trim();
+
+      const cancelAndWaitForIdle = async (knownRunId = "") => {
+        const activeRunId =
+          String(knownRunId || "").trim() || (await getActiveRunId().catch(() => ""));
+        if (!activeRunId) return true;
         if (activeRunId) {
           await fetch(
             `/api/engine/session/${encodeURIComponent(sessionId)}/run/${encodeURIComponent(activeRunId)}/cancel`,
@@ -753,11 +766,15 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
           }),
         });
 
+      const preflightIdle = await cancelAndWaitForIdle();
+      if (!preflightIdle) throw new Error("Session has a stuck active run. Cancel it and retry.");
+
       let runResp = await startRun();
       let runId = "";
 
       if (runResp.status === 409) {
-        const idle = await cancelAndWaitForIdle();
+        const conflictPayload = await runResp.json().catch(() => ({}));
+        const idle = await cancelAndWaitForIdle(activeRunIdFromPayload(conflictPayload));
         if (!idle) throw new Error("Session has a stuck active run. Cancel it and retry.");
 
         runResp = await startRun();

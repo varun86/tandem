@@ -1384,6 +1384,7 @@ async function getInstallProfile({ acaAvailable = false, acaReason = "" } = {}) 
     hosted_update_policy: String(summary.hosted?.update_policy || "").trim(),
     workspace_files_root: workspaceFilesRoot || "",
     workspace_files_available: !!workspaceFilesRoot,
+    workspace_files_api_available: !!workspaceFilesRoot,
     aca_integration: !!acaAvailable,
     aca_reason: acaReason || "",
   };
