@@ -1748,6 +1748,8 @@ impl EngineLoop {
                             "sessionID": session_id,
                             "correlationID": correlation_ref,
                             "messageID": user_message_id,
+                            "providerID": provider_id,
+                            "modelID": model_id_value,
                             "promptTokens": prompt_tokens,
                             "completionTokens": completion_tokens,
                             "totalTokens": total_tokens,

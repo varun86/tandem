@@ -716,6 +716,9 @@ pub async fn run_bug_monitor_recovery_sweep(state: AppState) {
 }
 
 pub async fn run_usage_aggregator(state: AppState) {
+    if crate::benchmarking::benchmark_config_from_env().profiling_enabled {
+        tokio::spawn(crate::benchmarking::run_benchmark_profiler(state.clone()));
+    }
     if !state.wait_until_ready_or_failed(120, 250).await {
         tracing::warn!("usage aggregator: skipped because runtime did not become ready");
         return;
