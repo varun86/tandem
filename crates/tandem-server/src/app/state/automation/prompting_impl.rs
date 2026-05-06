@@ -906,7 +906,7 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         });
         if requested_has_websearch {
             sections.push(
-                "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Use `webfetch` on concrete result URLs when search snippets are not enough.\n- Include only evidence you can support from local files or current web findings.\n- If `websearch` returns an authorization-required or unavailable result, treat external research as unavailable for this run, continue with local file reads, and note the web-research limitation instead of stopping."
+                "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Use `webfetch` on concrete result URLs when search snippets are not enough.\n- Include only evidence you can support from local files or current web findings.\n- When writing JSON, include raw source URLs in a `citations` or `citations_external` array and include `web_sources_reviewed`/`sources_reviewed` entries with `url`, `title`, and the claim or section each source supports.\n- Every non-obvious external claim should carry an inline URL, `source_url`, or citation entry that points to the exact web result used.\n- If `websearch` returns an authorization-required or unavailable result, treat external research as unavailable for this run, continue with local file reads, and note the web-research limitation instead of stopping."
                     .to_string(),
             );
             if let Some(hint) = next_step_hint {

@@ -18,6 +18,8 @@ Bug Monitor proposal quality gates also recognize the structured handoff shapes 
 
 Automation V2 long-running nodes now get to own their timeout path. The stale-run reaper honors the run-registry heartbeat that active node execution already emits every few seconds, so a first task with a 600-second budget is not globally paused as `stale_no_provider_activity` at the exact timeout boundary before the node can fail or repair normally.
 
+Automation V2 research validation now preserves source URLs from successful `websearch` and `webfetch` tool results. If a generated JSON artifact is too sparse and omits raw links, the validator can still see the current web evidence that was actually gathered instead of blocking the node as `citations_missing`. The prompt and repair guidance also now explicitly tell research agents to include raw URLs in `citations` or `web_sources_reviewed` fields.
+
 The control-panel Chat view now waits for the completed assistant message to materialize in the exact active session before clearing the live thinking/streaming state. This closes the blank-response gap where an answer was saved on the server and appeared after refresh, but the live UI had already removed `Thinking...` without rendering the final assistant message.
 
 Hosted Files now distinguishes workspace-root configuration from workspace-files API availability. The Files page only enables workspace browsing when capabilities explicitly advertise the API route, so managed-file deployments no longer spam `/api/workspace/files/list?dir=` 404s.

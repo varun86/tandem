@@ -168,6 +168,8 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let mut repair_attempted = false;
     let mut repair_succeeded = false;
     let mut citation_count = 0usize;
+    let mut current_web_research_citations = Vec::<String>::new();
+    let mut current_web_research_citation_count = 0usize;
     let mut web_sources_reviewed_present = false;
     let mut heading_count = 0usize;
     let mut paragraph_count = 0usize;
@@ -294,6 +296,19 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let web_research_succeeded = current_web_research_succeeded
             || (use_upstream_evidence
                 && upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded));
+        current_web_research_citations = tool_telemetry
+            .get("web_research_citations")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        current_web_research_citation_count = current_web_research_citations.len();
         let connector_discovery_text = automation_connector_hint_text(node);
         let connector_discovery_required =
             tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
@@ -702,9 +717,11 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             let missing_web_research = requires_external_sources && !web_research_succeeded;
             let upstream_has_citations =
                 use_upstream_evidence && upstream_evidence.is_some_and(|e| e.citation_count > 0);
+            let current_tool_has_citations = current_web_research_citation_count > 0;
             let missing_citations = requires_citations
                 && !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0)
-                && !upstream_has_citations;
+                && !upstream_has_citations
+                && !current_tool_has_citations;
             let upstream_web_sources_reviewed = use_upstream_evidence
                 && upstream_evidence.is_some_and(|e| e.web_research_succeeded);
             let missing_web_sources_reviewed = requires_web_sources_reviewed
@@ -1467,10 +1484,12 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         "citation_count": if use_upstream_evidence {
             json!(citation_count.saturating_add(
                 upstream_evidence.map(|e| e.citation_count).unwrap_or(0)
-            ))
+            ).saturating_add(current_web_research_citation_count))
         } else {
-            json!(citation_count)
+            json!(citation_count.saturating_add(current_web_research_citation_count))
         },
+        "current_web_research_citations": current_web_research_citations,
+        "current_web_research_citation_count": current_web_research_citation_count,
         "upstream_citations": if use_upstream_evidence {
             json!(upstream_evidence.map_or(&[] as &[_], |e| e.citations.as_slice()))
         } else {

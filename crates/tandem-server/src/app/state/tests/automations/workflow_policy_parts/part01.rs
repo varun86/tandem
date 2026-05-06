@@ -1008,10 +1008,7 @@ fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        vec![
-            json!("citations_missing"),
-            json!("web_sources_reviewed_missing")
-        ]
+        vec![json!("citations_missing")]
     );
     assert_eq!(
         artifact_validation

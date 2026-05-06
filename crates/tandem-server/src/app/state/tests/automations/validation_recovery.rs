@@ -1085,10 +1085,7 @@ fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
-        vec![
-            json!("citations_missing"),
-            json!("web_sources_reviewed_missing")
-        ]
+        vec![json!("citations_missing")]
     );
     assert_eq!(
         artifact_validation
@@ -1110,6 +1107,120 @@ fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
             .get("web_sources_reviewed_present")
             .and_then(Value::as_bool),
         Some(false)
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn research_validation_uses_websearch_result_urls_as_citation_evidence() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-research-tool-citation-test-{}", now_ms()));
+    std::fs::create_dir_all(workspace_root.join("inputs")).expect("create workspace");
+    std::fs::write(workspace_root.join("inputs/questions.md"), "Question")
+        .expect("seed input file");
+
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md",
+                "web_research_expected": true,
+                "source_coverage_required": true
+            }
+        })),
+    };
+    let mut session = Session::new(Some("research tool citations".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({"path":"inputs/questions.md"}),
+                result: Some(json!({"output":"Question"})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "websearch".to_string(),
+                args: json!({"query":"market trends"}),
+                result: Some(json!({
+                    "output": {
+                        "result_count": 1,
+                        "results": [{
+                            "title": "AI Agents in 2025: Expectations vs. Reality | IBM",
+                            "url": "https://www.ibm.com/think/insights/ai-agents-2025-expectations-vs-reality"
+                        }]
+                    }
+                })),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({
+                    "path":"marketing-brief.md",
+                    "content":"# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Findings\nClaims are summarized here with websearch evidence captured by tool telemetry.\n"
+                }),
+                result: Some(json!({"output":"written"})),
+                error: None,
+            },
+        ],
+    ));
+
+    let tool_telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "read".to_string(),
+            "write".to_string(),
+            "websearch".to_string(),
+        ],
+    );
+    let (_, artifact_validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &tool_telemetry,
+        None,
+        Some((
+            "marketing-brief.md".to_string(),
+            "# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Findings\nClaims are summarized here with websearch evidence captured by tool telemetry.\n".to_string(),
+        )),
+        &std::collections::BTreeSet::new(),
+    );
+
+    assert_ne!(
+        rejected.as_deref(),
+        Some("research completed without citation-backed claims")
+    );
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str() == Some("citations_missing"))));
+    assert_eq!(
+        artifact_validation
+            .get("current_web_research_citation_count")
+            .and_then(Value::as_u64),
+        Some(1)
     );
 
     let _ = std::fs::remove_dir_all(&workspace_root);

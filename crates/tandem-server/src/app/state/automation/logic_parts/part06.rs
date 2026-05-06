@@ -5,6 +5,55 @@ fn tool_telemetry_u32(tool_telemetry: &Value, key: &str) -> Option<u32> {
         .and_then(|value| u32::try_from(value).ok())
 }
 
+fn automation_push_unique_url(out: &mut Vec<String>, raw: &str) {
+    let trimmed = raw
+        .trim()
+        .trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+            )
+        })
+        .trim_end_matches(['.', ':', '!', '?'])
+        .trim();
+    if (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+        && !out.iter().any(|existing| existing == trimmed)
+    {
+        out.push(trimmed.to_string());
+    }
+}
+
+fn automation_collect_urls_from_text(out: &mut Vec<String>, text: &str) {
+    for token in text.split_whitespace() {
+        automation_push_unique_url(out, token);
+    }
+}
+
+fn automation_collect_urls_from_value(out: &mut Vec<String>, value: &Value) {
+    match value {
+        Value::String(text) => automation_collect_urls_from_text(out, text),
+        Value::Array(rows) => {
+            for row in rows {
+                automation_collect_urls_from_value(out, row);
+            }
+        }
+        Value::Object(map) => {
+            for (key, row) in map {
+                if matches!(
+                    key.as_str(),
+                    "url" | "final_url" | "canonical" | "source_url" | "href" | "link"
+                ) {
+                    if let Some(text) = row.as_str() {
+                        automation_push_unique_url(out, text);
+                    }
+                }
+                automation_collect_urls_from_value(out, row);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn summarize_automation_tool_activity(
     node: &AutomationFlowNode,
     session: &Session,
@@ -15,6 +64,7 @@ pub(crate) fn summarize_automation_tool_activity(
     let mut workspace_inspection_used = false;
     let mut web_research_used = false;
     let mut web_research_succeeded = false;
+    let mut web_research_citations = Vec::<String>::new();
     let mut latest_web_research_failure = None::<String>;
     let mut email_delivery_attempted = false;
     let mut email_delivery_succeeded = false;
@@ -92,10 +142,14 @@ pub(crate) fn summarize_automation_tool_activity(
                     .cloned()
                     .unwrap_or(Value::Null);
                 let output_payload = automation_tool_result_output_payload(result.as_ref());
-                let output = automation_tool_result_output_text(result.as_ref())
-                    .unwrap_or_default()
-                    .trim()
-                    .to_ascii_lowercase();
+                let output_raw =
+                    automation_tool_result_output_text(result.as_ref()).unwrap_or_default();
+                automation_collect_urls_from_value(&mut web_research_citations, &metadata);
+                if let Some(payload) = output_payload.as_ref() {
+                    automation_collect_urls_from_value(&mut web_research_citations, payload);
+                }
+                automation_collect_urls_from_text(&mut web_research_citations, &output_raw);
+                let output = output_raw.trim().to_ascii_lowercase();
                 let result_error = metadata
                     .get("error")
                     .and_then(Value::as_str)
@@ -200,6 +254,7 @@ pub(crate) fn summarize_automation_tool_activity(
                      workspace_inspection_used: &mut bool,
                      web_research_used: &mut bool,
                      web_research_succeeded: &mut bool,
+                     web_research_citations: &mut Vec<String>,
                      latest_web_research_failure: &mut Option<String>| {
                         let Some(tool_name) = tool_name.as_ref() else {
                             return;
@@ -225,6 +280,7 @@ pub(crate) fn summarize_automation_tool_activity(
                             "websearch" | "webfetch" | "webfetch_html"
                         ) {
                             *web_research_used = true;
+                            automation_collect_urls_from_text(web_research_citations, block);
                             let lowered = block.to_ascii_lowercase();
                             if lowered.contains("timed out")
                                 || lowered.contains("no results received")
@@ -251,6 +307,7 @@ pub(crate) fn summarize_automation_tool_activity(
                             &mut workspace_inspection_used,
                             &mut web_research_used,
                             &mut web_research_succeeded,
+                            &mut web_research_citations,
                             &mut latest_web_research_failure,
                         );
                         current_block.clear();
@@ -275,11 +332,15 @@ pub(crate) fn summarize_automation_tool_activity(
                     &mut workspace_inspection_used,
                     &mut web_research_used,
                     &mut web_research_succeeded,
+                    &mut web_research_citations,
                     &mut latest_web_research_failure,
                 );
             }
         }
     }
+    web_research_citations.sort();
+    web_research_citations.dedup();
+    web_research_citations.truncate(20);
     let verification = session_verification_summary(node, session);
     json!({
         "requested_tools": requested_tools,
@@ -288,6 +349,7 @@ pub(crate) fn summarize_automation_tool_activity(
         "workspace_inspection_used": workspace_inspection_used,
         "web_research_used": web_research_used,
         "web_research_succeeded": web_research_succeeded,
+        "web_research_citations": web_research_citations,
         "latest_web_research_failure": latest_web_research_failure,
         "email_delivery_attempted": email_delivery_attempted,
         "email_delivery_succeeded": email_delivery_succeeded,

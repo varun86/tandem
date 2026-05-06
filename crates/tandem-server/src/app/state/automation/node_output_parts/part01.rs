@@ -707,7 +707,7 @@ pub(crate) fn research_required_next_tool_actions(
     }
     if has_unmet("citations_missing") {
         actions.push(
-            "Add citation-backed proof points instead of unsupported claims before writing the final brief."
+            "Rewrite the artifact with citation-backed proof points. For JSON outputs, include raw source URLs from `websearch`/`webfetch` in `citations` or `citations_external`, and add `web_sources_reviewed` entries with `url`, `title`, and the claim or section each source supports."
                 .to_string(),
         );
     }

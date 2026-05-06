@@ -494,6 +494,18 @@ fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_s
             .and_then(Value::as_str),
         None
     );
+    let citations = telemetry
+        .get("web_research_citations")
+        .and_then(Value::as_array)
+        .expect("websearch URLs should be preserved as citation evidence");
+    assert!(citations.iter().any(|value| {
+        value.as_str()
+            == Some("https://www.ibm.com/think/insights/ai-agents-2025-expectations-vs-reality")
+    }));
+    assert!(citations.iter().any(|value| {
+        value.as_str()
+            == Some("https://www.deloitte.com/us/en/insights/topics/technology-management/tech-trends/2026/agentic-ai-strategy.html")
+    }));
 }
 
 #[test]
