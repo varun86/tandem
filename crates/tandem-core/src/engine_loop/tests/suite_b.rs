@@ -299,6 +299,39 @@ fn concrete_mcp_preflight_blocks_workspace_write_until_attempted() {
 }
 
 #[test]
+fn session_policy_keeps_artifact_write_tool_for_write_required_connector_nodes() {
+    let allowed = vec![
+        "mcp.notion.notion_fetch".to_string(),
+        "mcp.notion.notion_create_pages".to_string(),
+    ];
+
+    assert!(tool_allowed_by_session_policy(
+        "mcp.notion.notion_create_pages",
+        &allowed,
+        true
+    ));
+    assert!(tool_allowed_by_session_policy("write", &allowed, true));
+    assert!(!tool_allowed_by_session_policy("write", &allowed, false));
+    assert!(!tool_allowed_by_session_policy("read", &allowed, true));
+}
+
+#[test]
+fn provider_tool_mode_downgrades_required_when_no_tools_are_selected() {
+    assert_eq!(
+        provider_tool_mode_for_selected_tools(&ToolMode::Required, 0),
+        ToolMode::Auto
+    );
+    assert_eq!(
+        provider_tool_mode_for_selected_tools(&ToolMode::Required, 1),
+        ToolMode::Required
+    );
+    assert_eq!(
+        provider_tool_mode_for_selected_tools(&ToolMode::Auto, 0),
+        ToolMode::Auto
+    );
+}
+
+#[test]
 fn session_write_targets_ignore_workspace_read_tools() {
     assert!(crate::engine_loop::write_targets::paths(
         "read",

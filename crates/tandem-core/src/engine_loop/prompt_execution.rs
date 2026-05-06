@@ -468,8 +468,11 @@ impl EngineLoop {
                 {
                     if !allowed_tools.is_empty() {
                         tool_schemas.retain(|schema| {
-                            let normalized = normalize_tool_name(&schema.name);
-                            any_policy_matches(&allowed_tools, &normalized)
+                            tool_allowed_by_session_policy(
+                                &schema.name,
+                                &allowed_tools,
+                                requested_write_required,
+                            )
                         });
                     }
                 }
@@ -576,8 +579,15 @@ impl EngineLoop {
                             Some(provider_id.as_str()),
                             Some(model_id_value.as_str()),
                             messages.clone(),
-                            requested_tool_mode.clone(),
-                            Some(tool_schemas.clone()),
+                            provider_tool_mode_for_selected_tools(
+                                &requested_tool_mode,
+                                tool_schemas.len(),
+                            ),
+                            if tool_schemas.is_empty() {
+                                None
+                            } else {
+                                Some(tool_schemas.clone())
+                            },
                             cancel.clone(),
                         ),
                     )

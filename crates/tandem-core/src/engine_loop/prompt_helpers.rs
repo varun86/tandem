@@ -192,6 +192,30 @@ pub(super) fn unattempted_required_mcp_tools(
         .collect()
 }
 
+pub(super) fn tool_allowed_by_session_policy(
+    tool_name: &str,
+    allowed_tools: &[String],
+    requested_write_required: bool,
+) -> bool {
+    if allowed_tools.is_empty() {
+        return true;
+    }
+    let normalized = normalize_tool_name(tool_name);
+    any_policy_matches(allowed_tools, &normalized)
+        || (requested_write_required && is_workspace_write_tool(tool_name))
+}
+
+pub(super) fn provider_tool_mode_for_selected_tools(
+    requested_tool_mode: &ToolMode,
+    selected_tool_count: usize,
+) -> ToolMode {
+    if selected_tool_count == 0 && matches!(requested_tool_mode, ToolMode::Required) {
+        ToolMode::Auto
+    } else {
+        requested_tool_mode.clone()
+    }
+}
+
 pub(super) fn requires_web_research_prompt(input: &str) -> bool {
     let lower = input.to_ascii_lowercase();
     [
