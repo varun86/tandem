@@ -466,6 +466,31 @@ fn automation_prompt_render_concrete_source_coverage(
     Some(sections.join("\n\n"))
 }
 
+fn automation_prompt_concrete_connector_tools(
+    requested_tools: &[String],
+    allowed_servers: &[String],
+) -> Vec<String> {
+    let mut tools = requested_tools
+        .iter()
+        .map(|tool| tool.trim())
+        .filter(|tool| tool.starts_with("mcp.") && *tool != "mcp_list")
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for server_name in allowed_servers {
+        let server_name = server_name.trim();
+        if server_name.is_empty() {
+            continue;
+        }
+        tools.push(format!(
+            "mcp.{}.*",
+            crate::http::mcp::mcp_namespace_segment(server_name)
+        ));
+    }
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
 pub(crate) fn render_automation_v2_prompt(
     automation: &AutomationV2Spec,
     workspace_root: &str,
@@ -688,10 +713,27 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         &connector_discovery_text,
         &agent.mcp_policy.allowed_servers,
     ) {
+        let concrete_connector_tools = automation_prompt_concrete_connector_tools(
+            requested_tools,
+            &agent.mcp_policy.allowed_servers,
+        );
+        let concrete_connector_line = if concrete_connector_tools.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n- Concrete connector source tools available for this node include: {}.\n- If this node is collecting connector-backed source evidence, call at least one concrete `mcp.*` source tool after `mcp_list` and before writing the artifact. `mcp_list`, `glob`, `grep`, `edit`, and `apply_patch` are not source evidence.\n- If the connector tool returns no results or errors, preserve the attempted concrete tool name, arguments, and result/limitation in the artifact; do not silently report zero evidence after discovery only.",
+                concrete_connector_tools
+                    .iter()
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         sections.push(format!(
-            "MCP Discovery:\n- MCP-backed work may be relevant for this node.\n- Allowed MCP servers: {}.\n- Call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available. If you need the catalog overlay, follow up with `mcp_list_catalog`, and if you have identified a gap that needs human approval, use `mcp_request_capability`.\n- Prefer MCP-backed tools for source-specific systems when the connector exists.\n- If the objective depends on a connector-backed source and no relevant MCP tool is available, finish the artifact from the local evidence you already have and record that limitation instead of repeating discovery calls.",
+            "MCP Discovery:\n- MCP-backed work may be relevant for this node.\n- Allowed MCP servers: {}.\n- Call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available. If you need the catalog overlay, follow up with `mcp_list_catalog`, and if you have identified a gap that needs human approval, use `mcp_request_capability`.\n- Prefer MCP-backed tools for source-specific systems when the connector exists.{}\n- If the objective depends on a connector-backed source and no relevant MCP tool is available, finish the artifact from the local evidence you already have and record that limitation instead of repeating discovery calls.",
             serde_json::to_string_pretty(&agent.mcp_policy.allowed_servers)
-                .unwrap_or_else(|_| "[]".to_string())
+                .unwrap_or_else(|_| "[]".to_string()),
+            concrete_connector_line
         ));
     }
     if let Some(inputs) = node

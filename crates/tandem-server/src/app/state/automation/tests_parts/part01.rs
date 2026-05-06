@@ -734,6 +734,40 @@ fn connector_backed_publish_node_requests_named_server_mcp_tools() {
 }
 
 #[test]
+fn connector_source_nodes_do_not_offer_source_mutation_tools() {
+    let mut node = bare_node();
+    node.objective =
+        "Use the connected Reddit MCP to search Reddit for AI productivity signals.".to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/reddit-signals.json",
+            "preferred_mcp_servers": ["reddit-gmail"]
+        }
+    }));
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        "/tmp/tandem-connector-source-tools",
+        vec![
+            "mcp_list".to_string(),
+            "mcp.reddit_gmail.reddit_search_across_subreddits".to_string(),
+            "glob".to_string(),
+            "edit".to_string(),
+            "apply_patch".to_string(),
+            "bash".to_string(),
+            "write".to_string(),
+        ],
+    );
+
+    assert!(requested.contains(&"mcp_list".to_string()));
+    assert!(requested.contains(&"mcp.reddit_gmail.reddit_search_across_subreddits".to_string()));
+    assert!(requested.contains(&"write".to_string()));
+    assert!(!requested.contains(&"edit".to_string()));
+    assert!(!requested.contains(&"apply_patch".to_string()));
+    assert!(!requested.contains(&"bash".to_string()));
+}
+
+#[test]
 fn server_scoped_mcp_patterns_expand_into_concrete_tools() {
     let available_tool_names = std::collections::HashSet::from([
         "mcp.blog_mcp.create_blog_draft".to_string(),
