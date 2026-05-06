@@ -762,6 +762,35 @@ async fn stale_running_automation_runs_mark_in_progress_nodes_as_repairable() {
         Some("cluster_topics")
     );
     assert!(cancellation.is_cancelled());
+
+    let resumed = state.auto_resume_stale_reaped_runs().await;
+    assert_eq!(resumed, 1);
+    let resumed_run = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("resumed run");
+    assert_eq!(resumed_run.status, AutomationRunStatus::Queued);
+    assert_eq!(resumed_run.pause_reason, None);
+    assert_eq!(resumed_run.stop_kind, None);
+    assert!(resumed_run
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "cluster_topics"));
+    assert_eq!(
+        resumed_run
+            .checkpoint
+            .node_outputs
+            .get("cluster_topics")
+            .and_then(|output| output.get("status"))
+            .and_then(Value::as_str),
+        Some("needs_repair")
+    );
+    assert!(resumed_run
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .any(|entry| entry.event == "run_auto_resumed"));
 }
 
 #[tokio::test]

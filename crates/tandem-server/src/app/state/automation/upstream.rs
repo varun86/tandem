@@ -209,6 +209,7 @@ mod tests {
                 pending_nodes: Vec::new(),
                 node_outputs: HashMap::new(),
                 node_attempts: HashMap::new(),
+                node_attempt_verdicts: HashMap::new(),
                 blocked_nodes: Vec::new(),
                 awaiting_gate: None,
                 gate_history: Vec::new(),

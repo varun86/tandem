@@ -75,13 +75,27 @@ fn publish_automation_v2_failure_event(
         run.detail.as_deref().unwrap_or_default(),
     ]
     .join("\n");
+    let attempt_verdict_chain = recent_node_attempt_verdicts(run, node_id);
+    let attempt_review_chain = attempt_verdict_chain
+        .iter()
+        .filter_map(|verdict| {
+            let review = verdict.get("attempt_review")?;
+            Some(json!({
+                "attempt": verdict.get("attempt").cloned().unwrap_or(Value::Null),
+                "node_id": verdict.get("node_id").cloned().unwrap_or(Value::Null),
+                "failure_class": verdict.get("failure_class").cloned().unwrap_or(Value::Null),
+                "attempt_review": review,
+            }))
+        })
+        .collect::<Vec<_>>();
     let should_include_recent_attempt_evidence =
         automation_failure_is_provider_stream_related(&final_error_text)
             || validation_errors
                 .as_array()
                 .is_some_and(|rows| !rows.is_empty())
             || !missing_workspace_files.is_empty()
-            || !required_next_tool_actions.is_empty();
+            || !required_next_tool_actions.is_empty()
+            || !attempt_verdict_chain.is_empty();
     let recent_attempt_evidence = if should_include_recent_attempt_evidence {
         recent_node_attempt_evidence(run, node_id)
     } else {
@@ -152,6 +166,8 @@ fn publish_automation_v2_failure_event(
             "input_refs": node.map(|row| serde_json::to_value(&row.input_refs).unwrap_or(Value::Null)).unwrap_or(Value::Null),
             "output_contract": node.and_then(|row| row.output_contract.as_ref()).map(|row| serde_json::to_value(row).unwrap_or(Value::Null)),
             "validation_errors": validation_errors,
+            "attempt_verdict_chain": attempt_verdict_chain,
+            "attempt_review_chain": attempt_review_chain,
             "suggested_next_action": "Inspect the failing automation node output, fix the validation/config/tool failure, then rerun the automation.",
             "tenantContext": serde_json::to_value(&run.tenant_context).unwrap_or(Value::Null),
     });
@@ -369,6 +385,12 @@ pub(crate) fn build_node_execution_error_output_with_category(
             "Retry this node only after the required tool capabilities are actually available."
                 .to_string(),
             "Do not continue with a collapsed tool set that only exposes discovery helpers."
+                .to_string(),
+        ]
+    } else if blocker_category == "stale_no_provider_activity" {
+        vec![
+            "Retry the same node execution after provider activity/heartbeat recovers.".to_string(),
+            "Treat this as a stale provider/session heartbeat failure, not as a valid completed handoff."
                 .to_string(),
         ]
     } else {
@@ -1315,6 +1337,13 @@ pub async fn run_automation_v2_run(
                                 }
                             }
                             row.checkpoint.node_outputs.insert(node_id.clone(), output.clone());
+                            if let Some(verdict) = output.get("attempt_verdict").cloned() {
+                                row.checkpoint
+                                    .node_attempt_verdicts
+                                    .entry(node_id.clone())
+                                    .or_default()
+                                    .push(verdict);
+                            }
                             if !verify_failed
                                 && row
                                     .checkpoint
@@ -1535,6 +1564,102 @@ pub async fn run_automation_v2_run(
 
                     let mut failure_output =
                         build_node_execution_error_output(&node, &detail, terminal);
+                    let blocker_category = execution_error_blocker_category(&detail);
+                    let failure_class = match blocker_category {
+                        "provider_connect_timeout" | "provider_server_error" => {
+                            "provider_transient"
+                        }
+                        "provider_auth" => "provider_terminal",
+                        "tool_resolution_failed" => "tool_resolution",
+                        _ => "contract_miss",
+                    };
+                    let required_next_actions = failure_output
+                        .pointer("/artifact_validation/required_next_tool_actions")
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let provider_related = failure_class == "provider_transient"
+                        || failure_class == "provider_terminal";
+                    let attempt_review = crate::automation_v2::types::AutomationAttemptReview {
+                        tone: "calm_teammate_v1".to_string(),
+                        progress_label: if failure_class == "provider_transient" {
+                            "partial".to_string()
+                        } else {
+                            "none".to_string()
+                        },
+                        progress_score: if failure_class == "provider_transient" {
+                            10
+                        } else {
+                            0
+                        },
+                        completed_correctly: Vec::new(),
+                        still_needed: if failure_class == "provider_transient" {
+                            vec!["Retry the same plan after provider activity recovers.".to_string()]
+                        } else {
+                            vec![format!(
+                                "Address the recorded execution blocker: {}.",
+                                crate::app::state::truncate_text(&detail, 220)
+                            )]
+                        },
+                        why_it_matters: if failure_class == "provider_transient" {
+                            vec![
+                                "Provider interruptions are infrastructure failures, not evidence that the workflow contract was satisfied."
+                                    .to_string(),
+                            ]
+                        } else {
+                            vec![
+                                "The next attempt needs one concrete blocker it can satisfy and verify."
+                                    .to_string(),
+                            ]
+                        },
+                        next_moves: if required_next_actions.is_empty() {
+                            vec![
+                                "Use the execution error and expected contract to repair the next attempt."
+                                    .to_string(),
+                            ]
+                        } else {
+                            required_next_actions.iter().take(3).cloned().collect()
+                        },
+                    };
+                    let attempt_verdict = json!(
+                        crate::automation_v2::types::AutomationAttemptVerdict {
+                            version: 1,
+                            node_id: node.node_id.clone(),
+                            attempt: attempts,
+                            session_id: None,
+                            outcome: if terminal {
+                                "failed".to_string()
+                            } else {
+                                "needs_repair".to_string()
+                            },
+                            failure_class: Some(failure_class.to_string()),
+                            consumes_model_attempt_budget: failure_class != "provider_transient",
+                            consumes_repair_budget: failure_class == "contract_miss",
+                            expected: json!({
+                                "output_contract": node.output_contract,
+                                "required_output_path": crate::app::state::automation::automation_node_required_output_path(&node),
+                            }),
+                            observed: json!({
+                                "status": if terminal { "failed" } else { "needs_repair" },
+                                "blocker_category": blocker_category,
+                                "blocked_reason": detail,
+                            }),
+                            unmet_requirements: Vec::new(),
+                            required_next_actions,
+                            provider_error: provider_related.then(|| detail.clone()),
+                            validation_reason: Some(detail.clone()),
+                            attempt_review,
+                            created_at_ms: now_ms(),
+                        }
+                    );
+                    if let Some(object) = failure_output.as_object_mut() {
+                        object.insert("attempt_verdict".to_string(), attempt_verdict.clone());
+                    }
                     if artifact_recovered {
                         if let Some(obj) = failure_output.as_object_mut() {
                             obj.insert("artifact_recovered_from_session".to_string(), json!(true));
@@ -1561,6 +1686,11 @@ pub async fn run_automation_v2_run(
                             row.checkpoint
                                 .node_outputs
                                 .insert(node_id.clone(), failure_output.clone());
+                            row.checkpoint
+                                .node_attempt_verdicts
+                                .entry(node_id.clone())
+                                .or_default()
+                                .push(attempt_verdict.clone());
                             crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
                                 row,
                                 "node_failed",
@@ -1573,6 +1703,7 @@ pub async fn run_automation_v2_run(
                                     "reason": detail,
                                     "terminal": terminal,
                                     "artifact_recovered_from_session": artifact_recovered,
+                                    "attempt_verdict": attempt_verdict,
                                 })),
                             );
                         })

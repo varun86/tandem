@@ -537,11 +537,21 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                     >
                       <input
                         type="checkbox"
-                        className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-950 text-blue-500"
+                        className="sr-only"
                         checked={checked}
                         onChange={() => toggleWorkflowLibrarySourceFilter(option.value)}
                         disabled={workflowPreferencesLoading}
                       />
+                      <span
+                        className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border text-[10px] font-bold leading-none ${
+                          checked
+                            ? "border-blue-300 bg-blue-400 text-slate-950"
+                            : "border-white/10 bg-slate-950/70 text-transparent"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {checked ? "✓" : ""}
+                      </span>
                       {option.label}
                     </label>
                   );
@@ -562,11 +572,21 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                     >
                       <input
                         type="checkbox"
-                        className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-950 text-emerald-500"
+                        className="sr-only"
                         checked={checked}
                         onChange={() => toggleWorkflowLibraryStatusFilter(option.value)}
                         disabled={workflowPreferencesLoading}
                       />
+                      <span
+                        className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border text-[10px] font-bold leading-none ${
+                          checked
+                            ? "border-emerald-300 bg-emerald-400 text-slate-950"
+                            : "border-white/10 bg-slate-950/70 text-transparent"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {checked ? "✓" : ""}
+                      </span>
                       {option.label}
                     </label>
                   );

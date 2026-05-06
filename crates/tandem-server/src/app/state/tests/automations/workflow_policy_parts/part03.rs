@@ -351,6 +351,7 @@ fn workflow_state_events_capture_typed_stability_transitions() {
             pending_nodes: Vec::new(),
             node_outputs: std::collections::HashMap::new(),
             node_attempts: std::collections::HashMap::new(),
+            node_attempt_verdicts: std::collections::HashMap::new(),
             blocked_nodes: Vec::new(),
             awaiting_gate: None,
             gate_history: Vec::new(),
@@ -1216,4 +1217,3 @@ fn email_delivery_nodes_request_repair_when_email_tools_were_offered_but_unused(
     );
     assert_eq!(approved, Some(true));
 }
-

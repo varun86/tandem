@@ -174,6 +174,58 @@ pub(super) fn concrete_mcp_tools_required_before_write(
     tools
 }
 
+pub(super) fn mcp_source_wildcards_required_before_write(
+    tool_allowlist: &HashSet<String>,
+) -> Vec<String> {
+    let mut patterns = tool_allowlist
+        .iter()
+        .filter_map(|tool| {
+            let normalized = normalize_tool_name(tool);
+            if normalized == "mcp_list"
+                || !normalized.starts_with("mcp.")
+                || !normalized.ends_with(".*")
+            {
+                return None;
+            }
+            Some(normalized)
+        })
+        .collect::<Vec<_>>();
+    patterns.sort();
+    patterns.dedup();
+    patterns
+}
+
+pub(super) fn has_attempted_concrete_mcp_for_wildcard(
+    wildcard_patterns: &[String],
+    tool_call_counts: &HashMap<String, usize>,
+) -> bool {
+    if wildcard_patterns.is_empty() {
+        return true;
+    }
+    tool_call_counts.iter().any(|(tool, count)| {
+        *count > 0
+            && tool != "mcp_list"
+            && tool.starts_with("mcp.")
+            && tool.split('.').count() >= 3
+            && wildcard_patterns
+                .iter()
+                .any(|pattern| tool_name_matches_policy(pattern, tool))
+    })
+}
+
+pub(super) fn concrete_mcp_tool_matches_wildcard(
+    tool_name: &str,
+    wildcard_patterns: &[String],
+) -> bool {
+    let normalized = normalize_tool_name(tool_name);
+    normalized.starts_with("mcp.")
+        && normalized != "mcp_list"
+        && normalized.split('.').count() >= 3
+        && wildcard_patterns
+            .iter()
+            .any(|pattern| tool_name_matches_policy(pattern, &normalized))
+}
+
 pub(super) fn has_unattempted_required_mcp_tool(
     required_tools: &[String],
     tool_call_counts: &HashMap<String, usize>,

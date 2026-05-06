@@ -650,6 +650,39 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                     .unwrap_or(0)
                     > 1);
         let selected_assessment = best_candidate.as_ref();
+        let selected_text = selected_assessment
+            .map(|assessment| assessment.text.as_str())
+            .unwrap_or(text.as_str());
+        if artifact_text_contains_required_tool_mode_failure(selected_text) {
+            unmet_requirements.push("provider_required_tool_mode_unsatisfied".to_string());
+            accepted_output = None;
+            let reason = "artifact contains a provider required-tool/write-required failure marker"
+                .to_string();
+            if semantic_block_reason.is_none() {
+                semantic_block_reason = Some(reason.clone());
+            }
+            if rejected_reason.is_none() {
+                rejected_reason = Some(reason);
+            }
+        }
+        let connector_source_artifact_missing = connector_discovery_required
+            && !automation_node_is_outbound_action(node)
+            && !connector_action_patterns.is_empty()
+            && executed_concrete_mcp_tool
+            && (artifact_text_is_mcp_inventory_only(selected_text)
+                || !artifact_text_has_connector_source_evidence_or_limitation(selected_text));
+        if connector_source_artifact_missing {
+            unmet_requirements.push("mcp_connector_source_artifact_missing".to_string());
+            accepted_output = None;
+            let reason = "connector-backed source artifact contains connector inventory only; include source evidence from a concrete mcp.* tool result or an explicit connector limitation"
+                .to_string();
+            if semantic_block_reason.is_none() {
+                semantic_block_reason = Some(reason.clone());
+            }
+            if rejected_reason.is_none() {
+                rejected_reason = Some(reason);
+            }
+        }
         let required_tools_for_node = enforcement.required_tools.clone();
         let has_required_tools = !required_tools_for_node.is_empty();
         let validation_profile = enforcement
@@ -1260,7 +1293,11 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     if unmet_requirements.iter().any(|requirement| {
         matches!(
             requirement.as_str(),
-            "placeholder_artifact" | "mcp_required_tool_missing" | "mcp_connector_source_missing"
+            "placeholder_artifact"
+                | "provider_required_tool_mode_unsatisfied"
+                | "mcp_required_tool_missing"
+                | "mcp_connector_source_missing"
+                | "mcp_connector_source_artifact_missing"
         )
     }) {
         accepted_output = None;
@@ -1350,8 +1387,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             matches!(
                 value.as_str(),
                 "current_attempt_output_missing"
+                    | "provider_required_tool_mode_unsatisfied"
                     | "mcp_required_tool_missing"
                     | "mcp_connector_source_missing"
+                    | "mcp_connector_source_artifact_missing"
                     | "mcp_discovery_missing"
                     | "no_concrete_reads"
                     | "concrete_read_required"

@@ -1112,6 +1112,7 @@ impl AppState {
                 pending_nodes,
                 node_outputs: std::collections::HashMap::new(),
                 node_attempts: std::collections::HashMap::new(),
+                node_attempt_verdicts: std::collections::HashMap::new(),
                 blocked_nodes: Vec::new(),
                 awaiting_gate: None,
                 gate_history: Vec::new(),
@@ -1177,6 +1178,7 @@ impl AppState {
                 pending_nodes: Vec::new(),
                 node_outputs: std::collections::HashMap::new(),
                 node_attempts: std::collections::HashMap::new(),
+                node_attempt_verdicts: std::collections::HashMap::new(),
                 blocked_nodes: Vec::new(),
                 awaiting_gate: None,
                 gate_history: Vec::new(),
@@ -1406,7 +1408,7 @@ impl AppState {
                                     node,
                                     &stale_node_detail,
                                     terminal,
-                                    "execution_error",
+                                    "stale_no_provider_activity",
                                 ),
                             );
                             if row.checkpoint.last_failure.is_none() {

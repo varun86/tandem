@@ -1659,6 +1659,7 @@ mod tests {
                     ),
                 ]),
                 node_attempts: std::collections::HashMap::new(),
+                node_attempt_verdicts: std::collections::HashMap::new(),
                 blocked_nodes: vec!["node-2".to_string()],
                 awaiting_gate: None,
                 gate_history: Vec::new(),

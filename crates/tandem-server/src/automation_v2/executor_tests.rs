@@ -72,6 +72,7 @@ fn test_run_with_output(output: Value) -> crate::automation_v2::types::Automatio
             pending_nodes: Vec::new(),
             node_outputs: std::collections::HashMap::from([("research-brief".to_string(), output)]),
             node_attempts: std::collections::HashMap::new(),
+            node_attempt_verdicts: std::collections::HashMap::new(),
             blocked_nodes: Vec::new(),
             awaiting_gate: None,
             gate_history: Vec::new(),

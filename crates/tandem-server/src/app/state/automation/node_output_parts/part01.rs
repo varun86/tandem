@@ -649,10 +649,26 @@ pub(crate) fn research_required_next_tool_actions(
         );
     }
     if has_unmet("mcp_connector_source_missing") {
-        actions.push(
-            "Call at least one concrete connector-backed MCP source tool before finalizing. `mcp_list` only proves the connector exists; source evidence requires a tool such as `mcp.reddit_gmail.reddit_search_across_subreddits` or `mcp.reddit_gmail.reddit_retrieve_reddit_post`, then preserving the returned links/results in the artifact."
-                .to_string(),
-        );
+        let concrete_mcp_tools = requested_tools
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|tool| tool.starts_with("mcp.") && *tool != "mcp_list" && !tool.ends_with(".*"))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let tool_hint = if concrete_mcp_tools.is_empty() {
+            "a concrete connector-backed `mcp.*` source tool".to_string()
+        } else {
+            concrete_mcp_tools
+                .iter()
+                .map(|tool| format!("`{}`", tool))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        actions.push(format!(
+            "Call at least one concrete connector-backed MCP source tool before finalizing: {}. `mcp_list` only proves connector discovery; source evidence requires preserving concrete tool results or limitations in the artifact.",
+            tool_hint
+        ));
     }
     if requested_has_read
         && (!executed_has_read
@@ -911,6 +927,456 @@ pub(crate) fn build_automation_attempt_evidence(
             "latest_failure": tool_telemetry.get("latest_email_delivery_failure").cloned().unwrap_or(Value::Null),
         },
         "artifact": artifact_status,
+    })
+}
+
+fn strings_from_json_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn attempt_verdict_failure_class(
+    status: &str,
+    blocker_category: Option<&str>,
+    unmet_requirements: &[String],
+    validation_reason: Option<&str>,
+) -> Option<String> {
+    let normalized_status = status.trim().to_ascii_lowercase();
+    if matches!(
+        normalized_status.as_str(),
+        "completed" | "complete" | "done" | "passed" | "accepted"
+    ) {
+        return None;
+    }
+    match blocker_category.unwrap_or_default() {
+        "provider_connect_timeout" | "provider_server_error" | "stale_no_provider_activity" => {
+            return Some("provider_transient".to_string());
+        }
+        "provider_auth" => return Some("provider_terminal".to_string()),
+        "tool_resolution_failed" => return Some("tool_resolution".to_string()),
+        value if value.contains("tool") => return Some("tool_execution".to_string()),
+        _ => {}
+    }
+    let has_unmet = |needle: &str| unmet_requirements.iter().any(|value| value == needle);
+    if has_unmet("current_attempt_output_missing") || has_unmet("required_workspace_files_missing")
+    {
+        return Some("workspace_write_missing".to_string());
+    }
+    if has_unmet("mcp_connector_source_missing")
+        || has_unmet("mcp_connector_source_artifact_missing")
+        || has_unmet("mcp_required_tool_missing")
+        || has_unmet("provider_required_tool_mode_unsatisfied")
+    {
+        return Some("contract_miss".to_string());
+    }
+    if validation_reason.is_some() || !unmet_requirements.is_empty() {
+        return Some("artifact_validation".to_string());
+    }
+    Some("contract_miss".to_string())
+}
+
+fn attempt_review_push_unique(rows: &mut Vec<String>, value: impl Into<String>) {
+    let value = value.into();
+    let trimmed = value.trim();
+    if trimmed.is_empty() || rows.iter().any(|existing| existing == trimmed) {
+        return;
+    }
+    rows.push(trimmed.to_string());
+}
+
+fn attempt_review_cap(rows: &mut Vec<String>, max: usize) {
+    if rows.len() > max {
+        rows.truncate(max);
+    }
+}
+
+fn attempt_review_tick_list(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("`{}`", value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn attempt_review_humanize_requirement(requirement: &str) -> String {
+    requirement
+        .split('_')
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn attempt_review_required_workspace_files(expected: &Value) -> Vec<String> {
+    strings_from_json_array(expected.get("required_workspace_files"))
+}
+
+fn attempt_review_is_terminal_success(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "completed" | "complete" | "done" | "passed" | "accepted"
+    )
+}
+
+fn attempt_review_for_unmet_requirement(requirement: &str, expected: &Value) -> String {
+    match requirement {
+        "current_attempt_output_missing" => {
+            "Write the required run artifact before ending the attempt.".to_string()
+        }
+        "required_workspace_files_missing" => {
+            let files = attempt_review_required_workspace_files(expected);
+            if files.is_empty() {
+                "Write the required workspace file(s) approved for this node.".to_string()
+            } else {
+                format!(
+                    "Write the required workspace file(s) {} approved for this node before ending the attempt.",
+                    attempt_review_tick_list(&files)
+                )
+            }
+        }
+        "mcp_connector_source_missing"
+        | "mcp_connector_source_artifact_missing"
+        | "mcp_required_tool_missing" => {
+            "Use concrete source/tool evidence, not discovery-only output.".to_string()
+        }
+        "provider_required_tool_mode_unsatisfied" => {
+            "Complete the required tool/write mode instead of returning the provider failure marker."
+                .to_string()
+        }
+        "artifact_status_not_terminal" => {
+            "Rewrite the artifact with a terminal completed status once the best available deliverable is written."
+                .to_string()
+        }
+        "upstream_evidence_not_synthesized" => {
+            "Synthesize the strongest upstream evidence into the final artifact.".to_string()
+        }
+        "no_concrete_reads" | "concrete_read_required" | "required_source_paths_not_read" => {
+            "Read the required concrete source path(s) before finalizing.".to_string()
+        }
+        "missing_successful_web_research" | "web_sources_reviewed_missing" => {
+            "Complete external research, or record the exact limitation if the source is unavailable."
+                .to_string()
+        }
+        "citations_missing" | "research_citations_missing" => {
+            "Add source-backed citations or reviewed-source entries to the artifact.".to_string()
+        }
+        other => format!(
+            "Resolve the remaining requirement: {}.",
+            attempt_review_humanize_requirement(other)
+        ),
+    }
+}
+
+fn attempt_review_why_requirement_matters(requirement: &str) -> &'static str {
+    match requirement {
+        "current_attempt_output_missing" | "required_workspace_files_missing" => {
+            "Downstream nodes and Bug Monitor need a real artifact or workspace file to inspect."
+        }
+        "mcp_connector_source_missing"
+        | "mcp_connector_source_artifact_missing"
+        | "mcp_required_tool_missing" => {
+            "Discovery confirms tool availability; source evidence requires concrete results or an explicit limitation."
+        }
+        "provider_required_tool_mode_unsatisfied" => {
+            "The runtime can only trust the attempt after the required tool/write mode has actually completed."
+        }
+        "artifact_status_not_terminal" => {
+            "The runtime uses terminal status to distinguish completed work from a blocked handoff."
+        }
+        "upstream_evidence_not_synthesized" => {
+            "A final artifact should preserve the strongest evidence already gathered upstream."
+        }
+        "no_concrete_reads" | "concrete_read_required" | "required_source_paths_not_read" => {
+            "Concrete file reads give the next attempt stable evidence instead of guesswork."
+        }
+        "missing_successful_web_research"
+        | "web_sources_reviewed_missing"
+        | "citations_missing"
+        | "research_citations_missing" => {
+            "Source-backed research lets reviewers verify the answer without replaying the whole workflow."
+        }
+        _ => "Making the remaining contract explicit gives the next attempt a small, safe target.",
+    }
+}
+
+fn build_automation_attempt_review(
+    status: &str,
+    failure_class: Option<&str>,
+    expected: &Value,
+    observed: &Value,
+    unmet_requirements: &[String],
+    required_next_actions: &[String],
+    provider_error: Option<&str>,
+    validation_reason: Option<&str>,
+) -> crate::automation_v2::types::AutomationAttemptReview {
+    let executed_tools = strings_from_json_array(observed.get("executed_tools"));
+    let artifact_status = observed
+        .pointer("/artifact/status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let terminal_success = attempt_review_is_terminal_success(status);
+    let provider_transient = failure_class == Some("provider_transient");
+
+    let mut completed_correctly = Vec::new();
+    let mut still_needed = Vec::new();
+    let mut why_it_matters = Vec::new();
+    let mut next_moves = Vec::new();
+    let mut progress_score: u16 = 0;
+
+    if !executed_tools.is_empty() {
+        progress_score += 20;
+    }
+    if executed_tools.iter().any(|tool| tool == "mcp_list") {
+        progress_score += 10;
+        attempt_review_push_unique(
+            &mut completed_correctly,
+            "Discovered available MCP connector inventory.",
+        );
+    }
+    if executed_tools
+        .iter()
+        .any(|tool| tool.starts_with("mcp.") || tool.starts_with("mcp_"))
+    {
+        progress_score += 25;
+        attempt_review_push_unique(
+            &mut completed_correctly,
+            "Called a concrete MCP source/action tool.",
+        );
+    }
+    if executed_tools.iter().any(|tool| tool == "read") {
+        progress_score += 20;
+        attempt_review_push_unique(&mut completed_correctly, "Read workspace source material.");
+    }
+    if executed_tools.iter().any(|tool| {
+        matches!(
+            tool.as_str(),
+            "websearch" | "webfetch" | "web_search" | "web_fetch"
+        )
+    }) {
+        progress_score += 15;
+        attempt_review_push_unique(&mut completed_correctly, "Attempted external web research.");
+    }
+    if matches!(artifact_status, "written" | "reused_valid") {
+        progress_score += 25;
+        attempt_review_push_unique(
+            &mut completed_correctly,
+            "Produced the required artifact file.",
+        );
+    }
+    if terminal_success {
+        progress_score = 100;
+        attempt_review_push_unique(
+            &mut completed_correctly,
+            "Reached a terminal successful status.",
+        );
+    }
+    if provider_transient {
+        progress_score = progress_score.max(10).min(60);
+        attempt_review_push_unique(
+            &mut still_needed,
+            "Retry the same plan after provider activity recovers.",
+        );
+        attempt_review_push_unique(
+            &mut why_it_matters,
+            "Provider interruptions are infrastructure failures, not evidence that the workflow contract was satisfied.",
+        );
+    }
+
+    for requirement in unmet_requirements {
+        attempt_review_push_unique(
+            &mut still_needed,
+            attempt_review_for_unmet_requirement(requirement, expected),
+        );
+        attempt_review_push_unique(
+            &mut why_it_matters,
+            attempt_review_why_requirement_matters(requirement),
+        );
+    }
+
+    if still_needed.is_empty() && !terminal_success {
+        if let Some(reason) = validation_reason.or(provider_error) {
+            attempt_review_push_unique(
+                &mut still_needed,
+                format!(
+                    "Address the recorded blocker: {}.",
+                    truncate_text(reason, 220)
+                ),
+            );
+        } else {
+            attempt_review_push_unique(
+                &mut still_needed,
+                "Complete the expected contract before finalizing.",
+            );
+        }
+        attempt_review_push_unique(
+            &mut why_it_matters,
+            "The next attempt needs one concrete target it can satisfy and verify.",
+        );
+    }
+
+    for action in required_next_actions {
+        attempt_review_push_unique(&mut next_moves, action.clone());
+    }
+    if next_moves.is_empty() {
+        if provider_transient {
+            attempt_review_push_unique(
+                &mut next_moves,
+                "Retry without changing the workflow contract; preserve any useful prior evidence.",
+            );
+        } else if let Some(first) = still_needed.first() {
+            attempt_review_push_unique(&mut next_moves, first.clone());
+        } else {
+            attempt_review_push_unique(&mut next_moves, "Carry the successful artifact forward.");
+        }
+    }
+
+    if !unmet_requirements.is_empty() && !terminal_success {
+        progress_score = progress_score.min(85);
+    }
+    if progress_score == 0 && validation_reason.is_some() {
+        progress_score = 5;
+    }
+    let progress_score = progress_score.min(100) as u8;
+    let progress_label = if terminal_success || progress_score >= 95 {
+        "complete"
+    } else if progress_score >= 65 {
+        "substantial"
+    } else if progress_score >= 20 {
+        "partial"
+    } else {
+        "none"
+    };
+
+    attempt_review_cap(&mut completed_correctly, 5);
+    attempt_review_cap(&mut still_needed, 5);
+    attempt_review_cap(&mut why_it_matters, 5);
+    attempt_review_cap(&mut next_moves, 3);
+
+    crate::automation_v2::types::AutomationAttemptReview {
+        tone: "calm_teammate_v1".to_string(),
+        progress_label: progress_label.to_string(),
+        progress_score,
+        completed_correctly,
+        still_needed,
+        why_it_matters,
+        next_moves,
+    }
+}
+
+pub(crate) fn build_automation_attempt_verdict(
+    node: &AutomationFlowNode,
+    status: &str,
+    blocked_reason: Option<&str>,
+    failure_kind: Option<&str>,
+    blocker_category: Option<&str>,
+    tool_telemetry: &Value,
+    artifact_validation: Option<&Value>,
+    required_output_path: Option<&str>,
+    attempt_evidence: Option<&Value>,
+    session_id: &str,
+) -> Value {
+    let attempt = tool_telemetry
+        .get("node_attempt")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(1);
+    let mut unmet_requirements = strings_from_json_array(
+        artifact_validation.and_then(|value| value.get("unmet_requirements")),
+    );
+    unmet_requirements.sort();
+    unmet_requirements.dedup();
+    let required_next_actions = strings_from_json_array(
+        artifact_validation.and_then(|value| value.get("required_next_tool_actions")),
+    );
+    let validation_reason = artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .or_else(|| artifact_validation.and_then(|value| value.get("rejected_artifact_reason")))
+        .and_then(Value::as_str)
+        .or(blocked_reason);
+    let failure_class = attempt_verdict_failure_class(
+        status,
+        blocker_category,
+        &unmet_requirements,
+        validation_reason,
+    );
+    let consumes_model_attempt_budget = !matches!(
+        failure_class.as_deref(),
+        Some("provider_transient") | Some("stale_session")
+    );
+    let consumes_repair_budget = matches!(
+        failure_class.as_deref(),
+        Some("contract_miss")
+            | Some("artifact_validation")
+            | Some("workspace_write_missing")
+            | Some("tool_execution")
+    );
+    let provider_error = if matches!(
+        failure_class.as_deref(),
+        Some("provider_transient") | Some("provider_terminal")
+    ) {
+        blocked_reason.map(str::to_string)
+    } else {
+        None
+    };
+    let required_workspace_files = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .and_then(|value| value.get("must_write_files"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let expected = json!({
+        "output_contract": node.output_contract,
+        "required_output_path": required_output_path,
+        "required_workspace_files": required_workspace_files,
+        "requested_tools": tool_telemetry.get("requested_tools").cloned().unwrap_or_else(|| json!([])),
+        "concrete_mcp_tools": super::prompting_impl::automation_node_concrete_mcp_tool_allowlist(node),
+    });
+    let observed = json!({
+        "status": status,
+        "failure_kind": failure_kind,
+        "blocker_category": blocker_category,
+        "blocked_reason": blocked_reason,
+        "executed_tools": tool_telemetry.get("executed_tools").cloned().unwrap_or_else(|| json!([])),
+        "tool_call_counts": tool_telemetry.get("tool_call_counts").cloned().unwrap_or_else(|| json!({})),
+        "artifact": attempt_evidence
+            .and_then(|value| value.get("artifact"))
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    });
+    let attempt_review = build_automation_attempt_review(
+        status,
+        failure_class.as_deref(),
+        &expected,
+        &observed,
+        &unmet_requirements,
+        &required_next_actions,
+        provider_error.as_deref(),
+        validation_reason,
+    );
+    json!(crate::automation_v2::types::AutomationAttemptVerdict {
+        version: 1,
+        node_id: node.node_id.clone(),
+        attempt,
+        session_id: Some(session_id.to_string()),
+        outcome: status.to_string(),
+        failure_class,
+        consumes_model_attempt_budget,
+        consumes_repair_budget,
+        expected,
+        observed,
+        unmet_requirements,
+        required_next_actions,
+        provider_error,
+        validation_reason: validation_reason.map(str::to_string),
+        attempt_review,
+        created_at_ms: now_ms(),
     })
 }
 

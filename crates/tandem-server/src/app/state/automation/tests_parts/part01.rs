@@ -1,7 +1,7 @@
 use super::node_runtime_impl::automation_node_should_surface_mcp_discovery;
 use super::*;
 use crate::automation_v2::types::{AutomationFlowInputRef, AutomationFlowNode};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tandem_types::{ToolCapabilities, ToolDomain, ToolEffect, ToolSchema};
 
@@ -64,6 +64,143 @@ fn node_with_input_ref() -> AutomationFlowNode {
         alias: "research".to_string(),
     }];
     node
+}
+
+#[test]
+fn attempt_verdict_records_expected_observed_contract_miss() {
+    let mut node = bare_node();
+    node.metadata = Some(json!({
+        "tool_allowlist": ["mcp.example.search_posts"]
+    }));
+    let tool_telemetry = json!({
+        "node_attempt": 2,
+        "requested_tools": ["mcp.example.search_posts"],
+        "executed_tools": ["mcp_list"],
+        "tool_call_counts": { "mcp_list": 1 },
+    });
+    let artifact_validation = json!({
+        "semantic_block_reason": "connector source evidence was missing",
+        "unmet_requirements": ["mcp_connector_source_missing"],
+        "required_next_tool_actions": ["Call `mcp.example.search_posts` before writing the artifact."],
+        "validation_basis": {
+            "must_write_files": ["tandem-review.md"]
+        }
+    });
+
+    let verdict = build_automation_attempt_verdict(
+        &node,
+        "needs_repair",
+        None,
+        Some("required_tool_unused_mcp_connector"),
+        None,
+        &tool_telemetry,
+        Some(&artifact_validation),
+        Some(".tandem/artifacts/assess.json"),
+        None,
+        "session-1",
+    );
+
+    assert_eq!(
+        verdict.get("failure_class").and_then(Value::as_str),
+        Some("contract_miss")
+    );
+    assert_eq!(
+        verdict
+            .pointer("/observed/executed_tools/0")
+            .and_then(Value::as_str),
+        Some("mcp_list")
+    );
+    assert_eq!(
+        verdict
+            .pointer("/expected/concrete_mcp_tools/0")
+            .and_then(Value::as_str),
+        Some("mcp.example.search_posts")
+    );
+    assert_eq!(
+        verdict
+            .pointer("/attempt_review/tone")
+            .and_then(Value::as_str),
+        Some("calm_teammate_v1")
+    );
+    assert_eq!(
+        verdict
+            .pointer("/attempt_review/progress_label")
+            .and_then(Value::as_str),
+        Some("partial")
+    );
+    assert!(verdict
+        .pointer("/attempt_review/completed_correctly")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| row
+            .as_str()
+            .is_some_and(|text| text.contains("Discovered available MCP")))));
+    assert!(verdict
+        .pointer("/attempt_review/still_needed")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| row
+            .as_str()
+            .is_some_and(|text| text.contains("concrete source/tool evidence")))));
+    assert!(verdict
+        .pointer("/attempt_review/why_it_matters")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| row
+            .as_str()
+            .is_some_and(|text| text.contains("Discovery confirms tool availability")))));
+    assert_eq!(
+        verdict
+            .pointer("/attempt_review/next_moves/0")
+            .and_then(Value::as_str),
+        Some("Call `mcp.example.search_posts` before writing the artifact.")
+    );
+}
+
+#[test]
+fn repair_brief_uses_attempt_verdict_expected_observed_sections() {
+    let node = bare_node();
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "outcome": "needs_repair",
+            "unmet_requirements": ["mcp_connector_source_missing"]
+        },
+        "attempt_verdict": {
+            "failure_class": "contract_miss",
+            "validation_reason": "only discovery was attempted",
+            "expected": {
+                "concrete_mcp_tools": ["mcp.example.search_posts"],
+                "required_output_path": ".tandem/artifacts/assess.json"
+            },
+            "observed": {
+                "executed_tools": ["mcp_list"],
+                "artifact": {"status": "missing"}
+            },
+            "attempt_review": {
+                "tone": "calm_teammate_v1",
+                "progress_label": "partial",
+                "progress_score": 30,
+                "completed_correctly": ["Discovered available MCP connector inventory."],
+                "still_needed": ["Use concrete source/tool evidence, not discovery-only output."],
+                "why_it_matters": ["Discovery confirms tool availability; source evidence requires concrete results or an explicit limitation."],
+                "next_moves": ["Call `mcp.example.search_posts` before writing the artifact."]
+            },
+            "unmet_requirements": ["mcp_connector_source_missing"],
+            "required_next_actions": ["Call `mcp.example.search_posts` before writing the artifact."]
+        }
+    });
+
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 2, 3, Some("run-1"))
+        .expect("repair brief");
+
+    assert!(brief.contains("Attempt Review:"));
+    assert!(brief.contains("What went well:"));
+    assert!(brief.contains("Still needed:"));
+    assert!(brief.contains("Why this matters:"));
+    assert!(brief.contains("Next move:"));
+    assert!(brief.contains("Expected:"));
+    assert!(brief.contains("Observed:"));
+    assert!(brief.contains("mcp.example.search_posts"));
+    assert!(!brief.contains("mcp.reddit_gmail"));
+    assert!(!brief.to_ascii_lowercase().contains("you failed"));
 }
 
 fn code_workflow_node() -> AutomationFlowNode {

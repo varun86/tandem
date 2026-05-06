@@ -480,6 +480,20 @@ async fn bug_monitor_submission_preserves_prior_contract_failure_when_provider_s
                     "Write the required workspace file(s) `tandem-review.md` in this attempt before writing the run artifact; do not rely on the run artifact to satisfy this workspace-write contract."
                 ]
             }],
+            "attempt_review_chain": [{
+                "attempt": 2,
+                "node_id": "research_sources",
+                "failure_class": "workspace_write_missing",
+                "attempt_review": {
+                    "tone": "calm_teammate_v1",
+                    "progress_label": "partial",
+                    "progress_score": 45,
+                    "completed_correctly": ["Produced the required run artifact."],
+                    "still_needed": ["Write the required workspace file(s) `tandem-review.md` approved for this node before ending the attempt."],
+                    "why_it_matters": ["Downstream nodes and Bug Monitor need a real artifact or workspace file to inspect."],
+                    "next_moves": ["Write `tandem-review.md`, then write the run artifact."]
+                }
+            }],
         }),
     );
 
@@ -494,6 +508,8 @@ async fn bug_monitor_submission_preserves_prior_contract_failure_when_provider_s
     assert!(detail.contains("required_workspace_files_missing"));
     assert!(detail.contains("tandem-review.md"));
     assert!(detail.contains("recent_node_attempt_evidence:"));
+    assert!(detail.contains("attempt_review_chain:"));
+    assert!(detail.contains("calm_teammate_v1"));
     assert!(detail.contains("do not rely on the run artifact"));
 }
 

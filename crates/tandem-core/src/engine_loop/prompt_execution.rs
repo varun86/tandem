@@ -59,6 +59,8 @@ impl EngineLoop {
             .collect::<HashSet<_>>();
         let required_mcp_tools_before_write =
             concrete_mcp_tools_required_before_write(&request_tool_allowlist);
+        let required_mcp_source_wildcards_before_write =
+            mcp_source_wildcards_required_before_write(&request_tool_allowlist);
         // Propagate per-request tool allowlist to session-level enforcement so
         // that execution-time checks (and mcp_list scoping) also respect it.
         if !request_tool_allowlist.is_empty() {
@@ -420,7 +422,20 @@ impl EngineLoop {
                     &tool_call_counts,
                 );
                 let required_mcp_tool_pending = !pending_required_mcp_tools.is_empty();
-                if prewrite_gate_write {
+                let required_mcp_source_available = tool_schemas.iter().any(|schema| {
+                    concrete_mcp_tool_matches_wildcard(
+                        &schema.name,
+                        &required_mcp_source_wildcards_before_write,
+                    )
+                });
+                let required_mcp_source_pending = requested_write_required
+                    && !required_mcp_source_wildcards_before_write.is_empty()
+                    && required_mcp_source_available
+                    && !has_attempted_concrete_mcp_for_wildcard(
+                        &required_mcp_source_wildcards_before_write,
+                        &tool_call_counts,
+                    );
+                if prewrite_gate_write || required_mcp_source_pending {
                     tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
                 }
                 if requested_prewrite_requirements.repair_on_unmet_requirements
@@ -445,7 +460,11 @@ impl EngineLoop {
                         tool_schemas = repair_tools;
                     }
                 }
-                if force_write_only_retry && !allow_repair_tools && !required_mcp_tool_pending {
+                if force_write_only_retry
+                    && !allow_repair_tools
+                    && !required_mcp_tool_pending
+                    && !required_mcp_source_pending
+                {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
                 if active_agent.tools.is_some() {
@@ -481,6 +500,15 @@ impl EngineLoop {
                         let normalized = normalize_tool_name(&schema.name);
                         pending_required_mcp_tools.contains(&normalized)
                             || (!is_workspace_write_tool(&schema.name) && normalized == "mcp_list")
+                    });
+                } else if required_mcp_source_pending {
+                    tool_schemas.retain(|schema| {
+                        let normalized = normalize_tool_name(&schema.name);
+                        normalized == "mcp_list"
+                            || concrete_mcp_tool_matches_wildcard(
+                                &normalized,
+                                &required_mcp_source_wildcards_before_write,
+                            )
                     });
                 }
                 if let Err(validation_err) = validate_tool_schemas(&tool_schemas) {

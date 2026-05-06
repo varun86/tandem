@@ -210,6 +210,7 @@ impl AppState {
                 pending_nodes,
                 node_outputs: std::collections::HashMap::new(),
                 node_attempts: std::collections::HashMap::new(),
+                node_attempt_verdicts: std::collections::HashMap::new(),
                 blocked_nodes: Vec::new(),
                 awaiting_gate: None,
                 gate_history: Vec::new(),

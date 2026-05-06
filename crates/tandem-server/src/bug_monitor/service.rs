@@ -1207,6 +1207,20 @@ pub async fn build_bug_monitor_submission_from_event(
         ),
         12,
     );
+    let attempt_verdict_chain = strings_from_value(
+        first_value(
+            &event.properties,
+            &["attempt_verdict_chain", "attemptVerdictChain"],
+        ),
+        12,
+    );
+    let attempt_review_chain = strings_from_value(
+        first_value(
+            &event.properties,
+            &["attempt_review_chain", "attemptReviewChain"],
+        ),
+        12,
+    );
     let correlation_id = first_string_deep(
         &event.properties,
         &[
@@ -1389,6 +1403,18 @@ pub async fn build_bug_monitor_submission_from_event(
             String::new()
         } else {
             recent_attempt_evidence.join("\n")
+        },
+        "attempt_verdict_chain:".to_string(),
+        if attempt_verdict_chain.is_empty() {
+            String::new()
+        } else {
+            attempt_verdict_chain.join("\n")
+        },
+        "attempt_review_chain:".to_string(),
+        if attempt_review_chain.is_empty() {
+            String::new()
+        } else {
+            attempt_review_chain.join("\n")
         },
         String::new(),
         "suggested_next_action:".to_string(),

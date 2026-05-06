@@ -1,6 +1,7 @@
 import { formatJson } from "../../pages/ui";
 import {
   workflowActiveLifecycleTaskIds,
+  workflowActiveSessionCount,
   workflowArtifactValidation,
   workflowDerivedRunStatus,
   workflowEventBlockers,
@@ -70,9 +71,13 @@ export function workflowStatusSubtleDetail(run: any) {
     return "Run was paused automatically after provider activity stopped";
   }
   if (workflowRunIsPossiblyStale(run)) {
-    return `Run is possibly stale: last provider activity ${relativeTimeFromNow(
-      workflowRunLastActivityAt(run)
-    )}`;
+    const activeSessions = workflowActiveSessionCount(run);
+    if (activeSessions > 0) {
+      return `Waiting on ${activeSessions} active session${
+        activeSessions === 1 ? "" : "s"
+      }; last provider activity ${relativeTimeFromNow(workflowRunLastActivityAt(run))}`;
+    }
+    return `Run is possibly stale: last provider activity ${relativeTimeFromNow(workflowRunLastActivityAt(run))}`;
   }
   if (workflowDerivedRunStatus(run) === "stalled") {
     return `Run appears stalled: last provider activity ${relativeTimeFromNow(

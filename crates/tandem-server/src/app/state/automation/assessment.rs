@@ -228,6 +228,118 @@ pub(crate) fn assess_artifact_candidate(
     }
 }
 
+pub(crate) fn artifact_text_contains_required_tool_mode_failure(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("tool_mode_required_not_satisfied")
+        || lower.contains("write_required_not_satisfied")
+        || lower.contains("tool choice 'required' must be specified with 'tools' parameter")
+        || lower.contains("tool choice `required` must be specified with `tools` parameter")
+}
+
+fn value_has_nonempty_key(value: &Value, keys: &[&str]) -> bool {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if keys
+                    .iter()
+                    .any(|candidate| key.eq_ignore_ascii_case(candidate))
+                {
+                    match child {
+                        Value::Null => {}
+                        Value::Array(items) if items.is_empty() => {}
+                        Value::Object(items) if items.is_empty() => {}
+                        Value::String(text) if text.trim().is_empty() => {}
+                        _ => return true,
+                    }
+                }
+                if value_has_nonempty_key(child, keys) {
+                    return true;
+                }
+            }
+            false
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|child| value_has_nonempty_key(child, keys)),
+        _ => false,
+    }
+}
+
+pub(crate) fn artifact_text_has_connector_source_evidence_or_limitation(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        const EVIDENCE_KEYS: &[&str] = &[
+            "posts",
+            "items",
+            "findings",
+            "signals",
+            "source_url",
+            "permalink",
+            "selftext",
+            "citations",
+            "citations_external",
+            "sources_reviewed",
+            "web_sources_reviewed",
+            "tool_evidence",
+            "tool_results",
+            "search_queries_used",
+            "reddit_findings",
+            "result_excerpt",
+        ];
+        const LIMITATION_KEYS: &[&str] = &[
+            "limitations",
+            "source_limitations",
+            "connector_limitations",
+            "tool_limitations",
+        ];
+        return value_has_nonempty_key(&value, EVIDENCE_KEYS)
+            || value_has_nonempty_key(&value, LIMITATION_KEYS);
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    [
+        "https://www.reddit.com/",
+        "permalink",
+        "source_url",
+        "source url",
+        "citations",
+        "sources reviewed",
+        "connector limitation",
+        "source limitation",
+        "tool limitation",
+        "reddit signal",
+        "subreddit",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+pub(crate) fn artifact_text_is_mcp_inventory_only(text: &str) -> bool {
+    let trimmed = text.trim();
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let inventory_keys = [
+        "connected_server_names",
+        "enabled_server_names",
+        "inventory_version",
+        "registered_tools",
+        "remote_tools",
+        "servers",
+    ];
+    let has_inventory_shape = inventory_keys
+        .iter()
+        .filter(|key| object.contains_key(**key))
+        .count()
+        >= 3;
+    has_inventory_shape && !artifact_text_has_connector_source_evidence_or_limitation(trimmed)
+}
+
 pub(crate) fn best_artifact_candidate(
     candidates: &[ArtifactCandidateAssessment],
 ) -> Option<ArtifactCandidateAssessment> {

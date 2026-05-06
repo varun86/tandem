@@ -274,13 +274,8 @@ pub async fn publish_draft(
         && !triage_marked_timed_out
         && mode == PublishMode::Auto
     {
-        draft.github_status = Some("triage_pending".to_string());
-        let draft = state.put_bug_monitor_draft(draft).await?;
-        return Ok(PublishOutcome {
-            action: "triage_pending".to_string(),
-            draft,
-            post: None,
-        });
+        draft.github_status = Some("triage_enrichment_pending_fallback_publish".to_string());
+        draft = state.put_bug_monitor_draft(draft).await?;
     }
 
     let owner_repo = split_owner_repo(&draft.repo)?;
@@ -1154,7 +1149,12 @@ fn format_bug_monitor_ms(ms: u64) -> String {
 
 fn fallback_issue_triage_status(status: Option<&str>) -> Option<&str> {
     match status {
-        Some("triage_timed_out" | "triage_pending" | "github_post_failed") => status,
+        Some(
+            "triage_timed_out"
+            | "triage_pending"
+            | "triage_enrichment_pending_fallback_publish"
+            | "github_post_failed",
+        ) => status,
         _ => None,
     }
 }
@@ -2045,6 +2045,14 @@ mod tests {
             &draft,
             &different_fingerprint
         ));
+    }
+
+    #[test]
+    fn fallback_issue_body_can_explain_triage_enrichment_pending() {
+        assert_eq!(
+            fallback_issue_triage_status(Some("triage_enrichment_pending_fallback_publish")),
+            Some("triage_enrichment_pending_fallback_publish")
+        );
     }
 
     #[test]

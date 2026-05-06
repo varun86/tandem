@@ -1079,6 +1079,148 @@ fn validation_rejects_placeholder_markdown_artifact() {
 }
 
 #[test]
+fn validation_rejects_required_tool_mode_failure_artifact() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-required-tool-marker-artifact-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/collect-reddit-signals.json"
+        }
+    }));
+    let artifact = "TOOL_MODE_REQUIRED_NOT_SATISFIED: WRITE_REQUIRED_NOT_SATISFIED: tool_mode=required but the model ended without executing a productive tool call.";
+    let session = Session::new(Some("required tool failure marker".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &json!({
+            "executed_tools": ["mcp_list"],
+            "requested_tools": ["mcp_list", "write"],
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/collect-reddit-signals.json".to_string(),
+            artifact.to_string(),
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none());
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("provider_required_tool_mode_unsatisfied")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("required-tool"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn validation_rejects_connector_source_inventory_only_artifact() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-connector-inventory-only-artifact-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.node_id = "collect_reddit_signals".to_string();
+    node.objective = "Use reddit-gmail MCP to collect Reddit posts and comments.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/collect-reddit-signals.json"
+        },
+        "tool_allowlist": [
+            "mcp.reddit_gmail.reddit_search_across_subreddits"
+        ]
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "connected_server_names": ["reddit-gmail"],
+        "enabled_server_names": ["reddit-gmail"],
+        "inventory_version": 1,
+        "registered_tools": ["mcp.reddit_gmail.reddit_search_across_subreddits"],
+        "remote_tools": [],
+        "servers": [{
+            "name": "reddit-gmail",
+            "connected": true,
+            "registered_tools": ["mcp.reddit_gmail.reddit_search_across_subreddits"]
+        }]
+    }))
+    .expect("serialize inventory");
+    let session = Session::new(Some("inventory only connector artifact".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "",
+        &json!({
+            "executed_tools": [
+                "mcp_list",
+                "mcp.reddit_gmail.reddit_search_across_subreddits",
+                "write"
+            ],
+            "requested_tools": [
+                "mcp_list",
+                "mcp.reddit_gmail.reddit_search_across_subreddits",
+                "write"
+            ],
+            "capability_resolution": {
+                "mcp_tool_diagnostics": {
+                    "selected_servers": ["reddit-gmail"]
+                }
+            },
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/collect-reddit-signals.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none());
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("mcp_connector_source_artifact_missing")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("connector inventory"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn validation_requires_declared_concrete_mcp_tools() {
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-required-mcp-tool-{}", uuid::Uuid::new_v4()));

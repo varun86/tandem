@@ -93,12 +93,11 @@ impl AppState {
     }
 
     pub async fn auto_resume_stale_reaped_runs(&self) -> usize {
-        // Stale reaping means the provider/tool session stopped producing
-        // evidence. Automatically re-launching those nodes creates the long
-        // running retry loops that hide the actual blocker, so stale runs now
-        // stay paused until an operator explicitly retries after inspecting the
-        // blocked node output.
-        if std::env::var_os("TANDEM_ENABLE_STALE_AUTO_RESUME").is_none() {
+        // Stale reaping is provider/session infrastructure failure, not proof
+        // that the workflow contract failed. Keep the retry bounded so a truly
+        // wedged provider cannot loop forever, but default to recovery while
+        // the node still has attempt budget.
+        if std::env::var_os("TANDEM_DISABLE_STALE_AUTO_RESUME").is_some() {
             return 0;
         }
 

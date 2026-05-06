@@ -30,6 +30,16 @@ Connector-backed delivery nodes now keep their destination MCP tools focused all
 
 Required-tool provider calls now fail closed inside Tandem instead of being rejected by the provider when routing filters remove every tool. Write-required connector nodes keep the artifact `write` tool even when their session allowlist is connector-only, and if a later filter still produces an empty tool set Tandem downgrades the provider request away from `tool_choice: required` rather than sending an invalid no-tools request.
 
+Transient provider stream decode failures are now treated as recoverable provider infrastructure failures. Stream errors such as `error decoding response body`, unexpected EOF, and incomplete streamed responses are retried inside the current provider iteration with partial streamed text/tool-call state cleared before retry. The retry budget is bounded by `TANDEM_PROVIDER_STREAM_DECODE_RETRY_ATTEMPTS`, and each retry emits a `provider.call.iteration.retry` event for debugging.
+
+Automation V2 governance now gives repair attempts a calmer, more actionable handoff. Attempt verdicts include a `calm_teammate_v1` review with a progress score, what the agent completed correctly, what is still needed, why the missing work matters, and the next concrete moves. Repair prompts show that review before the raw expected/observed contract JSON, so retries can keep good evidence and fix the smallest missing piece rather than restarting from a vague validation failure.
+
+Bug Monitor failure reports now preserve both the final failure and the useful prior attempt evidence. Automation V2 failure events carry recent attempt verdict chains and attempt review chains into Bug Monitor submissions, making issue details show earlier contract misses such as missing workspace files, missing concrete connector calls, citation gaps, or required next actions even when the final observed failure is a provider stream/runtime error.
+
+Stale provider/session recovery now retries by default instead of stopping at a pause. When the stale reaper cancels a dead session, the in-progress node is marked `needs_repair` and the stale-reaped run is automatically requeued while attempt budget remains. The existing auto-resume cap keeps truly wedged providers from looping forever, and operators can disable this behavior with `TANDEM_DISABLE_STALE_AUTO_RESUME`.
+
+The control panel also avoids presenting active workflow sessions as stalled. A running Automation V2 run with active sessions stays visually `running`, and background-tab polling gaps are shown as a softer “waiting on active session” detail. The backend stale reaper remains the authority for real `stale_no_provider_activity` pauses.
+
 The control-panel Chat view now waits for the completed assistant message to materialize in the exact active session before clearing the live thinking/streaming state. This closes the blank-response gap where an answer was saved on the server and appeared after refresh, but the live UI had already removed `Thinking...` without rendering the final assistant message.
 
 Hosted Files now distinguishes workspace-root configuration from workspace-files API availability. The Files page only enables workspace browsing when capabilities explicitly advertise the API route, so managed-file deployments no longer spam `/api/workspace/files/list?dir=` 404s.

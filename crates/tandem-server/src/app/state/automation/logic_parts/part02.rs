@@ -1,3 +1,125 @@
+fn repair_brief_strings(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    row.as_str()
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
+                        .or_else(|| {
+                            if row.is_object() || row.is_array() {
+                                Some(truncate_text(&row.to_string(), 500))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn repair_brief_value(value: Option<&Value>) -> String {
+    value
+        .map(|value| truncate_text(&value.to_string(), 1200))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "not recorded".to_string())
+}
+
+fn repair_brief_review_strings(verdict: &Value, key: &str) -> Vec<String> {
+    repair_brief_strings(verdict.pointer(&format!("/attempt_review/{key}")))
+}
+
+fn repair_brief_review_section(rows: &[String], fallback: &str) -> String {
+    if rows.is_empty() {
+        fallback.to_string()
+    } else {
+        rows.join("\n")
+    }
+}
+
+fn render_automation_repair_brief_from_verdict(
+    node: &AutomationFlowNode,
+    verdict: &Value,
+    attempt: u32,
+    max_attempts: u32,
+    run_id: Option<&str>,
+) -> String {
+    let failure_class = verdict
+        .get("failure_class")
+        .and_then(Value::as_str)
+        .unwrap_or("contract_miss");
+    let validation_reason = verdict
+        .get("validation_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("the previous attempt did not satisfy the runtime contract");
+    let unmet = repair_brief_strings(verdict.get("unmet_requirements"));
+    let actions = repair_brief_strings(verdict.get("required_next_actions"));
+    let final_attempt_line = if attempt >= max_attempts {
+        let output_path = automation_node_required_output_path_for_run(node, run_id)
+            .unwrap_or_else(|| "the declared output path".to_string());
+        format!(
+            "\n\nFinal attempt:\n- This is the last retry.\n- Write the complete artifact to `{}` before ending.\n- End with a terminal completed status when the best available deliverable has been written.",
+            output_path
+        )
+    } else {
+        String::new()
+    };
+    let review = verdict.get("attempt_review");
+    let progress_label = review
+        .and_then(|value| value.get("progress_label"))
+        .and_then(Value::as_str)
+        .unwrap_or("not recorded");
+    let progress_score = review
+        .and_then(|value| value.get("progress_score"))
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "not recorded".to_string());
+    let completed_correctly = repair_brief_review_strings(verdict, "completed_correctly");
+    let still_needed = repair_brief_review_strings(verdict, "still_needed");
+    let why_it_matters = repair_brief_review_strings(verdict, "why_it_matters");
+    let next_moves = repair_brief_review_strings(verdict, "next_moves");
+    format!(
+        "Repair Brief:\n- Node `{}` is being retried because the prior attempt did not yet satisfy governance validation.\n- Failure class: `{}`.\n- Reason: {}.\n\nAttempt Review:\n- Progress: {} ({}/100)\n\nWhat went well:\n{}\n\nStill needed:\n{}\n\nWhy this matters:\n{}\n\nNext move:\n{}\n\nExpected:\n{}\n\nObserved:\n{}\n\nRepair:\n- Satisfy the expected contract before finalizing the artifact.\n- Do not stop after discovery, summaries, or partial tool output.\n- If a connector/tool is unavailable or returns no usable data, record the exact limitation in the artifact and still write the required output when the contract allows it.{}\n\nUnmet requirements:\n{}\n\nRequired next actions:\n{}",
+        node.node_id,
+        failure_class,
+        validation_reason,
+        progress_label,
+        progress_score,
+        repair_brief_review_section(
+            &completed_correctly,
+            "No verified progress was recorded for the prior attempt."
+        ),
+        repair_brief_review_section(
+            &still_needed,
+            "Use the Expected and Observed sections below to identify the missing contract work."
+        ),
+        repair_brief_review_section(
+            &why_it_matters,
+            "Clear contract evidence lets the runtime repair safely instead of guessing."
+        ),
+        repair_brief_review_section(
+            &next_moves,
+            "Use the Expected and Observed sections below to repair the contract miss."
+        ),
+        repair_brief_value(verdict.get("expected")),
+        repair_brief_value(verdict.get("observed")),
+        final_attempt_line,
+        if unmet.is_empty() {
+            "none recorded".to_string()
+        } else {
+            unmet.join("\n")
+        },
+        if actions.is_empty() {
+            "Use the Expected and Observed sections above to repair the contract miss.".to_string()
+        } else {
+            actions.join("\n")
+        },
+    )
+}
+
 pub(crate) fn render_automation_repair_brief(
     node: &AutomationFlowNode,
     prior_output: Option<&Value>,
@@ -45,6 +167,15 @@ pub(crate) fn render_automation_repair_brief(
     if is_upstream_passed {
         return None;
     }
+    if let Some(verdict) = prior_output.get("attempt_verdict") {
+        return Some(render_automation_repair_brief_from_verdict(
+            node,
+            verdict,
+            attempt,
+            max_attempts,
+            run_id,
+        ));
+    }
     let reason = validator_summary
         .and_then(|value| value.get("reason"))
         .and_then(Value::as_str)
@@ -78,6 +209,17 @@ pub(crate) fn render_automation_repair_brief(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    if unmet_requirements
+        .iter()
+        .any(|value| value == "upstream_evidence_not_synthesized")
+        && !required_next_tool_actions.iter().any(|value| {
+            value.contains("Read and synthesize the strongest upstream artifacts before finalizing")
+        })
+    {
+        required_next_tool_actions.push(
+            "Read and synthesize the strongest upstream artifacts before finalizing.".to_string(),
+        );
+    }
     let validation_basis = artifact_validation
         .and_then(|value| value.get("validation_basis"))
         .and_then(Value::as_object);
@@ -353,9 +495,29 @@ pub(crate) fn render_automation_repair_brief(
     } else {
         String::new()
     };
+    let concrete_mcp_corrective_line = if unmet_requirements.iter().any(|value| {
+        value == "mcp_connector_source_missing" || value == "mcp_connector_source_artifact_missing"
+    }) {
+        let concrete_tools =
+            super::prompting_impl::automation_node_concrete_mcp_tool_allowlist(node);
+        if concrete_tools.is_empty() {
+            "\n\nCORRECTIVE — connector source evidence is required:\n- The previous attempt only proved connector discovery/inventory, not source inspection.\n- For this retry, call a concrete `mcp.*` source tool after `mcp_list` and before writing the artifact.\n- If the concrete connector call fails or returns no useful results, record that exact tool failure or empty result under `connector_limitations`, then write a completed artifact.".to_string()
+        } else {
+            format!(
+                "\n\nCORRECTIVE — connector source evidence is required:\n- The previous attempt only proved connector discovery/inventory, not source inspection.\n- `mcp_list` alone is not enough. For this retry, call at least one concrete source tool after `mcp_list` and before writing the artifact: {}.\n- If the concrete connector call fails or returns no useful results, record that exact tool failure or empty result under `connector_limitations`, then write a completed artifact.",
+                concrete_tools
+                    .iter()
+                    .map(|tool| format!("`{}`", tool))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    } else {
+        String::new()
+    };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}{}{}",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Upstream read paths available for synthesis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}{}{}{}",
         node.node_id,
         reason,
         validation_basis_line,
@@ -374,6 +536,7 @@ pub(crate) fn render_automation_repair_brief(
         final_attempt_line,
         declared_output_corrective_line,
         nonterminal_status_corrective_line,
+        concrete_mcp_corrective_line,
     ))
 }
 
@@ -1026,10 +1189,17 @@ pub(crate) fn semantic_block_reason_for_requirements(
     let has_unmet = |needle: &str| unmet_requirements.iter().any(|value| value == needle);
     if has_unmet("artifact_status_not_terminal") {
         Some("artifact reported a non-terminal status".to_string())
+    } else if has_unmet("provider_required_tool_mode_unsatisfied") {
+        Some("artifact contains a provider required-tool/write-required failure marker".to_string())
     } else if has_unmet("placeholder_artifact") {
         Some("artifact is placeholder-like or incomplete".to_string())
     } else if has_unmet("mcp_required_tool_missing") {
         Some("required MCP tool calls were not completed".to_string())
+    } else if has_unmet("mcp_connector_source_artifact_missing") {
+        Some(
+            "connector-backed source artifact contains connector inventory only, not source evidence"
+                .to_string(),
+        )
     } else if has_unmet("mcp_connector_source_missing") {
         Some(
             "connector-backed source research completed without using a concrete connector tool"

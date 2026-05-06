@@ -66,6 +66,19 @@ pub(crate) fn automation_node_declared_artifacts_to_create(
     out
 }
 
+pub(crate) fn automation_node_concrete_mcp_tool_allowlist(
+    node: &AutomationFlowNode,
+) -> Vec<String> {
+    let mut tools = node_runtime_impl::automation_node_metadata_tool_allowlist(node)
+        .into_iter()
+        .map(|tool| tool.trim().to_string())
+        .filter(|tool| tool.starts_with("mcp.") && !tool.ends_with(".*") && tool != "mcp_list")
+        .collect::<Vec<_>>();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
 fn automation_prompt_extract_workspace_paths(
     text: &str,
     allow_bare_filenames: bool,
@@ -809,6 +822,19 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         write_scope_rule
     ));
     if let Some(output_path) = required_output_path.as_ref() {
+        let concrete_mcp_tools = automation_node_concrete_mcp_tool_allowlist(node);
+        let concrete_mcp_line = if concrete_mcp_tools.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n- For connector-backed source work, `mcp_list` is discovery only; it does not satisfy source evidence. Call at least one concrete source tool before writing the artifact: {}.",
+                concrete_mcp_tools
+                    .iter()
+                    .map(|tool| format!("`{}`", tool))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         let workspace_write_order = if required_workspace_write_targets.is_empty() {
             String::new()
         } else {
@@ -823,7 +849,8 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             )
         };
         sections.push(format!(
-            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n- Read or inspect the concrete sources required by the node.{}\n- On retries, rewrite the required files in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the required files are the deliverables.",
+            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.{}\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n- Read or inspect the concrete sources required by the node.{}\n- On retries, rewrite the required files in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the required files are the deliverables.",
+            concrete_mcp_line,
             if workspace_write_order.is_empty() {
                 format!(
                     "\n- Write the required run artifact to `{}` before ending this attempt.",

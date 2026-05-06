@@ -299,6 +299,38 @@ fn concrete_mcp_preflight_blocks_workspace_write_until_attempted() {
 }
 
 #[test]
+fn wildcard_mcp_source_prewrite_requires_one_concrete_tool_attempt() {
+    let allowlist = HashSet::from([
+        "write".to_string(),
+        "mcp_list".to_string(),
+        "mcp.reddit_gmail.*".to_string(),
+    ]);
+    let wildcards = mcp_source_wildcards_required_before_write(&allowlist);
+    assert_eq!(wildcards, vec!["mcp.reddit_gmail.*".to_string()]);
+
+    let mut counts = HashMap::new();
+    counts.insert("mcp_list".to_string(), 1);
+    assert!(!has_attempted_concrete_mcp_for_wildcard(
+        &wildcards, &counts
+    ));
+
+    counts.insert(
+        "mcp.reddit_gmail.reddit_search_across_subreddits".to_string(),
+        1,
+    );
+    assert!(has_attempted_concrete_mcp_for_wildcard(&wildcards, &counts));
+    assert!(concrete_mcp_tool_matches_wildcard(
+        "mcp.reddit_gmail.reddit_search_across_subreddits",
+        &wildcards
+    ));
+    assert!(!concrete_mcp_tool_matches_wildcard("mcp_list", &wildcards));
+    assert!(!concrete_mcp_tool_matches_wildcard(
+        "mcp.notion.notion_fetch",
+        &wildcards
+    ));
+}
+
+#[test]
 fn session_policy_keeps_artifact_write_tool_for_write_required_connector_nodes() {
     let allowed = vec![
         "mcp.notion.notion_fetch".to_string(),

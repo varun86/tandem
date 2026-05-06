@@ -183,6 +183,9 @@ pub fn record_automation_workflow_state_events(
     {
         base_metadata.insert("blocking_classification".to_string(), json!(classification));
     }
+    if let Some(verdict) = output.get("attempt_verdict") {
+        base_metadata.insert("attempt_verdict".to_string(), verdict.clone());
+    }
     if let Some(actions) = artifact_validation
         .and_then(|value| value.get("required_next_tool_actions"))
         .and_then(Value::as_array)

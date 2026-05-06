@@ -1373,6 +1373,21 @@ pub(crate) fn wrap_automation_node_output_with_automation(
         blocked_reason.as_deref(),
         artifact_validation.as_ref(),
     );
+    let required_output_path = run_id
+        .and_then(|value| automation_node_required_output_path_for_run(node, Some(value)))
+        .or_else(|| automation_node_required_output_path(node));
+    let attempt_verdict = build_automation_attempt_verdict(
+        node,
+        &status,
+        blocked_reason.as_deref(),
+        failure_kind.as_deref(),
+        blocker_category.as_deref(),
+        &tool_telemetry,
+        artifact_validation.as_ref(),
+        required_output_path.as_deref(),
+        final_attempt_evidence.as_ref(),
+        session_id,
+    );
     let preflight = tool_telemetry.get("preflight").cloned();
     let capability_resolution = tool_telemetry.get("capability_resolution").cloned();
     let content = match contract_kind.as_str() {
@@ -1436,6 +1451,7 @@ pub(crate) fn wrap_automation_node_output_with_automation(
         knowledge_preflight: None,
         capability_resolution,
         attempt_evidence: final_attempt_evidence,
+        attempt_verdict: Some(attempt_verdict),
         blocker_category,
         receipt_timeline: None,
         quality_mode: Some(quality_mode_resolution.effective.stable_key().to_string()),

@@ -232,6 +232,7 @@ export function workflowRunLooksStalled(run: any) {
     .trim()
     .toLowerCase();
   if (raw !== "running") return false;
+  if (workflowActiveSessionCount(run) > 0) return false;
   const lastActivityAt = workflowRunLastActivityAt(run);
   if (!lastActivityAt) return false;
   return Date.now() - lastActivityAt >= WORKFLOW_RUNNING_STALE_AFTER_MS;

@@ -798,6 +798,8 @@ pub struct AutomationNodeOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_evidence: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_verdict: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_timeline: Option<Value>,
@@ -813,6 +815,62 @@ pub struct AutomationNodeOutput {
     pub artifact_validation: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<AutomationNodeOutputProvenance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationAttemptReview {
+    pub tone: String,
+    pub progress_label: String,
+    pub progress_score: u8,
+    #[serde(default)]
+    pub completed_correctly: Vec<String>,
+    #[serde(default)]
+    pub still_needed: Vec<String>,
+    #[serde(default)]
+    pub why_it_matters: Vec<String>,
+    #[serde(default)]
+    pub next_moves: Vec<String>,
+}
+
+impl Default for AutomationAttemptReview {
+    fn default() -> Self {
+        Self {
+            tone: "calm_teammate_v1".to_string(),
+            progress_label: "none".to_string(),
+            progress_score: 0,
+            completed_correctly: Vec::new(),
+            still_needed: Vec::new(),
+            why_it_matters: Vec::new(),
+            next_moves: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationAttemptVerdict {
+    pub version: u32,
+    pub node_id: String,
+    pub attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<String>,
+    pub consumes_model_attempt_budget: bool,
+    pub consumes_repair_budget: bool,
+    pub expected: Value,
+    pub observed: Value,
+    #[serde(default)]
+    pub unmet_requirements: Vec<String>,
+    #[serde(default)]
+    pub required_next_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_reason: Option<String>,
+    #[serde(default)]
+    pub attempt_review: AutomationAttemptReview,
+    pub created_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1049,6 +1107,8 @@ pub struct AutomationRunCheckpoint {
     pub node_outputs: std::collections::HashMap<String, Value>,
     #[serde(default)]
     pub node_attempts: std::collections::HashMap<String, u32>,
+    #[serde(default)]
+    pub node_attempt_verdicts: std::collections::HashMap<String, Vec<Value>>,
     #[serde(default)]
     pub blocked_nodes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

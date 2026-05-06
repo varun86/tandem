@@ -233,6 +233,42 @@ fn recent_node_attempt_evidence(
     evidence
 }
 
+fn recent_node_attempt_verdicts(
+    run: &crate::automation_v2::types::AutomationV2RunRecord,
+    node_id: Option<&str>,
+) -> Vec<Value> {
+    let Some(node_id) = node_id else {
+        return Vec::new();
+    };
+    let mut verdicts = run
+        .checkpoint
+        .node_attempt_verdicts
+        .get(node_id)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(latest) = run
+        .checkpoint
+        .node_outputs
+        .get(node_id)
+        .and_then(|output| output.get("attempt_verdict"))
+        .cloned()
+    {
+        verdicts.push(latest);
+    }
+    verdicts.sort_by(|left, right| {
+        let left_attempt = left.get("attempt").and_then(Value::as_u64).unwrap_or(0);
+        let right_attempt = right.get("attempt").and_then(Value::as_u64).unwrap_or(0);
+        left_attempt.cmp(&right_attempt)
+    });
+    verdicts.dedup_by(|left, right| {
+        left.get("attempt") == right.get("attempt")
+            && left.get("failure_class") == right.get("failure_class")
+            && left.get("validation_reason") == right.get("validation_reason")
+    });
+    let keep_from = verdicts.len().saturating_sub(5);
+    verdicts.into_iter().skip(keep_from).collect()
+}
+
 fn validation_errors_with_prior_evidence(current: Value, evidence: &[Value]) -> Value {
     let mut rows = current.as_array().cloned().unwrap_or_default();
     for item in evidence {
