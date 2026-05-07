@@ -112,6 +112,9 @@ pub(crate) fn effective_automation_node_timeout_ms(node: &AutomationFlowNode) ->
                 crate::config::env::resolve_automation_execute_node_timeout_ms()
             }
             crate::AutomationOutputValidatorKind::StructuredJson => 180_000,
+            _ if automation_node_needs_long_execute_budget(node) => {
+                crate::config::env::resolve_automation_execute_node_timeout_ms()
+            }
             _ => 600_000,
         })
 }
@@ -137,10 +140,16 @@ fn automation_node_uses_external_data_source_budget(node_id: &str, objective: &s
         || objective.contains("websearch")
         || objective.contains("webfetch");
     let is_inspection_or_fetch = node_id.contains("inspect")
+        || node_id.contains("assess")
         || node_id.contains("fetch")
+        || node_id.contains("gather")
         || node_id.contains("research")
+        || node_id.contains("search")
+        || objective.contains("check")
         || objective.contains("fetch")
+        || objective.contains("gather")
         || objective.contains("inspect")
+        || objective.contains("search")
         || objective.contains("database")
         || objective.contains("collection");
 

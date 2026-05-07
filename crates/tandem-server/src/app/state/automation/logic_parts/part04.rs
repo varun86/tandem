@@ -193,11 +193,12 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         || !enforcement.required_sections.is_empty()
         || !enforcement.prewrite_gates.is_empty();
     let parsed_status = parse_status_json(session_text);
-    let structured_handoff = if handoff_only_structured_json {
-        extract_structured_handoff_json(session_text)
-    } else {
-        None
-    };
+    let structured_handoff =
+        if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson {
+            extract_structured_handoff_json(session_text)
+        } else {
+            None
+        };
     let repair_exhausted_hint = parsed_status
         .as_ref()
         .and_then(|value| value.get("repairExhausted"))
@@ -1135,7 +1136,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     if accepted_output.is_some() && accepted_candidate_source.is_none() {
         accepted_candidate_source = Some("verified_output".to_string());
     }
-    if handoff_only_structured_json {
+    if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson {
         let requested_tools = tool_telemetry
             .get("requested_tools")
             .and_then(Value::as_array)
@@ -1214,7 +1215,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let optional_workspace_reads =
             enforcement::automation_node_allows_optional_workspace_reads(node);
 
-        if structured_handoff.is_none() {
+        if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson
+            && structured_handoff.is_none()
+        {
             unmet_requirements.push("structured_handoff_missing".to_string());
         }
         if requires_workspace_inspection && !workspace_inspection_satisfied {
@@ -1361,22 +1364,59 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 Some("required output was not created in the current attempt".to_string());
         }
     }
-    let (repair_attempt, repair_attempts_remaining, repair_exhausted) = infer_artifact_repair_state(
-        parsed_status.as_ref(),
-        repair_attempted,
-        repair_succeeded,
-        semantic_block_reason.as_deref(),
-        tool_telemetry,
-        enforcement.repair_budget,
-    );
+    if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson
+        && unmet_requirements
+            .iter()
+            .any(|value| value == "structured_handoff_missing")
+    {
+        semantic_block_reason =
+            Some("structured handoff was not returned in the final response".to_string());
+        rejected_reason = semantic_block_reason.clone();
+    }
+    let (repair_attempt, repair_attempts_remaining, mut repair_exhausted) =
+        infer_artifact_repair_state(
+            parsed_status.as_ref(),
+            repair_attempted,
+            repair_succeeded,
+            semantic_block_reason.as_deref(),
+            tool_telemetry,
+            enforcement.repair_budget,
+        );
+    let node_attempt_has_retry_remaining = tool_telemetry_u32(tool_telemetry, "node_attempt")
+        .zip(tool_telemetry_u32(tool_telemetry, "node_max_attempts"))
+        .is_some_and(|(attempt, max_attempts)| attempt < max_attempts);
+    let node_attempt_exhausted = tool_telemetry_u32(tool_telemetry, "node_attempt")
+        .zip(tool_telemetry_u32(tool_telemetry, "node_max_attempts"))
+        .is_some_and(|(attempt, max_attempts)| attempt >= max_attempts);
+    let repairable_contract_miss_with_node_budget = node_attempt_has_retry_remaining
+        && unmet_requirements.iter().any(|value| {
+            matches!(
+                value.as_str(),
+                "mcp_connector_source_missing"
+                    | "mcp_connector_source_artifact_missing"
+                    | "mcp_required_tool_missing"
+                    | "structured_handoff_missing"
+            )
+        });
+    if repairable_contract_miss_with_node_budget
+        || (!node_attempt_exhausted
+            && unmet_requirements
+                .iter()
+                .any(|value| value == "structured_handoff_missing"))
+    {
+        repair_exhausted = false;
+    }
     let has_required_tools = !enforcement.required_tools.is_empty();
     let contract_requires_repair = !enforcement.retry_on_missing.is_empty()
         || has_required_tools
-        || handoff_only_structured_json;
+        || validator_kind == crate::AutomationOutputValidatorKind::StructuredJson;
     let current_attempt_has_recorded_activity = validation_basis
         .get("current_attempt_has_recorded_activity")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let structured_handoff_missing = unmet_requirements
+        .iter()
+        .any(|value| value == "structured_handoff_missing");
     let hard_blocking_unmet_requirements = unmet_requirements.iter().any(|value| {
         matches!(
             value.as_str(),
@@ -1397,7 +1437,8 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                     | "required_source_paths_not_read"
                     | "missing_successful_web_research"
             )
-        }));
+        })
+        && !structured_handoff_missing);
     if hard_blocking_unmet_requirements {
         accepted_output = None;
     }

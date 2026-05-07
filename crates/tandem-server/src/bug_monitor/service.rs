@@ -113,6 +113,23 @@ fn node_incident_matches_aggregate_outcome(
         .is_some_and(is_node_outcomes_reason)
 }
 
+fn stale_node_id_from_properties(properties: &Value) -> Option<String> {
+    strings_from_value(
+        first_value(
+            properties,
+            &[
+                "stale_node_ids",
+                "staleNodeIDs",
+                "stale_node_id",
+                "staleNodeID",
+            ],
+        ),
+        1,
+    )
+    .into_iter()
+    .next()
+}
+
 async fn existing_node_incident_fingerprint_for_aggregate_outcome(
     state: &AppState,
     repo: &str,
@@ -670,6 +687,121 @@ pub fn evaluate_bug_monitor_submission_quality(
     }
 }
 
+async fn recover_terminal_bug_monitor_triage_event(
+    state: &AppState,
+    event: &EngineEvent,
+) -> anyhow::Result<Option<BugMonitorIncidentRecord>> {
+    if !matches!(
+        event.event_type.as_str(),
+        "automation_v2.run.failed" | "automation_v2.run.blocked"
+    ) {
+        return Ok(None);
+    }
+    let Some(triage_run_id) = first_string_deep(&event.properties, &["run_id", "runID"]) else {
+        return Ok(None);
+    };
+    let Some(mut draft) = ({
+        let guard = state.bug_monitor_drafts.read().await;
+        guard
+            .values()
+            .find(|draft| draft.triage_run_id.as_deref() == Some(triage_run_id.as_str()))
+            .cloned()
+    }) else {
+        return Ok(None);
+    };
+    if draft_has_github_issue(&draft) {
+        return Ok(None);
+    }
+
+    let reason = first_string_deep(&event.properties, &["reason", "error", "detail"])
+        .unwrap_or_else(|| {
+            "bug monitor triage automation reached a terminal blocked state".to_string()
+        });
+    let diagnostics_value =
+        crate::http::bug_monitor::bug_monitor_triage_timeout_diagnostics(state, &triage_run_id, 0)
+            .await;
+    let mut last_post_error = format!(
+        "triage run {triage_run_id} ended before producing a publishable issue draft: {reason}"
+    );
+    if let Some(diagnostics) = diagnostics_value.as_ref() {
+        let detail =
+            crate::http::context_runs::format_bug_monitor_triage_timeout_diagnostics(diagnostics);
+        if !detail.trim().is_empty() {
+            last_post_error.push('\n');
+            last_post_error.push_str(&detail);
+        }
+    }
+
+    draft.github_status = Some("triage_failed_fallback_publish".to_string());
+    draft.last_post_error = Some(last_post_error.clone());
+    draft = state.put_bug_monitor_draft(draft).await?;
+
+    let Some(incident_id) =
+        bug_monitor_incident_for_draft(state, &draft.draft_id, &triage_run_id).await
+    else {
+        return Ok(None);
+    };
+    let Some(mut incident) = state.get_bug_monitor_incident(&incident_id).await else {
+        return Ok(None);
+    };
+    incident.status = "triage_failed".to_string();
+    incident.last_error = Some(last_post_error);
+    incident.updated_at_ms = now_ms();
+    state.put_bug_monitor_incident(incident.clone()).await?;
+
+    let mut event_payload = serde_json::json!({
+        "incident_id": incident.incident_id,
+        "draft_id": draft.draft_id,
+        "triage_run_id": triage_run_id,
+        "reason": reason,
+    });
+    if let Some(diagnostics) = diagnostics_value.as_ref() {
+        if let Some(obj) = event_payload.as_object_mut() {
+            obj.insert("diagnostics".to_string(), diagnostics.clone());
+        }
+    }
+    state.event_bus.publish(EngineEvent::new(
+        "bug_monitor.incident.triage_failed",
+        event_payload,
+    ));
+
+    match crate::bug_monitor_github::publish_draft(
+        state,
+        &draft.draft_id,
+        Some(&incident.incident_id),
+        crate::bug_monitor_github::PublishMode::Recovery,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let mut updated = incident.clone();
+            updated.status = outcome.action;
+            updated.last_error = None;
+            updated.updated_at_ms = now_ms();
+            state.put_bug_monitor_incident(updated.clone()).await?;
+            Ok(Some(updated))
+        }
+        Err(error) => {
+            let detail = truncate_text(&error.to_string(), 500);
+            let mut updated = incident.clone();
+            updated.last_error = Some(detail.clone());
+            updated.updated_at_ms = now_ms();
+            state.put_bug_monitor_incident(updated.clone()).await?;
+            let evidence_digest = draft.evidence_digest.clone();
+            let _ = crate::bug_monitor_github::record_post_failure(
+                state,
+                &draft,
+                Some(&updated.incident_id),
+                "triage_failed_fallback_publish",
+                evidence_digest.as_deref(),
+                &detail,
+            )
+            .await;
+            Ok(Some(updated))
+        }
+    }
+}
+
 pub async fn process_event(
     state: &AppState,
     event: &EngineEvent,
@@ -677,6 +809,9 @@ pub async fn process_event(
 ) -> anyhow::Result<BugMonitorIncidentRecord> {
     if let Some(reason) = recursive_triage_skip_reason(event) {
         if let Some(incident) = recover_stale_bug_monitor_triage_event(state, event).await? {
+            return Ok(incident);
+        }
+        if let Some(incident) = recover_terminal_bug_monitor_triage_event(state, event).await? {
             return Ok(incident);
         }
         // Don't queue a new triage workflow for a failure that came
@@ -705,11 +840,10 @@ pub async fn process_event(
         .fingerprint
         .clone()
         .ok_or_else(|| anyhow::anyhow!("bug monitor submission fingerprint missing"))?;
-    let default_workspace_root = state.workspace_index.snapshot().await.root;
-    let workspace_root = config
-        .workspace_root
-        .clone()
-        .unwrap_or(default_workspace_root);
+    let workspace_root = match config.workspace_root.clone() {
+        Some(root) => root,
+        None => state.workspace_index.snapshot().await.root,
+    };
     let now = crate::util::time::now_ms();
     let quality_gate = evaluate_bug_monitor_submission_quality(&submission);
 
@@ -1076,11 +1210,10 @@ pub async fn build_bug_monitor_submission_from_event(
         .repo
         .clone()
         .ok_or_else(|| anyhow::anyhow!("Bug Monitor repo is not configured"))?;
-    let default_workspace_root = state.workspace_index.snapshot().await.root;
-    let workspace_root = config
-        .workspace_root
-        .clone()
-        .unwrap_or(default_workspace_root);
+    let workspace_root = match config.workspace_root.clone() {
+        Some(root) => root,
+        None => state.workspace_index.snapshot().await.root,
+    };
     let reason = first_string_deep(
         &event.properties,
         &[
@@ -1102,12 +1235,16 @@ pub async fn build_bug_monitor_submission_from_event(
         .as_deref()
         .and_then(node_id_from_failure_reason)
         .map(|value| truncate_text(&value, 160));
+    let stale_node_id = stale_node_id_from_properties(&event.properties);
     let task_id = first_string_deep(&event.properties, &["task_id", "taskID", "task.id"])
-        .or_else(|| inferred_node_id.clone());
+        .or_else(|| inferred_node_id.clone())
+        .or_else(|| stale_node_id.clone());
     let stage_id = first_string_deep(&event.properties, &["stage_id", "stageID", "actionID"])
-        .or_else(|| inferred_node_id.clone());
+        .or_else(|| inferred_node_id.clone())
+        .or_else(|| stale_node_id.clone());
     let node_id = first_string_deep(&event.properties, &["node_id", "nodeID"])
-        .or_else(|| inferred_node_id.clone());
+        .or_else(|| inferred_node_id.clone())
+        .or_else(|| stale_node_id.clone());
     let automation_id = first_string_deep(&event.properties, &["automation_id", "automationID"]);
     let routine_id = first_string_deep(&event.properties, &["routine_id", "routineID"]);
     let agent_role = first_string_deep(&event.properties, &["agent_role", "agentRole"]);
@@ -1841,6 +1978,24 @@ mod tests {
         .expect("aggregate should reuse concrete node incident fingerprint");
 
         assert_eq!(fingerprint, "node-fingerprint");
+    }
+
+    #[test]
+    fn stale_node_id_from_properties_reads_stale_node_arrays_and_aliases() {
+        assert_eq!(
+            stale_node_id_from_properties(&json!({
+                "stale_node_ids": ["assess_reddit_activity"],
+            }))
+            .as_deref(),
+            Some("assess_reddit_activity")
+        );
+        assert_eq!(
+            stale_node_id_from_properties(&json!({
+                "staleNodeID": "collect_reddit_signals",
+            }))
+            .as_deref(),
+            Some("collect_reddit_signals")
+        );
     }
 
     #[test]

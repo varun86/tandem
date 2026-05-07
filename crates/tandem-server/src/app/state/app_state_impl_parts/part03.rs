@@ -1,3 +1,28 @@
+const AUTOMATION_STALE_NODE_TIMEOUT_GRACE_MS: u64 = 60_000;
+
+fn automation_run_effective_stale_after_ms(
+    run: &AutomationV2RunRecord,
+    default_stale_after_ms: u64,
+) -> u64 {
+    let Some(automation) = run.automation_snapshot.as_ref() else {
+        return default_stale_after_ms;
+    };
+    let max_node_timeout_ms = automation::lifecycle::automation_in_progress_node_ids(run)
+        .iter()
+        .filter_map(|node_id| {
+            automation
+                .flow
+                .nodes
+                .iter()
+                .find(|node| &node.node_id == node_id)
+        })
+        .map(automation::effective_automation_node_timeout_ms)
+        .max()
+        .unwrap_or(0);
+    default_stale_after_ms
+        .max(max_node_timeout_ms.saturating_add(AUTOMATION_STALE_NODE_TIMEOUT_GRACE_MS))
+}
+
 impl AppState {
     fn build_optimization_apply_patch(
         baseline: &crate::AutomationV2Spec,
@@ -1348,12 +1373,14 @@ impl AppState {
         let mut runs = Vec::new();
         for run in candidate_runs {
             let last_activity_at_ms = self.automation_run_last_activity_at_ms(&run).await;
-            if now.saturating_sub(last_activity_at_ms) >= stale_after_ms {
-                runs.push(run);
+            let effective_stale_after_ms =
+                automation_run_effective_stale_after_ms(&run, stale_after_ms);
+            if now.saturating_sub(last_activity_at_ms) >= effective_stale_after_ms {
+                runs.push((run, effective_stale_after_ms));
             }
         }
         let mut reaped = 0usize;
-        for run in runs {
+        for (run, stale_after_ms) in runs {
             let run_id = run.run_id.clone();
             let session_ids = run.active_session_ids.clone();
             let instance_ids = run.active_instance_ids.clone();
@@ -1377,7 +1404,8 @@ impl AppState {
                 .automation_snapshot
                 .as_ref()
                 .map(|automation| automation.name.clone());
-            if self
+            let mut terminal_stale_node_ids = Vec::new();
+            let updated_run = self
                 .update_automation_v2_run(&run_id, |row| {
                     let stale_node_detail = format!(
                         "node execution stalled after no provider activity for at least {}s",
@@ -1385,6 +1413,7 @@ impl AppState {
                     );
                     let automation_snapshot = row.automation_snapshot.clone();
                     let mut annotated_nodes = Vec::new();
+                    let mut terminal_nodes = Vec::new();
                     if let Some(automation) = automation_snapshot.as_ref() {
                         for node_id in &stale_node_ids {
                             if row.checkpoint.node_outputs.contains_key(node_id) {
@@ -1402,6 +1431,9 @@ impl AppState {
                                 row.checkpoint.node_attempts.get(node_id).copied().unwrap_or(1);
                             let max_attempts = automation_node_max_attempts(node);
                             let terminal = attempts >= max_attempts;
+                            if terminal {
+                                terminal_nodes.push(node_id.clone());
+                            }
                             row.checkpoint.node_outputs.insert(
                                 node_id.clone(),
                                 crate::automation_v2::executor::build_node_execution_error_output_with_category(
@@ -1423,9 +1455,25 @@ impl AppState {
                             annotated_nodes.push(node_id.clone());
                         }
                     }
-                    row.status = AutomationRunStatus::Paused;
-                    row.pause_reason = Some("stale_no_provider_activity".to_string());
-                    row.detail = Some(if annotated_nodes.is_empty() {
+                    terminal_stale_node_ids = terminal_nodes.clone();
+                    let terminal = !terminal_nodes.is_empty();
+                    row.status = if terminal {
+                        AutomationRunStatus::Failed
+                    } else {
+                        AutomationRunStatus::Paused
+                    };
+                    row.pause_reason = if terminal {
+                        None
+                    } else {
+                        Some("stale_no_provider_activity".to_string())
+                    };
+                    row.detail = Some(if terminal {
+                        format!(
+                            "automation run failed after no provider activity for at least {}s; terminal stale node(s): {}",
+                            stale_after_ms / 1000,
+                            terminal_nodes.join(", ")
+                        )
+                    } else if annotated_nodes.is_empty() {
                         detail.clone()
                     } else {
                         format!(
@@ -1435,26 +1483,43 @@ impl AppState {
                         )
                     });
                     row.stop_kind = Some(AutomationStopKind::StaleReaped);
-                    row.stop_reason = Some(detail.clone());
+                    row.stop_reason = row.detail.clone().or_else(|| Some(detail.clone()));
                     row.active_session_ids.clear();
                     row.latest_session_id = None;
                     row.active_instance_ids.clear();
                     automation::record_automation_lifecycle_event(
                         row,
-                        "run_paused_stale_no_provider_activity",
-                        Some(detail.clone()),
+                        if terminal {
+                            "run_failed_stale_no_provider_activity"
+                        } else {
+                            "run_paused_stale_no_provider_activity"
+                        },
+                        row.detail.clone().or_else(|| Some(detail.clone())),
                         Some(AutomationStopKind::StaleReaped),
                     );
                     if let Some(automation) = automation_snapshot.as_ref() {
                         automation::refresh_automation_runtime_state(automation, row);
                     }
                 })
-                .await
-                .is_some()
-            {
+                .await;
+            if let Some(updated_run) = updated_run {
+                let terminal = updated_run.status == AutomationRunStatus::Failed;
+                if terminal {
+                    if let Some(automation) = updated_run.automation_snapshot.as_ref() {
+                        crate::automation_v2::executor::publish_automation_v2_failure_event(
+                            self,
+                            automation,
+                            &updated_run,
+                        );
+                    }
+                }
                 self.event_bus
                     .publish(EngineEvent::new(
-                        "automation_v2.run.paused_stale_no_provider_activity",
+                        if terminal {
+                            "automation_v2.run.failed_stale_no_provider_activity"
+                        } else {
+                            "automation_v2.run.paused_stale_no_provider_activity"
+                        },
                         json!({
                             "automation_id": run.automation_id,
                             "automationID": run.automation_id,
@@ -1465,11 +1530,12 @@ impl AppState {
                             "runID": run_id,
                             "source": "automation_v2",
                             "component": "automation_v2",
-                            "status": "paused",
-                            "pause_reason": "stale_no_provider_activity",
-                            "reason": detail,
-                            "detail": detail,
+                            "status": if terminal { "failed" } else { "paused" },
+                            "pause_reason": if terminal { Value::Null } else { json!("stale_no_provider_activity") },
+                            "reason": updated_run.detail.clone().unwrap_or_else(|| detail.clone()),
+                            "detail": updated_run.detail.clone().unwrap_or_else(|| detail.clone()),
                             "stale_node_ids": stale_node_ids,
+                            "terminal_stale_node_ids": terminal_stale_node_ids,
                             "stale_after_ms": stale_after_ms,
                         }),
                     ));

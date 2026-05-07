@@ -45,10 +45,28 @@ pub(crate) fn detect_automation_node_status(
     tool_telemetry: &Value,
     artifact_validation: Option<&Value>,
 ) -> (String, Option<String>, Option<bool>) {
+    let structured_handoff_missing = artifact_validation
+        .and_then(|value| value.get("unmet_requirements"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| {
+            values
+                .iter()
+                .any(|value| value.as_str() == Some("structured_handoff_missing"))
+        });
+    let node_attempt_exhausted = artifact_validation
+        .and_then(|value| value.get("validation_basis"))
+        .and_then(|value| {
+            value
+                .get("node_attempt")
+                .and_then(Value::as_u64)
+                .zip(value.get("node_max_attempts").and_then(Value::as_u64))
+        })
+        .is_some_and(|(attempt, max_attempts)| attempt >= max_attempts);
     let research_repair_exhausted = artifact_validation
         .and_then(|value| value.get("repair_exhausted"))
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && (!structured_handoff_missing || node_attempt_exhausted);
     let validator_kind = automation_output_validator_kind(node);
 
     // --- Glob-loop circuit breaker ---
@@ -136,7 +154,7 @@ pub(crate) fn detect_automation_node_status(
         == crate::AutomationOutputValidatorKind::ResearchBrief
         || validator_kind == crate::AutomationOutputValidatorKind::GenericArtifact
         || has_required_tools
-        || handoff_only_structured_json)
+        || validator_kind == crate::AutomationOutputValidatorKind::StructuredJson)
         && !research_repair_exhausted;
     let parsed = parse_status_json_with_tail_window(session_text);
     let approved = parsed
@@ -255,6 +273,7 @@ pub(crate) fn detect_automation_node_status(
     }) {
         let repairable_rejected_artifact = reason
             .contains("was not created in the current attempt")
+            || reason.contains("structured handoff was not returned")
             || session_text.contains("TOOL_MODE_REQUIRED_NOT_SATISFIED");
         return (
             if repairable_rejected_artifact && !research_repair_exhausted {
@@ -715,6 +734,12 @@ pub(crate) fn detect_automation_node_failure_kind(
     {
         return Some("provider_transport_failure".to_string());
     }
+    if automation_output_validator_kind(node)
+        == crate::AutomationOutputValidatorKind::StructuredJson
+        && has_unmet("structured_handoff_missing")
+    {
+        return Some("structured_handoff_missing".to_string());
+    }
     if let Some(rejected_reason) = artifact_validation
         .and_then(|value| value.get("rejected_artifact_reason"))
         .and_then(Value::as_str)
@@ -754,7 +779,10 @@ pub(crate) fn detect_automation_node_failure_kind(
         if repair_exhausted && research_requirements_blocked {
             return Some("research_retry_exhausted".to_string());
         }
-        if handoff_only_structured_json && has_unmet("structured_handoff_missing") {
+        if automation_output_validator_kind(node)
+            == crate::AutomationOutputValidatorKind::StructuredJson
+            && has_unmet("structured_handoff_missing")
+        {
             return Some("structured_handoff_missing".to_string());
         }
         if has_unmet("mcp_connector_source_missing") {

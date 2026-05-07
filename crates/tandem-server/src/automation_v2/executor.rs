@@ -8,7 +8,7 @@ use crate::automation_v2::types::{AutomationRunStatus, AutomationStopKind};
 use crate::util::time::now_ms;
 
 include!("executor_helpers.rs");
-fn publish_automation_v2_failure_event(
+pub(crate) fn publish_automation_v2_failure_event(
     state: &AppState,
     automation: &crate::AutomationV2Spec,
     run: &crate::automation_v2::types::AutomationV2RunRecord,

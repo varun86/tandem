@@ -1151,6 +1151,7 @@ fn fallback_issue_triage_status(status: Option<&str>) -> Option<&str> {
     match status {
         Some(
             "triage_timed_out"
+            | "triage_failed_fallback_publish"
             | "triage_pending"
             | "triage_enrichment_pending_fallback_publish"
             | "github_post_failed",
@@ -1250,16 +1251,19 @@ async fn call_list_issues(
         .call_tool(
             &tools.server_name,
             &tools.list_issues,
-            json!({
-                "owner": owner,
-                "repo": repo,
-                "state": "all",
-                "perPage": 100
-            }),
+            github_list_issues_payload(owner, repo),
         )
         .await
         .map_err(anyhow::Error::msg)?;
     Ok(extract_issues_from_tool_result(&result))
+}
+
+fn github_list_issues_payload(owner: &str, repo: &str) -> Value {
+    json!({
+        "owner": owner,
+        "repo": repo,
+        "perPage": 100
+    })
 }
 
 async fn call_get_issue(
@@ -1273,11 +1277,7 @@ async fn call_get_issue(
         .call_tool(
             &tools.server_name,
             &tools.get_issue,
-            json!({
-                "owner": owner,
-                "repo": repo,
-                "issue_number": issue_number
-            }),
+            github_get_issue_payload(owner, repo, issue_number),
         )
         .await
         .map_err(anyhow::Error::msg)?;
@@ -1285,6 +1285,15 @@ async fn call_get_issue(
         .into_iter()
         .find(|issue| issue.number == issue_number)
         .ok_or_else(|| anyhow::anyhow!("GitHub issue #{issue_number} was not returned"))
+}
+
+fn github_get_issue_payload(owner: &str, repo: &str, issue_number: u64) -> Value {
+    json!({
+        "method": "get",
+        "owner": owner,
+        "repo": repo,
+        "issue_number": issue_number
+    })
 }
 
 async fn call_create_issue(
@@ -1799,6 +1808,24 @@ mod tests {
         assert!(body.contains("<!-- tandem:fingerprint:v1:abc123 -->"));
         assert!(body.contains("<!-- tandem:evidence:v1:digest-1 -->"));
         assert!(body.contains("triage_run_id: triage-1"));
+    }
+
+    #[test]
+    fn github_copilot_issue_payloads_match_current_schema() {
+        let list_payload = github_list_issues_payload("frumu-ai", "tandem");
+        assert_eq!(list_payload["owner"], "frumu-ai");
+        assert_eq!(list_payload["repo"], "tandem");
+        assert_eq!(list_payload["perPage"], 100);
+        assert!(
+            list_payload.get("state").is_none(),
+            "GitHub Copilot MCP accepts OPEN/CLOSED only; omitting state lists both"
+        );
+
+        let get_payload = github_get_issue_payload("frumu-ai", "tandem", 68);
+        assert_eq!(get_payload["method"], "get");
+        assert_eq!(get_payload["owner"], "frumu-ai");
+        assert_eq!(get_payload["repo"], "tandem");
+        assert_eq!(get_payload["issue_number"], 68);
     }
 
     #[test]
